@@ -1,0 +1,42 @@
+{
+  "Trina solar TSM-DEG-20C-20-600 Vertex": {
+    "manufacturer": "Trina solar",
+    "model": "TSM-DEG-20C-20-600 Vertex",
+    "type": "Mono PERC",
+    "length_mm": 2172.0,
+    "width_mm": 1303.0,
+    "depth_mm": 33.0,
+    "weight_kg": 34.9,
+    "wattage": 600.0,
+    "vmp": 34.6,
+    "imp": 17.34,
+    "voc": 41.7,
+    "isc": 18.42,
+    "max_system_voltage": 1500.0,
+    "efficiency": null,
+    "temperature_coefficient": -0.34,
+    "bifaciality_factor": null,
+    "default_orientation": "Portrait",
+    "cells_per_module": 72
+  },
+  "CSI Solar CS6W-530MB-AG": {
+    "manufacturer": "CSI Solar",
+    "model": "CS6W-530MB-AG",
+    "type": "Mono PERC",
+    "length_mm": 2266.0,
+    "width_mm": 1134.0,
+    "depth_mm": 35.0,
+    "weight_kg": 32.2,
+    "wattage": 530.0,
+    "vmp": 40.9,
+    "imp": 12.96,
+    "voc": 48.8,
+    "isc": 13.8,
+    "max_system_voltage": 1000.0,
+    "efficiency": null,
+    "temperature_coefficient": -0.34,
+    "bifaciality_factor": null,
+    "default_orientation": "Portrait",
+    "cells_per_module": 72
+  }
+}
