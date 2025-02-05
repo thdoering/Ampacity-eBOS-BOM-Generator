@@ -34,23 +34,27 @@ class TrackerTemplateCreator(ttk.Frame):
         main_container = ttk.Frame(self, padding="10")
         main_container.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
-        # Left side - Template List
-        template_frame = ttk.LabelFrame(main_container, text="Saved Templates", padding="5")
-        template_frame.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
+        # Left column
+        left_column = ttk.Frame(main_container)
+        left_column.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.N, tk.S))
+        
+        # Template List section in left column
+        template_frame = ttk.LabelFrame(left_column, text="Saved Templates", padding="2")
+        template_frame.grid(row=0, column=0, padx=2, pady=5, sticky=(tk.W, tk.E, tk.N))
         
         self.template_listbox = tk.Listbox(template_frame, width=30, height=15)
-        self.template_listbox.grid(row=0, column=0, padx=5, pady=5)
+        self.template_listbox.grid(row=0, column=0, padx=2, pady=2)
         self.template_listbox.bind('<<ListboxSelect>>', self.on_template_select)
         
         template_buttons = ttk.Frame(template_frame)
-        template_buttons.grid(row=1, column=0, padx=5, pady=5)
+        template_buttons.grid(row=1, column=0, padx=2, pady=2)
         
         ttk.Button(template_buttons, text="Load", command=self.load_template).grid(row=0, column=0, padx=2)
         ttk.Button(template_buttons, text="Delete", command=self.delete_template).grid(row=0, column=1, padx=2)
         
-        # Right side - Template Editor
-        editor_frame = ttk.LabelFrame(main_container, text="Template Editor", padding="5")
-        editor_frame.grid(row=0, column=1, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
+        # Editor section in left column
+        editor_frame = ttk.LabelFrame(left_column, text="Template Editor", padding="5")
+        editor_frame.grid(row=1, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
 
         # Current Module
         ttk.Label(editor_frame, text="Current Module:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
@@ -69,17 +73,16 @@ class TrackerTemplateCreator(ttk.Frame):
         orientation_combo['values'] = [o.value for o in ModuleOrientation]
         orientation_combo.grid(row=2, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         
-        # Modules per String (along torque tube)
+        # Modules per String
         ttk.Label(editor_frame, text="Modules per String:").grid(row=3, column=0, padx=5, pady=2, sticky=tk.W)
         self.modules_string_var = tk.StringVar(value="28")
         ttk.Spinbox(editor_frame, from_=1, to=100, textvariable=self.modules_string_var, 
             increment=1, validate='all', validatecommand=(self.register(lambda val: val.isdigit() or val == ""), '%P')
             ).grid(row=3, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         
-        # Strings per Tracker (perpendicular to torque tube)
+        # Strings per Tracker
         ttk.Label(editor_frame, text="Strings per Tracker:").grid(row=4, column=0, padx=5, pady=2, sticky=tk.W)
         self.strings_tracker_var = tk.StringVar(value="2")
-
         ttk.Spinbox(editor_frame, from_=1, to=10, textvariable=self.strings_tracker_var,
             increment=1, validate='all', validatecommand=(self.register(lambda val: val.isdigit() or val == ""), '%P')
             ).grid(row=4, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
@@ -112,16 +115,16 @@ class TrackerTemplateCreator(ttk.Frame):
         # Save Button
         ttk.Button(editor_frame, text="Save Template", command=self.save_template).grid(row=9, column=0, columnspan=2, pady=10)
         
-        # Preview Canvas
+        # Preview Canvas - Right column
         preview_frame = ttk.LabelFrame(main_container, text="Preview", padding="5")
-        preview_frame.grid(row=1, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
+        preview_frame.grid(row=0, column=1, padx=5, pady=5, sticky=(tk.N, tk.S))
 
-        self.canvas = tk.Canvas(preview_frame, width=800, height=300, bg='white')
-        self.canvas.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E))
+        self.canvas = tk.Canvas(preview_frame, width=300, height=600, bg='white')
+        self.canvas.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.N, tk.S))
         
         # Bind events for real-time preview updates
         for var in [self.modules_string_var, self.strings_tracker_var, 
-                   self.spacing_var, self.motor_gap_var, self.orientation_var]:
+                self.spacing_var, self.motor_gap_var, self.orientation_var]:
             var.trace('w', lambda *args: self.update_preview())
 
     def update_module_display(self):
@@ -273,83 +276,63 @@ class TrackerTemplateCreator(ttk.Frame):
         if not template:
             return
             
-        # Clear canvas
         self.canvas.delete("all")
         
-        # Get tracker dimensions and module count
-        total_modules = template.get_total_modules()
-        self.total_modules_label.config(text=str(total_modules))
-        
-        # Calculate module dimensions based on orientation
+        # Calculate module dimensions - flipped for vertical orientation
         if template.module_orientation == ModuleOrientation.PORTRAIT:
-            module_width = template.module_spec.width_mm / 1000
-            module_height = template.module_spec.length_mm / 1000
-        else:
-            module_width = template.module_spec.length_mm / 1000
             module_height = template.module_spec.width_mm / 1000
-            
-        # Calculate total tracker length
-        modules_before_motor = (template.strings_per_tracker // 2) * template.modules_per_string
-        modules_after_motor = (template.strings_per_tracker - template.strings_per_tracker // 2) * template.modules_per_string
+            module_width = template.module_spec.length_mm / 1000
+        else:
+            module_height = template.module_spec.length_mm / 1000
+            module_width = template.module_spec.width_mm / 1000
+
+        # Rest of the code remains same as previous version
+        total_strings_above_motor = template.strings_per_tracker - 1
+        modules_above_motor = total_strings_above_motor * template.modules_per_string
+        modules_below_motor = template.modules_per_string
         
-        total_length = (
-            # Length before motor
-            modules_before_motor * (module_width + template.module_spacing_m) +
-            # Motor gap
-            template.motor_gap_m +
-            # Length after motor
-            modules_after_motor * (module_width + template.module_spacing_m)
-        )
-        
-        # Calculate scale factor to fit preview
-        scale = min(
-            750 / total_length,  # Leave margin from 800px width
-            280 / module_height  # Leave margin from 300px height
-        )
-        
-        # Center vertically
-        center_y = 100
+        total_height = ((modules_above_motor + modules_below_motor) * module_height) + \
+                        ((modules_above_motor + modules_below_motor - 1) * template.module_spacing_m) + \
+                        template.motor_gap_m
+
+        scale = min(280 / module_width, 580 / total_height)
+        x_center = (300 - module_width * scale) / 2
         
         # Draw torque tube
         self.canvas.create_line(
-            10, center_y,
-            10 + total_length * scale, center_y,
+            x_center + module_width * scale / 2, 10,
+            x_center + module_width * scale / 2, 10 + total_height * scale,
             width=3, fill='gray'
         )
         
-        # Start drawing modules from left side
-        x_pos = 10
-        modules_drawn = 0
-        
-        # Draw modules before motor
-        for _ in range(modules_before_motor):
+        # Draw modules above motor
+        y_pos = 10
+        for i in range(modules_above_motor):
             self.canvas.create_rectangle(
-                x_pos, center_y - (module_height * scale) / 2,
-                x_pos + module_width * scale, center_y + (module_height * scale) / 2,
+                x_center, y_pos,
+                x_center + module_width * scale, y_pos + module_height * scale,
                 fill='lightblue', outline='blue'
             )
-            x_pos += (module_width + template.module_spacing_m) * scale
-            modules_drawn += 1
-            
-        # Add motor location
-        motor_x = x_pos
-        x_pos += template.motor_gap_m * scale
+            y_pos += (module_height + template.module_spacing_m) * scale
+
+        # Draw motor
+        motor_y = y_pos
+        y_pos += template.motor_gap_m * scale
         self.canvas.create_oval(
-            motor_x - 5, center_y - 5,
-            motor_x + 5, center_y + 5,
+            x_center + module_width * scale / 2 - 5, motor_y - 5,
+            x_center + module_width * scale / 2 + 5, motor_y + 5,
             fill='red'
         )
-        
-        # Draw remaining modules
-        for _ in range(modules_after_motor):
+
+        # Draw modules below motor
+        for i in range(modules_below_motor):
             self.canvas.create_rectangle(
-                x_pos, center_y - (module_height * scale) / 2,
-                x_pos + module_width * scale, center_y + (module_height * scale) / 2,
+                x_center, y_pos,
+                x_center + module_width * scale, y_pos + module_height * scale,
                 fill='lightblue', outline='blue'
             )
-            x_pos += (module_width + template.module_spacing_m) * scale
-            modules_drawn += 1
-            
+            y_pos += (module_height + template.module_spacing_m) * scale
+
         # Update dimension labels
-        self.length_label.config(text=f"Length: {total_length:.2f}m")
-        self.width_label.config(text=f"Width: {module_height:.2f}m")
+        self.length_label.config(text=f"Length: {module_width:.2f}m")
+        self.width_label.config(text=f"Height: {total_height:.2f}m")
