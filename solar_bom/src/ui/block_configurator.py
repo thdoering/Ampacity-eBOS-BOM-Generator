@@ -4,6 +4,7 @@ from typing import Optional, Dict, List
 from ..models.block import BlockConfig
 from ..models.tracker import TrackerTemplate
 from ..models.inverter import InverterSpec
+from .inverter_manager import InverterManager
 
 class BlockConfigurator(ttk.Frame):
     def __init__(self, parent):
@@ -14,7 +15,7 @@ class BlockConfigurator(ttk.Frame):
         self.blocks: Dict[str, BlockConfig] = {}  # Store block configurations
         self.current_block: Optional[str] = None  # Currently selected block ID
         self.available_templates: Dict[str, TrackerTemplate] = {}  # Available tracker templates
-        
+        self.selected_inverter = None
         self.setup_ui()
         
     def setup_ui(self):
@@ -69,6 +70,15 @@ class BlockConfigurator(ttk.Frame):
         self.gcr_var = tk.StringVar(value="0.4")
         ttk.Entry(dims_frame, textvariable=self.gcr_var).grid(row=3, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         
+        # Inverter Selection
+        inverter_frame = ttk.LabelFrame(config_frame, text="Inverter", padding="5")
+        inverter_frame.grid(row=4, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
+
+        ttk.Label(inverter_frame, text="Selected Inverter:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
+        self.inverter_label = ttk.Label(inverter_frame, text="None")
+        self.inverter_label.grid(row=0, column=1, padx=5, pady=2, sticky=tk.W)
+        ttk.Button(inverter_frame, text="Select Inverter", command=self.select_inverter).grid(row=0, column=2, padx=5, pady=2)
+
         # Canvas for block visualization
         canvas_frame = ttk.LabelFrame(main_container, text="Block Layout", padding="5")
         canvas_frame.grid(row=1, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
@@ -86,6 +96,38 @@ class BlockConfigurator(ttk.Frame):
         self.canvas.bind('<Button-1>', self.on_canvas_click)
         self.canvas.bind('<B1-Motion>', self.on_canvas_drag)
         self.canvas.bind('<ButtonRelease-1>', self.on_canvas_release)
+
+    def on_inverter_selected(self, inverter):
+        """Handle inverter selection"""
+        self.selected_inverter = inverter
+        if self.current_block:
+            self.blocks[self.current_block].inverter = inverter
+
+    def select_inverter(self):
+        """Open inverter selection dialog"""
+        dialog = tk.Toplevel(self)
+        dialog.title("Select Inverter")
+        dialog.transient(self)
+        dialog.grab_set()
+        
+        inverter_selector = InverterManager(
+            dialog,
+            on_inverter_selected=lambda inv: self.handle_inverter_selection(inv, dialog)
+        )
+        inverter_selector.pack(fill='both', expand=True, padx=5, pady=5)
+        
+        # Position dialog relative to parent
+        x = self.winfo_rootx() + 50
+        y = self.winfo_rooty() + 50
+        dialog.geometry(f"+{x}+{y}")
+
+    def handle_inverter_selection(self, inverter, dialog):
+        """Handle inverter selection from dialog"""
+        self.selected_inverter = inverter
+        self.inverter_label.config(text=f"{inverter.manufacturer} {inverter.model}")
+        if self.current_block:
+            self.blocks[self.current_block].inverter = inverter
+        dialog.destroy()
         
     def create_new_block(self):
         """Create a new block configuration"""
@@ -96,7 +138,7 @@ class BlockConfigurator(ttk.Frame):
             # Create new block config
             block = BlockConfig(
                 block_id=block_id,
-                inverter=None,  # Will need to add inverter selection
+                inverter=self.selected_inverter,  # Will need to add inverter selection
                 tracker_template=None,  # Will need to add template selection
                 width_m=float(self.width_var.get()),
                 height_m=float(self.height_var.get()),

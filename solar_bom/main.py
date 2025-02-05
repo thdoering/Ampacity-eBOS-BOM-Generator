@@ -4,6 +4,8 @@ from src.models.module import ModuleSpec, ModuleType
 from src.ui.tracker_creator import TrackerTemplateCreator
 from src.ui.module_manager import ModuleManager
 from src.ui.block_configurator import BlockConfigurator
+from src.ui.inverter_manager import InverterManager
+
 
 def main():
     # Create root window
