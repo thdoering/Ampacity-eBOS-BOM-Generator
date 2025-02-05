@@ -71,13 +71,18 @@ class TrackerTemplateCreator(ttk.Frame):
         
         # Modules per String (along torque tube)
         ttk.Label(editor_frame, text="Modules per String:").grid(row=3, column=0, padx=5, pady=2, sticky=tk.W)
-        self.modules_string_var = tk.StringVar(value="20")
-        ttk.Entry(editor_frame, textvariable=self.modules_string_var).grid(row=3, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        self.modules_string_var = tk.StringVar(value="28")
+        ttk.Spinbox(editor_frame, from_=1, to=100, textvariable=self.modules_string_var, 
+            increment=1, validate='all', validatecommand=(self.register(lambda val: val.isdigit() or val == ""), '%P')
+            ).grid(row=3, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         
         # Strings per Tracker (perpendicular to torque tube)
         ttk.Label(editor_frame, text="Strings per Tracker:").grid(row=4, column=0, padx=5, pady=2, sticky=tk.W)
         self.strings_tracker_var = tk.StringVar(value="2")
-        ttk.Entry(editor_frame, textvariable=self.strings_tracker_var).grid(row=4, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+
+        ttk.Spinbox(editor_frame, from_=1, to=10, textvariable=self.strings_tracker_var,
+            increment=1, validate='all', validatecommand=(self.register(lambda val: val.isdigit() or val == ""), '%P')
+            ).grid(row=4, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         
         # Module Spacing
         ttk.Label(editor_frame, text="Module Spacing (m):").grid(row=5, column=0, padx=5, pady=2, sticky=tk.W)
