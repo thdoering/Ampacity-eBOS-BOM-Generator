@@ -16,6 +16,10 @@ class BlockConfigurator(ttk.Frame):
         self.current_block: Optional[str] = None  # Currently selected block ID
         self.available_templates: Dict[str, TrackerTemplate] = {}  # Available tracker templates
         self.selected_inverter = None
+        self.tracker_templates: Dict[str, TrackerTemplate] = {}
+        self.dragging = False
+        self.drag_template = None
+        self.drag_start = None
         self.setup_ui()
         
     def setup_ui(self):
@@ -49,6 +53,13 @@ class BlockConfigurator(ttk.Frame):
         self.block_id_var = tk.StringVar()
         ttk.Entry(config_frame, textvariable=self.block_id_var).grid(row=0, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         
+        templates_frame = ttk.LabelFrame(config_frame, text="Tracker Templates", padding="5")
+        templates_frame.grid(row=2, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
+
+        self.template_listbox = tk.Listbox(templates_frame, height=5)
+        self.template_listbox.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E))
+        self.template_listbox.bind('<<ListboxSelect>>', self.on_template_select)
+
         # Block Dimensions
         dims_frame = ttk.LabelFrame(config_frame, text="Dimensions", padding="5")
         dims_frame.grid(row=1, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
@@ -248,18 +259,85 @@ class BlockConfigurator(ttk.Frame):
         for pos in block.tracker_positions:
             # TODO: Implement tracker drawing
             pass
+
+    def draw_tracker(self, x, y, template, tag=None):
+        """Draw a tracker on the canvas"""
+        if not template:
+            return
             
+        dims = template.get_physical_dimensions()
+        scale = self.get_canvas_scale()
+        
+        # Convert meters to pixels
+        width = dims[0] * scale
+        height = dims[1] * scale
+        
+        # Draw rectangle
+        self.canvas.create_rectangle(
+            x, y, x + width, y + height,
+            fill='lightblue', outline='blue',
+            tags=tag if tag else 'tracker'
+        )
+
+    def get_canvas_scale(self):
+        """Calculate scale factor (pixels per meter)"""
+        if not self.current_block:
+            return 1.0
+        block = self.blocks[self.current_block]
+        canvas_width = self.canvas.winfo_width() - 20
+        canvas_height = self.canvas.winfo_height() - 20
+        scale_x = canvas_width / block.width_m
+        scale_y = canvas_height / block.height_m
+        return min(scale_x, scale_y)
+
     def on_canvas_click(self, event):
         """Handle canvas click for tracker placement"""
-        # TODO: Implement tracker placement
-        pass
-        
+        if not self.current_block or not self.drag_template:
+            return
+        self.dragging = True
+        self.drag_start = (event.x, event.y)
+
     def on_canvas_drag(self, event):
         """Handle canvas drag for tracker movement"""
-        # TODO: Implement tracker dragging
-        pass
-        
+        if not self.dragging:
+            return
+        self.canvas.delete('drag_preview')
+        self.draw_tracker(event.x, event.y, self.drag_template, 'drag_preview')
+
     def on_canvas_release(self, event):
         """Handle canvas release for tracker placement"""
-        # TODO: Implement tracker placement completion
-        pass
+        if not self.dragging:
+            return
+            
+        self.dragging = False
+        self.canvas.delete('drag_preview')
+        
+        # Convert canvas coordinates to meters
+        scale = self.get_canvas_scale()
+        block = self.blocks[self.current_block]
+        x_m = (event.x - 10) / scale
+        y_m = (event.y - 10) / scale
+        
+        # Snap to grid based on row spacing
+        y_m = round(y_m / block.row_spacing_m) * block.row_spacing_m
+        
+        # Add tracker if within bounds
+        if 0 <= x_m <= block.width_m and 0 <= y_m <= block.height_m:
+            block.tracker_positions.append(TrackerPosition(x=x_m, y=y_m, rotation=0.0))
+            self.draw_block()
+
+    def load_templates(self):
+        """Load tracker templates from file"""
+        template_path = Path('data/tracker_templates.json')
+        if template_path.exists():
+            with open(template_path, 'r') as f:
+                data = json.load(f)
+                self.tracker_templates = {name: TrackerTemplate(**template) 
+                                    for name, template in data.items()}
+                
+    def on_template_select(self, event=None):
+        """Handle template selection"""
+        selection = self.template_listbox.curselection()
+        if selection:
+            template_name = self.template_listbox.get(selection[0])
+            self.drag_template = self.tracker_templates[template_name]
