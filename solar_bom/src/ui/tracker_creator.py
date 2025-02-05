@@ -111,6 +111,17 @@ class TrackerTemplateCreator(ttk.Frame):
         
         self.width_label = ttk.Label(dims_frame, text="Width: --")
         self.width_label.grid(row=0, column=1, padx=5, pady=2, sticky=tk.W)
+
+        # Update total modules calculation when inputs change
+        def update_total_modules(*args):
+            try:
+                modules = int(self.modules_string_var.get()) * int(self.strings_tracker_var.get())
+                self.total_modules_label.config(text=str(modules))
+            except ValueError:
+                self.total_modules_label.config(text="--")
+
+        self.modules_string_var.trace('w', update_total_modules)
+        self.strings_tracker_var.trace('w', update_total_modules)
         
         # Save Button
         ttk.Button(editor_frame, text="Save Template", command=self.save_template).grid(row=9, column=0, columnspan=2, pady=10)
