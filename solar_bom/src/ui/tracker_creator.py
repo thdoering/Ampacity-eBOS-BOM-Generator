@@ -16,6 +16,7 @@ class TrackerTemplateCreator(ttk.Frame):
         self.templates = self.load_templates()
         self.setup_ui()  # Creates current_module_label
         self.module_spec = module_spec  # Now safe to call
+        self.update_template_list()
 
     @property 
     def module_spec(self):
@@ -100,6 +101,11 @@ class TrackerTemplateCreator(ttk.Frame):
         # Total Modules Display
         ttk.Label(editor_frame, text="Modules per Tracker:").grid(row=7, column=0, padx=5, pady=2, sticky=tk.W)
         self.total_modules_label = ttk.Label(editor_frame, text="--")
+        try:
+            modules = int(self.modules_string_var.get()) * int(self.strings_tracker_var.get())
+            self.total_modules_label.config(text=str(modules))
+        except ValueError:
+            self.total_modules_label.config(text="--")
         self.total_modules_label.grid(row=7, column=1, padx=5, pady=2, sticky=tk.W)
         
         # Calculated Dimensions Display

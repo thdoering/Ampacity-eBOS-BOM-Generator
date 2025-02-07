@@ -5,6 +5,8 @@ from ..models.block import BlockConfig
 from ..models.tracker import TrackerTemplate
 from ..models.inverter import InverterSpec
 from .inverter_manager import InverterManager
+from pathlib import Path
+import json
 
 class BlockConfigurator(ttk.Frame):
     def __init__(self, parent):
@@ -20,7 +22,13 @@ class BlockConfigurator(ttk.Frame):
         self.dragging = False
         self.drag_template = None
         self.drag_start = None
+        
+        # First set up the UI
         self.setup_ui()
+        
+        # Then load and update templates
+        self.load_templates()
+        self.update_template_list()
         
     def setup_ui(self):
         """Create and arrange UI components"""
@@ -52,29 +60,25 @@ class BlockConfigurator(ttk.Frame):
         ttk.Label(config_frame, text="Block ID:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
         self.block_id_var = tk.StringVar()
         ttk.Entry(config_frame, textvariable=self.block_id_var).grid(row=0, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
-        
-        templates_frame = ttk.LabelFrame(config_frame, text="Tracker Templates", padding="5")
-        templates_frame.grid(row=2, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
-
-        self.template_listbox = tk.Listbox(templates_frame, height=5)
-        self.template_listbox.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E))
-        self.template_listbox.bind('<<ListboxSelect>>', self.on_template_select)
 
         # Block Dimensions
         dims_frame = ttk.LabelFrame(config_frame, text="Dimensions", padding="5")
         dims_frame.grid(row=1, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
         
-        ttk.Label(dims_frame, text="Width (m):").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
-        self.width_var = tk.StringVar(value="100")
+        ttk.Label(dims_frame, text="Width (ft):").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
+        self.width_var = tk.StringVar(value="200")
         ttk.Entry(dims_frame, textvariable=self.width_var).grid(row=0, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         
-        ttk.Label(dims_frame, text="Height (m):").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
-        self.height_var = tk.StringVar(value="50")
+        ttk.Label(dims_frame, text="Height (ft):").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
+        self.height_var = tk.StringVar(value="165")
         ttk.Entry(dims_frame, textvariable=self.height_var).grid(row=1, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         
-        ttk.Label(dims_frame, text="Row Spacing (m):").grid(row=2, column=0, padx=5, pady=2, sticky=tk.W)
-        self.row_spacing_var = tk.StringVar(value="6")
-        ttk.Entry(dims_frame, textvariable=self.row_spacing_var).grid(row=2, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        # Row Spacing
+        ttk.Label(dims_frame, text="Row Spacing (ft):").grid(row=2, column=0, padx=5, pady=2, sticky=tk.W)
+        self.row_spacing_var = tk.StringVar(value="19.7")  # 6m in feet
+        row_spacing_entry = ttk.Entry(dims_frame, textvariable=self.row_spacing_var)
+        row_spacing_entry.grid(row=2, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        self.row_spacing_var.trace('w', lambda *args: self.calculate_gcr())
         
         # GCR (Ground Coverage Ratio)
         ttk.Label(dims_frame, text="GCR:").grid(row=3, column=0, padx=5, pady=2, sticky=tk.W)
@@ -89,6 +93,14 @@ class BlockConfigurator(ttk.Frame):
         self.inverter_label = ttk.Label(inverter_frame, text="None")
         self.inverter_label.grid(row=0, column=1, padx=5, pady=2, sticky=tk.W)
         ttk.Button(inverter_frame, text="Select Inverter", command=self.select_inverter).grid(row=0, column=2, padx=5, pady=2)
+
+        # Templates List Frame
+        templates_frame = ttk.LabelFrame(config_frame, text="Tracker Templates", padding="5")
+        templates_frame.grid(row=3, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
+
+        self.template_listbox = tk.Listbox(templates_frame, height=5)
+        self.template_listbox.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E))
+        self.template_listbox.bind('<<ListboxSelect>>', self.on_template_select)
 
         # Canvas for block visualization
         canvas_frame = ttk.LabelFrame(main_container, text="Block Layout", padding="5")
@@ -146,14 +158,19 @@ class BlockConfigurator(ttk.Frame):
         block_id = f"Block_{len(self.blocks) + 1}"
         
         try:
+            # Convert feet to meters for storage
+            width_ft = float(self.width_var.get())
+            height_ft = float(self.height_var.get())
+            row_spacing_ft = float(self.row_spacing_var.get())
+            
             # Create new block config
             block = BlockConfig(
                 block_id=block_id,
-                inverter=self.selected_inverter,  # Will need to add inverter selection
-                tracker_template=None,  # Will need to add template selection
-                width_m=float(self.width_var.get()),
-                height_m=float(self.height_var.get()),
-                row_spacing_m=float(self.row_spacing_var.get()),
+                inverter=self.selected_inverter,
+                tracker_template=None,
+                width_m=self.ft_to_m(width_ft),
+                height_m=self.ft_to_m(height_ft),
+                row_spacing_m=self.ft_to_m(row_spacing_ft),
                 gcr=float(self.gcr_var.get()),
                 description=f"New block {block_id}"
             )
@@ -200,11 +217,11 @@ class BlockConfigurator(ttk.Frame):
         self.current_block = block_id
         block = self.blocks[block_id]
         
-        # Update UI with block data
+        # Update UI with block data (convert meters to feet)
         self.block_id_var.set(block.block_id)
-        self.width_var.set(str(block.width_m))
-        self.height_var.set(str(block.height_m))
-        self.row_spacing_var.set(str(block.row_spacing_m))
+        self.width_var.set(str(self.m_to_ft(block.width_m)))
+        self.height_var.set(str(self.m_to_ft(block.height_m)))
+        self.row_spacing_var.set(str(self.m_to_ft(block.row_spacing_m)))
         self.gcr_var.set(str(block.gcr))
         
         # Update canvas
@@ -213,9 +230,9 @@ class BlockConfigurator(ttk.Frame):
     def clear_config_display(self):
         """Clear block configuration display"""
         self.block_id_var.set("")
-        self.width_var.set("100")
-        self.height_var.set("50")
-        self.row_spacing_var.set("6")
+        self.width_var.set("200")
+        self.height_var.set("165")
+        self.row_spacing_var.set("18.5")
         self.gcr_var.set("0.4")
         self.canvas.delete("all")
         
@@ -341,3 +358,25 @@ class BlockConfigurator(ttk.Frame):
         if selection:
             template_name = self.template_listbox.get(selection[0])
             self.drag_template = self.tracker_templates[template_name]
+
+    def update_template_list(self):
+        """Update template listbox with available templates"""
+        self.template_listbox.delete(0, tk.END)
+        for name in self.tracker_templates.keys():
+            self.template_listbox.insert(tk.END, name)
+
+    def m_to_ft(self, meters):
+        return meters * 3.28084
+
+    def ft_to_m(self, feet):
+        return feet / 3.28084
+    
+    def calculate_gcr(self):
+        """Calculate Ground Coverage Ratio"""
+        if self.current_block and self.blocks[self.current_block].tracker_template:
+            template = self.blocks[self.current_block].tracker_template
+            module_width = template.module_spec.width_mm / 1000  # convert to meters
+            row_spacing = float(self.row_spacing_var.get())
+            row_spacing_m = self.ft_to_m(row_spacing)
+            gcr = module_width / row_spacing_m
+            self.gcr_var.set(f"{gcr:.3f}")
