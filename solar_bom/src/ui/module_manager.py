@@ -228,8 +228,6 @@ class ModuleManager(ttk.Frame):
             
         name = self.module_listbox.get(selection[0])
         module = self.modules[name]
-
-        print(f"ModuleManager: Module selected: {module}")  # Debug print
         
         # Update UI with selected module
         self.manufacturer_var.set(module.manufacturer)
@@ -245,5 +243,4 @@ class ModuleManager(ttk.Frame):
 
         # Call the callback if provided
         if self.on_module_selected:
-            print("ModuleManager: Calling on_module_selected callback")  # Debug print
             self.on_module_selected(module)

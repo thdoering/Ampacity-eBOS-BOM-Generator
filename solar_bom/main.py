@@ -31,7 +31,6 @@ def main():
 
     # Now create module manager with reference to tracker creator
     def on_module_selected(module):
-        print(f"Main: Module selected: {module}")   # debug print
         tracker_creator.module_spec = module
 
     module_manager = ModuleManager(

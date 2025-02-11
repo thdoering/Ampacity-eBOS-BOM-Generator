@@ -13,10 +13,10 @@
     "module_spacing_m": 0.01,
     "motor_gap_m": 1.0
   },
-  "NXT-56": {
+  "NXT-112": {
     "module_orientation": "Portrait",
     "modules_per_string": 28,
-    "strings_per_tracker": 2,
+    "strings_per_tracker": 4,
     "module_spacing_m": 0.01,
     "motor_gap_m": 1.0
   }

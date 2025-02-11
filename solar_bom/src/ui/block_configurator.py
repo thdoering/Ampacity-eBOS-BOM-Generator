@@ -84,11 +84,11 @@ class BlockConfigurator(ttk.Frame):
         dims_frame.grid(row=1, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
         
         ttk.Label(dims_frame, text="Width (ft):").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
-        self.width_var = tk.StringVar(value="200")
+        self.width_var = tk.StringVar(value="500")
         ttk.Entry(dims_frame, textvariable=self.width_var).grid(row=0, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         
         ttk.Label(dims_frame, text="Height (ft):").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
-        self.height_var = tk.StringVar(value="165")
+        self.height_var = tk.StringVar(value="500")
         ttk.Entry(dims_frame, textvariable=self.height_var).grid(row=1, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         
         # Row Spacing
@@ -301,27 +301,81 @@ class BlockConfigurator(ttk.Frame):
             
         # Draw trackers if any are placed
         for pos in block.tracker_positions:
-            # TODO: Implement tracker drawing
-            pass
+            x = 10 + pos.x * scale
+            y = 10 + pos.y * scale
+            self.draw_tracker(x, y, block.tracker_template)
 
     def draw_tracker(self, x, y, template, tag=None):
-        """Draw a tracker on the canvas"""
+        """Draw a tracker on the canvas with detailed module layout"""
         if not template:
             return
                 
         dims = template.get_physical_dimensions()
         scale = self.get_canvas_scale()
         
-        # Convert meters to pixels
-        width = dims[0] * scale
-        height = dims[1] * scale
+        # Get module dimensions
+        if template.module_orientation == ModuleOrientation.PORTRAIT:
+            module_height = template.module_spec.width_mm / 1000 * scale
+            module_width = template.module_spec.length_mm / 1000 * scale
+        else:
+            module_height = template.module_spec.length_mm / 1000 * scale
+            module_width = template.module_spec.width_mm / 1000 * scale
+
+        # Create group tag for all elements
+        group_tag = tag if tag else f'tracker_{x}_{y}'
         
-        # Draw rectangle
-        self.canvas.create_rectangle(
-            x, y, x + width, y + height,
-            fill='lightblue', outline='blue',
-            tags=tag if tag else 'tracker'
+        # Calculate number of modules above and below motor
+        total_modules = template.modules_per_string * template.strings_per_tracker
+        modules_per_string = template.modules_per_string
+        strings_above_motor = template.strings_per_tracker - 1
+        modules_above_motor = modules_per_string * strings_above_motor
+        modules_below_motor = modules_per_string
+
+        # Calculate total tracker height for torque tube
+        total_height = (
+            (total_modules * module_height) +  # All modules
+            ((total_modules - 1) * template.module_spacing_m * scale) +  # Module spacing
+            template.motor_gap_m * scale  # Motor gap
         )
+        
+        # Draw torque tube through center
+        self.canvas.create_line(
+            x + module_width/2, y,
+            x + module_width/2, y + total_height,
+            width=3, fill='gray', tags=group_tag
+        )
+        
+        # Draw all modules
+        y_pos = y
+        modules_drawn = 0
+        
+        # Draw modules above motor
+        for i in range(modules_above_motor):
+            self.canvas.create_rectangle(
+                x, y_pos,
+                x + module_width, y_pos + module_height,
+                fill='lightblue', outline='blue', tags=group_tag
+            )
+            modules_drawn += 1
+            y_pos += module_height + template.module_spacing_m * scale
+
+        # Draw motor
+        motor_y = y_pos
+        self.canvas.create_oval(
+            x + module_width/2 - 5, motor_y - 5,
+            x + module_width/2 + 5, motor_y + 5,
+            fill='red', tags=group_tag
+        )
+        y_pos += template.motor_gap_m * scale
+
+        # Draw modules below motor
+        for i in range(modules_below_motor):
+            self.canvas.create_rectangle(
+                x, y_pos,
+                x + module_width, y_pos + module_height,
+                fill='lightblue', outline='blue', tags=group_tag
+            )
+            y_pos += module_height + template.module_spacing_m * scale
 
     def get_canvas_scale(self):
         """Calculate scale factor (pixels per meter)"""
