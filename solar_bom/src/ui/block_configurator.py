@@ -27,6 +27,8 @@ class BlockConfigurator(ttk.Frame):
         self.dragging = False
         self.drag_template = None
         self.drag_start = None
+        self.selected_tracker = None  # Store currently selected tracker
+        self.grid_lines = []  # Store grid line IDs for cleanup 
         
         # First set up the UI
         self.setup_ui()
@@ -137,10 +139,14 @@ class BlockConfigurator(ttk.Frame):
         self.canvas = tk.Canvas(canvas_frame, width=800, height=400, bg='white')
         self.canvas.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
 
-        # Add canvas bindings
+        # Canvas bindings for clicking and dragging trackers
         self.canvas.bind('<Button-1>', self.on_canvas_click)
         self.canvas.bind('<B1-Motion>', self.on_canvas_drag)
         self.canvas.bind('<ButtonRelease-1>', self.on_canvas_release)
+
+        # Keyboard bindings for deleting trackers
+        self.canvas.bind('<Delete>', self.delete_selected_tracker)
+        self.canvas.bind('<BackSpace>', self.delete_selected_tracker)
         
         # Make canvas and frames expandable
         self.grid_columnconfigure(0, weight=1)
@@ -198,15 +204,16 @@ class BlockConfigurator(ttk.Frame):
             
             # Create new block config
             block = BlockConfig(
-                block_id=block_id,
-                inverter=self.selected_inverter,
-                tracker_template=None,
-                width_m=self.ft_to_m(width_ft),
-                height_m=self.ft_to_m(height_ft),
-                row_spacing_m=self.ft_to_m(row_spacing_ft),
-                gcr=float(self.gcr_var.get()),
-                description=f"New block {block_id}"
-            )
+            block_id=block_id,
+            inverter=self.selected_inverter,
+            tracker_template=None,
+            width_m=self.ft_to_m(width_ft),
+            height_m=self.ft_to_m(height_ft),
+            row_spacing_m=self.ft_to_m(row_spacing_ft),
+            ns_spacing_m=float(self.ns_spacing_var.get()),
+            gcr=0.0,  # This will be calculated when a tracker template is assigned
+            description=f"New block {block_id}"
+        )
             
             # Add to blocks dictionary
             self.blocks[block_id] = block
@@ -255,7 +262,7 @@ class BlockConfigurator(ttk.Frame):
         self.width_var.set(str(self.m_to_ft(block.width_m)))
         self.height_var.set(str(self.m_to_ft(block.height_m)))
         self.row_spacing_var.set(str(self.m_to_ft(block.row_spacing_m)))
-        self.gcr_var.set(str(block.gcr))
+        self.calculate_gcr()  # Update the GCR label
         
         # Update canvas
         self.draw_block()
@@ -273,16 +280,16 @@ class BlockConfigurator(ttk.Frame):
         """Draw current block layout on canvas"""
         if not self.current_block:
             return
-            
+                
         block = self.blocks[self.current_block]
         
-        # Clear canvas
+        # Clear canvas and grid lines list
         self.canvas.delete("all")
+        self.grid_lines = []
         
-        # Calculate scale factor to fit block in canvas
+        # Calculate scale factor
         canvas_width = self.canvas.winfo_width()
         canvas_height = self.canvas.winfo_height()
-        
         scale_x = (canvas_width - 20) / block.width_m
         scale_y = (canvas_height - 20) / block.height_m
         scale = min(scale_x, scale_y)
@@ -295,21 +302,33 @@ class BlockConfigurator(ttk.Frame):
             outline='black'
         )
         
-        # Draw row lines based on row spacing
+        # Draw row spacing grid lines
+        x = 10
+        while x < 10 + block.width_m * scale:
+            line_id = self.canvas.create_line(
+                x, 10,
+                x, 10 + block.height_m * scale,
+                fill='gray', dash=(2, 4)
+            )
+            self.grid_lines.append(line_id)
+            x += block.row_spacing_m * scale
+        
+        # Draw N/S spacing grid lines
         y = 10
         while y < 10 + block.height_m * scale:
-            self.canvas.create_line(
+            line_id = self.canvas.create_line(
                 10, y,
                 10 + block.width_m * scale, y,
                 fill='gray', dash=(2, 4)
             )
-            y += block.row_spacing_m * scale
-            
-        # Draw trackers if any are placed
+            self.grid_lines.append(line_id)
+            y += float(self.ns_spacing_var.get()) * scale
+        
+        # Draw existing trackers
         for pos in block.tracker_positions:
             x = 10 + pos.x * scale
             y = 10 + pos.y * scale
-            self.draw_tracker(x, y, block.tracker_template)
+            self.draw_tracker(x, y, pos.template)
 
     def draw_tracker(self, x, y, template, tag=None):
         """Draw a tracker on the canvas with detailed module layout"""
@@ -398,40 +417,50 @@ class BlockConfigurator(ttk.Frame):
         """Handle canvas click for tracker placement"""
         if not self.current_block or not self.drag_template:
             return
-            
-        selection = self.template_listbox.curselection()
-        if not selection:
+        
+        # First check if we're clicking on an existing tracker
+        if self.select_tracker(event.x, event.y):
             return
-            
+        
         self.dragging = True
         self.drag_start = (event.x, event.y)
-        # Create preview rectangle
-        self.draw_tracker(event.x, event.y, self.drag_template, 'drag_preview')
+        
+        # Calculate snapped position
+        block = self.blocks[self.current_block]
+        scale = self.get_canvas_scale()
+        x_m = (event.x - 10) / scale
+        y_m = (event.y - 10) / scale
+        
+        # Snap to grid
+        x_m = round(x_m / block.row_spacing_m) * block.row_spacing_m
+        y_m = round(y_m / float(self.ns_spacing_var.get())) * float(self.ns_spacing_var.get())
+        
+        # Draw preview
+        x = x_m * scale + 10
+        y = y_m * scale + 10
+        self.draw_tracker(x, y, self.drag_template, 'drag_preview')
 
     def on_canvas_drag(self, event):
         """Handle canvas drag for tracker movement"""
         if not self.dragging:
             return
-            
+        
         # Delete old preview
         self.canvas.delete('drag_preview')
         
-        # Get canvas scale
-        scale = self.get_canvas_scale()
-        
-        # Calculate grid-snapped position
+        # Calculate snapped position
         block = self.blocks[self.current_block]
+        scale = self.get_canvas_scale()
         x_m = (event.x - 10) / scale
         y_m = (event.y - 10) / scale
         
-        # Snap to row spacing
-        y_m = round(y_m / block.row_spacing_m) * block.row_spacing_m
-        
-        # Convert back to canvas coordinates
-        x = x_m * scale + 10
-        y = y_m * scale + 10
+        # Snap to grid
+        x_m = round(x_m / block.row_spacing_m) * block.row_spacing_m
+        y_m = round(y_m / float(self.ns_spacing_var.get())) * float(self.ns_spacing_var.get())
         
         # Draw new preview
+        x = x_m * scale + 10
+        y = y_m * scale + 10
         self.draw_tracker(x, y, self.drag_template, 'drag_preview')
 
     def on_canvas_release(self, event):
@@ -449,14 +478,16 @@ class BlockConfigurator(ttk.Frame):
         y_m = (event.y - 10) / scale
         
         # Snap to grid based on row spacing
-        y_m = round(y_m / block.row_spacing_m) * block.row_spacing_m
+        x_m = round(x_m / block.row_spacing_m) * block.row_spacing_m
+        y_m = round(y_m / float(self.ns_spacing_var.get())) * float(self.ns_spacing_var.get())
         
         # Add tracker if within bounds
         dims = self.drag_template.get_physical_dimensions()
         if (0 <= x_m <= block.width_m - dims[0] and 
             0 <= y_m <= block.height_m - dims[1]):
-            # Create new TrackerPosition
-            pos = TrackerPosition(x=x_m, y=y_m, rotation=0.0)
+            
+            # Create new TrackerPosition with template
+            pos = TrackerPosition(x=x_m, y=y_m, rotation=0.0, template=self.drag_template)
             block.tracker_positions.append(pos)
             
             # Update block display
@@ -539,3 +570,52 @@ class BlockConfigurator(ttk.Frame):
                 self.gcr_label.config(text="--")
         else:
             self.gcr_label.config(text="--")
+
+    def delete_selected_tracker(self, event=None):
+        """Delete the currently selected tracker"""
+        if not self.current_block or not self.selected_tracker:
+            return
+        
+        # Find and remove the selected tracker
+        block = self.blocks[self.current_block]
+        for i, pos in enumerate(block.tracker_positions):
+            if (pos.x, pos.y) == self.selected_tracker:
+                block.tracker_positions.pop(i)
+                break
+        
+        self.selected_tracker = None
+        self.draw_block()
+
+    def select_tracker(self, x, y):
+        """Select tracker at given coordinates"""
+        if not self.current_block:
+            return
+
+        block = self.blocks[self.current_block]
+        scale = self.get_canvas_scale()
+        
+        # Convert canvas coordinates to meters
+        x_m = (x - 10) / scale
+        y_m = (y - 10) / scale
+        
+        # Check if click is within any tracker
+        for pos in block.tracker_positions:
+            dims = pos.template.get_physical_dimensions()
+            if (pos.x <= x_m <= pos.x + dims[0] and 
+                pos.y <= y_m <= pos.y + dims[1]):
+                self.selected_tracker = (pos.x, pos.y)
+                self.draw_block()
+                # Highlight selected tracker
+                x_canvas = 10 + pos.x * scale
+                y_canvas = 10 + pos.y * scale
+                self.canvas.create_rectangle(
+                    x_canvas - 2, y_canvas - 2,
+                    x_canvas + dims[0] * scale + 2,
+                    y_canvas + dims[1] * scale + 2,
+                    outline='red', width=2
+                )
+                return True
+        
+        self.selected_tracker = None
+        self.draw_block()
+        return False

@@ -8,6 +8,7 @@ class TrackerPosition:
     x: float  # X coordinate in meters
     y: float  # Y coordinate in meters
     rotation: float  # Rotation angle in degrees
+    template: 'TrackerTemplate'  # Forward reference to avoid circular import
 
 @dataclass
 class TrackerTemplate:
