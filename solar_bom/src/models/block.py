@@ -37,6 +37,7 @@ class BlockConfig:
     width_m: float
     height_m: float
     row_spacing_m: float  # Distance between tracker rows
+    ns_spacing_m: float  # Distance between trackers in north/south direction
     gcr: float  # Ground Coverage Ratio
     
     # Optional fields with defaults must come after

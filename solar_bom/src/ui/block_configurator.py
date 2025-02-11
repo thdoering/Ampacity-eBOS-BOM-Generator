@@ -98,10 +98,16 @@ class BlockConfigurator(ttk.Frame):
         row_spacing_entry.grid(row=2, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         self.row_spacing_var.trace('w', lambda *args: self.calculate_gcr())
         
-        # GCR (Ground Coverage Ratio)
-        ttk.Label(dims_frame, text="GCR:").grid(row=3, column=0, padx=5, pady=2, sticky=tk.W)
-        self.gcr_var = tk.StringVar(value="0.4")
-        ttk.Entry(dims_frame, textvariable=self.gcr_var).grid(row=3, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        # GCR (Ground Coverage Ratio) - calculated
+        ttk.Label(dims_frame, text="GCR:").grid(row=2, column=2, padx=5, pady=2, sticky=tk.W)
+        self.gcr_label = ttk.Label(dims_frame, text="--")
+        self.gcr_label.grid(row=2, column=3, padx=5, pady=2, sticky=tk.W)
+
+        # N/S Tracker Spacing
+        ttk.Label(dims_frame, text="N/S Tracker Spacing (m):").grid(row=3, column=0, padx=5, pady=2, sticky=tk.W)
+        self.ns_spacing_var = tk.StringVar(value="1.0")
+        ns_spacing_entry = ttk.Entry(dims_frame, textvariable=self.ns_spacing_var)
+        ns_spacing_entry.grid(row=3, column=1, columnspan=3, padx=5, pady=2, sticky=(tk.W, tk.E))
         
         # Inverter Selection
         inverter_frame = ttk.LabelFrame(config_frame, text="Inverter", padding="5")
@@ -519,10 +525,17 @@ class BlockConfigurator(ttk.Frame):
     
     def calculate_gcr(self):
         """Calculate Ground Coverage Ratio"""
-        if self.current_block and self.blocks[self.current_block].tracker_template:
-            template = self.blocks[self.current_block].tracker_template
-            module_width = template.module_spec.width_mm / 1000  # convert to meters
-            row_spacing = float(self.row_spacing_var.get())
-            row_spacing_m = self.ft_to_m(row_spacing)
-            gcr = module_width / row_spacing_m
-            self.gcr_var.set(f"{gcr:.3f}")
+        if (self.current_block and 
+            self.blocks[self.current_block].tracker_template and 
+            self.blocks[self.current_block].tracker_template.module_spec):
+            try:
+                template = self.blocks[self.current_block].tracker_template
+                module_length = template.module_spec.length_mm / 1000  # convert to meters
+                row_spacing = float(self.row_spacing_var.get())
+                row_spacing_m = self.ft_to_m(row_spacing)
+                gcr = module_length / row_spacing_m
+                self.gcr_label.config(text=f"{gcr:.3f}")
+            except (ValueError, ZeroDivisionError):
+                self.gcr_label.config(text="--")
+        else:
+            self.gcr_label.config(text="--")
