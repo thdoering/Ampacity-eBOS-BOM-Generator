@@ -49,6 +49,10 @@ class BlockConfigurator(ttk.Frame):
         # Main container with padding
         main_container = ttk.Frame(self, padding="10")
         main_container.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        # Configure grid weights for expansion
+        main_container.grid_columnconfigure(2, weight=1)  # Make column 2 (canvas) expand
+        main_container.grid_rowconfigure(0, weight=1)     # Make rows expand
         
         # Left side - Block List and Controls
         list_frame = ttk.LabelFrame(main_container, text="Blocks", padding="5")
@@ -116,10 +120,14 @@ class BlockConfigurator(ttk.Frame):
         self.template_listbox.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E))
         self.template_listbox.bind('<<ListboxSelect>>', self.on_template_select)
 
-        # Canvas for block visualization
+        # Canvas frame for block layout - on the right side
         canvas_frame = ttk.LabelFrame(main_container, text="Block Layout", padding="5")
-        canvas_frame.grid(row=1, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
-        
+        canvas_frame.grid(row=0, rowspan=2, column=2, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        # Make canvas expand to fill available space
+        canvas_frame.grid_columnconfigure(0, weight=1)
+        canvas_frame.grid_rowconfigure(0, weight=1)
+
         self.canvas = tk.Canvas(canvas_frame, width=800, height=400, bg='white')
         self.canvas.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
 
