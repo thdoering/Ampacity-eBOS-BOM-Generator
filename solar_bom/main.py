@@ -46,9 +46,18 @@ def main():
     # Create block configurator tab
     block_frame = ttk.Frame(notebook)
     notebook.add(block_frame, text='Block Layout')
-    
+
     block_configurator = BlockConfigurator(block_frame)
     block_configurator.pack(fill='both', expand=True, padx=5, pady=5)
+
+    # Connect module manager to block configurator
+    def on_module_selected_for_block(module):
+        block_configurator.current_module = module  # We'll add this property
+
+    module_manager.on_module_selected = lambda module: (
+        on_module_selected(module),  # Original tracker creator connection
+        on_module_selected_for_block(module)  # New block configurator connection
+    )
     
     # Configure window size and center on screen
     window_width = 800

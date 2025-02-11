@@ -7,6 +7,9 @@ from ..models.inverter import InverterSpec
 from .inverter_manager import InverterManager
 from pathlib import Path
 import json
+from ..models.tracker import ModuleOrientation
+from ..models.module import ModuleSpec, ModuleType, ModuleOrientation
+from ..models.tracker import TrackerPosition
 
 class BlockConfigurator(ttk.Frame):
     def __init__(self, parent):
@@ -14,6 +17,8 @@ class BlockConfigurator(ttk.Frame):
         self.parent = parent
         
         # State management
+        self._current_module = None
+        self.available_templates = {}
         self.blocks: Dict[str, BlockConfig] = {}  # Store block configurations
         self.current_block: Optional[str] = None  # Currently selected block ID
         self.available_templates: Dict[str, TrackerTemplate] = {}  # Available tracker templates
@@ -29,6 +34,15 @@ class BlockConfigurator(ttk.Frame):
         # Then load and update templates
         self.load_templates()
         self.update_template_list()
+
+    @property
+    def current_module(self):
+        return self._current_module
+    
+    @current_module.setter
+    def current_module(self, module):
+        self._current_module = module
+        self.update_template_list()  # Refresh templates with new module 
         
     def setup_ui(self):
         """Create and arrange UI components"""
@@ -108,6 +122,11 @@ class BlockConfigurator(ttk.Frame):
         
         self.canvas = tk.Canvas(canvas_frame, width=800, height=400, bg='white')
         self.canvas.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        # Add canvas bindings
+        self.canvas.bind('<Button-1>', self.on_canvas_click)
+        self.canvas.bind('<B1-Motion>', self.on_canvas_drag)
+        self.canvas.bind('<ButtonRelease-1>', self.on_canvas_release)
         
         # Make canvas and frames expandable
         self.grid_columnconfigure(0, weight=1)
@@ -281,7 +300,7 @@ class BlockConfigurator(ttk.Frame):
         """Draw a tracker on the canvas"""
         if not template:
             return
-            
+                
         dims = template.get_physical_dimensions()
         scale = self.get_canvas_scale()
         
@@ -311,21 +330,47 @@ class BlockConfigurator(ttk.Frame):
         """Handle canvas click for tracker placement"""
         if not self.current_block or not self.drag_template:
             return
+            
+        selection = self.template_listbox.curselection()
+        if not selection:
+            return
+            
         self.dragging = True
         self.drag_start = (event.x, event.y)
+        # Create preview rectangle
+        self.draw_tracker(event.x, event.y, self.drag_template, 'drag_preview')
 
     def on_canvas_drag(self, event):
         """Handle canvas drag for tracker movement"""
         if not self.dragging:
             return
+            
+        # Delete old preview
         self.canvas.delete('drag_preview')
-        self.draw_tracker(event.x, event.y, self.drag_template, 'drag_preview')
+        
+        # Get canvas scale
+        scale = self.get_canvas_scale()
+        
+        # Calculate grid-snapped position
+        block = self.blocks[self.current_block]
+        x_m = (event.x - 10) / scale
+        y_m = (event.y - 10) / scale
+        
+        # Snap to row spacing
+        y_m = round(y_m / block.row_spacing_m) * block.row_spacing_m
+        
+        # Convert back to canvas coordinates
+        x = x_m * scale + 10
+        y = y_m * scale + 10
+        
+        # Draw new preview
+        self.draw_tracker(x, y, self.drag_template, 'drag_preview')
 
     def on_canvas_release(self, event):
         """Handle canvas release for tracker placement"""
-        if not self.dragging:
+        if not self.dragging or not self.current_block or not self.drag_template:
             return
-            
+                
         self.dragging = False
         self.canvas.delete('drag_preview')
         
@@ -339,25 +384,64 @@ class BlockConfigurator(ttk.Frame):
         y_m = round(y_m / block.row_spacing_m) * block.row_spacing_m
         
         # Add tracker if within bounds
-        if 0 <= x_m <= block.width_m and 0 <= y_m <= block.height_m:
-            block.tracker_positions.append(TrackerPosition(x=x_m, y=y_m, rotation=0.0))
+        dims = self.drag_template.get_physical_dimensions()
+        if (0 <= x_m <= block.width_m - dims[0] and 
+            0 <= y_m <= block.height_m - dims[1]):
+            # Create new TrackerPosition
+            pos = TrackerPosition(x=x_m, y=y_m, rotation=0.0)
+            block.tracker_positions.append(pos)
+            
+            # Update block display
             self.draw_block()
 
     def load_templates(self):
         """Load tracker templates from file"""
         template_path = Path('data/tracker_templates.json')
         if template_path.exists():
-            with open(template_path, 'r') as f:
-                data = json.load(f)
-                self.tracker_templates = {name: TrackerTemplate(**template) 
-                                    for name, template in data.items()}
+            try:
+                with open(template_path, 'r') as f:
+                    data = json.load(f)
+                    # Use current module if available, otherwise use default
+                    module_spec = self._current_module if self._current_module else ModuleSpec(
+                        manufacturer="Default",
+                        model="Default",
+                        type=ModuleType.MONO_PERC,
+                        length_mm=2000,
+                        width_mm=1000,
+                        depth_mm=40,
+                        weight_kg=25,
+                        wattage=400,
+                        vmp=40,
+                        imp=10,
+                        voc=48,
+                        isc=10.5,
+                        max_system_voltage=1500
+                    )
+                    
+                    self.tracker_templates = {
+                        name: TrackerTemplate(
+                            template_name=name,
+                            module_spec=module_spec,
+                            module_orientation=ModuleOrientation(template.get('module_orientation', 'Portrait')),
+                            modules_per_string=template.get('modules_per_string', 28),
+                            strings_per_tracker=template.get('strings_per_tracker', 2),
+                            module_spacing_m=template.get('module_spacing_m', 0.01),
+                            motor_gap_m=template.get('motor_gap_m', 1.0)
+                        ) 
+                        for name, template in data.items()
+                    }
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to load templates: {str(e)}")
+                self.tracker_templates = {}
+        else:
+            self.tracker_templates = {}
                 
     def on_template_select(self, event=None):
         """Handle template selection"""
         selection = self.template_listbox.curselection()
         if selection:
             template_name = self.template_listbox.get(selection[0])
-            self.drag_template = self.tracker_templates[template_name]
+            self.drag_template = self.tracker_templates.get(template_name)
 
     def update_template_list(self):
         """Update template listbox with available templates"""
