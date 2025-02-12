@@ -2,6 +2,34 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple
 from .module import ModuleSpec, ModuleOrientation
 
+"""
+Solar Tracker Terminology:
+
+1. Tracker Orientation:
+   - N/S Tracker: From bird's eye view, tracker appears taller than wide
+   - Modules stack vertically (in N/S direction)
+   - Torque tube runs along N/S axis
+
+2. String Configuration:
+   - String: A vertical sequence of modules on the same torque tube
+   - Motor position: Configurable between any strings
+   - Multiple strings stack vertically
+   - Total modules = modules_per_string × strings_per_tracker
+
+3. Physical Dimensions:
+   Portrait Module:
+   - total_length = (module_width × modules_per_string) + 
+                    (module_spacing × (modules_per_string - 1)) + 
+                    motor_gap
+   - total_width = module_length
+
+   Landscape Module:
+   - total_length = (module_length × modules_per_string) + 
+                    (module_spacing × (modules_per_string - 1)) + 
+                    motor_gap
+   - total_width = module_width
+"""
+
 @dataclass
 class TrackerPosition:
     """Data class representing a tracker's position in a block"""
@@ -50,24 +78,41 @@ class TrackerTemplate:
     
     def get_physical_dimensions(self) -> Tuple[float, float]:
         """
-        Calculate physical dimensions of tracker in meters
-        Returns (length, width) tuple
+        Calculate physical dimensions of tracker in meters.
+        For N/S trackers:
+        - Length is the vertical dimension (N/S direction)
+        - Width is the horizontal dimension (E/W direction)
+        
+        Length calculation accounts for:
+        - All modules in a string
+        - Spacing between modules
+        - Motor gap
+        
+        Width is simply the module dimension perpendicular to the torque tube.
+        
+        Returns:
+            Tuple[float, float]: (length, width) in meters
         """
+        # Convert module dimensions from mm to meters
         module_length = self.module_spec.length_mm / 1000
         module_width = self.module_spec.width_mm / 1000
         
+        # Total string length depends on module orientation
         if self.module_orientation == ModuleOrientation.PORTRAIT:
-            module_length, module_width = module_width, module_length
-            
-        # Calculate total length including spacing and motor gap
-        total_length = (module_length * self.modules_per_string) + \
-                      (self.module_spacing_m * (self.modules_per_string - 1)) + \
-                      self.motor_gap_m
-                      
-        # Calculate total width including module spacing
-        total_width = (module_width * self.strings_per_tracker) + \
-                     (self.module_spacing_m * (self.strings_per_tracker - 1))
-                     
+            # In portrait, module width runs along torque tube
+            total_length = (module_width * self.modules_per_string) + \
+                        (self.module_spacing_m * (self.modules_per_string - 1)) + \
+                        self.motor_gap_m
+            # Tracker width is module length
+            total_width = module_length
+        else:  # LANDSCAPE
+            # In landscape, module length runs along torque tube
+            total_length = (module_length * self.modules_per_string) + \
+                        (self.module_spacing_m * (self.modules_per_string - 1)) + \
+                        self.motor_gap_m
+            # Tracker width is module width
+            total_width = module_width
+                        
         return (total_length, total_width)
     
     def get_string_positions(self) -> List[List[TrackerPosition]]:

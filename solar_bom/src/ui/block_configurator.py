@@ -29,6 +29,7 @@ class BlockConfigurator(ttk.Frame):
         self.drag_start = None
         self.selected_tracker = None  # Store currently selected tracker
         self.grid_lines = []  # Store grid line IDs for cleanup 
+        self.scale_factor = 10.0  # Starting scale (10 pixels per meter)
         
         # First set up the UI
         self.setup_ui()
@@ -128,6 +129,11 @@ class BlockConfigurator(ttk.Frame):
         self.canvas = tk.Canvas(canvas_frame, width=1000, height=800, bg='white')
         self.canvas.grid(row=0, column=0, padx=5, pady=5)
 
+        # Add mouse wheel binding for zoom
+        self.canvas.bind('<MouseWheel>', self.on_mouse_wheel)  # Windows
+        self.canvas.bind('<Button-4>', self.on_mouse_wheel)    # Linux scroll up
+        self.canvas.bind('<Button-5>', self.on_mouse_wheel)    # Linux scroll down
+        
         # Canvas bindings for clicking and dragging trackers
         self.canvas.bind('<Button-1>', self.on_canvas_click)
         self.canvas.bind('<B1-Motion>', self.on_canvas_drag)
@@ -319,33 +325,33 @@ class BlockConfigurator(ttk.Frame):
         
         # Get module dimensions
         if template.module_orientation == ModuleOrientation.PORTRAIT:
-            module_height = template.module_spec.width_mm / 1000 * scale
-            module_width = template.module_spec.length_mm / 1000 * scale
+            module_height = template.module_spec.width_mm / 1000
+            module_width = template.module_spec.length_mm / 1000
         else:
-            module_height = template.module_spec.length_mm / 1000 * scale
-            module_width = template.module_spec.width_mm / 1000 * scale
+            module_height = template.module_spec.length_mm / 1000
+            module_width = template.module_spec.width_mm / 1000
 
         # Create group tag for all elements
         group_tag = tag if tag else f'tracker_{x}_{y}'
         
-        # Calculate number of modules above and below motor
+        # Calculate number of modules
         total_modules = template.modules_per_string * template.strings_per_tracker
         modules_per_string = template.modules_per_string
         strings_above_motor = template.strings_per_tracker - 1
         modules_above_motor = modules_per_string * strings_above_motor
         modules_below_motor = modules_per_string
 
-        # Calculate total tracker height for torque tube
+        # Calculate total physical height in meters
         total_height = (
             (total_modules * module_height) +  # All modules
-            ((total_modules - 1) * template.module_spacing_m * scale) +  # Module spacing
-            template.motor_gap_m * scale  # Motor gap
+            ((total_modules - 1) * template.module_spacing_m) +  # Module spacing
+            template.motor_gap_m  # Motor gap
         )
         
         # Draw torque tube through center
         self.canvas.create_line(
-            x + module_width/2, y,
-            x + module_width/2, y + total_height,
+            x + module_width * scale/2, y,
+            x + module_width * scale/2, y + total_height * scale,
             width=3, fill='gray', tags=group_tag
         )
         
@@ -357,17 +363,17 @@ class BlockConfigurator(ttk.Frame):
         for i in range(modules_above_motor):
             self.canvas.create_rectangle(
                 x, y_pos,
-                x + module_width, y_pos + module_height,
+                x + module_width * scale, y_pos + module_height * scale,
                 fill='lightblue', outline='blue', tags=group_tag
             )
             modules_drawn += 1
-            y_pos += module_height + template.module_spacing_m * scale
+            y_pos += (module_height + template.module_spacing_m) * scale
 
         # Draw motor
         motor_y = y_pos
         self.canvas.create_oval(
-            x + module_width/2 - 5, motor_y - 5,
-            x + module_width/2 + 5, motor_y + 5,
+            x + module_width * scale/2 - 5, motor_y - 5,
+            x + module_width * scale/2 + 5, motor_y + 5,
             fill='red', tags=group_tag
         )
         y_pos += template.motor_gap_m * scale
@@ -376,33 +382,14 @@ class BlockConfigurator(ttk.Frame):
         for i in range(modules_below_motor):
             self.canvas.create_rectangle(
                 x, y_pos,
-                x + module_width, y_pos + module_height,
+                x + module_width * scale, y_pos + module_height * scale,
                 fill='lightblue', outline='blue', tags=group_tag
             )
-            y_pos += module_height + template.module_spacing_m * scale
+            y_pos += (module_height + template.module_spacing_m) * scale
 
     def get_canvas_scale(self):
-        """Calculate scale factor (pixels per meter)"""
-        if not self.current_block:
-            return 1.0
-            
-        # Get block dimensions
-        block_width_m, block_height_m = self.calculate_block_dimensions()
-        
-        # Get canvas dimensions (subtract padding)
-        canvas_width = self.canvas.winfo_width() - 20
-        canvas_height = self.canvas.winfo_height() - 20
-        
-        # Calculate scale factors
-        scale_x = canvas_width / block_width_m
-        scale_y = canvas_height / block_height_m
-        
-        # Use minimum scale factor that ensures everything is visible
-        scale = min(scale_x, scale_y)
-        
-        # Don't let scale get too small (prevents objects from becoming too tiny)
-        MIN_SCALE = 0.5  # 0.5 pixels per meter minimum
-        return max(scale, MIN_SCALE)
+        """Return current scale factor (pixels per meter)"""
+        return self.scale_factor
 
     def on_canvas_click(self, event):
         """Handle canvas click for tracker placement"""
@@ -458,7 +445,7 @@ class BlockConfigurator(ttk.Frame):
         """Handle canvas release for tracker placement"""
         if not self.dragging or not self.current_block or not self.drag_template:
             return
-                
+                    
         self.dragging = False
         self.canvas.delete('drag_preview')
         
@@ -472,8 +459,11 @@ class BlockConfigurator(ttk.Frame):
         x_m = round(x_m / block.row_spacing_m) * block.row_spacing_m
         y_m = round(y_m / float(self.ns_spacing_var.get())) * float(self.ns_spacing_var.get())
         
-        # Add tracker if within bounds
+        # Get tracker dimensions
         dims = self.drag_template.get_physical_dimensions()
+        
+        # Check if placement would exceed canvas bounds
+        max_y = y_m + dims[0]  # Add tracker length to y position
         
         # Create new TrackerPosition with template
         pos = TrackerPosition(x=x_m, y=y_m, rotation=0.0, template=self.drag_template)
@@ -610,59 +600,44 @@ class BlockConfigurator(ttk.Frame):
         return False
     
     def calculate_block_dimensions(self):
-        """Calculate block dimensions based on placed trackers"""
-        if not self.current_block or not self.blocks[self.current_block].tracker_positions:
-            # If no trackers, use dimensions that would fit one tracker with room to spare
-            if self.drag_template:
-                # Use dimensions of selected template
-                dims = self.drag_template.get_physical_dimensions()
-                initial_width = dims[0] * 3  # Room for 3 trackers wide
-                initial_height = dims[1] * 3  # Room for 3 trackers tall
-                return (max(initial_width, 50), max(initial_height, 50))  # Min 50m in each direction
-            return (50, 50)  # Default minimum size in meters if no template selected
+        """Calculate block dimensions based on placed trackers or template"""
+        if not self.current_block:
+            return (50, 50)  # Default minimum size
             
         block = self.blocks[self.current_block]
         
+        # If no trackers but have a template, use template dimensions
+        if not block.tracker_positions:
+            if self.drag_template:
+                dims = self.drag_template.get_physical_dimensions()
+                # Add padding for initial placement
+                width = max(50, dims[0] * 2)  # Allow for at least 2 trackers wide
+                height = max(50, dims[1])  # Account for full tracker length
+                return (width, height)
+            return (50, 50)  # Default minimum size
+                
         # Find max x and y coordinates including tracker dimensions
         max_x = 0
         max_y = 0
         for pos in block.tracker_positions:
             dims = pos.template.get_physical_dimensions()
             max_x = max(max_x, pos.x + dims[0])
-            max_y = max(max_y, pos.y + dims[1])
-        
-        # Add padding (40% extra space)
-        # This ensures room for additional trackers in any direction
-        padding_x = max(50, max_x * 0.4)  # At least 50m padding or 40% of current width
-        padding_y = max(50, max_y * 0.4)  # At least 50m padding or 40% of current height
-        
-        return (max_x + padding_x, max_y + padding_y)
-
-    def resize_canvas(self):
-        """Resize canvas to fit all trackers plus padding"""
-        if not self.current_block:
-            return
+            max_y = max(max_y, pos.y + dims[1])  # Explicitly add tracker length
             
-        # Calculate required dimensions
-        block_width_m, block_height_m = self.calculate_block_dimensions()
+        # Add 20% padding
+        return (max_x * 1.2, max_y * 1.2)
+    
+    def on_mouse_wheel(self, event):
+        """Handle mouse wheel events for zooming"""
+        # Get the current scale
+        old_scale = self.scale_factor
         
-        # Get current window dimensions
-        window_width = self.winfo_width()
-        window_height = self.winfo_height()
-        
-        # Calculate required canvas size to maintain scale
-        # Use 80% of window size as maximum canvas dimension
-        max_canvas_width = int(window_width * 0.8)
-        max_canvas_height = int(window_height * 0.8)
-        
-        # Calculate scale factors
-        scale_x = max_canvas_width / block_width_m
-        scale_y = max_canvas_height / block_height_m
-        scale = min(scale_x, scale_y)
-        
-        # Calculate new canvas dimensions
-        canvas_width = int(block_width_m * scale) + 20  # Add padding
-        canvas_height = int(block_height_m * scale) + 20
-        
-        # Resize canvas
-        self.canvas.config(width=canvas_width, height=canvas_height)
+        # Update scale factor based on scroll direction
+        if event.num == 5 or event.delta < 0:  # Scroll down or delta negative
+            self.scale_factor = max(5.0, self.scale_factor * 0.9)
+        if event.num == 4 or event.delta > 0:  # Scroll up or delta positive
+            self.scale_factor = min(50.0, self.scale_factor * 1.1)
+            
+        # Redraw if scale changed
+        if old_scale != self.scale_factor:
+            self.draw_block()
