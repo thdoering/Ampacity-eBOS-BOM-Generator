@@ -297,22 +297,34 @@ class BlockConfigurator(ttk.Frame):
         
         scale = self.get_canvas_scale()
         
-        # Draw grid lines with pan offset
-        x = 10 + self.pan_x
-        while x < block_width_m * scale + 10 + self.pan_x:
+        # Draw grid lines across entire canvas
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+
+        # Calculate starting positions for gridlines
+        # Start drawing before visible area to ensure coverage when panning
+        start_x = -abs(self.pan_x)
+        start_y = -abs(self.pan_y)
+        end_x = canvas_width + abs(self.pan_x)
+        end_y = canvas_height + abs(self.pan_y)
+
+        # Draw vertical grid lines
+        x = start_x
+        while x <= end_x:
             line_id = self.canvas.create_line(
-                x, 10 + self.pan_y,
-                x, block_height_m * scale + 10 + self.pan_y,
+                x + self.pan_x, 0,
+                x + self.pan_x, canvas_height,
                 fill='gray', dash=(2, 4)
             )
             self.grid_lines.append(line_id)
             x += block.row_spacing_m * scale
-        
-        y = 10 + self.pan_y
-        while y < block_height_m * scale + 10 + self.pan_y:
+
+        # Draw horizontal grid lines
+        y = start_y
+        while y <= end_y:
             line_id = self.canvas.create_line(
-                10 + self.pan_x, y,
-                block_width_m * scale + 10 + self.pan_x, y,
+                0, y + self.pan_y,
+                canvas_width, y + self.pan_y,
                 fill='gray', dash=(2, 4)
             )
             self.grid_lines.append(line_id)
@@ -448,7 +460,7 @@ class BlockConfigurator(ttk.Frame):
         """Handle canvas release for tracker placement"""
         if not self.dragging or not self.current_block or not self.drag_template:
             return
-                    
+                        
         self.dragging = False
         self.canvas.delete('drag_preview')
         
@@ -464,7 +476,20 @@ class BlockConfigurator(ttk.Frame):
         x_m = round(x_m / block.row_spacing_m) * block.row_spacing_m
         y_m = round(y_m / float(self.ns_spacing_var.get())) * float(self.ns_spacing_var.get())
         
-        # Create new TrackerPosition with template
+        # Check for collisions with existing trackers
+        new_width, new_height = self.calculate_tracker_dimensions(self.drag_template)
+        for pos in block.tracker_positions:
+            existing_width, existing_height = self.calculate_tracker_dimensions(pos.template)
+            # Check if rectangles overlap
+            if (x_m < pos.x + existing_width and 
+                x_m + new_width > pos.x and 
+                y_m < pos.y + existing_height and 
+                y_m + new_height > pos.y):
+                # Collision detected
+                messagebox.showwarning("Invalid Position", "Cannot place tracker here - overlaps with existing tracker")
+                return
+        
+        # If no collision, create new TrackerPosition
         pos = TrackerPosition(x=x_m, y=y_m, rotation=0.0, template=self.drag_template)
         block.tracker_positions.append(pos)
         
@@ -572,24 +597,26 @@ class BlockConfigurator(ttk.Frame):
         block = self.blocks[self.current_block]
         scale = self.get_canvas_scale()
         
-        # Convert canvas coordinates to meters
-        x_m = (x - 10) / scale
-        y_m = (y - 10) / scale
+        # Convert canvas coordinates to meters, accounting for pan offset
+        x_m = (x - 10 - self.pan_x) / scale
+        y_m = (y - 10 - self.pan_y) / scale
         
         # Check if click is within any tracker
         for pos in block.tracker_positions:
-            dims = pos.template.get_physical_dimensions()
-            if (pos.x <= x_m <= pos.x + dims[0] and 
-                pos.y <= y_m <= pos.y + dims[1]):
+            tracker_width, tracker_height = self.calculate_tracker_dimensions(pos.template)
+            # Add some padding to make selection easier (0.2m padding)
+            if (pos.x - 0.2 <= x_m <= pos.x + tracker_width + 0.2 and 
+                pos.y - 0.2 <= y_m <= pos.y + tracker_height + 0.2):
                 self.selected_tracker = (pos.x, pos.y)
                 self.draw_block()
-                # Highlight selected tracker
-                x_canvas = 10 + pos.x * scale
-                y_canvas = 10 + pos.y * scale
+                
+                # Draw highlight rectangle with calculated dimensions
+                x_canvas = 10 + pos.x * scale + self.pan_x
+                y_canvas = 10 + pos.y * scale + self.pan_y
                 self.canvas.create_rectangle(
                     x_canvas - 2, y_canvas - 2,
-                    x_canvas + dims[0] * scale + 2,
-                    y_canvas + dims[1] * scale + 2,
+                    x_canvas + tracker_width * scale + 2,
+                    y_canvas + tracker_height * scale + 2,
                     outline='red', width=2
                 )
                 return True
@@ -660,7 +687,7 @@ class BlockConfigurator(ttk.Frame):
         # Update pan offset
         self.pan_x += dx
         self.pan_y += dy
-        
+
         # Update start position for next movement
         self.pan_start_x = event.x
         self.pan_start_y = event.y
@@ -672,3 +699,22 @@ class BlockConfigurator(ttk.Frame):
         """End canvas panning"""
         self.panning = False
         self.canvas.config(cursor="")  # Reset cursor
+
+    def calculate_tracker_dimensions(self, template):
+        """Calculate actual tracker dimensions including all modules and gaps"""
+        module_height = (template.module_spec.width_mm / 1000 if template.module_orientation == ModuleOrientation.PORTRAIT 
+                        else template.module_spec.length_mm / 1000)
+        module_width = (template.module_spec.length_mm / 1000 if template.module_orientation == ModuleOrientation.PORTRAIT 
+                    else template.module_spec.width_mm / 1000)
+
+        total_height = (
+            # Height for modules above motor
+            (template.modules_per_string * (template.strings_per_tracker - 1)) * 
+            (module_height + template.module_spacing_m) +
+            # Motor gap
+            template.motor_gap_m +
+            # Height for modules below motor
+            template.modules_per_string * (module_height + template.module_spacing_m)
+        )
+
+        return module_width, total_height  # width, height
