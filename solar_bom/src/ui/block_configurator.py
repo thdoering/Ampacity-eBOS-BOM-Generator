@@ -30,6 +30,11 @@ class BlockConfigurator(ttk.Frame):
         self.selected_tracker = None  # Store currently selected tracker
         self.grid_lines = []  # Store grid line IDs for cleanup 
         self.scale_factor = 10.0  # Starting scale (10 pixels per meter)
+        self.pan_x = 0  # Pan offset in pixels
+        self.pan_y = 0
+        self.panning = False
+        self.pan_start_x = 0
+        self.pan_start_y = 0
         
         # First set up the UI
         self.setup_ui()
@@ -142,6 +147,15 @@ class BlockConfigurator(ttk.Frame):
         # Keyboard bindings for deleting trackers
         self.canvas.bind('<Delete>', self.delete_selected_tracker)
         self.canvas.bind('<BackSpace>', self.delete_selected_tracker)
+
+        # Pan bindings
+        self.canvas.bind('<Button-2>', self.start_pan)  # Middle mouse button
+        self.canvas.bind('<B2-Motion>', self.update_pan)
+        self.canvas.bind('<ButtonRelease-2>', self.end_pan)
+        # Alternative right-click pan
+        self.canvas.bind('<Button-3>', self.start_pan)  
+        self.canvas.bind('<B3-Motion>', self.update_pan)
+        self.canvas.bind('<ButtonRelease-3>', self.end_pan)
         
         # Make canvas and frames expandable
         self.grid_columnconfigure(0, weight=1)
@@ -271,55 +285,51 @@ class BlockConfigurator(ttk.Frame):
         """Draw current block layout on canvas"""
         if not self.current_block:
             return
-                
+                    
         block = self.blocks[self.current_block]
         
         # Clear canvas and grid lines list
         self.canvas.delete("all")
         self.grid_lines = []
         
-        # Calculate block dimensions
+        # Calculate block dimensions first
         block_width_m, block_height_m = self.calculate_block_dimensions()
         
-        # Update block dimensions
-        block.width_m = block_width_m
-        block.height_m = block_height_m
-        
-        # Get scale factor
         scale = self.get_canvas_scale()
         
-        # Draw grid lines
-        x = 10
-        while x < block_width_m * scale + 10:
+        # Draw grid lines with pan offset
+        x = 10 + self.pan_x
+        while x < block_width_m * scale + 10 + self.pan_x:
             line_id = self.canvas.create_line(
-                x, 10,
-                x, block_height_m * scale + 10,
+                x, 10 + self.pan_y,
+                x, block_height_m * scale + 10 + self.pan_y,
                 fill='gray', dash=(2, 4)
             )
             self.grid_lines.append(line_id)
             x += block.row_spacing_m * scale
         
-        y = 10
-        while y < block_height_m * scale + 10:
+        y = 10 + self.pan_y
+        while y < block_height_m * scale + 10 + self.pan_y:
             line_id = self.canvas.create_line(
-                10, y,
-                block_width_m * scale + 10, y,
+                10 + self.pan_x, y,
+                block_width_m * scale + 10 + self.pan_x, y,
                 fill='gray', dash=(2, 4)
             )
             self.grid_lines.append(line_id)
             y += float(self.ns_spacing_var.get()) * scale
         
-        # Draw existing trackers
+        # Draw existing trackers with pan offset
         for pos in block.tracker_positions:
-            x = 10 + pos.x * scale
-            y = 10 + pos.y * scale
+            x = 10 + self.pan_x + pos.x * scale
+            y = 10 + self.pan_y + pos.y * scale
             self.draw_tracker(x, y, pos.template)
 
     def draw_tracker(self, x, y, template, tag=None):
-        """Draw a tracker on the canvas with detailed module layout"""
+        """Draw a tracker on the canvas with detailed module layout.
+        x and y are in canvas coordinates (already scaled and with padding)"""
         if not template:
             return
-                
+                    
         dims = template.get_physical_dimensions()
         scale = self.get_canvas_scale()
         
@@ -341,20 +351,13 @@ class BlockConfigurator(ttk.Frame):
         modules_above_motor = modules_per_string * strings_above_motor
         modules_below_motor = modules_per_string
 
-        # Calculate total physical height in meters
-        total_height = (
-            (total_modules * module_height) +  # All modules
-            ((total_modules - 1) * template.module_spacing_m) +  # Module spacing
-            template.motor_gap_m  # Motor gap
-        )
-        
         # Draw torque tube through center
         self.canvas.create_line(
             x + module_width * scale/2, y,
-            x + module_width * scale/2, y + total_height * scale,
+            x + module_width * scale/2, y + dims[1] * scale,
             width=3, fill='gray', tags=group_tag
         )
-        
+
         # Draw all modules
         y_pos = y
         modules_drawn = 0
@@ -395,27 +398,27 @@ class BlockConfigurator(ttk.Frame):
         """Handle canvas click for tracker placement"""
         if not self.current_block or not self.drag_template:
             return
-        
+            
         # First check if we're clicking on an existing tracker
         if self.select_tracker(event.x, event.y):
             return
-        
+            
         self.dragging = True
         self.drag_start = (event.x, event.y)
         
-        # Calculate snapped position
+        # Calculate snapped position - account for pan offset
         block = self.blocks[self.current_block]
         scale = self.get_canvas_scale()
-        x_m = (event.x - 10) / scale
-        y_m = (event.y - 10) / scale
+        x_m = (event.x - 10 - self.pan_x) / scale  # Subtract pan offset
+        y_m = (event.y - 10 - self.pan_y) / scale  # Subtract pan offset
         
         # Snap to grid
         x_m = round(x_m / block.row_spacing_m) * block.row_spacing_m
         y_m = round(y_m / float(self.ns_spacing_var.get())) * float(self.ns_spacing_var.get())
         
-        # Draw preview
-        x = x_m * scale + 10
-        y = y_m * scale + 10
+        # Draw preview - add pan offset back for canvas coordinates
+        x = x_m * scale + 10 + self.pan_x  # Add pan offset
+        y = y_m * scale + 10 + self.pan_y  # Add pan offset
         self.draw_tracker(x, y, self.drag_template, 'drag_preview')
 
     def on_canvas_drag(self, event):
@@ -426,19 +429,19 @@ class BlockConfigurator(ttk.Frame):
         # Delete old preview
         self.canvas.delete('drag_preview')
         
-        # Calculate snapped position
+        # Calculate snapped position - account for pan offset
         block = self.blocks[self.current_block]
         scale = self.get_canvas_scale()
-        x_m = (event.x - 10) / scale
-        y_m = (event.y - 10) / scale
+        x_m = (event.x - 10 - self.pan_x) / scale  # Subtract pan offset
+        y_m = (event.y - 10 - self.pan_y) / scale  # Subtract pan offset
         
         # Snap to grid
         x_m = round(x_m / block.row_spacing_m) * block.row_spacing_m
         y_m = round(y_m / float(self.ns_spacing_var.get())) * float(self.ns_spacing_var.get())
         
-        # Draw new preview
-        x = x_m * scale + 10
-        y = y_m * scale + 10
+        # Draw new preview - add pan offset back for canvas coordinates
+        x = x_m * scale + 10 + self.pan_x  # Add pan offset
+        y = y_m * scale + 10 + self.pan_y  # Add pan offset
         self.draw_tracker(x, y, self.drag_template, 'drag_preview')
 
     def on_canvas_release(self, event):
@@ -449,27 +452,23 @@ class BlockConfigurator(ttk.Frame):
         self.dragging = False
         self.canvas.delete('drag_preview')
         
-        # Convert canvas coordinates to meters
-        scale = self.get_canvas_scale()
+        # Get block reference
         block = self.blocks[self.current_block]
-        x_m = (event.x - 10) / scale
-        y_m = (event.y - 10) / scale
         
-        # Snap to grid based on row spacing
+        # Convert canvas coordinates to meters - account for pan offset
+        scale = self.get_canvas_scale()
+        x_m = (event.x - 10 - self.pan_x) / scale  # Subtract pan offset
+        y_m = (event.y - 10 - self.pan_y) / scale  # Subtract pan offset
+        
+        # Snap to grid
         x_m = round(x_m / block.row_spacing_m) * block.row_spacing_m
         y_m = round(y_m / float(self.ns_spacing_var.get())) * float(self.ns_spacing_var.get())
-        
-        # Get tracker dimensions
-        dims = self.drag_template.get_physical_dimensions()
-        
-        # Check if placement would exceed canvas bounds
-        max_y = y_m + dims[0]  # Add tracker length to y position
         
         # Create new TrackerPosition with template
         pos = TrackerPosition(x=x_m, y=y_m, rotation=0.0, template=self.drag_template)
         block.tracker_positions.append(pos)
         
-        # Update block display and resize canvas
+        # Update block display
         self.draw_block()
 
     def load_templates(self):
@@ -641,3 +640,35 @@ class BlockConfigurator(ttk.Frame):
         # Redraw if scale changed
         if old_scale != self.scale_factor:
             self.draw_block()
+
+    def start_pan(self, event):
+        """Start canvas panning"""
+        self.panning = True
+        self.pan_start_x = event.x
+        self.pan_start_y = event.y
+        self.canvas.config(cursor="fleur")  # Change cursor to indicate panning
+
+    def update_pan(self, event):
+        """Update canvas pan position"""
+        if not self.panning:
+            return
+        
+        # Calculate the distance moved
+        dx = event.x - self.pan_start_x
+        dy = event.y - self.pan_start_y
+        
+        # Update pan offset
+        self.pan_x += dx
+        self.pan_y += dy
+        
+        # Update start position for next movement
+        self.pan_start_x = event.x
+        self.pan_start_y = event.y
+        
+        # Redraw
+        self.draw_block()
+
+    def end_pan(self, event):
+        """End canvas panning"""
+        self.panning = False
+        self.canvas.config(cursor="")  # Reset cursor
