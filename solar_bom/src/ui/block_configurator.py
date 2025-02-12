@@ -80,36 +80,28 @@ class BlockConfigurator(ttk.Frame):
         ttk.Label(config_frame, text="Block ID:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
         self.block_id_var = tk.StringVar()
         ttk.Entry(config_frame, textvariable=self.block_id_var).grid(row=0, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        
+        # Spacing Configuration
+        spacing_frame = ttk.LabelFrame(config_frame, text="Spacing Configuration", padding="5")
+        spacing_frame.grid(row=1, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
 
-        # Block Dimensions
-        dims_frame = ttk.LabelFrame(config_frame, text="Dimensions", padding="5")
-        dims_frame.grid(row=1, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
-        
-        ttk.Label(dims_frame, text="Width (ft):").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
-        self.width_var = tk.StringVar(value="500")
-        ttk.Entry(dims_frame, textvariable=self.width_var).grid(row=0, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
-        
-        ttk.Label(dims_frame, text="Height (ft):").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
-        self.height_var = tk.StringVar(value="500")
-        ttk.Entry(dims_frame, textvariable=self.height_var).grid(row=1, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
-        
         # Row Spacing
-        ttk.Label(dims_frame, text="Row Spacing (ft):").grid(row=2, column=0, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(spacing_frame, text="Row Spacing (ft):").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
         self.row_spacing_var = tk.StringVar(value="19.7")  # 6m in feet
-        row_spacing_entry = ttk.Entry(dims_frame, textvariable=self.row_spacing_var)
-        row_spacing_entry.grid(row=2, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        row_spacing_entry = ttk.Entry(spacing_frame, textvariable=self.row_spacing_var)
+        row_spacing_entry.grid(row=0, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         self.row_spacing_var.trace('w', lambda *args: self.calculate_gcr())
-        
+
         # GCR (Ground Coverage Ratio) - calculated
-        ttk.Label(dims_frame, text="GCR:").grid(row=2, column=2, padx=5, pady=2, sticky=tk.W)
-        self.gcr_label = ttk.Label(dims_frame, text="--")
-        self.gcr_label.grid(row=2, column=3, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(spacing_frame, text="GCR:").grid(row=0, column=2, padx=5, pady=2, sticky=tk.W)
+        self.gcr_label = ttk.Label(spacing_frame, text="--")
+        self.gcr_label.grid(row=0, column=3, padx=5, pady=2, sticky=tk.W)
 
         # N/S Tracker Spacing
-        ttk.Label(dims_frame, text="N/S Tracker Spacing (m):").grid(row=3, column=0, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(spacing_frame, text="N/S Tracker Spacing (m):").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
         self.ns_spacing_var = tk.StringVar(value="1.0")
-        ns_spacing_entry = ttk.Entry(dims_frame, textvariable=self.ns_spacing_var)
-        ns_spacing_entry.grid(row=3, column=1, columnspan=3, padx=5, pady=2, sticky=(tk.W, tk.E))
+        ns_spacing_entry = ttk.Entry(spacing_frame, textvariable=self.ns_spacing_var)
+        ns_spacing_entry.grid(row=1, column=1, columnspan=3, padx=5, pady=2, sticky=(tk.W, tk.E))
         
         # Inverter Selection
         inverter_frame = ttk.LabelFrame(config_frame, text="Inverter", padding="5")
@@ -130,14 +122,11 @@ class BlockConfigurator(ttk.Frame):
 
         # Canvas frame for block layout - on the right side
         canvas_frame = ttk.LabelFrame(main_container, text="Block Layout", padding="5")
-        canvas_frame.grid(row=0, rowspan=2, column=2, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
+        canvas_frame.grid(row=0, rowspan=2, column=2, padx=5, pady=5)
 
-        # Make canvas expand to fill available space
-        canvas_frame.grid_columnconfigure(0, weight=1)
-        canvas_frame.grid_rowconfigure(0, weight=1)
-
-        self.canvas = tk.Canvas(canvas_frame, width=800, height=400, bg='white')
-        self.canvas.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
+        # Fixed size canvas
+        self.canvas = tk.Canvas(canvas_frame, width=1000, height=800, bg='white')
+        self.canvas.grid(row=0, column=0, padx=5, pady=5)
 
         # Canvas bindings for clicking and dragging trackers
         self.canvas.bind('<Button-1>', self.on_canvas_click)
@@ -198,22 +187,20 @@ class BlockConfigurator(ttk.Frame):
         
         try:
             # Convert feet to meters for storage
-            width_ft = float(self.width_var.get())
-            height_ft = float(self.height_var.get())
             row_spacing_ft = float(self.row_spacing_var.get())
             
             # Create new block config
             block = BlockConfig(
-            block_id=block_id,
-            inverter=self.selected_inverter,
-            tracker_template=None,
-            width_m=self.ft_to_m(width_ft),
-            height_m=self.ft_to_m(height_ft),
-            row_spacing_m=self.ft_to_m(row_spacing_ft),
-            ns_spacing_m=float(self.ns_spacing_var.get()),
-            gcr=0.0,  # This will be calculated when a tracker template is assigned
-            description=f"New block {block_id}"
-        )
+                block_id=block_id,
+                inverter=self.selected_inverter,
+                tracker_template=None,
+                width_m=20,  # Initial minimum width
+                height_m=20,  # Initial minimum height
+                row_spacing_m=self.ft_to_m(row_spacing_ft),
+                ns_spacing_m=float(self.ns_spacing_var.get()),
+                gcr=0.0,  # This will be calculated when a tracker template is assigned
+                description=f"New block {block_id}"
+            )
             
             # Add to blocks dictionary
             self.blocks[block_id] = block
@@ -252,15 +239,13 @@ class BlockConfigurator(ttk.Frame):
         selection = self.block_listbox.curselection()
         if not selection:
             return
-            
+                
         block_id = self.block_listbox.get(selection[0])
         self.current_block = block_id
         block = self.blocks[block_id]
         
         # Update UI with block data (convert meters to feet)
         self.block_id_var.set(block.block_id)
-        self.width_var.set(str(self.m_to_ft(block.width_m)))
-        self.height_var.set(str(self.m_to_ft(block.height_m)))
         self.row_spacing_var.set(str(self.m_to_ft(block.row_spacing_m)))
         self.calculate_gcr()  # Update the GCR label
         
@@ -287,38 +272,32 @@ class BlockConfigurator(ttk.Frame):
         self.canvas.delete("all")
         self.grid_lines = []
         
-        # Calculate scale factor
-        canvas_width = self.canvas.winfo_width()
-        canvas_height = self.canvas.winfo_height()
-        scale_x = (canvas_width - 20) / block.width_m
-        scale_y = (canvas_height - 20) / block.height_m
-        scale = min(scale_x, scale_y)
+        # Calculate block dimensions
+        block_width_m, block_height_m = self.calculate_block_dimensions()
         
-        # Draw block outline
-        self.canvas.create_rectangle(
-            10, 10,
-            10 + block.width_m * scale,
-            10 + block.height_m * scale,
-            outline='black'
-        )
+        # Update block dimensions
+        block.width_m = block_width_m
+        block.height_m = block_height_m
         
-        # Draw row spacing grid lines
+        # Get scale factor
+        scale = self.get_canvas_scale()
+        
+        # Draw grid lines
         x = 10
-        while x < 10 + block.width_m * scale:
+        while x < block_width_m * scale + 10:
             line_id = self.canvas.create_line(
                 x, 10,
-                x, 10 + block.height_m * scale,
+                x, block_height_m * scale + 10,
                 fill='gray', dash=(2, 4)
             )
             self.grid_lines.append(line_id)
             x += block.row_spacing_m * scale
         
-        # Draw N/S spacing grid lines
         y = 10
-        while y < 10 + block.height_m * scale:
+        while y < block_height_m * scale + 10:
             line_id = self.canvas.create_line(
                 10, y,
-                10 + block.width_m * scale, y,
+                block_width_m * scale + 10, y,
                 fill='gray', dash=(2, 4)
             )
             self.grid_lines.append(line_id)
@@ -406,12 +385,24 @@ class BlockConfigurator(ttk.Frame):
         """Calculate scale factor (pixels per meter)"""
         if not self.current_block:
             return 1.0
-        block = self.blocks[self.current_block]
+            
+        # Get block dimensions
+        block_width_m, block_height_m = self.calculate_block_dimensions()
+        
+        # Get canvas dimensions (subtract padding)
         canvas_width = self.canvas.winfo_width() - 20
         canvas_height = self.canvas.winfo_height() - 20
-        scale_x = canvas_width / block.width_m
-        scale_y = canvas_height / block.height_m
-        return min(scale_x, scale_y)
+        
+        # Calculate scale factors
+        scale_x = canvas_width / block_width_m
+        scale_y = canvas_height / block_height_m
+        
+        # Use minimum scale factor that ensures everything is visible
+        scale = min(scale_x, scale_y)
+        
+        # Don't let scale get too small (prevents objects from becoming too tiny)
+        MIN_SCALE = 0.5  # 0.5 pixels per meter minimum
+        return max(scale, MIN_SCALE)
 
     def on_canvas_click(self, event):
         """Handle canvas click for tracker placement"""
@@ -483,15 +474,13 @@ class BlockConfigurator(ttk.Frame):
         
         # Add tracker if within bounds
         dims = self.drag_template.get_physical_dimensions()
-        if (0 <= x_m <= block.width_m - dims[0] and 
-            0 <= y_m <= block.height_m - dims[1]):
-            
-            # Create new TrackerPosition with template
-            pos = TrackerPosition(x=x_m, y=y_m, rotation=0.0, template=self.drag_template)
-            block.tracker_positions.append(pos)
-            
-            # Update block display
-            self.draw_block()
+        
+        # Create new TrackerPosition with template
+        pos = TrackerPosition(x=x_m, y=y_m, rotation=0.0, template=self.drag_template)
+        block.tracker_positions.append(pos)
+        
+        # Update block display and resize canvas
+        self.draw_block()
 
     def load_templates(self):
         """Load tracker templates from file"""
@@ -619,3 +608,61 @@ class BlockConfigurator(ttk.Frame):
         self.selected_tracker = None
         self.draw_block()
         return False
+    
+    def calculate_block_dimensions(self):
+        """Calculate block dimensions based on placed trackers"""
+        if not self.current_block or not self.blocks[self.current_block].tracker_positions:
+            # If no trackers, use dimensions that would fit one tracker with room to spare
+            if self.drag_template:
+                # Use dimensions of selected template
+                dims = self.drag_template.get_physical_dimensions()
+                initial_width = dims[0] * 3  # Room for 3 trackers wide
+                initial_height = dims[1] * 3  # Room for 3 trackers tall
+                return (max(initial_width, 50), max(initial_height, 50))  # Min 50m in each direction
+            return (50, 50)  # Default minimum size in meters if no template selected
+            
+        block = self.blocks[self.current_block]
+        
+        # Find max x and y coordinates including tracker dimensions
+        max_x = 0
+        max_y = 0
+        for pos in block.tracker_positions:
+            dims = pos.template.get_physical_dimensions()
+            max_x = max(max_x, pos.x + dims[0])
+            max_y = max(max_y, pos.y + dims[1])
+        
+        # Add padding (40% extra space)
+        # This ensures room for additional trackers in any direction
+        padding_x = max(50, max_x * 0.4)  # At least 50m padding or 40% of current width
+        padding_y = max(50, max_y * 0.4)  # At least 50m padding or 40% of current height
+        
+        return (max_x + padding_x, max_y + padding_y)
+
+    def resize_canvas(self):
+        """Resize canvas to fit all trackers plus padding"""
+        if not self.current_block:
+            return
+            
+        # Calculate required dimensions
+        block_width_m, block_height_m = self.calculate_block_dimensions()
+        
+        # Get current window dimensions
+        window_width = self.winfo_width()
+        window_height = self.winfo_height()
+        
+        # Calculate required canvas size to maintain scale
+        # Use 80% of window size as maximum canvas dimension
+        max_canvas_width = int(window_width * 0.8)
+        max_canvas_height = int(window_height * 0.8)
+        
+        # Calculate scale factors
+        scale_x = max_canvas_width / block_width_m
+        scale_y = max_canvas_height / block_height_m
+        scale = min(scale_x, scale_y)
+        
+        # Calculate new canvas dimensions
+        canvas_width = int(block_width_m * scale) + 20  # Add padding
+        canvas_height = int(block_height_m * scale) + 20
+        
+        # Resize canvas
+        self.canvas.config(width=canvas_width, height=canvas_height)
