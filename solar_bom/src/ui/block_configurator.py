@@ -58,7 +58,7 @@ class BlockConfigurator(ttk.Frame):
     @current_module.setter
     def current_module(self, module):
         self._current_module = module
-        self.update_template_list()  # Refresh templates with new module 
+        self.update_template_list()  # Refresh templates with new module
         
     def setup_ui(self):
         """Create and arrange UI components"""
@@ -281,22 +281,11 @@ class BlockConfigurator(ttk.Frame):
             self.block_listbox.selection_set(tk.END)
             self.on_block_select()
             
+            # Save initial empty state
+            self._push_state("Create block")
+            
         except ValueError as e:
             messagebox.showerror("Error", f"Invalid input: {str(e)}")
-
-        # Add to blocks dictionary
-        self.blocks[block_id] = block
-        
-        # Update listbox
-        self.block_listbox.insert(tk.END, block_id)
-        
-        # Select new block
-        self.block_listbox.selection_clear(0, tk.END)
-        self.block_listbox.selection_set(tk.END)
-        self.on_block_select()
-        
-        # Add this line - save initial empty state
-        self._push_state("Create block")
         
     def delete_block(self):
         """Delete currently selected block"""
@@ -1042,20 +1031,20 @@ class BlockConfigurator(ttk.Frame):
         placement = DevicePlacement(self.device_placement_var.get())
         
         if placement == DevicePlacement.NORTH:
-            # Draw restricted zone (red)
-            y1 = 10 + self.pan_y
+            # Draw full restricted zone from top of canvas down to device bottom + spacing
+            y1 = 0  # Start from top of canvas
             y2 = 10 + self.pan_y + (device_y + device_h + spacing_m) * scale
             self.canvas.create_rectangle(
-                x1_zone, y1, x2_zone, y2,
+                0, y1, self.canvas.winfo_width(), y2,
                 fill='#ffcccc', stipple='gray50', tags='zones'
             )
             
         elif placement == DevicePlacement.SOUTH:
-            # Draw restricted zone (red)
+            # Draw full restricted zone from device top - spacing to bottom of canvas
             y1 = 10 + self.pan_y + (device_y - spacing_m) * scale
-            y2 = 10 + self.pan_y + (device_y + device_h + spacing_m) * scale
+            y2 = self.canvas.winfo_height()  # Extend to bottom of canvas
             self.canvas.create_rectangle(
-                x1_zone, y1, x2_zone, y2,
+                0, y1, self.canvas.winfo_width(), y2,
                 fill='#ffcccc', stipple='gray50', tags='zones'
             )
             
