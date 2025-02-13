@@ -131,7 +131,7 @@ class BlockConfigurator(ttk.Frame):
         device_frame.grid(row=5, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
 
         ttk.Label(device_frame, text="Device Placement:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
-        self.device_placement_var = tk.StringVar(value=DevicePlacement.SOUTH.value)
+        self.device_placement_var = tk.StringVar(value=DevicePlacement.NORTH.value)
         placement_combo = ttk.Combobox(device_frame, textvariable=self.device_placement_var)
         placement_combo['values'] = [p.value for p in DevicePlacement]
         placement_combo.grid(row=0, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
@@ -144,7 +144,7 @@ class BlockConfigurator(ttk.Frame):
         self.device_spacing_var.trace('w', lambda *args: self.draw_block())
 
         ttk.Label(device_frame, text="Center Gap (ft):").grid(row=2, column=0, padx=5, pady=2, sticky=tk.W)
-        self.center_spacing_var = tk.StringVar(value="6.0")
+        self.center_spacing_var = tk.StringVar(value="50.0")
         self.center_spacing_entry = ttk.Entry(device_frame, textvariable=self.center_spacing_var)
         self.center_spacing_entry.grid(row=2, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         self.center_spacing_entry.grid_remove()  # Hidden by default
@@ -394,6 +394,9 @@ class BlockConfigurator(ttk.Frame):
             )
             self.grid_lines.append(line_id)
             y += float(self.ns_spacing_var.get()) * scale
+
+        # Draw device zones
+        self.draw_device_zones(block.height_m)
 
         # Draw device
         if self.current_block:
@@ -1010,10 +1013,75 @@ class BlockConfigurator(ttk.Frame):
         # For center placement, check additional clearance
         if self.device_placement_var.get() == DevicePlacement.CENTER.value:
             center_spacing = self.ft_to_m(float(self.center_spacing_var.get()))
-            min_height = 2 * (device_h + center_spacing)
+            # Changed validation to only require the center spacing plus device height
+            min_height = device_h + 2 * spacing_m  # Just require basic clearance
             if block.height_m < min_height:
                 messagebox.showwarning("Invalid Configuration",
                     f"Block height ({block.height_m:.1f}m) must be at least {min_height:.1f}m for center placement")
                 return False
                 
         return True
+    
+    def draw_device_zones(self, block_height_m):
+        """Draw device zones with semi-transparent shading"""
+        if not self.current_block:
+            return
+            
+        scale = self.get_canvas_scale()
+        device_x, device_y, device_w, device_h = self.get_device_coordinates(block_height_m)
+        spacing_m = self.ft_to_m(float(self.device_spacing_var.get()))
+        
+        # Convert device coordinates to canvas coordinates
+        x1 = 10 + self.pan_x
+        x2 = x1 + device_w * scale
+        
+        # Add spacing zone width
+        x1_zone = x1 - spacing_m * scale
+        x2_zone = x2 + spacing_m * scale
+        
+        placement = DevicePlacement(self.device_placement_var.get())
+        
+        if placement == DevicePlacement.NORTH:
+            # Draw restricted zone (red)
+            y1 = 10 + self.pan_y
+            y2 = 10 + self.pan_y + (device_y + device_h + spacing_m) * scale
+            self.canvas.create_rectangle(
+                x1_zone, y1, x2_zone, y2,
+                fill='#ffcccc', stipple='gray50', tags='zones'
+            )
+            
+        elif placement == DevicePlacement.SOUTH:
+            # Draw restricted zone (red)
+            y1 = 10 + self.pan_y + (device_y - spacing_m) * scale
+            y2 = 10 + self.pan_y + (device_y + device_h + spacing_m) * scale
+            self.canvas.create_rectangle(
+                x1_zone, y1, x2_zone, y2,
+                fill='#ffcccc', stipple='gray50', tags='zones'
+            )
+            
+        else:  # CENTER
+            center_spacing = self.ft_to_m(float(self.center_spacing_var.get()))
+            
+            # Draw center gap zone (yellow) - extends full width
+            y1 = 10 + self.pan_y + (device_y - center_spacing) * scale
+            y2 = 10 + self.pan_y + (device_y + device_h + center_spacing) * scale
+            self.canvas.create_rectangle(
+                0, y1, self.canvas.winfo_width(), y2,
+                fill='#fff3cd', stipple='gray50', tags='zones'
+            )
+            
+            # Draw device safety zone (red) - just around device
+            y1 = 10 + self.pan_y + (device_y - spacing_m) * scale
+            y2 = 10 + self.pan_y + (device_y + device_h + spacing_m) * scale
+            self.canvas.create_rectangle(
+                x1_zone, y1, x2_zone, y2,
+                fill='#ffcccc', stipple='gray50', tags='zones'
+            )
+
+        # Draw the device itself as a solid rectangle on top
+        y1 = 10 + self.pan_y + device_y * scale
+        y2 = y1 + device_h * scale
+        self.canvas.create_rectangle(
+            x1, y1, x2, y2,
+            fill='red', tags='device'
+        )
