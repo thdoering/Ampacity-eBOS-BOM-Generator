@@ -10,6 +10,8 @@ import json
 from ..models.tracker import ModuleOrientation
 from ..models.module import ModuleSpec, ModuleType, ModuleOrientation
 from ..models.tracker import TrackerPosition
+from ..utils.undo_manager import UndoManager
+from copy import deepcopy
 
 class BlockConfigurator(ttk.Frame):
     def __init__(self, parent):
@@ -35,6 +37,14 @@ class BlockConfigurator(ttk.Frame):
         self.panning = False
         self.pan_start_x = 0
         self.pan_start_y = 0
+        self.inverters = {}  # Store inverter configurations
+
+        # Initialize undo manager
+        self.undo_manager = UndoManager()
+        self.undo_manager.set_callbacks(
+            get_state=self._get_current_state,
+            set_state=self._restore_from_state
+        )
         
         # First set up the UI
         self.setup_ui()
@@ -134,6 +144,17 @@ class BlockConfigurator(ttk.Frame):
         self.canvas = tk.Canvas(canvas_frame, width=1000, height=800, bg='white')
         self.canvas.grid(row=0, column=0, padx=5, pady=5)
 
+        # Add undo/redo buttons
+        button_frame = ttk.Frame(canvas_frame)
+        button_frame.grid(row=1, column=0, pady=5)
+        
+        ttk.Button(button_frame, text="Undo", command=self.undo).grid(row=0, column=0, padx=2)
+        ttk.Button(button_frame, text="Redo", command=self.redo).grid(row=0, column=1, padx=2)
+
+        # Bind keyboard shortcuts
+        self.canvas.bind('<Control-z>', self.undo)
+        self.canvas.bind('<Control-y>', self.redo)
+
         # Add mouse wheel binding for zoom
         self.canvas.bind('<MouseWheel>', self.on_mouse_wheel)  # Windows
         self.canvas.bind('<Button-4>', self.on_mouse_wheel)    # Linux scroll up
@@ -196,6 +217,8 @@ class BlockConfigurator(ttk.Frame):
         """Handle inverter selection from dialog"""
         self.selected_inverter = inverter
         self.inverter_label.config(text=f"{inverter.manufacturer} {inverter.model}")
+        # Add this line to store the inverter
+        self.inverters[f"{inverter.manufacturer} {inverter.model}"] = inverter
         if self.current_block:
             self.blocks[self.current_block].inverter = inverter
         dialog.destroy()
@@ -235,6 +258,20 @@ class BlockConfigurator(ttk.Frame):
             
         except ValueError as e:
             messagebox.showerror("Error", f"Invalid input: {str(e)}")
+
+        # Add to blocks dictionary
+        self.blocks[block_id] = block
+        
+        # Update listbox
+        self.block_listbox.insert(tk.END, block_id)
+        
+        # Select new block
+        self.block_listbox.selection_clear(0, tk.END)
+        self.block_listbox.selection_set(tk.END)
+        self.on_block_select()
+        
+        # Add this line - save initial empty state
+        self._push_state("Create block")
         
     def delete_block(self):
         """Delete currently selected block"""
@@ -287,7 +324,8 @@ class BlockConfigurator(ttk.Frame):
             return
                     
         block = self.blocks[self.current_block]
-        
+        print(f"Drawing block with {len(block.tracker_positions)} trackers")
+
         # Clear canvas and grid lines list
         self.canvas.delete("all")
         self.grid_lines = []
@@ -463,7 +501,7 @@ class BlockConfigurator(ttk.Frame):
         """Handle canvas release for tracker placement"""
         if not self.dragging or not self.current_block or not self.drag_template:
             return
-                        
+                            
         self.dragging = False
         self.canvas.delete('drag_preview')
         
@@ -483,16 +521,17 @@ class BlockConfigurator(ttk.Frame):
         new_width, new_height = self.calculate_tracker_dimensions(self.drag_template)
         for pos in block.tracker_positions:
             existing_width, existing_height = self.calculate_tracker_dimensions(pos.template)
-            # Check if rectangles overlap
             if (x_m < pos.x + existing_width and 
                 x_m + new_width > pos.x and 
                 y_m < pos.y + existing_height and 
                 y_m + new_height > pos.y):
-                # Collision detected
                 messagebox.showwarning("Invalid Position", "Cannot place tracker here - overlaps with existing tracker")
                 return
+
+        # Save state before adding tracker
+        self._push_state("Before place tracker")
         
-        # If no collision, create new TrackerPosition
+        # Create new TrackerPosition
         pos = TrackerPosition(x=x_m, y=y_m, rotation=0.0, template=self.drag_template)
         block.tracker_positions.append(pos)
         
@@ -582,8 +621,14 @@ class BlockConfigurator(ttk.Frame):
         if not self.current_block or not self.selected_tracker:
             return
         
-        # Find and remove the selected tracker
+        print("\n=== Starting Delete Tracker ===")
         block = self.blocks[self.current_block]
+        print(f"Current tracker count: {len(block.tracker_positions)}")
+        
+        # Save state before deletion
+        self._push_state("Before delete tracker")
+        
+        # Find and remove the selected tracker
         positions_to_remove = []
         for i, pos in enumerate(block.tracker_positions):
             if (abs(pos.x - self.selected_tracker[0]) < 0.01 and 
@@ -594,6 +639,7 @@ class BlockConfigurator(ttk.Frame):
         for i in sorted(positions_to_remove, reverse=True):
             block.tracker_positions.pop(i)
         
+        print(f"Tracker count after deletion: {len(block.tracker_positions)}")
         self.selected_tracker = None
         self.draw_block()
 
@@ -729,3 +775,140 @@ class BlockConfigurator(ttk.Frame):
         )
 
         return module_width, total_height  # width, height
+    
+    def _restore_state(self, state):
+        """Restore blocks from state"""
+        print(f"Restoring state. Current block: {self.current_block}")
+        if self.current_block:
+            print(f"Number of trackers before restore: {len(self.blocks[self.current_block].tracker_positions)}")
+        self._restore_from_state(state)
+        if self.current_block:
+            print(f"Number of trackers after restore: {len(self.blocks[self.current_block].tracker_positions)}")
+        self.draw_block()
+
+    def _push_state(self, description: str):
+        """Push current state to undo manager"""
+        print(f"\n=== Pushing State: {description} ===")
+        if self.current_block:
+            print(f"Current block {self.current_block} has {len(self.blocks[self.current_block].tracker_positions)} trackers")
+        self.undo_manager.push_state(description)
+        print("=== End Push State ===\n")
+
+    def undo(self, event=None):
+        """Handle undo command"""
+        print("\n=== Starting Undo ===")
+        print(f"Undo stack size before: {len(self.undo_manager.undo_stack)}")
+        print(f"Redo stack size before: {len(self.undo_manager.redo_stack)}")
+        description = self.undo_manager.undo()
+        print(f"Undo stack size after: {len(self.undo_manager.undo_stack)}")
+        print(f"Redo stack size after: {len(self.undo_manager.redo_stack)}")
+        if description:
+            print(f"Undid: {description}")
+        else:
+            print("Nothing to undo")
+        print("=== End Undo ===\n")
+
+    def redo(self, event=None):
+        """Handle redo command"""
+        print("\n=== Starting Redo ===")
+        print(f"Undo stack size before: {len(self.undo_manager.undo_stack)}")
+        print(f"Redo stack size before: {len(self.undo_manager.redo_stack)}")
+        description = self.undo_manager.redo()
+        print(f"Undo stack size after: {len(self.undo_manager.undo_stack)}")
+        print(f"Redo stack size after: {len(self.undo_manager.redo_stack)}")
+        if description:
+            print(f"Redid: {description}")
+        else:
+            print("Nothing to redo")
+        print("=== End Redo ===\n")
+
+    def _get_current_state(self):
+        """Get a deep copy of current block state"""
+        if not self.current_block:
+            return {}
+        print("\n=== Getting Current State ===")
+        
+        current_state = {}
+        for id, block in self.blocks.items():
+            positions = []
+            for pos in block.tracker_positions:
+                positions.append({
+                    'x': pos.x,
+                    'y': pos.y,
+                    'rotation': pos.rotation,
+                    'template_name': pos.template.template_name if pos.template else None
+                })
+                
+            current_state[id] = {
+                'block_id': block.block_id,
+                'width_m': block.width_m,
+                'height_m': block.height_m,
+                'row_spacing_m': block.row_spacing_m,
+                'ns_spacing_m': block.ns_spacing_m,
+                'gcr': block.gcr,
+                'description': block.description,
+                'tracker_positions': positions,
+                'inverter_name': f"{block.inverter.manufacturer} {block.inverter.model}" if block.inverter else None,
+                'template_name': block.tracker_template.template_name if block.tracker_template else None
+            }
+        
+        print(f"Current state has {len(current_state)} blocks")
+        for block_id, block_data in current_state.items():
+            print(f"Block {block_id} has {len(block_data['tracker_positions'])} trackers")
+            
+        return current_state
+
+    def _restore_from_state(self, state):
+        """Restore block state from saved state"""
+        print("\n=== Starting State Restore ===")
+        print(f"Restoring state with {len(state)} blocks")
+        
+        if not state:
+            print("Empty state, clearing blocks")
+            self.blocks = {}
+            return
+            
+        self.blocks = {}
+        for id, block_data in state.items():
+            print(f"Restoring block {id} with {len(block_data['tracker_positions'])} trackers")
+            
+            # Get template and inverter from saved names
+            template = next((t for t in self.tracker_templates.values() 
+                            if t.template_name == block_data['template_name']), None)
+            inverter = next((inv for name, inv in self.inverters.items() 
+                            if f"{inv.manufacturer} {inv.model}" == block_data['inverter_name']), None)
+            
+            block = BlockConfig(
+                block_id=block_data['block_id'],
+                inverter=inverter,
+                tracker_template=template,
+                width_m=block_data['width_m'],
+                height_m=block_data['height_m'],
+                row_spacing_m=block_data['row_spacing_m'],
+                ns_spacing_m=block_data['ns_spacing_m'],
+                gcr=block_data['gcr'],
+                description=block_data['description'],
+                tracker_positions=[]  # Initialize empty list
+            )
+            
+            # Clear existing tracker positions
+            block.tracker_positions = []
+            
+            # Restore tracker positions
+            for pos_data in block_data['tracker_positions']:
+                template = next((t for t in self.tracker_templates.values() 
+                            if t.template_name == pos_data['template_name']), None)
+                if template:
+                    pos = TrackerPosition(
+                        x=pos_data['x'],
+                        y=pos_data['y'],
+                        rotation=pos_data['rotation'],
+                        template=template
+                    )
+                    block.tracker_positions.append(pos)
+            
+            self.blocks[id] = block
+            
+        print("=== End State Restore ===")
+        # Force canvas redraw
+        self.draw_block()
