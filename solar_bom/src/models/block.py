@@ -15,6 +15,11 @@ class DevicePlacement(Enum):
     SOUTH = "South"
     CENTER = "Center"
 
+class DeviceType(Enum):
+    """Enumeration of downstream device types"""
+    STRING_INVERTER = "String Inverter"
+    COMBINER_BOX = "Combiner Box"
+
 @dataclass
 class CollectionPoint:
     """Data class representing a wiring collection point"""
