@@ -59,7 +59,15 @@ class BlockConfigurator(ttk.Frame):
     def current_module(self, module):
         self._current_module = module
         self.update_template_list()  # Refresh templates with new module
-        
+
+    def validate_float_input(self, var, default_value):
+        """Validate float input, returning default value if invalid"""
+        try:
+            value = var.get().strip()
+            return float(value) if value else default_value
+        except ValueError:
+            return default_value
+
     def setup_ui(self):
         """Create and arrange UI components"""
         # Main container with padding
@@ -130,6 +138,7 @@ class BlockConfigurator(ttk.Frame):
         device_frame = ttk.LabelFrame(config_frame, text="Downstream Device", padding="5")
         device_frame.grid(row=5, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
 
+        
         ttk.Label(device_frame, text="Device Placement:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
         self.device_placement_var = tk.StringVar(value=DevicePlacement.NORTH.value)
         placement_combo = ttk.Combobox(device_frame, textvariable=self.device_placement_var)
@@ -146,6 +155,7 @@ class BlockConfigurator(ttk.Frame):
         ttk.Label(device_frame, text="Center Gap (ft):").grid(row=2, column=0, padx=5, pady=2, sticky=tk.W)
         self.center_spacing_var = tk.StringVar(value="50.0")
         self.center_spacing_entry = ttk.Entry(device_frame, textvariable=self.center_spacing_var)
+        self.center_spacing_var.trace('w', lambda *args: self.draw_block())
         self.center_spacing_entry.grid(row=2, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         self.center_spacing_entry.grid_remove()  # Hidden by default
         self.device_placement_var.trace('w', self.update_center_spacing_visibility)
@@ -336,77 +346,91 @@ class BlockConfigurator(ttk.Frame):
         """Draw current block layout on canvas"""
         if not self.current_block:
             return
-                    
-        if not self.validate_device_clearances():
-            return
+                
+        try:
+            if not self.validate_device_clearances():
+                return
 
-        block = self.blocks[self.current_block]
-
-        # Clear canvas and grid lines list
-        self.canvas.delete("all")
-        self.grid_lines = []
-        
-        # Calculate block dimensions first
-        block_width_m, block_height_m = self.calculate_block_dimensions()
-        
-        scale = self.get_canvas_scale()
-        
-        # Draw grid lines across entire canvas
-        canvas_width = self.canvas.winfo_width()
-        canvas_height = self.canvas.winfo_height()
-
-        # Calculate starting positions for gridlines
-        # Start drawing before visible area to ensure coverage when panning
-        start_x = -abs(self.pan_x)
-        start_y = -abs(self.pan_y)
-        end_x = canvas_width + abs(self.pan_x)
-        end_y = canvas_height + abs(self.pan_y)
-
-        # Draw vertical grid lines
-        x = start_x
-        while x <= end_x:
-            line_id = self.canvas.create_line(
-                x + self.pan_x, 0,
-                x + self.pan_x, canvas_height,
-                fill='gray', dash=(2, 4)
-            )
-            self.grid_lines.append(line_id)
-            x += block.row_spacing_m * scale
-
-        # Draw horizontal grid lines
-        y = start_y
-        while y <= end_y:
-            line_id = self.canvas.create_line(
-                0, y + self.pan_y,
-                canvas_width, y + self.pan_y,
-                fill='gray', dash=(2, 4)
-            )
-            self.grid_lines.append(line_id)
-            y += float(self.ns_spacing_var.get()) * scale
-
-        # Draw device zones
-        self.draw_device_zones(block.height_m)
-
-        # Draw device
-        if self.current_block:
             block = self.blocks[self.current_block]
-            device_x, device_y, device_w, device_h = self.get_device_coordinates(block.height_m)
+
+            # Clear canvas and grid lines list
+            self.canvas.delete("all")
+            self.grid_lines = []
+                        
+            if not self.validate_device_clearances():
+                return
+
+            block = self.blocks[self.current_block]
+
+            # Clear canvas and grid lines list
+            self.canvas.delete("all")
+            self.grid_lines = []
+            
+            # Calculate block dimensions first
+            block_width_m, block_height_m = self.calculate_block_dimensions()
+            
             scale = self.get_canvas_scale()
             
-            # Convert to canvas coordinates
-            x1 = 10 + self.pan_x + device_x * scale
-            y1 = 10 + self.pan_y + device_y * scale
-            x2 = x1 + device_w * scale
-            y2 = y1 + device_h * scale
-            
+            # Draw grid lines across entire canvas
+            canvas_width = self.canvas.winfo_width()
+            canvas_height = self.canvas.winfo_height()
+
+            # Calculate starting positions for gridlines
+            # Start drawing before visible area to ensure coverage when panning
+            start_x = -abs(self.pan_x)
+            start_y = -abs(self.pan_y)
+            end_x = canvas_width + abs(self.pan_x)
+            end_y = canvas_height + abs(self.pan_y)
+
+            # Draw vertical grid lines
+            x = start_x
+            while x <= end_x:
+                line_id = self.canvas.create_line(
+                    x + self.pan_x, 0,
+                    x + self.pan_x, canvas_height,
+                    fill='gray', dash=(2, 4)
+                )
+                self.grid_lines.append(line_id)
+                x += block.row_spacing_m * scale
+
+            # Draw horizontal grid lines
+            y = start_y
+            while y <= end_y:
+                line_id = self.canvas.create_line(
+                    0, y + self.pan_y,
+                    canvas_width, y + self.pan_y,
+                    fill='gray', dash=(2, 4)
+                )
+                self.grid_lines.append(line_id)
+                y += float(self.ns_spacing_var.get()) * scale
+
+            # Draw device zones
+            self.draw_device_zones(block.height_m)
+
             # Draw device
-            self.canvas.create_rectangle(x1, y1, x2, y2, fill='red', tags='device')    
+            if self.current_block:
+                block = self.blocks[self.current_block]
+                device_x, device_y, device_w, device_h = self.get_device_coordinates(block.height_m)
+                scale = self.get_canvas_scale()
+                
+                # Convert to canvas coordinates
+                x1 = 10 + self.pan_x + device_x * scale
+                y1 = 10 + self.pan_y + device_y * scale
+                x2 = x1 + device_w * scale
+                y2 = y1 + device_h * scale
+                
+                # Draw device
+                self.canvas.create_rectangle(x1, y1, x2, y2, fill='red', tags='device')    
+            
+            # Draw existing trackers with pan offset
+            for pos in block.tracker_positions:
+                x = 10 + self.pan_x + pos.x * scale
+                y = 10 + self.pan_y + pos.y * scale
+                self.draw_tracker(x, y, pos.template)
         
-        # Draw existing trackers with pan offset
-        for pos in block.tracker_positions:
-            x = 10 + self.pan_x + pos.x * scale
-            y = 10 + self.pan_y + pos.y * scale
-            self.draw_tracker(x, y, pos.template)
+        except (ValueError, TypeError):
+            # Silently ignore transient errors during editing
+            pass
 
     def draw_tracker(self, x, y, template, tag=None):
         """Draw a tracker on the canvas with detailed module layout.
@@ -930,7 +954,7 @@ class BlockConfigurator(ttk.Frame):
         """Calculate device coordinates based on placement"""
         device_height_m = 0.91  # 3ft in meters
         device_width_m = 0.91   # 3ft in meters
-        spacing_m = self.ft_to_m(float(self.device_spacing_var.get()))
+        spacing_m = self.ft_to_m(self.validate_float_input(self.device_spacing_var, 6.0))  # 6ft default
         
         placement = DevicePlacement(self.device_placement_var.get())
         
@@ -990,7 +1014,7 @@ class BlockConfigurator(ttk.Frame):
             
         block = self.blocks[self.current_block]
         device_x, device_y, device_w, device_h = self.get_device_coordinates(block.height_m)
-        spacing_m = self.ft_to_m(float(self.device_spacing_var.get()))
+        spacing_m = self.ft_to_m(self.validate_float_input(self.device_spacing_var, 6.0))
         
         # Check minimum block dimensions
         min_height = 2 * spacing_m + device_h
@@ -1001,7 +1025,7 @@ class BlockConfigurator(ttk.Frame):
             
         # For center placement, check additional clearance
         if self.device_placement_var.get() == DevicePlacement.CENTER.value:
-            center_spacing = self.ft_to_m(float(self.center_spacing_var.get()))
+            center_spacing = self.ft_to_m(self.validate_float_input(self.center_spacing_var, 50.0))
             # Changed validation to only require the center spacing plus device height
             min_height = device_h + 2 * spacing_m  # Just require basic clearance
             if block.height_m < min_height:
