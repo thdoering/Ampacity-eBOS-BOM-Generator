@@ -411,6 +411,9 @@ class BlockConfigurator(ttk.Frame):
         if not self.current_block or not self.drag_template:
             return
             
+        # Give canvas keyboard focus when clicked
+        self.canvas.focus_set()
+
         # First check if we're clicking on an existing tracker
         if self.select_tracker(event.x, event.y):
             return
@@ -581,10 +584,15 @@ class BlockConfigurator(ttk.Frame):
         
         # Find and remove the selected tracker
         block = self.blocks[self.current_block]
+        positions_to_remove = []
         for i, pos in enumerate(block.tracker_positions):
-            if (pos.x, pos.y) == self.selected_tracker:
-                block.tracker_positions.pop(i)
-                break
+            if (abs(pos.x - self.selected_tracker[0]) < 0.01 and 
+                abs(pos.y - self.selected_tracker[1]) < 0.01):
+                positions_to_remove.append(i)
+        
+        # Remove from highest index to lowest to avoid shifting issues
+        for i in sorted(positions_to_remove, reverse=True):
+            block.tracker_positions.pop(i)
         
         self.selected_tracker = None
         self.draw_block()
@@ -592,7 +600,7 @@ class BlockConfigurator(ttk.Frame):
     def select_tracker(self, x, y):
         """Select tracker at given coordinates"""
         if not self.current_block:
-            return
+            return False
 
         block = self.blocks[self.current_block]
         scale = self.get_canvas_scale()
@@ -609,15 +617,18 @@ class BlockConfigurator(ttk.Frame):
                 pos.y - 0.2 <= y_m <= pos.y + tracker_height + 0.2):
                 self.selected_tracker = (pos.x, pos.y)
                 self.draw_block()
-                
+                    
                 # Draw highlight rectangle with calculated dimensions
                 x_canvas = 10 + pos.x * scale + self.pan_x
                 y_canvas = 10 + pos.y * scale + self.pan_y
+                # Create filled selection rectangle with transparency
                 self.canvas.create_rectangle(
                     x_canvas - 2, y_canvas - 2,
                     x_canvas + tracker_width * scale + 2,
                     y_canvas + tracker_height * scale + 2,
-                    outline='red', width=2
+                    outline='red', width=2,
+                    fill='red', stipple='gray50',  # This creates a semi-transparent effect
+                    tags='selection'
                 )
                 return True
         
