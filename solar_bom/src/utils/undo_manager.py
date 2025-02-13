@@ -51,7 +51,6 @@ class UndoManager:
         self.redo_stack.append(UndoState(current_state, last_state.description))
         
         # Restore previous state
-        print(f"\n=== Restoring to previous state with description: {last_state.description} ===")
         self._state_setter(last_state.state)
         
         return last_state.description

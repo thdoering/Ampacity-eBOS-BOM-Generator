@@ -1,15 +1,13 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import Optional, Dict, List
-from ..models.block import BlockConfig
-from ..models.tracker import TrackerTemplate
+from ..models.block import BlockConfig, WiringType, DevicePlacement, TrackerPosition
+from ..models.tracker import TrackerTemplate, TrackerPosition, ModuleOrientation
 from ..models.inverter import InverterSpec
 from .inverter_manager import InverterManager
 from pathlib import Path
 import json
-from ..models.tracker import ModuleOrientation
 from ..models.module import ModuleSpec, ModuleType, ModuleOrientation
-from ..models.tracker import TrackerPosition
 from ..utils.undo_manager import UndoManager
 from copy import deepcopy
 
@@ -128,6 +126,30 @@ class BlockConfigurator(ttk.Frame):
         self.inverter_label.grid(row=0, column=1, padx=5, pady=2, sticky=tk.W)
         ttk.Button(inverter_frame, text="Select Inverter", command=self.select_inverter).grid(row=0, column=2, padx=5, pady=2)
 
+        # Device Configuration
+        device_frame = ttk.LabelFrame(config_frame, text="Downstream Device", padding="5")
+        device_frame.grid(row=5, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
+
+        ttk.Label(device_frame, text="Device Placement:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
+        self.device_placement_var = tk.StringVar(value=DevicePlacement.SOUTH.value)
+        placement_combo = ttk.Combobox(device_frame, textvariable=self.device_placement_var)
+        placement_combo['values'] = [p.value for p in DevicePlacement]
+        placement_combo.grid(row=0, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        self.device_placement_var.trace('w', lambda *args: self.draw_block())
+
+        ttk.Label(device_frame, text="Device Spacing (ft):").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
+        self.device_spacing_var = tk.StringVar(value="6.0")
+        device_spacing_entry = ttk.Entry(device_frame, textvariable=self.device_spacing_var)
+        device_spacing_entry.grid(row=1, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        self.device_spacing_var.trace('w', lambda *args: self.draw_block())
+
+        ttk.Label(device_frame, text="Center Gap (ft):").grid(row=2, column=0, padx=5, pady=2, sticky=tk.W)
+        self.center_spacing_var = tk.StringVar(value="6.0")
+        self.center_spacing_entry = ttk.Entry(device_frame, textvariable=self.center_spacing_var)
+        self.center_spacing_entry.grid(row=2, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        self.center_spacing_entry.grid_remove()  # Hidden by default
+        self.device_placement_var.trace('w', self.update_center_spacing_visibility)
+
         # Templates List Frame
         templates_frame = ttk.LabelFrame(config_frame, text="Tracker Templates", padding="5")
         templates_frame.grid(row=3, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
@@ -242,7 +264,10 @@ class BlockConfigurator(ttk.Frame):
                 row_spacing_m=self.ft_to_m(row_spacing_ft),
                 ns_spacing_m=float(self.ns_spacing_var.get()),
                 gcr=0.0,  # This will be calculated when a tracker template is assigned
-                description=f"New block {block_id}"
+                description=f"New block {block_id}",
+                device_placement=DevicePlacement(self.device_placement_var.get()),  
+                device_spacing_m=self.ft_to_m(float(self.device_spacing_var.get())),  
+                center_spacing_m=self.ft_to_m(float(self.center_spacing_var.get()))
             )
             
             # Add to blocks dictionary
@@ -323,8 +348,10 @@ class BlockConfigurator(ttk.Frame):
         if not self.current_block:
             return
                     
+        if not self.validate_device_clearances():
+            return
+
         block = self.blocks[self.current_block]
-        print(f"Drawing block with {len(block.tracker_positions)} trackers")
 
         # Clear canvas and grid lines list
         self.canvas.delete("all")
@@ -367,6 +394,21 @@ class BlockConfigurator(ttk.Frame):
             )
             self.grid_lines.append(line_id)
             y += float(self.ns_spacing_var.get()) * scale
+
+        # Draw device
+        if self.current_block:
+            block = self.blocks[self.current_block]
+            device_x, device_y, device_w, device_h = self.get_device_coordinates(block.height_m)
+            scale = self.get_canvas_scale()
+            
+            # Convert to canvas coordinates
+            x1 = 10 + self.pan_x + device_x * scale
+            y1 = 10 + self.pan_y + device_y * scale
+            x2 = x1 + device_w * scale
+            y2 = y1 + device_h * scale
+            
+            # Draw device
+            self.canvas.create_rectangle(x1, y1, x2, y2, fill='red', tags='device')    
         
         # Draw existing trackers with pan offset
         for pos in block.tracker_positions:
@@ -528,6 +570,12 @@ class BlockConfigurator(ttk.Frame):
                 messagebox.showwarning("Invalid Position", "Cannot place tracker here - overlaps with existing tracker")
                 return
 
+        # Check if position is valid for device placement
+        if not self.is_valid_tracker_position(x_m, y_m, new_height):
+            messagebox.showwarning("Invalid Position", 
+                "Cannot place tracker here due to device placement restrictions")
+            return
+        
         # Save state before adding tracker
         self._push_state("Before place tracker")
         
@@ -621,9 +669,7 @@ class BlockConfigurator(ttk.Frame):
         if not self.current_block or not self.selected_tracker:
             return
         
-        print("\n=== Starting Delete Tracker ===")
         block = self.blocks[self.current_block]
-        print(f"Current tracker count: {len(block.tracker_positions)}")
         
         # Save state before deletion
         self._push_state("Before delete tracker")
@@ -639,7 +685,6 @@ class BlockConfigurator(ttk.Frame):
         for i in sorted(positions_to_remove, reverse=True):
             block.tracker_positions.pop(i)
         
-        print(f"Tracker count after deletion: {len(block.tracker_positions)}")
         self.selected_tracker = None
         self.draw_block()
 
@@ -778,55 +823,31 @@ class BlockConfigurator(ttk.Frame):
     
     def _restore_state(self, state):
         """Restore blocks from state"""
-        print(f"Restoring state. Current block: {self.current_block}")
         if self.current_block:
-            print(f"Number of trackers before restore: {len(self.blocks[self.current_block].tracker_positions)}")
-        self._restore_from_state(state)
-        if self.current_block:
-            print(f"Number of trackers after restore: {len(self.blocks[self.current_block].tracker_positions)}")
-        self.draw_block()
+            self._restore_from_state(state)
+            self.draw_block()
 
     def _push_state(self, description: str):
         """Push current state to undo manager"""
-        print(f"\n=== Pushing State: {description} ===")
         if self.current_block:
-            print(f"Current block {self.current_block} has {len(self.blocks[self.current_block].tracker_positions)} trackers")
-        self.undo_manager.push_state(description)
-        print("=== End Push State ===\n")
+            self.undo_manager.push_state(description)
 
     def undo(self, event=None):
         """Handle undo command"""
-        print("\n=== Starting Undo ===")
-        print(f"Undo stack size before: {len(self.undo_manager.undo_stack)}")
-        print(f"Redo stack size before: {len(self.undo_manager.redo_stack)}")
         description = self.undo_manager.undo()
-        print(f"Undo stack size after: {len(self.undo_manager.undo_stack)}")
-        print(f"Redo stack size after: {len(self.undo_manager.redo_stack)}")
         if description:
-            print(f"Undid: {description}")
-        else:
-            print("Nothing to undo")
-        print("=== End Undo ===\n")
+            self.draw_block()
 
     def redo(self, event=None):
         """Handle redo command"""
-        print("\n=== Starting Redo ===")
-        print(f"Undo stack size before: {len(self.undo_manager.undo_stack)}")
-        print(f"Redo stack size before: {len(self.undo_manager.redo_stack)}")
         description = self.undo_manager.redo()
-        print(f"Undo stack size after: {len(self.undo_manager.undo_stack)}")
-        print(f"Redo stack size after: {len(self.undo_manager.redo_stack)}")
         if description:
-            print(f"Redid: {description}")
-        else:
-            print("Nothing to redo")
-        print("=== End Redo ===\n")
+            self.draw_block()
 
     def _get_current_state(self):
         """Get a deep copy of current block state"""
         if not self.current_block:
             return {}
-        print("\n=== Getting Current State ===")
         
         current_state = {}
         for id, block in self.blocks.items():
@@ -849,29 +870,22 @@ class BlockConfigurator(ttk.Frame):
                 'description': block.description,
                 'tracker_positions': positions,
                 'inverter_name': f"{block.inverter.manufacturer} {block.inverter.model}" if block.inverter else None,
-                'template_name': block.tracker_template.template_name if block.tracker_template else None
+                'template_name': block.tracker_template.template_name if block.tracker_template else None,
+                'device_placement': block.device_placement.value,
+                'device_spacing_m': block.device_spacing_m,
+                'center_spacing_m': block.center_spacing_m
             }
-        
-        print(f"Current state has {len(current_state)} blocks")
-        for block_id, block_data in current_state.items():
-            print(f"Block {block_id} has {len(block_data['tracker_positions'])} trackers")
             
         return current_state
 
     def _restore_from_state(self, state):
         """Restore block state from saved state"""
-        print("\n=== Starting State Restore ===")
-        print(f"Restoring state with {len(state)} blocks")
-        
         if not state:
-            print("Empty state, clearing blocks")
             self.blocks = {}
             return
             
         self.blocks = {}
         for id, block_data in state.items():
-            print(f"Restoring block {id} with {len(block_data['tracker_positions'])} trackers")
-            
             # Get template and inverter from saved names
             template = next((t for t in self.tracker_templates.values() 
                             if t.template_name == block_data['template_name']), None)
@@ -888,7 +902,9 @@ class BlockConfigurator(ttk.Frame):
                 ns_spacing_m=block_data['ns_spacing_m'],
                 gcr=block_data['gcr'],
                 description=block_data['description'],
-                tracker_positions=[]  # Initialize empty list
+                device_placement=DevicePlacement(block_data.get('device_placement', DevicePlacement.SOUTH.value)),
+                device_spacing_m=block_data.get('device_spacing_m', 1.83),  # 6ft default
+                center_spacing_m=block_data.get('center_spacing_m', 1.83)
             )
             
             # Clear existing tracker positions
@@ -909,6 +925,95 @@ class BlockConfigurator(ttk.Frame):
             
             self.blocks[id] = block
             
-        print("=== End State Restore ===")
-        # Force canvas redraw
         self.draw_block()
+
+    def update_center_spacing_visibility(self, *args):
+        """Show/hide center spacing input based on device placement"""
+        if self.device_placement_var.get() == DevicePlacement.CENTER.value:
+            self.center_spacing_entry.grid()
+        else:
+            self.center_spacing_entry.grid_remove()
+
+    def get_device_coordinates(self, block_height_m):
+        """Calculate device coordinates based on placement"""
+        device_height_m = 0.91  # 3ft in meters
+        device_width_m = 0.91   # 3ft in meters
+        spacing_m = self.ft_to_m(float(self.device_spacing_var.get()))
+        
+        placement = DevicePlacement(self.device_placement_var.get())
+        
+        # Ensure minimum spacing
+        min_spacing = 0.3  # 1ft minimum
+        spacing_m = max(spacing_m, min_spacing)
+        
+        # Validate block height
+        if block_height_m < (2 * spacing_m + device_height_m):
+            messagebox.showwarning("Invalid Configuration", 
+                "Block height too small for device placement")
+            return (0, 0, 0, 0)
+        
+        if placement == DevicePlacement.NORTH:
+            return (0, spacing_m, device_width_m, device_height_m)
+        elif placement == DevicePlacement.SOUTH:
+            return (0, block_height_m - spacing_m - device_height_m, 
+                    device_width_m, device_height_m)
+        else:  # CENTER
+            center_y = block_height_m / 2
+            return (0, center_y - device_height_m/2, 
+                    device_width_m, device_height_m)
+
+    def is_valid_tracker_position(self, x, y, tracker_height):
+        """Check if tracker position is valid based on device placement"""
+        if not self.current_block:
+            return False
+            
+        block = self.blocks[self.current_block]
+        device_x, device_y, device_w, device_h = self.get_device_coordinates(block.height_m)
+        
+        # If device coordinates are invalid, prevent placement
+        if device_w == 0 and device_h == 0:
+            return False
+            
+        spacing_m = self.ft_to_m(float(self.device_spacing_var.get()))
+        min_spacing = 0.3  # 1ft minimum clearance
+        spacing_m = max(spacing_m, min_spacing)
+        
+        placement = DevicePlacement(self.device_placement_var.get())
+        if placement == DevicePlacement.NORTH:
+            # Must be below device plus spacing
+            return y >= (device_y + device_h + spacing_m)
+        elif placement == DevicePlacement.SOUTH:
+            # Must be above device minus spacing
+            return (y + tracker_height) <= (device_y - spacing_m)
+        else:  # CENTER
+            center_spacing = self.ft_to_m(float(self.center_spacing_var.get()))
+            # Must be either fully above or fully below the device zone
+            return ((y + tracker_height <= device_y - spacing_m) or  # Above device
+                    (y >= device_y + device_h + spacing_m))  # Below device
+        
+    def validate_device_clearances(self):
+        """Validate device clearances against block dimensions"""
+        if not self.current_block:
+            return False
+            
+        block = self.blocks[self.current_block]
+        device_x, device_y, device_w, device_h = self.get_device_coordinates(block.height_m)
+        spacing_m = self.ft_to_m(float(self.device_spacing_var.get()))
+        
+        # Check minimum block dimensions
+        min_height = 2 * spacing_m + device_h
+        if block.height_m < min_height:
+            messagebox.showwarning("Invalid Configuration",
+                f"Block height ({block.height_m:.1f}m) must be at least {min_height:.1f}m")
+            return False
+            
+        # For center placement, check additional clearance
+        if self.device_placement_var.get() == DevicePlacement.CENTER.value:
+            center_spacing = self.ft_to_m(float(self.center_spacing_var.get()))
+            min_height = 2 * (device_h + center_spacing)
+            if block.height_m < min_height:
+                messagebox.showwarning("Invalid Configuration",
+                    f"Block height ({block.height_m:.1f}m) must be at least {min_height:.1f}m for center placement")
+                return False
+                
+        return True
