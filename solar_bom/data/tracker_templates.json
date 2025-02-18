@@ -19,5 +19,12 @@
     "strings_per_tracker": 4,
     "module_spacing_m": 0.01,
     "motor_gap_m": 1.0
+  },
+  "TEST NXT-87": {
+    "module_orientation": "Portrait",
+    "modules_per_string": 29,
+    "strings_per_tracker": 3,
+    "module_spacing_m": 0.01,
+    "motor_gap_m": 1.0
   }
 }

@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import Optional, Dict, List
-from ..models.block import BlockConfig, WiringType, DevicePlacement, TrackerPosition
+from ..models.block import BlockConfig, WiringType, DevicePlacement, TrackerPosition, DeviceType
 from ..models.tracker import TrackerTemplate, TrackerPosition, ModuleOrientation
 from ..models.inverter import InverterSpec
 from .inverter_manager import InverterManager
@@ -134,9 +134,9 @@ class BlockConfigurator(ttk.Frame):
 
         # Device Type Selection
         ttk.Label(device_frame, text="Device Type:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
-        self.device_type_var = tk.StringVar(value="String Inverter")
+        self.device_type_var = tk.StringVar(value=DeviceType.STRING_INVERTER.value)
         device_type_combo = ttk.Combobox(device_frame, textvariable=self.device_type_var, state='readonly')
-        device_type_combo['values'] = ["String Inverter", "Combiner Box"]
+        device_type_combo['values'] = [t.value for t in DeviceType]
         device_type_combo.grid(row=0, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
 
         # Device Specifications
@@ -145,7 +145,7 @@ class BlockConfigurator(ttk.Frame):
 
         # Number of Inputs
         ttk.Label(specs_frame, text="Number of Inputs:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
-        self.num_inputs_var = tk.StringVar(value="8")
+        self.num_inputs_var = tk.StringVar(value="20")
         num_inputs_spinbox = ttk.Spinbox(
             specs_frame,
             from_=8,
@@ -158,7 +158,7 @@ class BlockConfigurator(ttk.Frame):
 
         # Max Current per Input
         ttk.Label(specs_frame, text="Max Current per Input (A):").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
-        self.max_current_per_input_var = tk.StringVar(value="15")
+        self.max_current_per_input_var = tk.StringVar(value="20")
         max_current_spinbox = ttk.Spinbox(
             specs_frame,
             from_=15,
@@ -283,10 +283,15 @@ class BlockConfigurator(ttk.Frame):
         # Set initial visibility state
         self.update_center_spacing_visibility()
 
+        # Initialize device max current calculation
+        self.update_device_max_current()
+
+        # Initialize GCR calculation
+
     def toggle_inverter_frame(self, *args):
         """Show/hide inverter selection frame based on device type"""
-        if self.device_type_var.get() == "String Inverter":
-            self.inverter_frame.grid(row=3, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
+        if self.device_type_var.get() == DeviceType.STRING_INVERTER.value:
+            self.inverter_frame.grid(row=2, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
         else:
             self.inverter_frame.grid_remove()
 
@@ -330,6 +335,13 @@ class BlockConfigurator(ttk.Frame):
         block_id = f"Block_{len(self.blocks) + 1}"
         
         try:
+            # Get selected template if any
+            selection = self.template_listbox.curselection()
+            selected_template = None
+            if selection:
+                template_name = self.template_listbox.get(selection[0])
+                selected_template = self.tracker_templates.get(template_name)
+            
             # Convert feet to meters for storage
             row_spacing_ft = float(self.row_spacing_var.get())
             
@@ -337,7 +349,7 @@ class BlockConfigurator(ttk.Frame):
             block = BlockConfig(
                 block_id=block_id,
                 inverter=self.selected_inverter,
-                tracker_template=None,
+                tracker_template=selected_template,  # Now passing selected template
                 width_m=20,  # Initial minimum width
                 height_m=20,  # Initial minimum height
                 row_spacing_m=self.ft_to_m(row_spacing_ft),
@@ -719,6 +731,10 @@ class BlockConfigurator(ttk.Frame):
         if selection:
             template_name = self.template_listbox.get(selection[0])
             self.drag_template = self.tracker_templates.get(template_name)
+            # Update current block's template if one is selected
+            if self.current_block and self.drag_template:
+                self.blocks[self.current_block].tracker_template = self.drag_template
+                self.calculate_gcr()  # Recalculate GCR with new template
 
     def update_template_list(self):
         """Update template listbox with available templates"""
@@ -734,19 +750,23 @@ class BlockConfigurator(ttk.Frame):
     
     def calculate_gcr(self):
         """Calculate Ground Coverage Ratio"""
-        if (self.current_block and 
-            self.blocks[self.current_block].tracker_template and 
-            self.blocks[self.current_block].tracker_template.module_spec):
-            try:
-                template = self.blocks[self.current_block].tracker_template
-                module_length = template.module_spec.length_mm / 1000  # convert to meters
-                row_spacing = float(self.row_spacing_var.get())
-                row_spacing_m = self.ft_to_m(row_spacing)
-                gcr = module_length / row_spacing_m
-                self.gcr_label.config(text=f"{gcr:.3f}")
-            except (ValueError, ZeroDivisionError):
-                self.gcr_label.config(text="--")
-        else:
+        if not self.current_block:
+            return
+            
+        if not self.blocks[self.current_block].tracker_template:
+            return
+            
+        if not self.blocks[self.current_block].tracker_template.module_spec:
+            return
+            
+        try:
+            template = self.blocks[self.current_block].tracker_template
+            module_length = template.module_spec.length_mm / 1000  # convert to meters
+            row_spacing = float(self.row_spacing_var.get())
+            row_spacing_m = self.ft_to_m(row_spacing)
+            gcr = module_length / row_spacing_m
+            self.gcr_label.config(text=f"{gcr:.3f}")
+        except (ValueError, ZeroDivisionError, AttributeError) as e:
             self.gcr_label.config(text="--")
 
     def delete_selected_tracker(self, event=None):

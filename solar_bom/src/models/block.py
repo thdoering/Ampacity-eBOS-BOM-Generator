@@ -9,12 +9,6 @@ class WiringType(Enum):
     HOMERUN = "String Homerun"
     HARNESS = "Wire Harness"
 
-class DevicePlacement(Enum):
-    """Enumeration of downstream device placement options"""
-    NORTH = "North"
-    SOUTH = "South"
-    CENTER = "Center"
-
 class DeviceType(Enum):
     """Enumeration of downstream device types"""
     STRING_INVERTER = "String Inverter"
@@ -50,9 +44,9 @@ class BlockConfig:
     row_spacing_m: float  # Distance between tracker rows
     ns_spacing_m: float  # Distance between trackers in north/south direction
     gcr: float  # Ground Coverage Ratio
-    device_placement: DevicePlacement
+    device_x: float = 0.0  # X coordinate of device in meters
+    device_y: float = 0.0  # Y coordinate of device in meters
     device_spacing_m: float = 1.83  # 6ft in meters default
-    center_spacing_m: float = 1.83  # Only used when device_placement is CENTER
     
     # Optional fields with defaults must come after
     description: Optional[str] = None
