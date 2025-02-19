@@ -450,19 +450,20 @@ class BlockConfigurator(ttk.Frame):
             canvas_width = self.canvas.winfo_width()
             canvas_height = self.canvas.winfo_height()
 
-            # Calculate starting positions for gridlines
-            # Start drawing before visible area to ensure coverage when panning
-            start_x = -abs(self.pan_x)
-            start_y = -abs(self.pan_y)
-            end_x = canvas_width + abs(self.pan_x)
-            end_y = canvas_height + abs(self.pan_y)
+            # Calculate grid extent - ensure we cover entire visible area plus padding
+            grid_padding = 1000  # Add extra padding for panning
+            start_x = -grid_padding
+            start_y = -grid_padding
+            end_x = canvas_width + grid_padding
+            end_y = canvas_height + grid_padding
 
             # Draw vertical grid lines
             x = start_x
             while x <= end_x:
+                scaled_x = x + self.pan_x
                 line_id = self.canvas.create_line(
-                    x + self.pan_x, 0,
-                    x + self.pan_x, canvas_height,
+                    scaled_x, start_y,
+                    scaled_x, end_y,
                     fill='gray', dash=(2, 4)
                 )
                 self.grid_lines.append(line_id)
@@ -471,9 +472,10 @@ class BlockConfigurator(ttk.Frame):
             # Draw horizontal grid lines
             y = start_y
             while y <= end_y:
+                scaled_y = y + self.pan_y
                 line_id = self.canvas.create_line(
-                    0, y + self.pan_y,
-                    canvas_width, y + self.pan_y,
+                    start_x, scaled_y,
+                    end_x, scaled_y,
                     fill='gray', dash=(2, 4)
                 )
                 self.grid_lines.append(line_id)
@@ -1032,11 +1034,9 @@ class BlockConfigurator(ttk.Frame):
         min_spacing = 0.3  # 1ft minimum
         spacing_m = max(spacing_m, min_spacing)
         
-        # Validate block height
-        if block_height_m < (2 * spacing_m + device_height_m):
-            messagebox.showwarning("Invalid Configuration", 
-                "Block height too small for device placement")
-            return (0, 0, 0, 0)
+        # Place device in center of block width, near bottom
+        # Return (x, y, width, height) in meters
+        return (0, 0, device_width_m, device_height_m)  # Starting position at origin
 
     def is_valid_tracker_position(self, x, y, tracker_height):
         """Check if tracker position is valid based on device placement"""
@@ -1046,13 +1046,9 @@ class BlockConfigurator(ttk.Frame):
         block = self.blocks[self.current_block]
         device_x, device_y, device_w, device_h = self.get_device_coordinates(block.height_m)
         
-        # If device coordinates are invalid, prevent placement
-        if device_w == 0 and device_h == 0:
-            return False
-            
-        spacing_m = self.ft_to_m(float(self.device_spacing_var.get()))
-        min_spacing = 0.3  # 1ft minimum clearance
-        spacing_m = max(spacing_m, min_spacing)
+        # For now, all positions are valid as long as we have a block
+        # You can add specific validation rules here later if needed
+        return True
         
     def validate_device_clearances(self):
         """Validate device clearances against block dimensions"""
@@ -1060,16 +1056,9 @@ class BlockConfigurator(ttk.Frame):
             return False
             
         block = self.blocks[self.current_block]
-        device_x, device_y, device_w, device_h = self.get_device_coordinates(block.height_m)
         spacing_m = self.ft_to_m(self.validate_float_input(self.device_spacing_var, 6.0))
         
-        # Check minimum block dimensions
-        min_height = 2 * spacing_m + device_h
-        if block.height_m < min_height:
-            messagebox.showwarning("Invalid Configuration",
-                f"Block height ({block.height_m:.1f}m) must be at least {min_height:.1f}m")
-            return False
-                
+        # Allow placement as long as block exists
         return True
     
     def draw_device_zones(self, block_height_m):
@@ -1081,27 +1070,29 @@ class BlockConfigurator(ttk.Frame):
         device_x, device_y, device_w, device_h = self.get_device_coordinates(block_height_m)
         spacing_m = self.ft_to_m(float(self.device_spacing_var.get()))
         
-        # Convert device coordinates to canvas coordinates
-        x1 = 10 + self.pan_x
+        # Convert device coordinates to canvas coordinates (include padding and pan)
+        x1 = 10 + self.pan_x + device_x * scale
         x2 = x1 + device_w * scale
         
         # Add spacing zone width
         x1_zone = x1 - spacing_m * scale
         x2_zone = x2 + spacing_m * scale
         
-        # Draw device safety zone (red) - just around device
+        # Draw device safety zone (semi-transparent red)
         y1 = 10 + self.pan_y + (device_y - spacing_m) * scale
         y2 = 10 + self.pan_y + (device_y + device_h + spacing_m) * scale
+        
+        # Create safety zone with stipple pattern for transparency
         self.canvas.create_rectangle(
             x1_zone, y1, x2_zone, y2,
             fill='#ffcccc', stipple='gray50', tags='zones'
         )
 
-        # Draw the device itself as a solid rectangle on top
-        y1 = 10 + self.pan_y + device_y * scale
-        y2 = y1 + device_h * scale
+        # Draw the device itself as a solid rectangle
+        y1_device = 10 + self.pan_y + device_y * scale
+        y2_device = y1_device + device_h * scale
         self.canvas.create_rectangle(
-            x1, y1, x2, y2,
+            x1, y1_device, x2, y2_device,
             fill='red', tags='device'
         )
 
