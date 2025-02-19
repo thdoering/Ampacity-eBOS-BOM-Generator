@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import Optional, Dict, List
-from ..models.block import BlockConfig, WiringType, DevicePlacement, TrackerPosition, DeviceType
+from ..models.block import BlockConfig, WiringType, TrackerPosition, DeviceType
 from ..models.tracker import TrackerTemplate, TrackerPosition, ModuleOrientation
 from ..models.inverter import InverterSpec
 from .inverter_manager import InverterManager
@@ -188,29 +188,28 @@ class BlockConfigurator(ttk.Frame):
         # Initial inverter frame visibility
         self.toggle_inverter_frame()
 
-        # Device Placement
-        ttk.Label(device_frame, text="Device Placement:").grid(row=2, column=0, padx=5, pady=2, sticky=tk.W)
-        self.device_placement_var = tk.StringVar(value=DevicePlacement.NORTH.value)
-        placement_combo = ttk.Combobox(device_frame, textvariable=self.device_placement_var)
-        placement_combo['values'] = [p.value for p in DevicePlacement]
-        placement_combo.grid(row=2, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
-        self.device_placement_var.trace('w', lambda *args: (
-            self.update_center_spacing_visibility(),
-            self.draw_block()
-        ))
+        # Device position configuration
+        device_frame = ttk.LabelFrame(config_frame, text="Device Position", padding="5")
+        device_frame.grid(row=5, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
 
-        ttk.Label(device_frame, text="Device Spacing (ft):").grid(row=3, column=0, padx=5, pady=2, sticky=tk.W)
+        # Position display
+        ttk.Label(device_frame, text="Position:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
+        self.device_pos_label = ttk.Label(device_frame, text="X: 0.0m, Y: 0.0m")
+        self.device_pos_label.grid(row=0, column=1, padx=5, pady=2, sticky=tk.W)
+
+        # Device spacing in feet (with meters display)
+        ttk.Label(device_frame, text="Device Spacing (ft):").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
         self.device_spacing_var = tk.StringVar(value="6.0")
         device_spacing_entry = ttk.Entry(device_frame, textvariable=self.device_spacing_var)
-        device_spacing_entry.grid(row=3, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
-        self.device_spacing_var.trace('w', lambda *args: self.draw_block())
+        device_spacing_entry.grid(row=1, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        self.device_spacing_meters_label = ttk.Label(device_frame, text="(1.83m)")
+        self.device_spacing_meters_label.grid(row=1, column=2, padx=5, pady=2, sticky=tk.W)
 
-        ttk.Label(device_frame, text="Center Gap (ft):").grid(row=4, column=0, padx=5, pady=2, sticky=tk.W)
-        self.center_spacing_var = tk.StringVar(value="50.0")
-        self.center_spacing_var.trace('w', lambda *args: self.draw_block())
-        self.center_spacing_entry = ttk.Entry(device_frame, textvariable=self.center_spacing_var)
-        self.center_spacing_entry.grid(row=4, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
-        self.center_spacing_entry.grid_remove()  # Hidden by default
+        # Add trace to update both display and block
+        self.device_spacing_var.trace('w', lambda *args: (
+            self.update_device_spacing_display(),
+            self.draw_block()
+        ))
 
         # Templates List Frame
         templates_frame = ttk.LabelFrame(config_frame, text="Tracker Templates", padding="5")
@@ -279,9 +278,6 @@ class BlockConfigurator(ttk.Frame):
 
         # Add trace for device type to show/hide inverter frame
         self.device_type_var.trace('w', lambda *args: self.toggle_inverter_frame())
-
-        # Set initial visibility state
-        self.update_center_spacing_visibility()
 
         # Initialize device max current calculation
         self.update_device_max_current()
@@ -356,9 +352,7 @@ class BlockConfigurator(ttk.Frame):
                 ns_spacing_m=float(self.ns_spacing_var.get()),
                 gcr=0.0,  # This will be calculated when a tracker template is assigned
                 description=f"New block {block_id}",
-                device_placement=DevicePlacement(self.device_placement_var.get()),  
-                device_spacing_m=self.ft_to_m(float(self.device_spacing_var.get())),  
-                center_spacing_m=self.ft_to_m(float(self.center_spacing_var.get()))
+                device_spacing_m=self.ft_to_m(float(self.device_spacing_var.get())) 
             )
             
             # Add to blocks dictionary
@@ -976,9 +970,7 @@ class BlockConfigurator(ttk.Frame):
                 'tracker_positions': positions,
                 'inverter_name': f"{block.inverter.manufacturer} {block.inverter.model}" if block.inverter else None,
                 'template_name': block.tracker_template.template_name if block.tracker_template else None,
-                'device_placement': block.device_placement.value,
-                'device_spacing_m': block.device_spacing_m,
-                'center_spacing_m': block.center_spacing_m
+                'device_spacing_m': block.device_spacing_m
             }
             
         return current_state
@@ -1007,9 +999,7 @@ class BlockConfigurator(ttk.Frame):
                 ns_spacing_m=block_data['ns_spacing_m'],
                 gcr=block_data['gcr'],
                 description=block_data['description'],
-                device_placement=DevicePlacement(block_data.get('device_placement', DevicePlacement.SOUTH.value)),
                 device_spacing_m=block_data.get('device_spacing_m', 1.83),  # 6ft default
-                center_spacing_m=block_data.get('center_spacing_m', 1.83)
             )
             
             # Clear existing tracker positions
@@ -1032,20 +1022,11 @@ class BlockConfigurator(ttk.Frame):
             
         self.draw_block()
 
-    def update_center_spacing_visibility(self):
-        """Show/hide center spacing input based on device placement"""
-        if self.device_placement_var.get() == DevicePlacement.CENTER.value:
-            self.center_spacing_entry.grid()
-        else:
-            self.center_spacing_entry.grid_remove()
-
     def get_device_coordinates(self, block_height_m):
         """Calculate device coordinates based on placement"""
         device_height_m = 0.91  # 3ft in meters
         device_width_m = 0.91   # 3ft in meters
         spacing_m = self.ft_to_m(self.validate_float_input(self.device_spacing_var, 6.0))  # 6ft default
-        
-        placement = DevicePlacement(self.device_placement_var.get())
         
         # Ensure minimum spacing
         min_spacing = 0.3  # 1ft minimum
@@ -1056,16 +1037,6 @@ class BlockConfigurator(ttk.Frame):
             messagebox.showwarning("Invalid Configuration", 
                 "Block height too small for device placement")
             return (0, 0, 0, 0)
-        
-        if placement == DevicePlacement.NORTH:
-            return (0, spacing_m, device_width_m, device_height_m)
-        elif placement == DevicePlacement.SOUTH:
-            return (0, block_height_m - spacing_m - device_height_m, 
-                    device_width_m, device_height_m)
-        else:  # CENTER
-            center_y = block_height_m / 2
-            return (0, center_y - device_height_m/2, 
-                    device_width_m, device_height_m)
 
     def is_valid_tracker_position(self, x, y, tracker_height):
         """Check if tracker position is valid based on device placement"""
@@ -1083,19 +1054,6 @@ class BlockConfigurator(ttk.Frame):
         min_spacing = 0.3  # 1ft minimum clearance
         spacing_m = max(spacing_m, min_spacing)
         
-        placement = DevicePlacement(self.device_placement_var.get())
-        if placement == DevicePlacement.NORTH:
-            # Must be below device plus spacing
-            return y >= (device_y + device_h + spacing_m)
-        elif placement == DevicePlacement.SOUTH:
-            # Must be above device minus spacing
-            return (y + tracker_height) <= (device_y - spacing_m)
-        else:  # CENTER
-            center_spacing = self.ft_to_m(float(self.center_spacing_var.get()))
-            # Must be either fully above or fully below the device zone
-            return ((y + tracker_height <= device_y - spacing_m) or  # Above device
-                    (y >= device_y + device_h + spacing_m))  # Below device
-        
     def validate_device_clearances(self):
         """Validate device clearances against block dimensions"""
         if not self.current_block:
@@ -1111,16 +1069,6 @@ class BlockConfigurator(ttk.Frame):
             messagebox.showwarning("Invalid Configuration",
                 f"Block height ({block.height_m:.1f}m) must be at least {min_height:.1f}m")
             return False
-            
-        # For center placement, check additional clearance
-        if self.device_placement_var.get() == DevicePlacement.CENTER.value:
-            center_spacing = self.ft_to_m(self.validate_float_input(self.center_spacing_var, 50.0))
-            # Changed validation to only require the center spacing plus device height
-            min_height = device_h + 2 * spacing_m  # Just require basic clearance
-            if block.height_m < min_height:
-                messagebox.showwarning("Invalid Configuration",
-                    f"Block height ({block.height_m:.1f}m) must be at least {min_height:.1f}m for center placement")
-                return False
                 
         return True
     
@@ -1141,44 +1089,13 @@ class BlockConfigurator(ttk.Frame):
         x1_zone = x1 - spacing_m * scale
         x2_zone = x2 + spacing_m * scale
         
-        placement = DevicePlacement(self.device_placement_var.get())
-        
-        if placement == DevicePlacement.NORTH:
-            # Draw full restricted zone from top of canvas down to device bottom + spacing
-            y1 = 0  # Start from top of canvas
-            y2 = 10 + self.pan_y + (device_y + device_h + spacing_m) * scale
-            self.canvas.create_rectangle(
-                0, y1, self.canvas.winfo_width(), y2,
-                fill='#ffcccc', stipple='gray50', tags='zones'
-            )
-            
-        elif placement == DevicePlacement.SOUTH:
-            # Draw full restricted zone from device top - spacing to bottom of canvas
-            y1 = 10 + self.pan_y + (device_y - spacing_m) * scale
-            y2 = self.canvas.winfo_height()  # Extend to bottom of canvas
-            self.canvas.create_rectangle(
-                0, y1, self.canvas.winfo_width(), y2,
-                fill='#ffcccc', stipple='gray50', tags='zones'
-            )
-            
-        else:  # CENTER
-            center_spacing = self.ft_to_m(float(self.center_spacing_var.get()))
-            
-            # Draw center gap zone (yellow) - extends full width
-            y1 = 10 + self.pan_y + (device_y - center_spacing) * scale
-            y2 = 10 + self.pan_y + (device_y + device_h + center_spacing) * scale
-            self.canvas.create_rectangle(
-                0, y1, self.canvas.winfo_width(), y2,
-                fill='#fff3cd', stipple='gray50', tags='zones'
-            )
-            
-            # Draw device safety zone (red) - just around device
-            y1 = 10 + self.pan_y + (device_y - spacing_m) * scale
-            y2 = 10 + self.pan_y + (device_y + device_h + spacing_m) * scale
-            self.canvas.create_rectangle(
-                x1_zone, y1, x2_zone, y2,
-                fill='#ffcccc', stipple='gray50', tags='zones'
-            )
+        # Draw device safety zone (red) - just around device
+        y1 = 10 + self.pan_y + (device_y - spacing_m) * scale
+        y2 = 10 + self.pan_y + (device_y + device_h + spacing_m) * scale
+        self.canvas.create_rectangle(
+            x1_zone, y1, x2_zone, y2,
+            fill='#ffcccc', stipple='gray50', tags='zones'
+        )
 
         # Draw the device itself as a solid rectangle on top
         y1 = 10 + self.pan_y + device_y * scale
@@ -1197,3 +1114,12 @@ class BlockConfigurator(ttk.Frame):
             self.device_max_current_label.config(text=f"{total_current}")
         except ValueError:
             self.device_max_current_label.config(text="--")
+
+    def update_device_spacing_display(self):
+        """Update the meters display when feet value changes"""
+        try:
+            feet = float(self.device_spacing_var.get())
+            meters = self.ft_to_m(feet)
+            self.device_spacing_meters_label.config(text=f"({meters:.2f}m)")
+        except ValueError:
+            self.device_spacing_meters_label.config(text="(invalid)")
