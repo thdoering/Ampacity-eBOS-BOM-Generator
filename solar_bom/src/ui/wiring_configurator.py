@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Optional
 from ..models.block import BlockConfig, WiringType
+from ..models.module import ModuleOrientation
 
 class WiringConfigurator(tk.Toplevel):
     def __init__(self, parent, block: BlockConfig):
@@ -116,25 +117,76 @@ class WiringConfigurator(tk.Toplevel):
     def draw_block(self):
         """Draw block layout with wiring visualization"""
         self.canvas.delete("all")
-        
         scale = self.get_canvas_scale()
         
         # Draw existing trackers
         for pos in self.block.tracker_positions:
-            # Convert tracker position to canvas coordinates
-            x = 20 + self.pan_x + pos.x * scale
-            y = 20 + self.pan_y + pos.y * scale
+            if not pos.template:
+                continue
+                
+            template = pos.template
             
-            # Get tracker dimensions
-            tracker_width, tracker_height = pos.template.get_physical_dimensions()
+            # Get base coordinates with pan offset
+            x_base = 20 + self.pan_x + pos.x * scale
+            y_base = 20 + self.pan_y + pos.y * scale
             
-            # Draw tracker representation
-            self.canvas.create_rectangle(
-                x, y,
-                x + tracker_width * scale,
-                y + tracker_height * scale,
-                fill='lightblue', outline='blue'
+            # Get module dimensions based on orientation
+            if template.module_orientation == ModuleOrientation.PORTRAIT:
+                module_height = template.module_spec.width_mm / 1000
+                module_width = template.module_spec.length_mm / 1000
+            else:
+                module_height = template.module_spec.length_mm / 1000
+                module_width = template.module_spec.width_mm / 1000
+                
+            # Draw torque tube through center
+            self.canvas.create_line(
+                x_base + module_width * scale/2, y_base,
+                x_base + module_width * scale/2, y_base + (module_height * template.modules_per_string + 
+                    template.module_spacing_m * (template.modules_per_string - 1) + 
+                    template.motor_gap_m) * scale,
+                width=3, fill='gray'
             )
+            
+            # Calculate number of modules
+            total_modules = template.modules_per_string * template.strings_per_tracker
+            modules_per_string = template.modules_per_string
+            strings_above_motor = template.strings_per_tracker - 1
+            modules_above_motor = modules_per_string * strings_above_motor
+            modules_below_motor = modules_per_string
+            
+            # Draw all modules
+            y_pos = y_base
+            modules_drawn = 0
+            
+            # Draw modules above motor
+            for i in range(modules_above_motor):
+                self.canvas.create_rectangle(
+                    x_base, y_pos,
+                    x_base + module_width * scale, 
+                    y_pos + module_height * scale,
+                    fill='lightblue', outline='blue'
+                )
+                modules_drawn += 1
+                y_pos += (module_height + template.module_spacing_m) * scale
+            
+            # Draw motor
+            motor_y = y_pos
+            self.canvas.create_oval(
+                x_base + module_width * scale/2 - 5, motor_y - 5,
+                x_base + module_width * scale/2 + 5, motor_y + 5,
+                fill='red'
+            )
+            y_pos += template.motor_gap_m * scale
+            
+            # Draw modules below motor
+            for i in range(modules_below_motor):
+                self.canvas.create_rectangle(
+                    x_base, y_pos,
+                    x_base + module_width * scale,
+                    y_pos + module_height * scale,
+                    fill='lightblue', outline='blue'
+                )
+                y_pos += (module_height + template.module_spacing_m) * scale
         
         # Draw inverter/combiner
         device_x = 20 + self.pan_x + self.block.device_x * scale
