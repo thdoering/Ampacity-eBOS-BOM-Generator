@@ -132,6 +132,10 @@ class BlockConfigurator(ttk.Frame):
         device_frame = ttk.LabelFrame(config_frame, text="Downstream Device", padding="5")
         device_frame.grid(row=5, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
 
+        # Add Configure Wiring button
+        ttk.Button(config_frame, text="Configure Wiring", 
+                command=self.configure_wiring).grid(row=6, column=0, columnspan=2, padx=5, pady=5)
+
         # Device Type Selection
         ttk.Label(device_frame, text="Device Type:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
         self.device_type_var = tk.StringVar(value=DeviceType.STRING_INVERTER.value)
@@ -1114,3 +1118,12 @@ class BlockConfigurator(ttk.Frame):
             self.device_spacing_meters_label.config(text=f"({meters:.2f}m)")
         except ValueError:
             self.device_spacing_meters_label.config(text="(invalid)")
+
+    def configure_wiring(self):
+        """Open wiring configuration window"""
+        if not self.current_block:
+            messagebox.showwarning("Warning", "Please select a block first")
+            return
+            
+        from .wiring_configurator import WiringConfigurator
+        WiringConfigurator(self, self.blocks[self.current_block])
