@@ -1,6 +1,6 @@
 import tkinter as tk
 from tkinter import ttk
-from typing import Optional, Dict, ClassVar
+from typing import Optional, Dict, ClassVar, List
 from ..models.block import BlockConfig, WiringType
 from ..models.module import ModuleOrientation
 from ..models.tracker import TrackerPosition
@@ -221,6 +221,69 @@ class WiringConfigurator(tk.Toplevel):
         # Draw device destination points
         self.draw_device_destination_points()
 
+        # Draw routes if wiring type is selected
+        if self.wiring_type_var.get() == WiringType.HOMERUN.value:
+            # Sort strings by Y position to determine route indices
+            pos_routes = []  # List to store positive route info
+            neg_routes = []  # List to store negative route info
+            
+            # Collect all source points
+            for pos in self.block.tracker_positions:
+                for string in pos.strings:
+                    pos_routes.append({
+                        'source_x': pos.x + string.positive_source_x,
+                        'source_y': pos.y + string.positive_source_y,
+                        'going_north': self.block.device_y < pos.y + string.positive_source_y
+                    })
+                    neg_routes.append({
+                        'source_x': pos.x + string.negative_source_x,
+                        'source_y': pos.y + string.negative_source_y,
+                        'going_north': self.block.device_y < pos.y + string.negative_source_y
+                    })
+            
+            # Sort routes by y position within their north/south groups
+            pos_routes_north = sorted([r for r in pos_routes if r['going_north']], 
+                                    key=lambda r: r['source_y'], reverse=True)
+            pos_routes_south = sorted([r for r in pos_routes if not r['going_north']], 
+                                    key=lambda r: r['source_y'])
+            neg_routes_north = sorted([r for r in neg_routes if r['going_north']], 
+                                    key=lambda r: r['source_y'], reverse=True)
+            neg_routes_south = sorted([r for r in neg_routes if not r['going_north']], 
+                                    key=lambda r: r['source_y'])
+            
+            # Get device destination points
+            pos_dest, neg_dest = self.get_device_destination_points()
+            
+            # Draw positive routes
+            for i, route_info in enumerate(pos_routes_north + pos_routes_south):
+                route = self.calculate_cable_route(
+                    route_info['source_x'],
+                    route_info['source_y'],
+                    pos_dest[0],  # Left side of device
+                    pos_dest[1],  # Device y-position
+                    True,  # is_positive
+                    i  # route_index
+                )
+                points = [(20 + self.pan_x + x * scale, 
+                          20 + self.pan_y + y * scale) for x, y in route]
+                if len(points) > 1:
+                    self.canvas.create_line(points, fill='red', width=2)
+            
+            # Draw negative routes
+            for i, route_info in enumerate(neg_routes_north + neg_routes_south):
+                route = self.calculate_cable_route(
+                    route_info['source_x'],
+                    route_info['source_y'],
+                    neg_dest[0],  # Right side of device
+                    neg_dest[1],  # Device y-position
+                    False,  # is_positive
+                    i  # route_index
+                )
+                points = [(20 + self.pan_x + x * scale, 
+                          20 + self.pan_y + y * scale) for x, y in route]
+                if len(points) > 1:
+                    self.canvas.create_line(points, fill='blue', width=2)
+
     def draw_collection_points(self, pos: TrackerPosition, x: float, y: float, scale: float):
         """Draw collection points for a tracker position"""
         for string in pos.strings:
@@ -362,3 +425,42 @@ class WiringConfigurator(tk.Toplevel):
             outline='darkblue',
             tags='destination_point'
         )
+
+    def calculate_cable_route(self, source_x: float, source_y: float, 
+                            dest_x: float, dest_y: float, 
+                            is_positive: bool, route_index: int) -> List[tuple[float, float]]:
+        """
+        Calculate cable route from source point to destination point.
+        
+        Args:
+            source_x, source_y: Starting coordinates in meters
+            dest_x, dest_y: Ending coordinates in meters
+            is_positive: True if this is a positive (red) wire, False if negative (blue)
+            route_index: Index of this route for offsetting parallel runs
+            
+        Returns:
+            List of (x, y) coordinates defining the route
+        """
+        route = []
+        offset = 0.1 * route_index  # 0.1m offset between parallel runs
+        
+        # Add starting point
+        route.append((source_x, source_y))
+        
+        # Determine vertical direction based on source and destination points
+        going_north = dest_y < source_y
+        
+        # Offset x position based on whether it's positive/negative and route index
+        tracker_x = source_x + (0.1 if is_positive else -0.1) + offset
+        
+        # First: Vertical run along tracker to the destination y-level
+        route.append((tracker_x, dest_y))
+        
+        # Second: Horizontal run to device x-position
+        # Keep the same offset in the horizontal run
+        route.append((dest_x + (offset if is_positive else -offset), dest_y))
+        
+        # Finally: Connect to exact destination point
+        route.append((dest_x, dest_y))
+        
+        return route

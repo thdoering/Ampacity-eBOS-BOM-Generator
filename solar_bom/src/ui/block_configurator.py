@@ -132,83 +132,62 @@ class BlockConfigurator(ttk.Frame):
         device_frame = ttk.LabelFrame(config_frame, text="Downstream Device", padding="5")
         device_frame.grid(row=5, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
 
-        # Add Configure Wiring button
-        ttk.Button(config_frame, text="Configure Wiring", 
-                command=self.configure_wiring).grid(row=6, column=0, columnspan=2, padx=5, pady=5)
-
         # Device Type Selection
         ttk.Label(device_frame, text="Device Type:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
         self.device_type_var = tk.StringVar(value=DeviceType.STRING_INVERTER.value)
         device_type_combo = ttk.Combobox(device_frame, textvariable=self.device_type_var, state='readonly')
         device_type_combo['values'] = [t.value for t in DeviceType]
-        device_type_combo.grid(row=0, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
-
-        # Device Specifications
-        specs_frame = ttk.LabelFrame(device_frame, text="Device Specifications", padding="5")
-        specs_frame.grid(row=1, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
+        device_type_combo.grid(row=0, column=1, columnspan=2, padx=5, pady=2, sticky=(tk.W, tk.E))
 
         # Number of Inputs
-        ttk.Label(specs_frame, text="Number of Inputs:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(device_frame, text="Number of Inputs:").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
         self.num_inputs_var = tk.StringVar(value="20")
         num_inputs_spinbox = ttk.Spinbox(
-            specs_frame,
+            device_frame,
             from_=8,
             to=40,
             textvariable=self.num_inputs_var,
             increment=1,
             width=10
         )
-        num_inputs_spinbox.grid(row=0, column=1, padx=5, pady=2, sticky=tk.W)
+        num_inputs_spinbox.grid(row=1, column=1, padx=5, pady=2, sticky=tk.W)
 
         # Max Current per Input
-        ttk.Label(specs_frame, text="Max Current per Input (A):").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(device_frame, text="Max Current per Input (A):").grid(row=2, column=0, padx=5, pady=2, sticky=tk.W)
         self.max_current_per_input_var = tk.StringVar(value="20")
         max_current_spinbox = ttk.Spinbox(
-            specs_frame,
+            device_frame,
             from_=15,
             to=30,
             textvariable=self.max_current_per_input_var,
             increment=1,
-            width=10,
-            validate='all',
-            validatecommand=(self.register(lambda val: val.isdigit() or val == ""), '%P')
+            width=10
         )
-        max_current_spinbox.grid(row=1, column=1, padx=5, pady=2, sticky=tk.W)
+        max_current_spinbox.grid(row=2, column=1, padx=5, pady=2, sticky=tk.W)
 
         # Device Max Current (calculated)
-        ttk.Label(specs_frame, text="Device Max Current (A):").grid(row=2, column=0, padx=5, pady=2, sticky=tk.W)
-        self.device_max_current_label = ttk.Label(specs_frame, text="--")
-        self.device_max_current_label.grid(row=2, column=1, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(device_frame, text="Device Max Current (A):").grid(row=3, column=0, padx=5, pady=2, sticky=tk.W)
+        self.device_max_current_label = ttk.Label(device_frame, text="--")
+        self.device_max_current_label.grid(row=3, column=1, padx=5, pady=2, sticky=tk.W)
 
-        # Inverter Selection (only shown for string inverter type)
-        self.inverter_frame = ttk.Frame(specs_frame)
-        self.inverter_frame.grid(row=3, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
-
-        ttk.Label(self.inverter_frame, text="Selected Inverter:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
-        self.inverter_label = ttk.Label(self.inverter_frame, text="None")
-        self.inverter_label.grid(row=0, column=1, padx=5, pady=2, sticky=tk.W)
-        ttk.Button(self.inverter_frame, text="Select Inverter", command=self.select_inverter).grid(row=0, column=2, padx=5, pady=2)
-
-        # Initial inverter frame visibility
-        self.toggle_inverter_frame()
-
-        # Device position configuration
-        device_frame = ttk.LabelFrame(config_frame, text="Device Position", padding="5")
-        device_frame.grid(row=5, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
-
-        # Position display
-        ttk.Label(device_frame, text="Position:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
+        # Device Position
+        ttk.Label(device_frame, text="Position:").grid(row=4, column=0, padx=5, pady=2, sticky=tk.W)
         self.device_pos_label = ttk.Label(device_frame, text="X: 0.0m, Y: 0.0m")
-        self.device_pos_label.grid(row=0, column=1, padx=5, pady=2, sticky=tk.W)
+        self.device_pos_label.grid(row=4, column=1, columnspan=2, padx=5, pady=2, sticky=tk.W)
 
-        # Device spacing in feet (with meters display)
-        ttk.Label(device_frame, text="Device Spacing (ft):").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
+        # Device Spacing
+        ttk.Label(device_frame, text="Device Spacing (ft):").grid(row=5, column=0, padx=5, pady=2, sticky=tk.W)
         self.device_spacing_var = tk.StringVar(value="6.0")
         device_spacing_entry = ttk.Entry(device_frame, textvariable=self.device_spacing_var)
-        device_spacing_entry.grid(row=1, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        device_spacing_entry.grid(row=5, column=1, padx=5, pady=2, sticky=tk.W)
         self.device_spacing_meters_label = ttk.Label(device_frame, text="(1.83m)")
-        self.device_spacing_meters_label.grid(row=1, column=2, padx=5, pady=2, sticky=tk.W)
+        self.device_spacing_meters_label.grid(row=5, column=2, padx=5, pady=2, sticky=tk.W)
 
+        # Selected Inverter
+        ttk.Label(device_frame, text="Selected Inverter:").grid(row=6, column=0, padx=5, pady=2, sticky=tk.W)
+        self.inverter_label = ttk.Label(device_frame, text="None")
+        self.inverter_label.grid(row=6, column=1, padx=5, pady=2, sticky=tk.W)
+        ttk.Button(device_frame, text="Select Inverter", command=self.select_inverter).grid(row=6, column=2, padx=5, pady=2)
         # Add trace to update both display and block
         self.device_spacing_var.trace('w', lambda *args: (
             self.update_device_spacing_display(),
@@ -348,9 +327,6 @@ class BlockConfigurator(ttk.Frame):
                 row_spacing_m = self.ft_to_m(row_spacing_ft)
                 device_width_m = 0.91  # 3ft in meters
                 initial_device_x = row_spacing_m / 2 + (device_width_m / 2)
-                print(f"Row spacing ft: {row_spacing_ft}")
-                print(f"Row spacing m: {row_spacing_m}")
-                print(f"Initial device x: {initial_device_x}")
             except ValueError:
                 row_spacing_m = 6.0  # Default to 6m if invalid input
                 device_width_m = 0.91  # 3ft in meters
@@ -370,8 +346,6 @@ class BlockConfigurator(ttk.Frame):
                 device_x=initial_device_x,  # Set initial X position
                 device_y=0.0  # Start at top
             )
-            
-            print(f"Block device_x after creation: {block.device_x}")
             
             # Add to blocks dictionary
             self.blocks[block_id] = block
