@@ -170,11 +170,6 @@ class BlockConfigurator(ttk.Frame):
         self.device_max_current_label = ttk.Label(device_frame, text="--")
         self.device_max_current_label.grid(row=3, column=1, padx=5, pady=2, sticky=tk.W)
 
-        # Device Position
-        ttk.Label(device_frame, text="Position:").grid(row=4, column=0, padx=5, pady=2, sticky=tk.W)
-        self.device_pos_label = ttk.Label(device_frame, text="X: 0.0m, Y: 0.0m")
-        self.device_pos_label.grid(row=4, column=1, columnspan=2, padx=5, pady=2, sticky=tk.W)
-
         # Device Spacing
         ttk.Label(device_frame, text="Device Spacing (ft):").grid(row=5, column=0, padx=5, pady=2, sticky=tk.W)
         self.device_spacing_var = tk.StringVar(value="6.0")
@@ -187,7 +182,9 @@ class BlockConfigurator(ttk.Frame):
         ttk.Label(device_frame, text="Selected Inverter:").grid(row=6, column=0, padx=5, pady=2, sticky=tk.W)
         self.inverter_label = ttk.Label(device_frame, text="None")
         self.inverter_label.grid(row=6, column=1, padx=5, pady=2, sticky=tk.W)
-        ttk.Button(device_frame, text="Select Inverter", command=self.select_inverter).grid(row=6, column=2, padx=5, pady=2)
+        # Change this line in the UI setup:
+        self.inverter_select_button = ttk.Button(device_frame, text="Select Inverter", command=self.select_inverter)
+        self.inverter_select_button.grid(row=6, column=2, padx=5, pady=2)
         # Add trace to update both display and block
         self.device_spacing_var.trace('w', lambda *args: (
             self.update_device_spacing_display(),
@@ -268,11 +265,23 @@ class BlockConfigurator(ttk.Frame):
         # Initialize GCR calculation
 
     def toggle_inverter_frame(self, *args):
-        """Show/hide inverter selection frame based on device type"""
+        """Show/hide inverter selection elements based on device type"""
         if self.device_type_var.get() == DeviceType.STRING_INVERTER.value:
-            self.inverter_frame.grid(row=2, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
+            # Show inverter widgets
+            self.inverter_label.grid(row=6, column=1, padx=5, pady=2, sticky=tk.W)
+            self.inverter_label.grid(row=6, column=1, padx=5, pady=2, sticky=tk.W)
+            for widget in [
+                self.inverter_label,
+                self.inverter_select_button
+            ]:
+                widget.grid()
         else:
-            self.inverter_frame.grid_remove()
+            # Hide inverter widgets
+            for widget in [
+                self.inverter_label,
+                self.inverter_select_button
+            ]:
+                widget.grid_remove()
 
     def on_inverter_selected(self, inverter):
         """Handle inverter selection"""
