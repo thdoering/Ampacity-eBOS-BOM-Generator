@@ -191,6 +191,13 @@ class BlockConfigurator(ttk.Frame):
             self.draw_block()
         ))
 
+        # Add spacing after device frame
+        ttk.Label(config_frame, text="").grid(row=6, column=0, pady=5)  # Spacer
+
+        # Configure Wiring button
+        ttk.Button(config_frame, text="Configure Wiring", 
+                command=self.configure_wiring).grid(row=7, column=0, columnspan=2, padx=5, pady=5)
+
         # Templates List Frame
         templates_frame = ttk.LabelFrame(config_frame, text="Tracker Templates", padding="5")
         templates_frame.grid(row=3, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))

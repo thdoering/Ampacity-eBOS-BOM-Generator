@@ -80,7 +80,7 @@ class WiringConfigurator(tk.Toplevel):
         self.harness_frame = ttk.Frame(cable_frame)
         self.harness_frame.grid(row=1, column=0, columnspan=2, padx=0, pady=5, sticky=(tk.W, tk.E))
         ttk.Label(self.harness_frame, text="Harness Cable Size:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
-        self.harness_cable_size_var = tk.StringVar(value="4 AWG")
+        self.harness_cable_size_var = tk.StringVar(value="8 AWG")
         harness_cable_combo = ttk.Combobox(self.harness_frame, textvariable=self.harness_cable_size_var, state='readonly', width=10)
         harness_cable_combo['values'] = list(self.AWG_SIZES.keys())
         harness_cable_combo.grid(row=0, column=1, padx=5, pady=2)
@@ -283,6 +283,91 @@ class WiringConfigurator(tk.Toplevel):
                           20 + self.pan_y + y * scale) for x, y in route]
                 if len(points) > 1:
                     self.canvas.create_line(points, fill='blue', width=2)
+                    
+        else:  # Wire Harness configuration
+            # Process each tracker
+            for pos in self.block.tracker_positions:
+                # Calculate node points
+                pos_nodes = self.calculate_node_points(pos, True)  # Positive nodes
+                neg_nodes = self.calculate_node_points(pos, False)  # Negative nodes
+                
+                # Draw string cables to node points
+                for i, string in enumerate(pos.strings):
+                    # Positive string cable
+                    source_x = pos.x + string.positive_source_x
+                    source_y = pos.y + string.positive_source_y
+                    route = self.calculate_cable_route(
+                        source_x, source_y,
+                        pos_nodes[i][0], pos_nodes[i][1],
+                        True, i
+                    )
+                    points = [(20 + self.pan_x + x * scale, 
+                             20 + self.pan_y + y * scale) for x, y in route]
+                    if len(points) > 1:
+                        self.canvas.create_line(points, fill='red', width=1)
+                        
+                    # Negative string cable
+                    source_x = pos.x + string.negative_source_x
+                    source_y = pos.y + string.negative_source_y
+                    route = self.calculate_cable_route(
+                        source_x, source_y,
+                        neg_nodes[i][0], neg_nodes[i][1],
+                        False, i
+                    )
+                    points = [(20 + self.pan_x + x * scale, 
+                             20 + self.pan_y + y * scale) for x, y in route]
+                    if len(points) > 1:
+                        self.canvas.create_line(points, fill='blue', width=1)
+                
+                # Draw node points
+                for nx, ny in pos_nodes:
+                    x = 20 + self.pan_x + nx * scale
+                    y = 20 + self.pan_y + ny * scale
+                    self.canvas.create_oval(x-3, y-3, x+3, y+3, fill='red', outline='darkred')
+                
+                for nx, ny in neg_nodes:
+                    x = 20 + self.pan_x + nx * scale
+                    y = 20 + self.pan_y + ny * scale
+                    self.canvas.create_oval(x-3, y-3, x+3, y+3, fill='blue', outline='darkblue')
+                
+                # Draw harness cables between nodes
+                pos_dest, neg_dest = self.get_device_destination_points()
+                
+                # Positive harness
+                for i in range(len(pos_nodes)):
+                    start = pos_nodes[i]
+                    if i < len(pos_nodes) - 1:
+                        end = pos_nodes[i + 1]
+                    else:
+                        end = (pos_dest[0], pos_dest[1])
+                    
+                    route = self.calculate_cable_route(
+                        start[0], start[1],
+                        end[0], end[1],
+                        True, 0  # Use index 0 since harness follows single path
+                    )
+                    points = [(20 + self.pan_x + x * scale, 
+                             20 + self.pan_y + y * scale) for x, y in route]
+                    if len(points) > 1:
+                        self.canvas.create_line(points, fill='red', width=2)  # Thicker line for harness
+                
+                # Negative harness
+                for i in range(len(neg_nodes)):
+                    start = neg_nodes[i]
+                    if i < len(neg_nodes) - 1:
+                        end = neg_nodes[i + 1]
+                    else:
+                        end = (neg_dest[0], neg_dest[1])
+                    
+                    route = self.calculate_cable_route(
+                        start[0], start[1],
+                        end[0], end[1],
+                        False, 0  # Use index 0 since harness follows single path
+                    )
+                    points = [(20 + self.pan_x + x * scale, 
+                             20 + self.pan_y + y * scale) for x, y in route]
+                    if len(points) > 1:
+                        self.canvas.create_line(points, fill='blue', width=2)  # Thicker line for harness
 
     def draw_collection_points(self, pos: TrackerPosition, x: float, y: float, scale: float):
         """Draw collection points for a tracker position"""
@@ -464,3 +549,36 @@ class WiringConfigurator(tk.Toplevel):
         route.append((dest_x, dest_y))
         
         return route
+    
+    def calculate_node_points(self, pos, is_positive: bool) -> List[tuple[float, float]]:
+        """
+        Calculate node points for a tracker's wire harness.
+        
+        Args:
+            pos: TrackerPosition object
+            is_positive: True for positive (red) nodes, False for negative (blue) nodes
+            
+        Returns:
+            List of (x, y) coordinates for node points
+        """
+        nodes = []
+        base_offset = 0.1  # Base offset from tracker centerline
+        offset = base_offset if is_positive else -base_offset
+        
+        # Sort strings by y-position
+        source_points = []
+        for string in pos.strings:
+            if is_positive:
+                source_points.append((string.positive_source_x, string.positive_source_y))
+            else:
+                source_points.append((string.negative_source_x, string.negative_source_y))
+        
+        source_points.sort(key=lambda p: p[1])  # Sort by y-coordinate
+        
+        # Create node points slightly offset from source points
+        for i, (sx, sy) in enumerate(source_points):
+            node_x = pos.x + sx + offset
+            node_y = sy  # Keep same y-position as source
+            nodes.append((node_x, node_y))
+            
+        return nodes
