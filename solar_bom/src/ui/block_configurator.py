@@ -342,22 +342,36 @@ class BlockConfigurator(ttk.Frame):
                 template_name = self.template_listbox.get(selection[0])
                 selected_template = self.tracker_templates.get(template_name)
             
-            # Convert feet to meters for storage
-            row_spacing_ft = float(self.row_spacing_var.get())
+            # Get row spacing value and convert feet to meters
+            try:
+                row_spacing_ft = float(self.row_spacing_var.get())
+                row_spacing_m = self.ft_to_m(row_spacing_ft)
+                device_width_m = 0.91  # 3ft in meters
+                initial_device_x = row_spacing_m / 2 + (device_width_m / 2)
+                print(f"Row spacing ft: {row_spacing_ft}")
+                print(f"Row spacing m: {row_spacing_m}")
+                print(f"Initial device x: {initial_device_x}")
+            except ValueError:
+                row_spacing_m = 6.0  # Default to 6m if invalid input
+                device_width_m = 0.91  # 3ft in meters
+                initial_device_x = row_spacing_m / 2 + (device_width_m / 2)
             
-            # Create new block config
             block = BlockConfig(
                 block_id=block_id,
                 inverter=self.selected_inverter,
-                tracker_template=selected_template,  # Now passing selected template
+                tracker_template=selected_template,
                 width_m=20,  # Initial minimum width
                 height_m=20,  # Initial minimum height
-                row_spacing_m=self.ft_to_m(row_spacing_ft),
+                row_spacing_m=row_spacing_m,
                 ns_spacing_m=float(self.ns_spacing_var.get()),
                 gcr=0.0,  # This will be calculated when a tracker template is assigned
                 description=f"New block {block_id}",
-                device_spacing_m=self.ft_to_m(float(self.device_spacing_var.get())) 
+                device_spacing_m=self.ft_to_m(float(self.device_spacing_var.get())),
+                device_x=initial_device_x,  # Set initial X position
+                device_y=0.0  # Start at top
             )
+            
+            print(f"Block device_x after creation: {block.device_x}")
             
             # Add to blocks dictionary
             self.blocks[block_id] = block
@@ -996,6 +1010,15 @@ class BlockConfigurator(ttk.Frame):
             inverter = next((inv for name, inv in self.inverters.items() 
                             if f"{inv.manufacturer} {inv.model}" == block_data['inverter_name']), None)
             
+            # Get row spacing value and convert feet to meters
+            try:
+                row_spacing_ft = float(self.row_spacing_var.get())
+                row_spacing_m = self.ft_to_m(row_spacing_ft)
+                initial_device_x = row_spacing_m / 2
+            except ValueError:
+                row_spacing_m = 6.0  # Default to 6m if invalid input
+                initial_device_x = row_spacing_m / 2
+
             block = BlockConfig(
                 block_id=block_data['block_id'],
                 inverter=inverter,
@@ -1007,6 +1030,8 @@ class BlockConfigurator(ttk.Frame):
                 gcr=block_data['gcr'],
                 description=block_data['description'],
                 device_spacing_m=block_data.get('device_spacing_m', 1.83),  # 6ft default
+                device_x=initial_device_x,
+                device_y=0.0
             )
             
             # Clear existing tracker positions
@@ -1033,15 +1058,14 @@ class BlockConfigurator(ttk.Frame):
         """Calculate device coordinates based on placement"""
         device_height_m = 0.91  # 3ft in meters
         device_width_m = 0.91   # 3ft in meters
-        spacing_m = self.ft_to_m(self.validate_float_input(self.device_spacing_var, 6.0))  # 6ft default
         
-        # Ensure minimum spacing
-        min_spacing = 0.3  # 1ft minimum
-        spacing_m = max(spacing_m, min_spacing)
-        
-        # Place device in center of block width, near bottom
-        # Return (x, y, width, height) in meters
-        return (0, 0, device_width_m, device_height_m)  # Starting position at origin
+        if not self.current_block:
+            return (0, 0, device_width_m, device_height_m)
+            
+        # Return actual device position from block config
+        return (self.blocks[self.current_block].device_x, 
+                self.blocks[self.current_block].device_y, 
+                device_width_m, device_height_m)
 
     def is_valid_tracker_position(self, x, y, tracker_height):
         """Check if tracker position is valid based on device placement"""
