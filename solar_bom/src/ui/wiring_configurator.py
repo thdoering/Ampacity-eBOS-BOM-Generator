@@ -202,9 +202,7 @@ class WiringConfigurator(tk.Toplevel):
                 )
                 y_pos += (module_height + template.module_spacing_m) * scale
         
-            # After drawing the tracker itself:
-            x_base = 20 + self.pan_x + pos.x * scale
-            y_base = 20 + self.pan_y + pos.y * scale
+            # Draw source points for this tracker
             self.draw_collection_points(pos, x_base, y_base, scale)
 
         # Draw inverter/combiner
@@ -219,6 +217,9 @@ class WiringConfigurator(tk.Toplevel):
                 fill='red', outline='darkred',
                 tags='device'
             )
+
+        # Draw device destination points
+        self.draw_device_destination_points()
 
     def draw_collection_points(self, pos: TrackerPosition, x: float, y: float, scale: float):
         """Draw collection points for a tracker position"""
@@ -314,3 +315,50 @@ class WiringConfigurator(tk.Toplevel):
         """End canvas panning"""
         self.panning = False
         self.canvas.config(cursor="")  # Reset cursor
+
+    def get_device_destination_points(self):
+        """Get the two main destination points on the device (positive and negative)"""
+        if not self.block:
+            return None, None
+            
+        device_width = 0.91  # 3ft in meters
+        device_x = self.block.device_x
+        device_y = self.block.device_y
+        
+        # Positive point on left side, halfway up
+        positive_point = (device_x, device_y + (device_width / 2))
+        
+        # Negative point on right side, halfway up
+        negative_point = (device_x + device_width, device_y + (device_width / 2))
+        
+        return positive_point, negative_point
+
+    def draw_device_destination_points(self):
+        """Draw the positive and negative destination points on the device"""
+        pos_point, neg_point = self.get_device_destination_points()
+        if not pos_point or not neg_point:
+            return
+            
+        scale = self.get_canvas_scale()
+        
+        # Draw positive destination point (red)
+        px = 20 + self.pan_x + pos_point[0] * scale
+        py = 20 + self.pan_y + pos_point[1] * scale
+        self.canvas.create_oval(
+            px - 4, py - 4,
+            px + 4, py + 4,
+            fill='red',  # Match source point colors
+            outline='darkred',
+            tags='destination_point'
+        )
+        
+        # Draw negative destination point (blue)
+        nx = 20 + self.pan_x + neg_point[0] * scale
+        ny = 20 + self.pan_y + neg_point[1] * scale
+        self.canvas.create_oval(
+            nx - 4, ny - 4,
+            nx + 4, ny + 4,
+            fill='blue',  # Match source point colors
+            outline='darkblue',
+            tags='destination_point'
+        )
