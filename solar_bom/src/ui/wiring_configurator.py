@@ -202,10 +202,10 @@ class WiringConfigurator(tk.Toplevel):
                 )
                 y_pos += (module_height + template.module_spacing_m) * scale
         
-        # After drawing the tracker itself:
-        x_base = 20 + self.pan_x + pos.x * scale
-        y_base = 20 + self.pan_y + pos.y * scale
-        self.draw_collection_points(pos, x_base, y_base, scale)
+            # After drawing the tracker itself:
+            x_base = 20 + self.pan_x + pos.x * scale
+            y_base = 20 + self.pan_y + pos.y * scale
+            self.draw_collection_points(pos, x_base, y_base, scale)
 
         # Draw inverter/combiner
         if self.block.device_x is not None and self.block.device_y is not None:

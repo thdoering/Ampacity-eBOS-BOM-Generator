@@ -65,23 +65,29 @@ class TrackerPosition:
             module_height = self.template.module_spec.length_mm / 1000
             module_width = self.template.module_spec.width_mm / 1000
 
-        # Calculate string height
-        string_height = (
-            self.template.modules_per_string * module_height + 
-            (self.template.modules_per_string - 1) * self.template.module_spacing_m + 
-            self.template.motor_gap_m
-        )
+        # Calculate height for a single string of modules
+        modules_per_string = self.template.modules_per_string
+        single_string_height = (modules_per_string * module_height + 
+                            (modules_per_string - 1) * self.template.module_spacing_m)
 
         # Create string positions
         for i in range(self.template.strings_per_tracker):
-            # Collection points are at top and bottom of string
+            # For strings above motor (all except last string)
+            if i < self.template.strings_per_tracker - 1:
+                y_start = i * single_string_height
+                y_end = y_start + single_string_height
+            else:
+                # Last string goes below motor gap
+                y_start = (i * single_string_height) + self.template.motor_gap_m
+                y_end = y_start + single_string_height
+                
             string = StringPosition(
                 index=i,
-                positive_collection_x=0,  # At left edge of tracker
-                positive_collection_y=0,  # At top of string
-                negative_collection_x=0,  # At left edge of tracker
-                negative_collection_y=string_height,  # At bottom of string
-                num_modules=self.template.modules_per_string
+                positive_collection_x=0,  # Left side of torque tube
+                positive_collection_y=y_start,  # Top of string
+                negative_collection_x=module_width,  # Right side of torque tube
+                negative_collection_y=y_end,  # Bottom of string
+                num_modules=modules_per_string
             )
             self.strings.append(string)
 
