@@ -678,6 +678,7 @@ class BlockConfigurator(ttk.Frame):
         
         # Create new TrackerPosition
         pos = TrackerPosition(x=x_m, y=y_m, rotation=0.0, template=self.drag_template)
+        pos.calculate_string_positions() # Calculate string and collection point positions
         block.tracker_positions.append(pos)
         
         # Update block display

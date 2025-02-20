@@ -1,10 +1,20 @@
 import tkinter as tk
 from tkinter import ttk
-from typing import Optional
+from typing import Optional, Dict, ClassVar
 from ..models.block import BlockConfig, WiringType
 from ..models.module import ModuleOrientation
+from ..models.tracker import TrackerPosition
 
 class WiringConfigurator(tk.Toplevel):
+
+    # AWG to mm² conversion
+    AWG_SIZES: ClassVar[Dict[str, float]] = {
+        "4 AWG": 21.15,
+        "6 AWG": 13.30,
+        "8 AWG": 8.37,
+        "10 AWG": 5.26
+    }
+
     def __init__(self, parent, block: BlockConfig):
         super().__init__(parent)
         self.parent = parent
@@ -60,16 +70,20 @@ class WiringConfigurator(tk.Toplevel):
         cable_frame.grid(row=1, column=0, columnspan=2, padx=5, pady=10, sticky=(tk.W, tk.E))
 
         # String Cable Size
-        ttk.Label(cable_frame, text="String Cable Size (mm²):").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
-        self.string_cable_size_var = tk.StringVar(value="4")
-        ttk.Entry(cable_frame, textvariable=self.string_cable_size_var, width=10).grid(row=0, column=1, padx=5, pady=2)
+        ttk.Label(cable_frame, text="String Cable Size:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
+        self.string_cable_size_var = tk.StringVar(value="10 AWG")
+        string_cable_combo = ttk.Combobox(cable_frame, textvariable=self.string_cable_size_var, state='readonly', width=10)
+        string_cable_combo['values'] = list(self.AWG_SIZES.keys())
+        string_cable_combo.grid(row=0, column=1, padx=5, pady=2)
 
         # Wire Harness Size
         self.harness_frame = ttk.Frame(cable_frame)
         self.harness_frame.grid(row=1, column=0, columnspan=2, padx=0, pady=5, sticky=(tk.W, tk.E))
-        ttk.Label(self.harness_frame, text="Harness Cable Size (mm²):").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
-        self.harness_cable_size_var = tk.StringVar(value="35")
-        ttk.Entry(self.harness_frame, textvariable=self.harness_cable_size_var, width=10).grid(row=0, column=1, padx=5, pady=2)
+        ttk.Label(self.harness_frame, text="Harness Cable Size:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
+        self.harness_cable_size_var = tk.StringVar(value="4 AWG")
+        harness_cable_combo = ttk.Combobox(self.harness_frame, textvariable=self.harness_cable_size_var, state='readonly', width=10)
+        harness_cable_combo['values'] = list(self.AWG_SIZES.keys())
+        harness_cable_combo.grid(row=0, column=1, padx=5, pady=2)
         
         # Right side - Visualization
         canvas_frame = ttk.LabelFrame(main_container, text="Wiring Layout", padding="5")
@@ -112,9 +126,9 @@ class WiringConfigurator(tk.Toplevel):
             self.harness_frame.grid()
         else:
             self.harness_frame.grid_remove()
-        self.draw_block()
+        self.draw_wiring_layout()
 
-    def draw_block(self):
+    def draw_wiring_layout(self):
         """Draw block layout with wiring visualization"""
         self.canvas.delete("all")
         scale = self.get_canvas_scale()
@@ -188,16 +202,48 @@ class WiringConfigurator(tk.Toplevel):
                 )
                 y_pos += (module_height + template.module_spacing_m) * scale
         
+        # After drawing the tracker itself:
+        x_base = 20 + self.pan_x + pos.x * scale
+        y_base = 20 + self.pan_y + pos.y * scale
+        self.draw_collection_points(pos, x_base, y_base, scale)
+
         # Draw inverter/combiner
-        device_x = 20 + self.pan_x + self.block.device_x * scale
-        device_y = 20 + self.pan_y + self.block.device_y * scale
-        device_size = 0.91 * scale  # 3ft = 0.91m
-        self.canvas.create_rectangle(
-            device_x, device_y,
-            device_x + device_size,
-            device_y + device_size,
-            fill='red', outline='darkred'
-        )
+        if self.block.device_x is not None and self.block.device_y is not None:
+            device_x = 20 + self.pan_x + self.block.device_x * scale
+            device_y = 20 + self.pan_y + self.block.device_y * scale
+            device_size = 0.91 * scale  # 3ft = 0.91m
+            self.canvas.create_rectangle(
+                device_x, device_y,
+                device_x + device_size,
+                device_y + device_size,
+                fill='red', outline='darkred',
+                tags='device'
+            )
+
+    def draw_collection_points(self, pos: TrackerPosition, x: float, y: float, scale: float):
+        """Draw collection points for a tracker position"""
+        for string in pos.strings:
+            # Draw positive collection point (red circle)
+            px = x + string.positive_collection_x * scale
+            py = y + string.positive_collection_y * scale
+            self.canvas.create_oval(
+                px - 3, py - 3,
+                px + 3, py + 3,
+                fill='red',
+                outline='darkred',
+                tags='collection_point'
+            )
+
+            # Draw negative collection point (blue circle)
+            nx = x + string.negative_collection_x * scale
+            ny = y + string.negative_collection_y * scale
+            self.canvas.create_oval(
+                nx - 3, ny - 3,
+                nx + 3, ny + 3,
+                fill='blue',
+                outline='darkblue',
+                tags='collection_point'
+            )
 
     def on_wiring_type_change(self, event=None):
         """Handle wiring type selection change"""
@@ -206,7 +252,7 @@ class WiringConfigurator(tk.Toplevel):
     def on_canvas_resize(self, event):
         """Handle canvas resize event"""
         if event.width > 1 and event.height > 1:  # Ensure valid dimensions
-            self.draw_block()
+            self.draw_wiring_layout()
         
     def apply_configuration(self):
         """Apply wiring configuration to block"""
@@ -230,7 +276,7 @@ class WiringConfigurator(tk.Toplevel):
             
         # Redraw if scale changed
         if old_scale != self.scale_factor:
-            self.draw_block()
+            self.draw_wiring_layout()
 
     def get_canvas_scale(self):
         """Return current scale factor (pixels per meter)"""
@@ -262,7 +308,7 @@ class WiringConfigurator(tk.Toplevel):
         self.pan_start_y = event.y
         
         # Redraw
-        self.draw_block()
+        self.draw_wiring_layout()
 
     def end_pan(self, event):
         """End canvas panning"""

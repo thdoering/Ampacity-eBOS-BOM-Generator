@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 from .module import ModuleSpec, ModuleOrientation
 
@@ -31,12 +31,59 @@ Solar Tracker Terminology:
 """
 
 @dataclass
+class StringPosition:
+    """Represents a single string on a tracker with its collection points"""
+    index: int  # Index of this string on the tracker
+    positive_collection_x: float  # X coordinate of positive collection point relative to tracker
+    positive_collection_y: float  # Y coordinate of positive collection point relative to tracker
+    negative_collection_x: float  # X coordinate of negative collection point relative to tracker
+    negative_collection_y: float  # Y coordinate of negative collection point relative to tracker
+    num_modules: int  # Number of modules in this string
+
+@dataclass
 class TrackerPosition:
     """Data class representing a tracker's position in a block"""
     x: float  # X coordinate in meters
     y: float  # Y coordinate in meters
     rotation: float  # Rotation angle in degrees
     template: 'TrackerTemplate'  # Forward reference to avoid circular import
+    strings: List[StringPosition] = field(default_factory=list)  # List of strings on this tracker
+
+    def calculate_string_positions(self) -> None:
+        """Calculate string positions and their collection points"""
+        if not self.template:
+            return
+
+        # Clear existing strings
+        self.strings.clear()
+
+        # Get module dimensions based on orientation
+        if self.template.module_orientation == ModuleOrientation.PORTRAIT:
+            module_height = self.template.module_spec.width_mm / 1000
+            module_width = self.template.module_spec.length_mm / 1000
+        else:
+            module_height = self.template.module_spec.length_mm / 1000
+            module_width = self.template.module_spec.width_mm / 1000
+
+        # Calculate string height
+        string_height = (
+            self.template.modules_per_string * module_height + 
+            (self.template.modules_per_string - 1) * self.template.module_spacing_m + 
+            self.template.motor_gap_m
+        )
+
+        # Create string positions
+        for i in range(self.template.strings_per_tracker):
+            # Collection points are at top and bottom of string
+            string = StringPosition(
+                index=i,
+                positive_collection_x=0,  # At left edge of tracker
+                positive_collection_y=0,  # At top of string
+                negative_collection_x=0,  # At left edge of tracker
+                negative_collection_y=string_height,  # At bottom of string
+                num_modules=self.template.modules_per_string
+            )
+            self.strings.append(string)
 
 @dataclass
 class TrackerTemplate:
