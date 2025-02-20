@@ -21,6 +21,14 @@ class CollectionPoint:
     y: float
     connected_strings: List[int]  # List of string IDs connected to this point
     current_rating: float
+
+@dataclass
+class DeviceInputPoint:
+    """Represents an input connection point on a device"""
+    index: int  # Input number
+    x: float  # X coordinate relative to device corner
+    y: float  # Y coordinate relative to device corner
+    max_current: float  # Maximum current rating for this input
     
 @dataclass
 class WiringConfig:
@@ -47,6 +55,7 @@ class BlockConfig:
     device_x: float = 0.0  # X coordinate of device in meters
     device_y: float = 0.0  # Y coordinate of device in meters
     device_spacing_m: float = 1.83  # 6ft in meters default
+    input_points: List[DeviceInputPoint] = field(default_factory=list)
     
     # Optional fields with defaults must come after
     description: Optional[str] = None

@@ -223,9 +223,9 @@ class WiringConfigurator(tk.Toplevel):
     def draw_collection_points(self, pos: TrackerPosition, x: float, y: float, scale: float):
         """Draw collection points for a tracker position"""
         for string in pos.strings:
-            # Draw positive collection point (red circle)
-            px = x + string.positive_collection_x * scale
-            py = y + string.positive_collection_y * scale
+            # Draw positive source point (red circle)
+            px = x + string.positive_source_x * scale
+            py = y + string.positive_source_y * scale
             self.canvas.create_oval(
                 px - 3, py - 3,
                 px + 3, py + 3,
@@ -234,9 +234,9 @@ class WiringConfigurator(tk.Toplevel):
                 tags='collection_point'
             )
 
-            # Draw negative collection point (blue circle)
-            nx = x + string.negative_collection_x * scale
-            ny = y + string.negative_collection_y * scale
+            # Draw negative source point (blue circle)
+            nx = x + string.negative_source_x * scale
+            ny = y + string.negative_source_y * scale
             self.canvas.create_oval(
                 nx - 3, ny - 3,
                 nx + 3, ny + 3,

@@ -32,12 +32,12 @@ Solar Tracker Terminology:
 
 @dataclass
 class StringPosition:
-    """Represents a single string on a tracker with its collection points"""
+    """Represents a single string on a tracker with its source points"""
     index: int  # Index of this string on the tracker
-    positive_collection_x: float  # X coordinate of positive collection point relative to tracker
-    positive_collection_y: float  # Y coordinate of positive collection point relative to tracker
-    negative_collection_x: float  # X coordinate of negative collection point relative to tracker
-    negative_collection_y: float  # Y coordinate of negative collection point relative to tracker
+    positive_source_x: float  # X coordinate of positive source point relative to tracker
+    positive_source_y: float  # Y coordinate of positive source point relative to tracker
+    negative_source_x: float  # X coordinate of negative source point relative to tracker
+    negative_source_y: float  # Y coordinate of negative source point relative to tracker
     num_modules: int  # Number of modules in this string
 
 @dataclass
@@ -50,7 +50,7 @@ class TrackerPosition:
     strings: List[StringPosition] = field(default_factory=list)  # List of strings on this tracker
 
     def calculate_string_positions(self) -> None:
-        """Calculate string positions and their collection points"""
+        """Calculate string positions and their source points"""
         if not self.template:
             return
 
@@ -83,10 +83,10 @@ class TrackerPosition:
                 
             string = StringPosition(
                 index=i,
-                positive_collection_x=0,  # Left side of torque tube
-                positive_collection_y=y_start,  # Top of string
-                negative_collection_x=module_width,  # Right side of torque tube
-                negative_collection_y=y_end,  # Bottom of string
+                positive_source_x=0,  # Left side of torque tube
+                positive_source_y=y_start,  # Top of string
+                negative_source_x=module_width,  # Right side of torque tube
+                negative_source_y=y_end,  # Bottom of string
                 num_modules=modules_per_string
             )
             self.strings.append(string)
