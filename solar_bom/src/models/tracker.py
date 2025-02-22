@@ -137,9 +137,10 @@ class TrackerTemplate:
         - Width is the horizontal dimension (E/W direction)
         
         Length calculation accounts for:
-        - All modules in a string
+        - All modules in all strings
         - Spacing between modules
         - Motor gap
+        - Spacing between strings
         
         Width is simply the module dimension perpendicular to the torque tube.
         
@@ -150,21 +151,26 @@ class TrackerTemplate:
         module_length = self.module_spec.length_mm / 1000
         module_width = self.module_spec.width_mm / 1000
         
-        # Total string length depends on module orientation
+        # Calculate length of a single string including module spacing
         if self.module_orientation == ModuleOrientation.PORTRAIT:
             # In portrait, module width runs along torque tube
-            total_length = (module_width * self.modules_per_string) + \
-                        (self.module_spacing_m * (self.modules_per_string - 1)) + \
-                        self.motor_gap_m
+            single_string_length = (module_width * self.modules_per_string) + \
+                        (self.module_spacing_m * (self.modules_per_string - 1))
             # Tracker width is module length
             total_width = module_length
         else:  # LANDSCAPE
             # In landscape, module length runs along torque tube
-            total_length = (module_length * self.modules_per_string) + \
-                        (self.module_spacing_m * (self.modules_per_string - 1)) + \
-                        self.motor_gap_m
+            single_string_length = (module_length * self.modules_per_string) + \
+                        (self.module_spacing_m * (self.modules_per_string - 1))
             # Tracker width is module width
             total_width = module_width
+        
+        # Calculate total length including all strings and motor gap
+        # Motor gap is added between the last string before motor and first string after
+        strings_above_motor = self.strings_per_tracker - 1  # All strings except last one
+        total_length = (single_string_length * strings_above_motor) + \
+                    self.motor_gap_m + \
+                    single_string_length  # Last string
                         
         return (total_length, total_width)
     

@@ -205,6 +205,32 @@ class WiringConfigurator(tk.Toplevel):
             # Draw source points for this tracker
             self.draw_collection_points(pos, x_base, y_base, scale)
 
+            # Draw whip points for this tracker
+            pos_whip = self.calculate_whip_points(pos, True)
+            neg_whip = self.calculate_whip_points(pos, False)
+            
+            if pos_whip:
+                wx = 20 + self.pan_x + pos_whip[0] * scale
+                wy = 20 + self.pan_y + pos_whip[1] * scale
+                self.canvas.create_oval(
+                    wx - 3, wy - 3,
+                    wx + 3, wy + 3,
+                    fill='pink',
+                    outline='deeppink',
+                    tags='whip_point'
+                )
+            
+            if neg_whip:
+                wx = 20 + self.pan_x + neg_whip[0] * scale
+                wy = 20 + self.pan_y + neg_whip[1] * scale
+                self.canvas.create_oval(
+                    wx - 3, wy - 3,
+                    wx + 3, wy + 3,
+                    fill='teal',
+                    outline='darkcyan',
+                    tags='whip_point'
+                )
+
         # Draw inverter/combiner
         if self.block.device_x is not None and self.block.device_y is not None:
             device_x = 20 + self.pan_x + self.block.device_x * scale
@@ -229,16 +255,45 @@ class WiringConfigurator(tk.Toplevel):
             
             # Collect all source points
             for pos in self.block.tracker_positions:
+                pos_whip = self.calculate_whip_points(pos, True)
+                neg_whip = self.calculate_whip_points(pos, False)
+                
                 for string in pos.strings:
+                    whip_points_valid = pos_whip and neg_whip  # Check both whip points exist
+                    if whip_points_valid:
+                        # First route: source to whip
+                        route1 = self.calculate_cable_route(
+                            pos.x + string.positive_source_x,
+                            pos.y + string.positive_source_y,
+                            pos_whip[0], pos_whip[1],
+                            True, len(pos_routes)
+                        )
+                        points = [(20 + self.pan_x + x * scale, 
+                                20 + self.pan_y + y * scale) for x, y in route1]
+                        if len(points) > 1:
+                            self.canvas.create_line(points, fill='red', width=2)
+                        
+                    if neg_whip:
+                        route1 = self.calculate_cable_route(
+                            pos.x + string.negative_source_x,
+                            pos.y + string.negative_source_y,
+                            neg_whip[0], neg_whip[1],
+                            False, len(neg_routes)
+                        )
+                        points = [(20 + self.pan_x + x * scale, 
+                                20 + self.pan_y + y * scale) for x, y in route1]
+                        if len(points) > 1:
+                            self.canvas.create_line(points, fill='blue', width=2)
+                    
                     pos_routes.append({
-                        'source_x': pos.x + string.positive_source_x,
-                        'source_y': pos.y + string.positive_source_y,
-                        'going_north': self.block.device_y < pos.y + string.positive_source_y
+                        'source_x': pos_whip[0] if pos_whip else (pos.x + string.positive_source_x),
+                        'source_y': pos_whip[1] if pos_whip else (pos.y + string.positive_source_y),
+                        'going_north': self.block.device_y < (pos_whip[1] if pos_whip else (pos.y + string.positive_source_y))
                     })
                     neg_routes.append({
-                        'source_x': pos.x + string.negative_source_x,
-                        'source_y': pos.y + string.negative_source_y,
-                        'going_north': self.block.device_y < pos.y + string.negative_source_y
+                        'source_x': neg_whip[0] if neg_whip else (pos.x + string.negative_source_x),
+                        'source_y': neg_whip[1] if neg_whip else (pos.y + string.negative_source_y),
+                        'going_north': self.block.device_y < (neg_whip[1] if neg_whip else (pos.y + string.negative_source_y))
                     })
             
             # Sort routes by y position within their north/south groups
@@ -254,7 +309,7 @@ class WiringConfigurator(tk.Toplevel):
             # Get device destination points
             pos_dest, neg_dest = self.get_device_destination_points()
             
-            # Draw positive routes
+            # Draw routes from whip points to device
             for i, route_info in enumerate(pos_routes_north + pos_routes_south):
                 route = self.calculate_cable_route(
                     route_info['source_x'],
@@ -265,11 +320,10 @@ class WiringConfigurator(tk.Toplevel):
                     i  # route_index
                 )
                 points = [(20 + self.pan_x + x * scale, 
-                          20 + self.pan_y + y * scale) for x, y in route]
+                        20 + self.pan_y + y * scale) for x, y in route]
                 if len(points) > 1:
                     self.canvas.create_line(points, fill='red', width=2)
             
-            # Draw negative routes
             for i, route_info in enumerate(neg_routes_north + neg_routes_south):
                 route = self.calculate_cable_route(
                     route_info['source_x'],
@@ -280,7 +334,7 @@ class WiringConfigurator(tk.Toplevel):
                     i  # route_index
                 )
                 points = [(20 + self.pan_x + x * scale, 
-                          20 + self.pan_y + y * scale) for x, y in route]
+                        20 + self.pan_y + y * scale) for x, y in route]
                 if len(points) > 1:
                     self.canvas.create_line(points, fill='blue', width=2)
                     
@@ -290,6 +344,10 @@ class WiringConfigurator(tk.Toplevel):
                 # Calculate node points
                 pos_nodes = self.calculate_node_points(pos, True)  # Positive nodes
                 neg_nodes = self.calculate_node_points(pos, False)  # Negative nodes
+                
+                # Get whip points
+                pos_whip = self.calculate_whip_points(pos, True)
+                neg_whip = self.calculate_whip_points(pos, False)
                 
                 # Draw string cables to node points
                 for i, string in enumerate(pos.strings):
@@ -302,7 +360,7 @@ class WiringConfigurator(tk.Toplevel):
                         True, i
                     )
                     points = [(20 + self.pan_x + x * scale, 
-                             20 + self.pan_y + y * scale) for x, y in route]
+                            20 + self.pan_y + y * scale) for x, y in route]
                     if len(points) > 1:
                         self.canvas.create_line(points, fill='red', width=1)
                         
@@ -315,7 +373,7 @@ class WiringConfigurator(tk.Toplevel):
                         False, i
                     )
                     points = [(20 + self.pan_x + x * scale, 
-                             20 + self.pan_y + y * scale) for x, y in route]
+                            20 + self.pan_y + y * scale) for x, y in route]
                     if len(points) > 1:
                         self.canvas.create_line(points, fill='blue', width=1)
                 
@@ -330,44 +388,90 @@ class WiringConfigurator(tk.Toplevel):
                     y = 20 + self.pan_y + ny * scale
                     self.canvas.create_oval(x-3, y-3, x+3, y+3, fill='blue', outline='darkblue')
                 
-                # Draw harness cables between nodes
+                # Route from node points through whip points to device
                 pos_dest, neg_dest = self.get_device_destination_points()
                 
+                # Draw node connections - bottom to top for north device
                 # Positive harness
-                for i in range(len(pos_nodes)):
-                    start = pos_nodes[i]
-                    if i < len(pos_nodes) - 1:
-                        end = pos_nodes[i + 1]
+                sorted_pos_nodes = sorted(pos_nodes, key=lambda p: p[1], reverse=True)  # Sort by y coordinate
+                for i in range(len(sorted_pos_nodes)):
+                    start = sorted_pos_nodes[i]
+                    if i < len(sorted_pos_nodes) - 1:
+                        # Connect to next node
+                        end = sorted_pos_nodes[i + 1]
+                        route = self.calculate_cable_route(
+                            start[0], start[1],
+                            end[0], end[1],
+                            True, 0
+                        )
                     else:
-                        end = (pos_dest[0], pos_dest[1])
-                    
-                    route = self.calculate_cable_route(
-                        start[0], start[1],
-                        end[0], end[1],
-                        True, 0  # Use index 0 since harness follows single path
-                    )
+                        # Last (northernmost) node routes to whip point
+                        if pos_whip:
+                            route = self.calculate_cable_route(
+                                start[0], start[1],
+                                pos_whip[0], pos_whip[1],
+                                True, 0
+                            )
+                        else:
+                            continue
                     points = [(20 + self.pan_x + x * scale, 
-                             20 + self.pan_y + y * scale) for x, y in route]
+                            20 + self.pan_y + y * scale) for x, y in route]
                     if len(points) > 1:
-                        self.canvas.create_line(points, fill='red', width=2)  # Thicker line for harness
-                
+                        self.canvas.create_line(points, fill='red', width=2)
+
                 # Negative harness
-                for i in range(len(neg_nodes)):
-                    start = neg_nodes[i]
-                    if i < len(neg_nodes) - 1:
-                        end = neg_nodes[i + 1]
+                sorted_neg_nodes = sorted(neg_nodes, key=lambda p: p[1], reverse=True)  # Sort by y coordinate
+                for i in range(len(sorted_neg_nodes)):
+                    start = sorted_neg_nodes[i]
+                    if i < len(sorted_neg_nodes) - 1:
+                        # Connect to next node
+                        end = sorted_neg_nodes[i + 1]
+                        route = self.calculate_cable_route(
+                            start[0], start[1],
+                            end[0], end[1],
+                            False, 0
+                        )
                     else:
-                        end = (neg_dest[0], neg_dest[1])
-                    
+                        # Last (northernmost) node routes to whip point
+                        if neg_whip:
+                            route = self.calculate_cable_route(
+                                start[0], start[1],
+                                neg_whip[0], neg_whip[1],
+                                False, 0
+                            )
+                        else:
+                            continue
+                    points = [(20 + self.pan_x + x * scale, 
+                            20 + self.pan_y + y * scale) for x, y in route]
+                    if len(points) > 1:
+                        self.canvas.create_line(points, fill='blue', width=2)
+            
+                # Route from whip point to device
+                pos_dest, neg_dest = self.get_device_destination_points()
+
+                # Draw positive whip to device route
+                if pos_whip and pos_dest:
                     route = self.calculate_cable_route(
-                        start[0], start[1],
-                        end[0], end[1],
-                        False, 0  # Use index 0 since harness follows single path
+                        pos_whip[0], pos_whip[1],
+                        pos_dest[0], pos_dest[1],
+                        True, 0
                     )
                     points = [(20 + self.pan_x + x * scale, 
-                             20 + self.pan_y + y * scale) for x, y in route]
+                            20 + self.pan_y + y * scale) for x, y in route]
                     if len(points) > 1:
-                        self.canvas.create_line(points, fill='blue', width=2)  # Thicker line for harness
+                        self.canvas.create_line(points, fill='red', width=2)
+
+                # Draw negative whip to device route
+                if neg_whip and neg_dest:
+                    route = self.calculate_cable_route(
+                        neg_whip[0], neg_whip[1],
+                        neg_dest[0], neg_dest[1],
+                        False, 0
+                    )
+                    points = [(20 + self.pan_x + x * scale, 
+                            20 + self.pan_y + y * scale) for x, y in route]
+                    if len(points) > 1:
+                        self.canvas.create_line(points, fill='blue', width=2)
 
     def draw_collection_points(self, pos: TrackerPosition, x: float, y: float, scale: float):
         """Draw collection points for a tracker position"""
@@ -532,21 +636,13 @@ class WiringConfigurator(tk.Toplevel):
         # Add starting point
         route.append((source_x, source_y))
         
-        # Determine vertical direction based on source and destination points
-        going_north = dest_y < source_y
-        
-        # Offset x position based on whether it's positive/negative and route index
-        tracker_x = source_x + (0.1 if is_positive else -0.1) + offset
-        
-        # First: Vertical run along tracker to the destination y-level
-        route.append((tracker_x, dest_y))
-        
-        # Second: Horizontal run to device x-position
-        # Keep the same offset in the horizontal run
-        route.append((dest_x + (offset if is_positive else -offset), dest_y))
-        
-        # Finally: Connect to exact destination point
-        route.append((dest_x, dest_y))
+        if self.wiring_type_var.get() == WiringType.HARNESS.value:
+            # For harness configuration, route directly to node point
+            route.append((dest_x, dest_y))
+        else:
+            # For homerun configuration, use horizontal-then-vertical routing
+            route.append((dest_x, source_y))  # Horizontal segment
+            route.append((dest_x, dest_y))    # Vertical segment
         
         return route
     
@@ -562,8 +658,7 @@ class WiringConfigurator(tk.Toplevel):
             List of (x, y) coordinates for node points
         """
         nodes = []
-        base_offset = 0.1  # Base offset from tracker centerline
-        offset = base_offset if is_positive else -base_offset
+        horizontal_offset = 0.6  # ~2ft offset from tracker
         
         # Sort strings by y-position
         source_points = []
@@ -575,10 +670,39 @@ class WiringConfigurator(tk.Toplevel):
         
         source_points.sort(key=lambda p: p[1])  # Sort by y-coordinate
         
-        # Create node points slightly offset from source points
+        # Create node points at same y-level as source points, but offset horizontally
         for i, (sx, sy) in enumerate(source_points):
-            node_x = pos.x + sx + offset
-            node_y = sy  # Keep same y-position as source
+            node_x = pos.x + sx + (horizontal_offset if not is_positive else -horizontal_offset)
+            node_y = pos.y + sy  # Same y-level as source point
             nodes.append((node_x, node_y))
             
         return nodes
+
+    def calculate_whip_points(self, pos, is_positive: bool) -> tuple[float, float]:
+        if self.block.device_y is None or self.block.device_x is None:
+            return None
+            
+        horizontal_offset = 0.6  # Same offset as node points
+        whip_offset = 2.0  # 2m offset from tracker edge
+        
+        # Get tracker dimensions
+        tracker_dims = pos.template.get_physical_dimensions()
+        tracker_height = tracker_dims[0]
+        tracker_width = tracker_dims[1]
+        
+        # Determine if device is north or south of tracker
+        device_is_north = self.block.device_y < pos.y
+        
+        # Calculate Y position
+        if device_is_north:
+            y = pos.y - whip_offset
+        else:
+            y = pos.y + tracker_height + whip_offset
+        
+        # Calculate X position - match node points pattern
+        if is_positive:
+            x = pos.x - horizontal_offset  # Left side
+        else:
+            x = pos.x + tracker_width + horizontal_offset  # Right side
+        
+        return (x, y)
