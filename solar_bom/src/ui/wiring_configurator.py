@@ -59,7 +59,7 @@ class WiringConfigurator(tk.Toplevel):
         
         # Wiring Type Selection
         ttk.Label(controls_frame, text="Wiring Type:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
-        self.wiring_type_var = tk.StringVar(value=WiringType.HOMERUN.value)
+        self.wiring_type_var = tk.StringVar(value=WiringType.HARNESS.value)
         wiring_type_combo = ttk.Combobox(controls_frame, textvariable=self.wiring_type_var, state='readonly')
         wiring_type_combo['values'] = [t.value for t in WiringType]
         wiring_type_combo.grid(row=0, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
@@ -75,6 +75,7 @@ class WiringConfigurator(tk.Toplevel):
         string_cable_combo = ttk.Combobox(cable_frame, textvariable=self.string_cable_size_var, state='readonly', width=10)
         string_cable_combo['values'] = list(self.AWG_SIZES.keys())
         string_cable_combo.grid(row=0, column=1, padx=5, pady=2)
+        self.string_cable_size_var.trace('w', lambda *args: self.draw_wiring_layout())
 
         # Wire Harness Size
         self.harness_frame = ttk.Frame(cable_frame)
@@ -84,6 +85,14 @@ class WiringConfigurator(tk.Toplevel):
         harness_cable_combo = ttk.Combobox(self.harness_frame, textvariable=self.harness_cable_size_var, state='readonly', width=10)
         harness_cable_combo['values'] = list(self.AWG_SIZES.keys())
         harness_cable_combo.grid(row=0, column=1, padx=5, pady=2)
+        self.harness_cable_size_var.trace('w', lambda *args: self.draw_wiring_layout())
+
+        # Current label toggle button
+        self.show_current_labels_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(cable_frame, text="Show Current Labels", 
+                        variable=self.show_current_labels_var,
+                        command=self.draw_wiring_layout).grid(
+                        row=2, column=0, columnspan=2, padx=5, pady=5, sticky=tk.W)
         
         # Right side - Visualization
         canvas_frame = ttk.LabelFrame(main_container, text="Wiring Layout", padding="5")
@@ -271,7 +280,10 @@ class WiringConfigurator(tk.Toplevel):
                         points = [(20 + self.pan_x + x * scale, 
                                 20 + self.pan_y + y * scale) for x, y in route1]
                         if len(points) > 1:
-                            self.canvas.create_line(points, fill='red', width=2)
+                            line_thickness = self.get_line_thickness_for_wire(self.string_cable_size_var.get())
+                            self.canvas.create_line(points, fill='red', width=line_thickness)
+                            current = self.calculate_current_for_segment('string')
+                            self.add_current_label(points, current, is_positive=True)
                         
                     if neg_whip:
                         route1 = self.calculate_cable_route(
@@ -283,8 +295,11 @@ class WiringConfigurator(tk.Toplevel):
                         points = [(20 + self.pan_x + x * scale, 
                                 20 + self.pan_y + y * scale) for x, y in route1]
                         if len(points) > 1:
-                            self.canvas.create_line(points, fill='blue', width=2)
-                    
+                            line_thickness = self.get_line_thickness_for_wire(self.string_cable_size_var.get())
+                            self.canvas.create_line(points, fill='blue', width=line_thickness)
+                            current = self.calculate_current_for_segment('string')
+                            self.add_current_label(points, current, is_positive=False)
+                                                
                     pos_routes.append({
                         'source_x': pos_whip[0] if pos_whip else (pos.x + string.positive_source_x),
                         'source_y': pos_whip[1] if pos_whip else (pos.y + string.positive_source_y),
@@ -322,7 +337,10 @@ class WiringConfigurator(tk.Toplevel):
                 points = [(20 + self.pan_x + x * scale, 
                         20 + self.pan_y + y * scale) for x, y in route]
                 if len(points) > 1:
-                    self.canvas.create_line(points, fill='red', width=2)
+                    thickness = self.get_line_thickness_for_wire(self.string_cable_size_var.get())
+                    self.canvas.create_line(points, fill='red', width=thickness)
+                    current = self.calculate_current_for_segment('whip', num_strings=1) # For homerun, it's 1 string per route
+                    self.add_current_label(points, current, is_positive=True, segment_type='whip')
             
             for i, route_info in enumerate(neg_routes_north + neg_routes_south):
                 route = self.calculate_cable_route(
@@ -336,7 +354,10 @@ class WiringConfigurator(tk.Toplevel):
                 points = [(20 + self.pan_x + x * scale, 
                         20 + self.pan_y + y * scale) for x, y in route]
                 if len(points) > 1:
-                    self.canvas.create_line(points, fill='blue', width=2)
+                    thickness = self.get_line_thickness_for_wire(self.string_cable_size_var.get())
+                    self.canvas.create_line(points, fill='blue', width=thickness)
+                    current = self.calculate_current_for_segment('whip', num_strings=1) # For homerun, it's 1 string per route
+                    self.add_current_label(points, current, is_positive=True, segment_type='whip')
                     
         else:  # Wire Harness configuration
             # Process each tracker
@@ -362,7 +383,10 @@ class WiringConfigurator(tk.Toplevel):
                     points = [(20 + self.pan_x + x * scale, 
                             20 + self.pan_y + y * scale) for x, y in route]
                     if len(points) > 1:
-                        self.canvas.create_line(points, fill='red', width=1)
+                        line_thickness = self.get_line_thickness_for_wire(self.string_cable_size_var.get())
+                        self.canvas.create_line(points, fill='red', width=line_thickness)
+                        current = self.calculate_current_for_segment('string')
+                        self.add_current_label(points, current, is_positive=True)
                         
                     # Negative string cable
                     source_x = pos.x + string.negative_source_x
@@ -375,7 +399,10 @@ class WiringConfigurator(tk.Toplevel):
                     points = [(20 + self.pan_x + x * scale, 
                             20 + self.pan_y + y * scale) for x, y in route]
                     if len(points) > 1:
-                        self.canvas.create_line(points, fill='blue', width=1)
+                        line_thickness = self.get_line_thickness_for_wire(self.string_cable_size_var.get())
+                        self.canvas.create_line(points, fill='blue', width=line_thickness)
+                        current = self.calculate_current_for_segment('string')
+                        self.add_current_label(points, current, is_positive=False)
                 
                 # Draw node points
                 for nx, ny in pos_nodes:
@@ -417,7 +444,19 @@ class WiringConfigurator(tk.Toplevel):
                     points = [(20 + self.pan_x + x * scale, 
                             20 + self.pan_y + y * scale) for x, y in route]
                     if len(points) > 1:
-                        self.canvas.create_line(points, fill='red', width=2)
+                        line_thickness = self.get_line_thickness_for_wire(self.harness_cable_size_var.get())
+                        line_id = self.canvas.create_line(points, fill='red', width=line_thickness)
+                        # Add current label showing accumulated current
+                        if len(points) >= 2 and self.show_current_labels_var.get():
+                            mid_idx = len(points) // 2
+                            mid_x = (points[mid_idx-1][0] + points[mid_idx][0]) / 2
+                            mid_y = (points[mid_idx-1][1] + points[mid_idx][1]) / 2
+                            # Calculate accumulated current based on position in chain
+                            # i+1 strings are accumulated at this point
+                            accumulated_strings = i + 1
+                            current = self.calculate_current_for_segment('string') * accumulated_strings
+                            self.canvas.create_text(mid_x, mid_y-10, text=f"{current:.1f}A", 
+                                                fill='red', font=('Arial', 8))
 
                 # Negative harness
                 sorted_neg_nodes = sorted(neg_nodes, key=lambda p: p[1], reverse=True)  # Sort by y coordinate
@@ -444,8 +483,20 @@ class WiringConfigurator(tk.Toplevel):
                     points = [(20 + self.pan_x + x * scale, 
                             20 + self.pan_y + y * scale) for x, y in route]
                     if len(points) > 1:
-                        self.canvas.create_line(points, fill='blue', width=2)
-            
+                        line_thickness = self.get_line_thickness_for_wire(self.harness_cable_size_var.get())
+                        line_id = self.canvas.create_line(points, fill='blue', width=line_thickness)
+                        # Add current label showing accumulated current
+                        if len(points) >= 2 and self.show_current_labels_var.get():
+                            mid_idx = len(points) // 2
+                            mid_x = (points[mid_idx-1][0] + points[mid_idx][0]) / 2
+                            mid_y = (points[mid_idx-1][1] + points[mid_idx][1]) / 2
+                            # Calculate accumulated current based on position in chain
+                            # i+1 strings are accumulated at this point
+                            accumulated_strings = i + 1
+                            current = self.calculate_current_for_segment('string') * accumulated_strings
+                            self.canvas.create_text(mid_x, mid_y+10, text=f"{current:.1f}A", 
+                                                fill='blue', font=('Arial', 8))
+                                    
                 # Route from whip point to device
                 pos_dest, neg_dest = self.get_device_destination_points()
 
@@ -459,7 +510,18 @@ class WiringConfigurator(tk.Toplevel):
                     points = [(20 + self.pan_x + x * scale, 
                             20 + self.pan_y + y * scale) for x, y in route]
                     if len(points) > 1:
-                        self.canvas.create_line(points, fill='red', width=2)
+                        line_thickness = self.get_line_thickness_for_wire(self.string_cable_size_var.get())
+                        line_id = self.canvas.create_line(points, fill='red', width=line_thickness)
+                        # Add current label at midpoint of line
+                        if len(points) >= 2 and self.show_current_labels_var.get():
+                            mid_idx = len(points) // 2
+                            mid_x = (points[mid_idx-1][0] + points[mid_idx][0]) / 2
+                            mid_y = (points[mid_idx-1][1] + points[mid_idx][1]) / 2
+                            # Total current for all strings on this tracker
+                            total_strings = len(pos.strings)
+                            current = self.calculate_current_for_segment('whip', total_strings)
+                            self.canvas.create_text(mid_x, mid_y-10, text=f"{current:.1f}A", 
+                                                fill='red', font=('Arial', 8))
 
                 # Draw negative whip to device route
                 if neg_whip and neg_dest:
@@ -471,7 +533,18 @@ class WiringConfigurator(tk.Toplevel):
                     points = [(20 + self.pan_x + x * scale, 
                             20 + self.pan_y + y * scale) for x, y in route]
                     if len(points) > 1:
-                        self.canvas.create_line(points, fill='blue', width=2)
+                        line_thickness = self.get_line_thickness_for_wire(self.string_cable_size_var.get())
+                        line_id = self.canvas.create_line(points, fill='blue', width=line_thickness)
+                        # Add current label at midpoint of line
+                        if len(points) >= 2 and self.show_current_labels_var.get():
+                            mid_idx = len(points) // 2
+                            mid_x = (points[mid_idx-1][0] + points[mid_idx][0]) / 2
+                            mid_y = (points[mid_idx-1][1] + points[mid_idx][1]) / 2
+                            # Total current for all strings on this tracker
+                            total_strings = len(pos.strings)
+                            current = self.calculate_current_for_segment('whip', total_strings)
+                            self.canvas.create_text(mid_x, mid_y+10, text=f"{current:.1f}A", 
+                                                fill='blue', font=('Arial', 8))
 
     def draw_collection_points(self, pos: TrackerPosition, x: float, y: float, scale: float):
         """Draw collection points for a tracker position"""
@@ -706,3 +779,71 @@ class WiringConfigurator(tk.Toplevel):
             x = pos.x + tracker_width + horizontal_offset  # Right side
         
         return (x, y)
+
+    def get_line_thickness_for_wire(self, wire_gauge: str) -> float:
+        """
+        Convert wire gauge to appropriate line thickness for display
+        
+        Args:
+            wire_gauge: String representing AWG gauge (e.g., "10 AWG")
+            
+        Returns:
+            float: Line thickness in pixels
+        """
+        # Map AWG sizes to line thickness (larger wire = thicker line)
+        thickness_map = {
+            "4 AWG": 5.0,
+            "6 AWG": 4.0,
+            "8 AWG": 3.0, 
+            "10 AWG": 2.0
+        }
+        
+        return thickness_map.get(wire_gauge, 2.0)  # Default to 2.0 if gauge not found
+
+    def calculate_current_for_segment(self, segment_type: str, strings_combined: int = 1) -> float:
+        """
+        Calculate current flowing through a wire segment based on configuration
+        
+        Args:
+            segment_type: Type of segment ('string', 'harness', or 'whip')
+            strings_combined: Number of strings combined in this segment
+            
+        Returns:
+            float: Current in amperes
+        """
+        # Get module current value from template
+        if not self.block or not self.block.tracker_template or not self.block.tracker_template.module_spec:
+            return 0.0
+            
+        module_spec = self.block.tracker_template.module_spec
+        
+        # Use Imp as the normal operating current per string
+        string_current = module_spec.imp
+        
+        # Calculate current based on how many strings are combined at this point
+        return string_current * strings_combined
+
+    def add_current_label(self, points, current, is_positive, segment_type='string'):
+        """Add current label to a wire segment if enabled"""
+        if not self.show_current_labels_var.get():
+            return
+            
+        if len(points) < 2:
+            return
+            
+        # Find midpoint of line segment
+        if len(points) == 2:
+            mid_x = (points[0][0] + points[1][0]) / 2
+            mid_y = (points[0][1] + points[1][1]) / 2
+        else:
+            # For multi-segment lines, choose a good point (middle segment)
+            mid_idx = len(points) // 2
+            mid_x = (points[mid_idx-1][0] + points[mid_idx][0]) / 2
+            mid_y = (points[mid_idx-1][1] + points[mid_idx][1]) / 2
+        
+        # Adjust label position slightly above/below line
+        offset = -8 if is_positive else 8
+        color = 'red' if is_positive else 'blue'
+        
+        self.canvas.create_text(mid_x, mid_y + offset, text=f"{current:.1f}A", 
+                            fill=color, font=('Arial', 8))
