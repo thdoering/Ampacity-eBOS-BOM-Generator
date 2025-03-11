@@ -38,7 +38,9 @@ class WiringConfig:
     negative_collection_points: List[CollectionPoint]
     strings_per_collection: Dict[int, int]  # Collection point ID -> number of strings
     cable_routes: Dict[str, List[tuple[float, float]]]  # Route ID -> list of coordinates
-    
+    string_cable_size: str = "10 AWG"  # Default value
+    harness_cable_size: str = "8 AWG"  # Default value
+
 @dataclass
 class BlockConfig:
     """Data class representing a solar block configuration"""

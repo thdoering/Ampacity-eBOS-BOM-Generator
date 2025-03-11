@@ -1,7 +1,7 @@
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 from typing import Optional, Dict, ClassVar, List
-from ..models.block import BlockConfig, WiringType
+from ..models.block import BlockConfig, WiringType, CollectionPoint, WiringConfig
 from ..models.module import ModuleOrientation
 from ..models.tracker import TrackerPosition
 
@@ -16,6 +16,11 @@ class WiringConfigurator(tk.Toplevel):
     }
 
     def __init__(self, parent, block: BlockConfig):
+        print("Initializing wiring configurator")
+        print("Block has wiring config:", block.wiring_config is not None)
+        if block.wiring_config:
+            print("Wiring type:", block.wiring_config.wiring_type)
+
         super().__init__(parent)
         self.parent = parent
         self.block = block
@@ -127,6 +132,28 @@ class WiringConfigurator(tk.Toplevel):
 
         # Update UI based on initial wiring type
         self.update_ui_for_wiring_type()
+
+        # At the end of setup_ui method, add:
+        # Initialize with existing configuration if available
+        if self.block.wiring_config:
+            # Set wiring type
+            self.wiring_type_var.set(self.block.wiring_config.wiring_type.value)
+            
+            # Set cable sizes
+            if hasattr(self.block.wiring_config, 'string_cable_size'):
+                self.string_cable_size_var.set(self.block.wiring_config.string_cable_size)
+            
+            if hasattr(self.block.wiring_config, 'harness_cable_size'):
+                self.harness_cable_size_var.set(self.block.wiring_config.harness_cable_size)
+            
+            # Update UI based on wiring type
+            self.update_ui_for_wiring_type()
+
+        # Check if block has an existing configuration
+        if self.block.wiring_config:
+            print("Setting up UI with existing wiring config")
+            self.wiring_type_var.set(self.block.wiring_config.wiring_type.value)
+            self.update_ui_for_wiring_type()
         
     def update_ui_for_wiring_type(self):
         """Update UI elements based on selected wiring type"""
@@ -582,8 +609,87 @@ class WiringConfigurator(tk.Toplevel):
         
     def apply_configuration(self):
         """Apply wiring configuration to block"""
-        # TODO: Implement configuration application
-        self.destroy()
+        if not self.block:
+            tk.messagebox.showerror("Error", "No block selected")
+            self.destroy()
+            return
+            
+        try:
+            # Get the selected wiring type
+            wiring_type_str = self.wiring_type_var.get()
+            wiring_type = WiringType(wiring_type_str)
+            
+            # Create collection points
+            positive_collection_points = []
+            negative_collection_points = []
+            strings_per_collection = {}
+            cable_routes = {}
+            
+            # Process each tracker position to capture collection points and routes
+            for idx, pos in enumerate(self.block.tracker_positions):
+                if not pos.template:
+                    continue
+                    
+                # Get whip points for this tracker
+                pos_whip = self.calculate_whip_points(pos, True)
+                neg_whip = self.calculate_whip_points(pos, False)
+                
+                # Add collection points
+                if pos_whip:
+                    point_id = idx  # Use tracker index as point ID
+                    collection_point = CollectionPoint(
+                        x=pos_whip[0],
+                        y=pos_whip[1],
+                        connected_strings=[s.index for s in pos.strings],
+                        current_rating=self.calculate_current_for_segment('whip', num_strings=len(pos.strings))
+                    )
+                    positive_collection_points.append(collection_point)
+                    strings_per_collection[point_id] = len(pos.strings)
+                
+                if neg_whip:
+                    point_id = idx  # Use tracker index as point ID
+                    collection_point = CollectionPoint(
+                        x=neg_whip[0],
+                        y=neg_whip[1],
+                        connected_strings=[s.index for s in pos.strings],
+                        current_rating=self.calculate_current_for_segment('whip', num_strings=len(pos.strings))
+                    )
+                    negative_collection_points.append(collection_point)
+                
+                # Add routes based on wiring type - these methods should populate the cable_routes dict
+                for string_idx, string in enumerate(pos.strings):
+                    if wiring_type == WiringType.HOMERUN:
+                        self.add_homerun_routes(cable_routes, pos, string, idx, string_idx, pos_whip, neg_whip)
+                    else:
+                        self.add_harness_routes(cable_routes, pos, string, idx, string_idx, pos_whip, neg_whip)
+            
+            # Create the WiringConfig instance
+            wiring_config = WiringConfig(
+                wiring_type=wiring_type,
+                positive_collection_points=positive_collection_points,
+                negative_collection_points=negative_collection_points,
+                strings_per_collection=strings_per_collection,
+                cable_routes=cable_routes,
+                string_cable_size=self.string_cable_size_var.get(),
+                harness_cable_size=self.harness_cable_size_var.get()
+                )
+            
+            # Store the configuration in the block
+            self.block.wiring_config = wiring_config
+            
+            tk.messagebox.showinfo("Success", "Wiring configuration applied successfully")
+            self.destroy()
+
+            # Right after assigning the wiring config to the block
+            print("Wiring config applied:", self.block.wiring_config)
+            print("Wiring type:", self.block.wiring_config.wiring_type)
+            print("Num positive collection points:", len(self.block.wiring_config.positive_collection_points))
+            print("Num cable routes:", len(self.block.wiring_config.cable_routes))
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            tk.messagebox.showerror("Error", f"Failed to apply wiring configuration: {str(e)}")
         
     def cancel(self):
         """Cancel wiring configuration"""
@@ -847,3 +953,66 @@ class WiringConfigurator(tk.Toplevel):
         
         self.canvas.create_text(mid_x, mid_y + offset, text=f"{current:.1f}A", 
                             fill=color, font=('Arial', 8))
+        
+    def add_homerun_routes(self, cable_routes, pos, string, tracker_idx, string_idx, pos_whip, neg_whip):
+        """Add homerun wiring routes to the cable_routes dictionary"""
+        # Source to whip routes
+        if pos_whip:
+            cable_routes[f"pos_src_{tracker_idx}_{string_idx}"] = [
+                (pos.x + string.positive_source_x, pos.y + string.positive_source_y),
+                pos_whip
+            ]
+        
+        if neg_whip:
+            cable_routes[f"neg_src_{tracker_idx}_{string_idx}"] = [
+                (pos.x + string.negative_source_x, pos.y + string.negative_source_y),
+                neg_whip
+            ]
+        
+        # Whip to device routes
+        pos_dest, neg_dest = self.get_device_destination_points()
+        if pos_whip and pos_dest:
+            cable_routes[f"pos_dev_{tracker_idx}_{string_idx}"] = [
+                pos_whip, pos_dest
+            ]
+        
+        if neg_whip and neg_dest:
+            cable_routes[f"neg_dev_{tracker_idx}_{string_idx}"] = [
+                neg_whip, neg_dest
+            ]
+
+    def add_harness_routes(self, cable_routes, pos, string, tracker_idx, string_idx, pos_whip, neg_whip):
+        """Add harness wiring routes to the cable_routes dictionary"""
+        # Calculate node points
+        pos_nodes = self.calculate_node_points(pos, True)
+        neg_nodes = self.calculate_node_points(pos, False)
+        
+        # String to node routes
+        if pos_nodes and len(pos_nodes) > string_idx:
+            cable_routes[f"pos_node_{tracker_idx}_{string_idx}"] = [
+                (pos.x + string.positive_source_x, pos.y + string.positive_source_y),
+                pos_nodes[string_idx]
+            ]
+        
+        if neg_nodes and len(neg_nodes) > string_idx:
+            cable_routes[f"neg_node_{tracker_idx}_{string_idx}"] = [
+                (pos.x + string.negative_source_x, pos.y + string.negative_source_y),
+                neg_nodes[string_idx]
+            ]
+        
+        # Only add harness routes once per tracker
+        if string_idx == 0:
+            # Node-to-node to whip routes (for all nodes)
+            if pos_nodes and pos_whip:
+                cable_routes[f"pos_harness_{tracker_idx}"] = pos_nodes + [pos_whip]
+            
+            if neg_nodes and neg_whip:
+                cable_routes[f"neg_harness_{tracker_idx}"] = neg_nodes + [neg_whip]
+            
+            # Whip to device routes
+            pos_dest, neg_dest = self.get_device_destination_points()
+            if pos_whip and pos_dest:
+                cable_routes[f"pos_main_{tracker_idx}"] = [pos_whip, pos_dest]
+            
+            if neg_whip and neg_dest:
+                cable_routes[f"neg_main_{tracker_idx}"] = [neg_whip, neg_dest]

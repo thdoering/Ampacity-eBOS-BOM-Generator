@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import Optional, Dict, List
-from ..models.block import BlockConfig, WiringType, TrackerPosition, DeviceType
+from ..models.block import BlockConfig, WiringType, TrackerPosition, DeviceType, WiringConfig, CollectionPoint
 from ..models.tracker import TrackerTemplate, TrackerPosition, ModuleOrientation
 from ..models.inverter import InverterSpec
 from .inverter_manager import InverterManager
@@ -1019,6 +1019,37 @@ class BlockConfigurator(ttk.Frame):
                 'device_spacing_m': block.device_spacing_m
             }
             
+            # ADD THIS CODE HERE
+            if block.wiring_config:
+                # Serialize the wiring config
+                wiring_config_data = {
+                    'wiring_type': block.wiring_config.wiring_type.value,
+                    'positive_collection_points': [
+                        {
+                            'x': point.x,
+                            'y': point.y,
+                            'connected_strings': point.connected_strings,
+                            'current_rating': point.current_rating
+                        }
+                        for point in block.wiring_config.positive_collection_points
+                    ],
+                    'negative_collection_points': [
+                        {
+                            'x': point.x,
+                            'y': point.y,
+                            'connected_strings': point.connected_strings,
+                            'current_rating': point.current_rating
+                        }
+                        for point in block.wiring_config.negative_collection_points
+                    ],
+                    'strings_per_collection': block.wiring_config.strings_per_collection,
+                    'cable_routes': block.wiring_config.cable_routes,
+                    'string_cable_size': getattr(block.wiring_config, 'string_cable_size', "10 AWG"),
+                    'harness_cable_size': getattr(block.wiring_config, 'harness_cable_size', "8 AWG")
+                }
+                current_state[id]['wiring_config_data'] = wiring_config_data
+            # END OF ADDED CODE
+                
         return current_state
 
     def _restore_from_state(self, state):
@@ -1074,6 +1105,42 @@ class BlockConfigurator(ttk.Frame):
                         template=template
                     )
                     block.tracker_positions.append(pos)
+            
+            # Restore wiring configuration if available
+            if 'wiring_config_data' in block_data:
+                wiring_data = block_data['wiring_config_data']
+                
+                # Create collection points
+                positive_points = [
+                    CollectionPoint(
+                        x=point['x'],
+                        y=point['y'],
+                        connected_strings=point['connected_strings'],
+                        current_rating=point['current_rating']
+                    )
+                    for point in wiring_data['positive_collection_points']
+                ]
+                
+                negative_points = [
+                    CollectionPoint(
+                        x=point['x'],
+                        y=point['y'],
+                        connected_strings=point['connected_strings'],
+                        current_rating=point['current_rating']
+                    )
+                    for point in wiring_data['negative_collection_points']
+                ]
+                
+                # Create wiring config with cable sizes
+                block.wiring_config = WiringConfig(
+                    wiring_type=WiringType(wiring_data['wiring_type']),
+                    positive_collection_points=positive_points,
+                    negative_collection_points=negative_points,
+                    strings_per_collection=wiring_data['strings_per_collection'],
+                    cable_routes=wiring_data['cable_routes'],
+                    string_cable_size=wiring_data.get('string_cable_size', "10 AWG"),
+                    harness_cable_size=wiring_data.get('harness_cable_size', "8 AWG")
+                )
             
             self.blocks[id] = block
             
@@ -1171,6 +1238,15 @@ class BlockConfigurator(ttk.Frame):
 
     def configure_wiring(self):
         """Open wiring configuration window"""
+
+        # At the beginning of the method
+        print("Opening wiring configurator")
+        print("Current block has wiring config:", self.blocks[self.current_block].wiring_config is not None)
+        if self.blocks[self.current_block].wiring_config:
+            print("Wiring type:", self.blocks[self.current_block].wiring_config.wiring_type)
+            print("Num positive collection points:", len(self.blocks[self.current_block].wiring_config.positive_collection_points))
+            print("Num cable routes:", len(self.blocks[self.current_block].wiring_config.cable_routes))
+            
         if not self.current_block:
             messagebox.showwarning("Warning", "Please select a block first")
             return
