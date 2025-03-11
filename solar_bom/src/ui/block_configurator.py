@@ -38,6 +38,7 @@ class BlockConfigurator(ttk.Frame):
         self.pan_start_x = 0
         self.pan_start_y = 0
         self.inverters = {}  # Store inverter configurations
+        self.on_blocks_changed = None  # Callback for when blocks change
 
 
         # Initialize undo manager
@@ -394,6 +395,9 @@ class BlockConfigurator(ttk.Frame):
             
             # Save initial empty state
             self._push_state("Create block")
+
+            # Notify blocks changed
+            self._notify_blocks_changed()
             
         except ValueError as e:
             messagebox.showerror("Error", f"Invalid input: {str(e)}")
@@ -415,6 +419,9 @@ class BlockConfigurator(ttk.Frame):
             # Clear current block
             self.current_block = None
             self.clear_config_display()
+
+            # Notify blocks changed
+            self._notify_blocks_changed()
             
     def on_block_select(self, event=None):
         """Handle block selection from listbox"""
@@ -706,6 +713,9 @@ class BlockConfigurator(ttk.Frame):
         # Update block display
         self.draw_block()
 
+        # Notify blocks changed
+        self._notify_blocks_changed()
+
     def load_templates(self):
         """Load tracker templates from file"""
         template_path = Path('data/tracker_templates.json')
@@ -832,6 +842,9 @@ class BlockConfigurator(ttk.Frame):
         
         self.selected_tracker = None
         self.draw_block()
+
+        # Notify blocks changed
+        self._notify_blocks_changed()
 
     def select_tracker(self, x, y):
         """Select tracker at given coordinates"""
@@ -1308,8 +1321,16 @@ class BlockConfigurator(ttk.Frame):
         self.block_listbox.selection_set(tk.END)
         self.block_listbox.see(tk.END)  # Ensure it's visible
         self.on_block_select()
+
+        # Notify blocks changed
+        self._notify_blocks_changed()
         
         messagebox.showinfo("Success", f"Block copied as '{new_id}'")
+    
+    def _notify_blocks_changed(self):
+        """Notify listeners that blocks have changed"""
+        if self.on_blocks_changed:
+            self.on_blocks_changed()
 
     def rename_block(self):
         """Rename the currently selected block"""
@@ -1358,5 +1379,8 @@ class BlockConfigurator(ttk.Frame):
         
         # Update UI display
         self.block_id_var.set(new_id)
+
+        # Notify blocks changed
+        self._notify_blocks_changed()
         
         messagebox.showinfo("Success", f"Block renamed to '{new_id}'")

@@ -121,7 +121,7 @@ class BlockConfig:
         if self.wiring_config.wiring_type == WiringType.HOMERUN:
             # Calculate individual string cable lengths
             string_cable_length = 0
-            for route in self.wiring_config.cable_routes.values():
+            for route_id, route in self.wiring_config.cable_routes.items():
                 points = route
                 for i in range(len(points) - 1):
                     dx = points[i+1][0] - points[i][0]
@@ -131,16 +131,26 @@ class BlockConfig:
             lengths["string_cable"] = string_cable_length
             
         else:  # Wire Harness configuration
-            # Calculate harness lengths
-            harness_length = 0
-            for route in self.wiring_config.cable_routes.values():
+            # Calculate string cable lengths
+            string_cable_length = 0
+            harness_cable_length = 0
+            
+            for route_id, route in self.wiring_config.cable_routes.items():
                 points = route
+                route_length = 0
                 for i in range(len(points) - 1):
                     dx = points[i+1][0] - points[i][0]
                     dy = points[i+1][1] - points[i][1]
-                    harness_length += (dx**2 + dy**2)**0.5
+                    route_length += (dx**2 + dy**2)**0.5
+                
+                # Determine if this is a string or harness route
+                if "node" in route_id or "src" in route_id:
+                    string_cable_length += route_length
+                elif "harness" in route_id or "main" in route_id:
+                    harness_cable_length += route_length
             
-            lengths["harness_cable"] = harness_length
+            lengths["string_cable"] = string_cable_length
+            lengths["harness_cable"] = harness_cable_length
             
         return lengths
     

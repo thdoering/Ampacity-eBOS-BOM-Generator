@@ -16,14 +16,12 @@ class WiringConfigurator(tk.Toplevel):
     }
 
     def __init__(self, parent, block: BlockConfig):
-        print("Initializing wiring configurator")
-        print("Block has wiring config:", block.wiring_config is not None)
-        if block.wiring_config:
-            print("Wiring type:", block.wiring_config.wiring_type)
-
         super().__init__(parent)
         self.parent = parent
         self.block = block
+
+        self.parent_notify_blocks_changed = getattr(parent, '_notify_blocks_changed', None)
+
         self.scale_factor = 10.0  # Starting scale (10 pixels per meter)
         self.pan_x = 0  # Pan offset in pixels
         self.pan_y = 0
@@ -151,7 +149,6 @@ class WiringConfigurator(tk.Toplevel):
 
         # Check if block has an existing configuration
         if self.block.wiring_config:
-            print("Setting up UI with existing wiring config")
             self.wiring_type_var.set(self.block.wiring_config.wiring_type.value)
             self.update_ui_for_wiring_type()
         
@@ -678,13 +675,9 @@ class WiringConfigurator(tk.Toplevel):
             self.block.wiring_config = wiring_config
             
             tk.messagebox.showinfo("Success", "Wiring configuration applied successfully")
+            if self.parent_notify_blocks_changed:
+                self.parent_notify_blocks_changed()
             self.destroy()
-
-            # Right after assigning the wiring config to the block
-            print("Wiring config applied:", self.block.wiring_config)
-            print("Wiring type:", self.block.wiring_config.wiring_type)
-            print("Num positive collection points:", len(self.block.wiring_config.positive_collection_points))
-            print("Num cable routes:", len(self.block.wiring_config.cable_routes))
             
         except Exception as e:
             import traceback
@@ -923,8 +916,7 @@ class WiringConfigurator(tk.Toplevel):
             string_current = module_spec.imp
         else:
             # Fallback if we can't get the actual current
-            print("Cannot find module spec in wiring configurator")
-            string_current = 10.0  # This explains why we keep seeing 10A!
+            string_current = 10.0
         
         # Calculate current based on how many strings are combined
         return string_current * num_strings

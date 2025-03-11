@@ -5,6 +5,7 @@ from src.ui.tracker_creator import TrackerTemplateCreator
 from src.ui.module_manager import ModuleManager
 from src.ui.block_configurator import BlockConfigurator
 from src.ui.inverter_manager import InverterManager
+from src.ui.bom_manager import BOMManager
 
 
 def main():
@@ -49,15 +50,30 @@ def main():
     block_configurator = BlockConfigurator(block_frame)
     block_configurator.pack(fill='both', expand=True, padx=5, pady=5)
 
+    # Create BOM manager tab
+    bom_frame = ttk.Frame(notebook)
+    notebook.add(bom_frame, text='BOM Generator')
+
+    bom_manager = BOMManager(bom_frame)
+    bom_manager.pack(fill='both', expand=True, padx=5, pady=5)
+
     # Connect module manager to block configurator
     def on_module_selected_for_block(module):
         block_configurator.current_module = module  # We'll add this property
+
+    # Function to update BOM manager with current blocks
+    def update_bom_blocks():
+        bom_manager.set_blocks(block_configurator.blocks)
 
     module_manager.on_module_selected = lambda module: (
         on_module_selected(module),  # Original tracker creator connection
         on_module_selected_for_block(module)  # New block configurator connection
     )
     
+    # Connect block configurator to BOM manager
+    # This allows the BOM manager to access the blocks
+    block_configurator.on_blocks_changed = update_bom_blocks
+
     # Configure window size and center on screen
     root.state('zoomed')
     
