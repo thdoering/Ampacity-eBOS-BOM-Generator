@@ -246,7 +246,22 @@ class TrackerTemplateCreator(ttk.Frame):
                 "modules_per_string": template.modules_per_string,
                 "strings_per_tracker": template.strings_per_tracker,
                 "module_spacing_m": template.module_spacing_m,
-                "motor_gap_m": template.motor_gap_m
+                "motor_gap_m": template.motor_gap_m,
+                "module_spec": {
+                    "manufacturer": template.module_spec.manufacturer,
+                    "model": template.module_spec.model,
+                    "type": template.module_spec.type.value,
+                    "length_mm": template.module_spec.length_mm,
+                    "width_mm": template.module_spec.width_mm,
+                    "depth_mm": template.module_spec.depth_mm,
+                    "weight_kg": template.module_spec.weight_kg,
+                    "wattage": template.module_spec.wattage,
+                    "vmp": template.module_spec.vmp,
+                    "imp": template.module_spec.imp,
+                    "voc": template.module_spec.voc,
+                    "isc": template.module_spec.isc,
+                    "max_system_voltage": template.module_spec.max_system_voltage
+                }
             }
             
             self.save_templates()
@@ -272,6 +287,26 @@ class TrackerTemplateCreator(ttk.Frame):
         self.strings_tracker_var.set(str(template_data["strings_per_tracker"]))
         self.spacing_var.set(str(template_data["module_spacing_m"]))
         self.motor_gap_var.set(str(template_data["motor_gap_m"]))
+        
+        # If we have module spec data, use it
+        if "module_spec" in template_data:
+            module_data = template_data["module_spec"]
+            module_spec = ModuleSpec(
+                manufacturer=module_data["manufacturer"],
+                model=module_data["model"],
+                type=ModuleType(module_data["type"]),
+                length_mm=module_data["length_mm"],
+                width_mm=module_data["width_mm"],
+                depth_mm=module_data["depth_mm"],
+                weight_kg=module_data["weight_kg"],
+                wattage=module_data["wattage"],
+                vmp=module_data["vmp"],
+                imp=module_data["imp"],
+                voc=module_data["voc"],
+                isc=module_data["isc"],
+                max_system_voltage=module_data["max_system_voltage"]
+            )
+            self.module_spec = module_spec
         
         self.update_preview()
         

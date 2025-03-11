@@ -206,6 +206,22 @@ class BlockConfigurator(ttk.Frame):
         self.template_listbox.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E))
         self.template_listbox.bind('<<ListboxSelect>>', self.on_template_select)
 
+        # Add current values display
+        self.current_frame = ttk.Frame(templates_frame)
+        self.current_frame.grid(row=1, column=0, padx=5, pady=5, sticky=(tk.W, tk.E))
+
+        ttk.Label(self.current_frame, text="String Current (Imp):").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
+        self.string_current_label = ttk.Label(self.current_frame, text="-- A")
+        self.string_current_label.grid(row=0, column=1, padx=5, pady=2, sticky=tk.W)
+
+        ttk.Label(self.current_frame, text="NEC Current (Isc×1.25):").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
+        self.nec_current_label = ttk.Label(self.current_frame, text="-- A")
+        self.nec_current_label.grid(row=1, column=1, padx=5, pady=2, sticky=tk.W)
+
+        # Add string_current and nec_current properties to the class
+        self.string_current = 0.0
+        self.nec_current = 0.0
+
         # Canvas frame for block layout - on the right side
         canvas_frame = ttk.LabelFrame(main_container, text="Block Layout", padding="5")
         canvas_frame.grid(row=0, rowspan=2, column=2, padx=5, pady=5)
@@ -419,10 +435,10 @@ class BlockConfigurator(ttk.Frame):
     def clear_config_display(self):
         """Clear block configuration display"""
         self.block_id_var.set("")
-        self.width_var.set("200")
-        self.height_var.set("165")
+        # self.width_var.set("200")
+        # self.height_var.set("165")
         self.row_spacing_var.set("18.5")
-        self.gcr_var.set("0.4")
+        # self.gcr_var.set("0.4")
         self.canvas.delete("all")
         
     def draw_block(self):
@@ -695,25 +711,31 @@ class BlockConfigurator(ttk.Frame):
             try:
                 with open(template_path, 'r') as f:
                     data = json.load(f)
-                    # Use current module if available, otherwise use default
-                    module_spec = self._current_module if self._current_module else ModuleSpec(
-                        manufacturer="Default",
-                        model="Default",
-                        type=ModuleType.MONO_PERC,
-                        length_mm=2000,
-                        width_mm=1000,
-                        depth_mm=40,
-                        weight_kg=25,
-                        wattage=400,
-                        vmp=40,
-                        imp=10,
-                        voc=48,
-                        isc=10.5,
-                        max_system_voltage=1500
-                    )
-                    
-                    self.tracker_templates = {
-                        name: TrackerTemplate(
+                    # Create ModuleSpec objects from the stored module_spec data in templates
+                    self.tracker_templates = {}
+                    for name, template in data.items():
+                        # Extract the module spec data
+                        module_data = template.get('module_spec', {})
+                        
+                        # Create proper ModuleSpec object with correct values
+                        module_spec = ModuleSpec(
+                            manufacturer=module_data.get('manufacturer', 'Default'),
+                            model=module_data.get('model', 'Default'),
+                            type=ModuleType.MONO_PERC,  # Default type
+                            length_mm=module_data.get('length_mm', 2000),
+                            width_mm=module_data.get('width_mm', 1000),
+                            depth_mm=module_data.get('depth_mm', 40),
+                            weight_kg=module_data.get('weight_kg', 25),
+                            wattage=module_data.get('wattage', 400),
+                            vmp=module_data.get('vmp', 40),
+                            imp=module_data.get('imp', 10),  # This is the value we need to fix!
+                            voc=module_data.get('voc', 48),
+                            isc=module_data.get('isc', 10.5),
+                            max_system_voltage=module_data.get('max_system_voltage', 1500)
+                        )
+                        
+                        # Create TrackerTemplate with the correct module_spec
+                        self.tracker_templates[name] = TrackerTemplate(
                             template_name=name,
                             module_spec=module_spec,
                             module_orientation=ModuleOrientation(template.get('module_orientation', 'Portrait')),
@@ -721,9 +743,7 @@ class BlockConfigurator(ttk.Frame):
                             strings_per_tracker=template.get('strings_per_tracker', 2),
                             module_spacing_m=template.get('module_spacing_m', 0.01),
                             motor_gap_m=template.get('motor_gap_m', 1.0)
-                        ) 
-                        for name, template in data.items()
-                    }
+                        )
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to load templates: {str(e)}")
                 self.tracker_templates = {}
@@ -740,6 +760,27 @@ class BlockConfigurator(ttk.Frame):
             if self.current_block and self.drag_template:
                 self.blocks[self.current_block].tracker_template = self.drag_template
                 self.calculate_gcr()  # Recalculate GCR with new template
+
+                # Debug prints - add these
+                print(f"Selected template: {template_name}")
+                if self.drag_template and self.drag_template.module_spec:
+                    print(f"Module spec: {self.drag_template.module_spec}")
+                    print(f"Imp value: {self.drag_template.module_spec.imp}")
+                else:
+                    print("No module spec found in template")
+                
+                # Update string current values
+                if self.drag_template.module_spec:
+                    module = self.drag_template.module_spec
+                    self.string_current = module.imp
+                    self.nec_current = module.isc * 1.25
+                    self.string_current_label.config(text=f"{self.string_current:.2f} A")
+                    self.nec_current_label.config(text=f"{self.nec_current:.2f} A")
+                else:
+                    self.string_current = 0.0
+                    self.nec_current = 0.0
+                    self.string_current_label.config(text="-- A")
+                    self.nec_current_label.config(text="-- A")
 
     def update_template_list(self):
         """Update template listbox with available templates"""

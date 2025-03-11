@@ -119,7 +119,7 @@ class ModuleManager(ttk.Frame):
             
     def load_modules(self):
         """Load saved modules from JSON file"""
-        module_path = Path('data/modules.json')
+        module_path = Path('data/module_templates.json')
         if not module_path.exists():
             return
             
@@ -140,7 +140,7 @@ class ModuleManager(ttk.Frame):
             
     def save_modules(self):
         """Save modules to JSON file"""
-        module_path = Path('data/modules.json')
+        module_path = Path('data/module_templates.json')
         module_path.parent.mkdir(exist_ok=True)
         
         data = {

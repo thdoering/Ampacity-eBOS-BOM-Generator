@@ -800,28 +800,32 @@ class WiringConfigurator(tk.Toplevel):
         
         return thickness_map.get(wire_gauge, 2.0)  # Default to 2.0 if gauge not found
 
-    def calculate_current_for_segment(self, segment_type: str, strings_combined: int = 1) -> float:
+    def calculate_current_for_segment(self, segment_type: str, num_strings: int = 1) -> float:
         """
         Calculate current flowing through a wire segment based on configuration
-        
-        Args:
-            segment_type: Type of segment ('string', 'harness', or 'whip')
-            strings_combined: Number of strings combined in this segment
-            
-        Returns:
-            float: Current in amperes
         """
-        # Get module current value from template
-        if not self.block or not self.block.tracker_template or not self.block.tracker_template.module_spec:
-            return 0.0
+        # Direct access to module spec from block's tracker template
+        if (self.block and 
+            hasattr(self.block, 'tracker_template') and 
+            self.block.tracker_template and 
+            hasattr(self.block.tracker_template, 'module_spec') and 
+            self.block.tracker_template.module_spec):
             
-        module_spec = self.block.tracker_template.module_spec
+            module_spec = self.block.tracker_template.module_spec
+            
+            # Print debug info to console
+            print(f"Module spec in wiring configurator: {module_spec}")
+            print(f"Module imp: {module_spec.imp}")
+            
+            # Use the Imp value
+            string_current = module_spec.imp
+        else:
+            # Fallback if we can't get the actual current
+            print("Cannot find module spec in wiring configurator")
+            string_current = 10.0  # This explains why we keep seeing 10A!
         
-        # Use Imp as the normal operating current per string
-        string_current = module_spec.imp
-        
-        # Calculate current based on how many strings are combined at this point
-        return string_current * strings_combined
+        # Calculate current based on how many strings are combined
+        return string_current * num_strings
 
     def add_current_label(self, points, current, is_positive, segment_type='string'):
         """Add current label to a wire segment if enabled"""
