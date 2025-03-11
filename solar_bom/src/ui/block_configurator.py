@@ -760,14 +760,6 @@ class BlockConfigurator(ttk.Frame):
             if self.current_block and self.drag_template:
                 self.blocks[self.current_block].tracker_template = self.drag_template
                 self.calculate_gcr()  # Recalculate GCR with new template
-
-                # Debug prints - add these
-                print(f"Selected template: {template_name}")
-                if self.drag_template and self.drag_template.module_spec:
-                    print(f"Module spec: {self.drag_template.module_spec}")
-                    print(f"Imp value: {self.drag_template.module_spec.imp}")
-                else:
-                    print("No module spec found in template")
                 
                 # Update string current values
                 if self.drag_template.module_spec:

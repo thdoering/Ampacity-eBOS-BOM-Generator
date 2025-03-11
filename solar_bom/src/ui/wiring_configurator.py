@@ -813,10 +813,6 @@ class WiringConfigurator(tk.Toplevel):
             
             module_spec = self.block.tracker_template.module_spec
             
-            # Print debug info to console
-            print(f"Module spec in wiring configurator: {module_spec}")
-            print(f"Module imp: {module_spec.imp}")
-            
             # Use the Imp value
             string_current = module_spec.imp
         else:
