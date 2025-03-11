@@ -185,12 +185,19 @@ class BOMManager(ttk.Frame):
         
         # Add summary data to preview
         for _, row in summary_data.iterrows():
+            # Format quantity based on unit
+            quantity = row['Quantity']
+            if row['Unit'] == 'feet':
+                quantity_str = f"{quantity:.1f}"
+            else:
+                quantity_str = f"{int(quantity)}"
+                
             self.preview_tree.insert(
                 '', 'end',
                 values=(
                     row['Component Type'],
                     row['Description'],
-                    row['Quantity'],
+                    quantity_str,
                     row['Unit']
                 )
             )

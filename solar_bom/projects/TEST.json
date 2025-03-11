@@ -1,0 +1,16 @@
+{
+  "metadata": {
+    "name": "TEST",
+    "description": "TEST",
+    "location": "TEST",
+    "client": "TEST",
+    "created_date": "2025-03-11T15:41:06.794547",
+    "modified_date": "2025-03-11T15:42:16.413773",
+    "notes": ""
+  },
+  "blocks": {
+    "Block_1": "Block_1"
+  },
+  "selected_modules": [],
+  "selected_inverters": []
+}

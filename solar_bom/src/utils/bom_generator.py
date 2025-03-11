@@ -22,15 +22,19 @@ class BOMGenerator:
         """
         self.blocks = blocks
     
-    def calculate_cable_quantities(self) -> Dict[str, Dict[str, float]]:
+    def calculate_cable_quantities(self) -> Dict[str, Dict[str, Any]]:
         """
         Calculate cable quantities by block and type
         
         Returns:
-            Dictionary of cable quantities by block and type
+            Dictionary with quantities by block and component type
             {
                 'block_id': {
-                    'cable_type': length_in_meters
+                    'component_type': {
+                        'description': description,
+                        'quantity': quantity,
+                        'unit': unit
+                    }
                 }
             }
         """
@@ -44,58 +48,118 @@ class BOMGenerator:
             cable_lengths = block.calculate_cable_lengths()
             
             if block.wiring_config.wiring_type == WiringType.HOMERUN:
-                # For homerun, we use just string cables
+                # For homerun, we track string cable length
                 if 'string_cable' in cable_lengths:
-                    block_quantities[block.wiring_config.string_cable_size] = cable_lengths['string_cable'] * self.CABLE_WASTE_FACTOR
+                    length = cable_lengths['string_cable'] * self.CABLE_WASTE_FACTOR
+                    block_quantities['String Wire'] = {
+                        'description': f'DC String Wire {block.wiring_config.string_cable_size}',
+                        'quantity': round(length, 1),
+                        'unit': 'meters'
+                    }
             else:
-                # For harness, we have both string and harness cables
+                # For harness config, count harnesses by number of strings
+                harness_counts = self._count_harnesses_by_size(block)
+                
+                # Add each harness type
+                for string_count, count in harness_counts.items():
+                    block_quantities[f'{string_count}-String Harness'] = {
+                        'description': f'{string_count}-String Harness ({block.wiring_config.harness_cable_size} trunk, {block.wiring_config.string_cable_size} strings)',
+                        'quantity': count,
+                        'unit': 'units'
+                    }
+                
+                # Add string wire for connections to harness nodes
                 if 'string_cable' in cable_lengths:
-                    block_quantities[block.wiring_config.string_cable_size] = cable_lengths.get('string_cable', 0) * self.CABLE_WASTE_FACTOR
-                if 'harness_cable' in cable_lengths:
-                    block_quantities[block.wiring_config.harness_cable_size] = cable_lengths.get('harness_cable', 0) * self.CABLE_WASTE_FACTOR
+                    length = cable_lengths.get('string_cable', 0) * self.CABLE_WASTE_FACTOR
+                    block_quantities['String Wire'] = {
+                        'description': f'DC String Wire {block.wiring_config.string_cable_size}',
+                        'quantity': round(length, 1),
+                        'unit': 'meters'
+                    }
+                
+                # Add trunk wire from harness to inverter (whips)
+                whip_count = len([pos for pos in block.tracker_positions])
+                block_quantities['Whips'] = {
+                    'description': f'DC Whip Cable {block.wiring_config.harness_cable_size}',
+                    'quantity': whip_count * 2,  # Positive and negative
+                    'unit': 'units'
+                }
             
             quantities[block_id] = block_quantities
         
         return quantities
+        
+    def _count_harnesses_by_size(self, block: BlockConfig) -> Dict[int, int]:
+        """
+        Count harnesses by number of strings they connect
+        
+        Args:
+            block: Block configuration
+            
+        Returns:
+            Dictionary mapping string count to harness count
+        """
+        harness_counts = {}
+        
+        if not block.wiring_config or block.wiring_config.wiring_type != WiringType.HARNESS:
+            return harness_counts
+            
+        # Count strings per tracker
+        for pos in block.tracker_positions:
+            if pos.template:
+                string_count = len(pos.strings)
+                if string_count not in harness_counts:
+                    harness_counts[string_count] = 0
+                harness_counts[string_count] += 1
+                
+        return harness_counts
     
-    def generate_summary_data(self, quantities: Dict[str, Dict[str, float]]) -> pd.DataFrame:
+    def generate_summary_data(self, quantities: Dict[str, Dict[str, Any]]) -> pd.DataFrame:
         """
         Generate summary data for BOM
         
         Args:
-            quantities: Cable quantities by block and type
+            quantities: Component quantities by block
             
         Returns:
             DataFrame with summary data
         """
-        # Initialize dictionary to store totals by cable type
-        cable_totals = {}
+        # Initialize dictionaries to track totals by component and description
+        component_totals = {}
         
-        # Sum up quantities for each cable type across all blocks
+        # Sum up quantities for each component type across all blocks
         for block_id, block_quantities in quantities.items():
-            for cable_type, length in block_quantities.items():
-                if cable_type not in cable_totals:
-                    cable_totals[cable_type] = 0
-                cable_totals[cable_type] += length
+            for component_type, details in block_quantities.items():
+                description = details['description']
+                quantity = details['quantity']
+                unit = details['unit']
+                
+                key = (component_type, description, unit)
+                if key not in component_totals:
+                    component_totals[key] = 0
+                component_totals[key] += quantity
         
         # Convert to DataFrame
         summary_data = []
-        for cable_type, length in cable_totals.items():
+        for (component_type, description, unit), quantity in component_totals.items():
             summary_data.append({
-                'Component Type': 'DC Cable',
-                'Description': cable_type,
-                'Quantity': round(length, 1),
-                'Unit': 'meters'
+                'Component Type': component_type,
+                'Description': description,
+                'Quantity': round(quantity, 1) if unit == 'meters' else int(quantity),
+                'Unit': unit
             })
+        
+        # Sort by component type
+        summary_data = sorted(summary_data, key=lambda x: x['Component Type'])
         
         return pd.DataFrame(summary_data)
     
-    def generate_detailed_data(self, quantities: Dict[str, Dict[str, float]]) -> pd.DataFrame:
+    def generate_detailed_data(self, quantities: Dict[str, Dict[str, Any]]) -> pd.DataFrame:
         """
         Generate detailed data for BOM
         
         Args:
-            quantities: Cable quantities by block and type
+            quantities: Component quantities by block
             
         Returns:
             DataFrame with detailed data
@@ -103,14 +167,21 @@ class BOMGenerator:
         detailed_data = []
         
         for block_id, block_quantities in quantities.items():
-            for cable_type, length in block_quantities.items():
+            for component_type, details in block_quantities.items():
+                description = details['description']
+                quantity = details['quantity']
+                unit = details['unit']
+                
                 detailed_data.append({
                     'Block': block_id,
-                    'Component Type': 'DC Cable',
-                    'Description': cable_type,
-                    'Quantity': round(length, 1),
-                    'Unit': 'meters'
+                    'Component Type': component_type,
+                    'Description': description,
+                    'Quantity': round(quantity, 1) if unit == 'meters' else int(quantity),
+                    'Unit': unit
                 })
+        
+        # Sort by block ID and component type
+        detailed_data = sorted(detailed_data, key=lambda x: (x['Block'], x['Component Type']))
         
         return pd.DataFrame(detailed_data)
     
