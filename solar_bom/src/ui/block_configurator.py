@@ -96,6 +96,7 @@ class BlockConfigurator(ttk.Frame):
         
         ttk.Button(btn_frame, text="New Block", command=self.create_new_block).grid(row=0, column=0, padx=2)
         ttk.Button(btn_frame, text="Delete Block", command=self.delete_block).grid(row=0, column=1, padx=2)
+        ttk.Button(btn_frame, text="Copy Block", command=self.copy_block).grid(row=0, column=2, padx=2)
         
         # Right side - Block Configuration
         config_frame = ttk.LabelFrame(main_container, text="Block Configuration", padding="5")
@@ -105,7 +106,8 @@ class BlockConfigurator(ttk.Frame):
         ttk.Label(config_frame, text="Block ID:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
         self.block_id_var = tk.StringVar()
         ttk.Entry(config_frame, textvariable=self.block_id_var).grid(row=0, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
-        
+        ttk.Button(config_frame, text="Rename", command=self.rename_block).grid(row=0, column=2, padx=5, pady=2)
+
         # Spacing Configuration
         spacing_frame = ttk.LabelFrame(config_frame, text="Spacing Configuration", padding="5")
         spacing_frame.grid(row=1, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
@@ -158,7 +160,7 @@ class BlockConfigurator(ttk.Frame):
         max_current_spinbox = ttk.Spinbox(
             device_frame,
             from_=15,
-            to=30,
+            to=60,
             textvariable=self.max_current_per_input_var,
             increment=1,
             width=10
@@ -728,7 +730,7 @@ class BlockConfigurator(ttk.Frame):
                             weight_kg=module_data.get('weight_kg', 25),
                             wattage=module_data.get('wattage', 400),
                             vmp=module_data.get('vmp', 40),
-                            imp=module_data.get('imp', 10),  # This is the value we need to fix!
+                            imp=module_data.get('imp', 10),
                             voc=module_data.get('voc', 48),
                             isc=module_data.get('isc', 10.5),
                             max_system_voltage=module_data.get('max_system_voltage', 1500)
@@ -1175,3 +1177,110 @@ class BlockConfigurator(ttk.Frame):
             
         from .wiring_configurator import WiringConfigurator
         WiringConfigurator(self, self.blocks[self.current_block])
+
+    def copy_block(self):
+        """Create a copy of the currently selected block with incremented name"""
+        if not self.current_block:
+            messagebox.showwarning("Warning", "Please select a block to copy")
+            return
+            
+        # Get the source block
+        source_block = self.blocks[self.current_block]
+        source_id = source_block.block_id
+        
+        # Try to parse the source ID to find a numerical suffix
+        import re
+        match = re.match(r'(.*?)(\d+)$', source_id)
+        
+        if match:
+            # If source ID ends with a number, increment it
+            base_name = match.group(1)  # The part before the number
+            number = int(match.group(2))  # The number part
+            
+            # Try incrementing the number until we find an unused ID
+            new_id = f"{base_name}{number + 1}"
+            while new_id in self.blocks:
+                number += 1
+                new_id = f"{base_name}{number}"
+        else:
+            # If no numeric suffix, use the old method
+            base_id = f"{source_id}_copy"
+            new_id = base_id
+            counter = 1
+            while new_id in self.blocks:
+                new_id = f"{base_id}_{counter}"
+                counter += 1
+        
+        # Create a deep copy of the block to avoid shared references
+        from copy import deepcopy
+        new_block = deepcopy(source_block)
+        
+        # Update the ID
+        new_block.block_id = new_id
+        
+        # Add to blocks dictionary
+        self.blocks[new_id] = new_block
+        
+        # Save state for undo
+        self._push_state("Copy block")
+        
+        # Update listbox
+        self.block_listbox.insert(tk.END, new_id)
+        
+        # Select the new block
+        self.block_listbox.selection_clear(0, tk.END)
+        self.block_listbox.selection_set(tk.END)
+        self.block_listbox.see(tk.END)  # Ensure it's visible
+        self.on_block_select()
+        
+        messagebox.showinfo("Success", f"Block copied as '{new_id}'")
+
+    def rename_block(self):
+        """Rename the currently selected block"""
+        if not self.current_block:
+            messagebox.showwarning("Warning", "Please select a block to rename")
+            return
+            
+        # Get the new ID from the entry field
+        new_id = self.block_id_var.get().strip()
+        
+        # Validate the new ID
+        if not new_id:
+            messagebox.showerror("Error", "Block ID cannot be empty")
+            return
+            
+        if new_id in self.blocks and new_id != self.current_block:
+            messagebox.showerror("Error", f"Block ID '{new_id}' already exists")
+            return
+        
+        # Save state for undo
+        self._push_state("Before rename block")
+        
+        # Get the current block
+        block = self.blocks[self.current_block]
+        old_id = self.current_block
+        
+        # Remove the old entry from the dictionary
+        del self.blocks[self.current_block]
+        
+        # Update the block ID
+        block.block_id = new_id
+        
+        # Add back to dictionary with new ID
+        self.blocks[new_id] = block
+        
+        # Update the listbox - find the exact item that matches the old ID
+        for i in range(self.block_listbox.size()):
+            if self.block_listbox.get(i) == old_id:
+                self.block_listbox.delete(i)
+                self.block_listbox.insert(i, new_id)
+                self.block_listbox.selection_set(i)
+                break
+        
+        # Update current_block reference to the new ID
+        self.current_block = new_id
+        
+        # Update UI display
+        self.block_id_var.set(new_id)
+        
+        messagebox.showinfo("Success", f"Block renamed to '{new_id}'")
