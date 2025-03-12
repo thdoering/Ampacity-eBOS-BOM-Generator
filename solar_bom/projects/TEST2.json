@@ -1,0 +1,14 @@
+{
+  "metadata": {
+    "name": "TEST2",
+    "description": "Twe",
+    "location": "asdf",
+    "client": "asdf",
+    "created_date": "2025-03-12T07:44:43.597672",
+    "modified_date": "2025-03-12T07:44:43.597672",
+    "notes": ""
+  },
+  "blocks": {},
+  "selected_modules": [],
+  "selected_inverters": []
+}

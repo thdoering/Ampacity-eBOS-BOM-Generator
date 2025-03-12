@@ -1251,14 +1251,6 @@ class BlockConfigurator(ttk.Frame):
 
     def configure_wiring(self):
         """Open wiring configuration window"""
-
-        # At the beginning of the method
-        print("Opening wiring configurator")
-        print("Current block has wiring config:", self.blocks[self.current_block].wiring_config is not None)
-        if self.blocks[self.current_block].wiring_config:
-            print("Wiring type:", self.blocks[self.current_block].wiring_config.wiring_type)
-            print("Num positive collection points:", len(self.blocks[self.current_block].wiring_config.positive_collection_points))
-            print("Num cable routes:", len(self.blocks[self.current_block].wiring_config.cable_routes))
             
         if not self.current_block:
             messagebox.showwarning("Warning", "Please select a block first")
