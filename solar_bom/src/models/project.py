@@ -21,7 +21,7 @@ class Project:
     """Data class representing a solar project configuration"""
     metadata: ProjectMetadata
     # Store references to blocks by their IDs
-    blocks: Dict[str, str] = field(default_factory=dict)
+    blocks: Dict[str, dict] = field(default_factory=dict)
     # Store selected module IDs for this project
     selected_modules: List[str] = field(default_factory=list)
     # Store selected inverter IDs for this project

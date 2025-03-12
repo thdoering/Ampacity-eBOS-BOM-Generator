@@ -157,3 +157,179 @@ class BlockConfig:
     def __str__(self) -> str:
         return (f"Block {self.block_id} - {len(self.tracker_positions)} trackers, "
                 f"{self.calculate_power()/1000:.1f}kW")
+    
+    def to_dict(self) -> dict:
+        """Convert block configuration to dictionary for serialization"""
+        tracker_positions_data = []
+        for pos in self.tracker_positions:
+            pos_data = {
+                'x': pos.x,
+                'y': pos.y,
+                'rotation': pos.rotation,
+                'template_name': pos.template.template_name if pos.template else None,
+                'strings': []
+            }
+            
+            # Save strings data
+            for string in pos.strings:
+                string_data = {
+                    'index': string.index,
+                    'positive_source_x': string.positive_source_x,
+                    'positive_source_y': string.positive_source_y,
+                    'negative_source_x': string.negative_source_x,
+                    'negative_source_y': string.negative_source_y,
+                    'num_modules': string.num_modules
+                }
+                pos_data['strings'].append(string_data)
+                
+            tracker_positions_data.append(pos_data)
+        
+        # Basic block data
+        data = {
+            'block_id': self.block_id,
+            'width_m': self.width_m,
+            'height_m': self.height_m,
+            'row_spacing_m': self.row_spacing_m,
+            'ns_spacing_m': self.ns_spacing_m,
+            'gcr': self.gcr,
+            'description': self.description,
+            'tracker_positions': tracker_positions_data,
+            'device_x': self.device_x,
+            'device_y': self.device_y,
+            'device_spacing_m': self.device_spacing_m
+        }
+        
+        # Add inverter reference if exists
+        if self.inverter:
+            data['inverter_id'] = f"{self.inverter.manufacturer} {self.inverter.model}"
+        
+        # Add tracker template reference if exists
+        if self.tracker_template:
+            data['tracker_template_name'] = self.tracker_template.template_name
+        
+        # Add wiring config if exists
+        if self.wiring_config:
+            wiring_data = {
+                'wiring_type': self.wiring_config.wiring_type.value,
+                'string_cable_size': self.wiring_config.string_cable_size,
+                'harness_cable_size': self.wiring_config.harness_cable_size,
+                'positive_collection_points': [],
+                'negative_collection_points': [],
+                'strings_per_collection': self.wiring_config.strings_per_collection,
+                'cable_routes': self.wiring_config.cable_routes
+            }
+            
+            # Serialize collection points
+            for point in self.wiring_config.positive_collection_points:
+                wiring_data['positive_collection_points'].append({
+                    'x': point.x,
+                    'y': point.y,
+                    'connected_strings': point.connected_strings,
+                    'current_rating': point.current_rating
+                })
+                
+            for point in self.wiring_config.negative_collection_points:
+                wiring_data['negative_collection_points'].append({
+                    'x': point.x,
+                    'y': point.y,
+                    'connected_strings': point.connected_strings,
+                    'current_rating': point.current_rating
+                })
+                
+            data['wiring_config'] = wiring_data
+        
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict, tracker_templates: dict, inverters: dict):
+        """Create a BlockConfig instance from dictionary data"""
+        # Get referenced objects
+        tracker_template = None
+        if 'tracker_template_name' in data and data['tracker_template_name'] in tracker_templates:
+            tracker_template = tracker_templates[data['tracker_template_name']]
+        
+        inverter = None
+        if 'inverter_id' in data and data['inverter_id'] in inverters:
+            inverter = inverters[data['inverter_id']]
+        
+        # Create block instance
+        block = cls(
+            block_id=data['block_id'],
+            inverter=inverter,
+            tracker_template=tracker_template,
+            width_m=data['width_m'],
+            height_m=data['height_m'],
+            row_spacing_m=data['row_spacing_m'],
+            ns_spacing_m=data['ns_spacing_m'],
+            gcr=data['gcr'],
+            description=data.get('description'),
+            device_x=data.get('device_x', 0.0),
+            device_y=data.get('device_y', 0.0),
+            device_spacing_m=data.get('device_spacing_m', 1.83)
+        )
+        
+        # Load tracker positions
+        from .tracker import TrackerPosition, StringPosition
+        
+        for pos_data in data.get('tracker_positions', []):
+            if not tracker_template:
+                continue
+                
+            pos = TrackerPosition(
+                x=pos_data['x'],
+                y=pos_data['y'],
+                rotation=pos_data['rotation'],
+                template=tracker_template
+            )
+            
+            # Load strings data if available
+            for string_data in pos_data.get('strings', []):
+                string = StringPosition(
+                    index=string_data['index'],
+                    positive_source_x=string_data['positive_source_x'],
+                    positive_source_y=string_data['positive_source_y'],
+                    negative_source_x=string_data['negative_source_x'],
+                    negative_source_y=string_data['negative_source_y'],
+                    num_modules=string_data['num_modules']
+                )
+                pos.strings.append(string)
+                
+            block.tracker_positions.append(pos)
+        
+        # Load wiring configuration if exists
+        if 'wiring_config' in data:
+            wiring_data = data['wiring_config']
+            
+            # Create collection points
+            positive_points = []
+            for point_data in wiring_data.get('positive_collection_points', []):
+                point = CollectionPoint(
+                    x=point_data['x'],
+                    y=point_data['y'],
+                    connected_strings=point_data['connected_strings'],
+                    current_rating=point_data['current_rating']
+                )
+                positive_points.append(point)
+                
+            negative_points = []
+            for point_data in wiring_data.get('negative_collection_points', []):
+                point = CollectionPoint(
+                    x=point_data['x'],
+                    y=point_data['y'],
+                    connected_strings=point_data['connected_strings'],
+                    current_rating=point_data['current_rating']
+                )
+                negative_points.append(point)
+            
+            # Create wiring config
+            block.wiring_config = WiringConfig(
+                wiring_type=WiringType(wiring_data['wiring_type']),
+                positive_collection_points=positive_points,
+                negative_collection_points=negative_points,
+                strings_per_collection=wiring_data.get('strings_per_collection', {}),
+                cable_routes=wiring_data.get('cable_routes', {}),
+                string_cable_size=wiring_data.get('string_cable_size', "10 AWG"),
+                harness_cable_size=wiring_data.get('harness_cable_size', "8 AWG")
+            )
+        
+        return block

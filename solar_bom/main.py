@@ -122,8 +122,108 @@ class SolarBOMApplication:
         
         # Load blocks from project if available
         if self.current_project.blocks:
-            # TODO: Implement loading blocks from project
-            pass
+            # Get templates and inverters for block reconstruction
+            from src.utils.file_handlers import load_json_file
+            
+            # Load tracker templates
+            tracker_templates = {}
+            try:
+                templates_data = load_json_file('data/tracker_templates.json')
+                for name, template_data in templates_data.items():
+                    # Create proper objects here (simplified for example)
+                    from src.models.tracker import TrackerTemplate
+                    from src.models.module import ModuleSpec, ModuleType, ModuleOrientation
+                    
+                    # Create module spec from stored data
+                    module_data = template_data.get('module_spec', {})
+                    module_spec = ModuleSpec(
+                        manufacturer=module_data.get('manufacturer', 'Default'),
+                        model=module_data.get('model', 'Default'),
+                        type=ModuleType.MONO_PERC,
+                        length_mm=float(module_data.get('length_mm', 2000)),
+                        width_mm=float(module_data.get('width_mm', 1000)),
+                        depth_mm=float(module_data.get('depth_mm', 40)),
+                        weight_kg=float(module_data.get('weight_kg', 25)),
+                        wattage=float(module_data.get('wattage', 400)),
+                        vmp=float(module_data.get('vmp', 40)),
+                        imp=float(module_data.get('imp', 10)),
+                        voc=float(module_data.get('voc', 48)),
+                        isc=float(module_data.get('isc', 10.5)),
+                        max_system_voltage=float(module_data.get('max_system_voltage', 1500))
+                    )
+                    
+                    # Create tracker template
+                    tracker_templates[name] = TrackerTemplate(
+                        template_name=name,
+                        module_spec=module_spec,
+                        module_orientation=ModuleOrientation(template_data.get('module_orientation', 'Portrait')),
+                        modules_per_string=int(template_data.get('modules_per_string', 28)),
+                        strings_per_tracker=int(template_data.get('strings_per_tracker', 2)),
+                        module_spacing_m=float(template_data.get('module_spacing_m', 0.01)),
+                        motor_gap_m=float(template_data.get('motor_gap_m', 1.0))
+                    )
+            except Exception as e:
+                print(f"Error loading templates: {str(e)}")
+            
+            # Load stored inverters
+            inverters = {}
+            try:
+                inverters_data = load_json_file('data/inverters.json')
+                for name, inverter_data in inverters_data.items():
+                    # Create proper inverter object here (simplified)
+                    from src.models.inverter import InverterSpec, MPPTChannel, MPPTConfig
+                    
+                    # Create MPPT channels
+                    channels = []
+                    for ch_data in inverter_data.get('mppt_channels', []):
+                        channel = MPPTChannel(
+                            max_input_current=float(ch_data.get('max_input_current', 10)),
+                            min_voltage=float(ch_data.get('min_voltage', 200)),
+                            max_voltage=float(ch_data.get('max_voltage', 1000)),
+                            max_power=float(ch_data.get('max_power', 5000)),
+                            num_string_inputs=int(ch_data.get('num_string_inputs', 2))
+                        )
+                        channels.append(channel)
+                    
+                    # Create inverter
+                    inverters[name] = InverterSpec(
+                        manufacturer=inverter_data.get('manufacturer', 'Unknown'),
+                        model=inverter_data.get('model', 'Unknown'),
+                        rated_power=float(inverter_data.get('rated_power', 10.0)),
+                        max_efficiency=float(inverter_data.get('max_efficiency', 98.0)),
+                        mppt_channels=channels,
+                        mppt_configuration=MPPTConfig(inverter_data.get('mppt_configuration', 'Independent')),
+                        max_dc_voltage=float(inverter_data.get('max_dc_voltage', 1000)),
+                        startup_voltage=float(inverter_data.get('startup_voltage', 200)),
+                        nominal_ac_voltage=float(inverter_data.get('nominal_ac_voltage', 400.0)),
+                        max_ac_current=float(inverter_data.get('max_ac_current', 40.0)),
+                        power_factor=float(inverter_data.get('power_factor', 0.99)),
+                        dimensions_mm=inverter_data.get('dimensions_mm', (1000, 600, 300)),
+                        weight_kg=float(inverter_data.get('weight_kg', 75.0)),
+                        ip_rating=inverter_data.get('ip_rating', "IP65")
+                    )
+            except Exception as e:
+                print(f"Error loading inverters: {str(e)}")
+            
+            # Reconstruct blocks
+            from src.models.block import BlockConfig
+            
+            reconstructed_blocks = {}
+            for block_id, block_data in self.current_project.blocks.items():
+                try:
+                    block = BlockConfig.from_dict(block_data, tracker_templates, inverters)
+                    reconstructed_blocks[block_id] = block
+                except Exception as e:
+                    print(f"Error reconstructing block {block_id}: {str(e)}")
+            
+            # Set blocks in configurator
+            block_configurator.blocks = reconstructed_blocks
+            
+            # Update block listbox
+            if hasattr(block_configurator, 'block_listbox'):
+                block_configurator.block_listbox.delete(0, tk.END)
+                for block_id in reconstructed_blocks:
+                    block_configurator.block_listbox.insert(tk.END, block_id)
         
         # Create BOM manager tab
         bom_frame = ttk.Frame(notebook)
@@ -142,9 +242,9 @@ class SolarBOMApplication:
             
             # Update project with current blocks
             if self.current_project:
-                # Store block references in project
+                # Store serialized block data in project
                 self.current_project.blocks = {
-                    block_id: block_id for block_id in block_configurator.blocks.keys()
+                    block_id: block.to_dict() for block_id, block in block_configurator.blocks.items()
                 }
         
         module_manager.on_module_selected = lambda module: (
