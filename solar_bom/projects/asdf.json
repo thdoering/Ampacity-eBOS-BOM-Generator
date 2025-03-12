@@ -1,0 +1,94 @@
+{
+  "metadata": {
+    "name": "asdf",
+    "description": "",
+    "location": "",
+    "client": "",
+    "created_date": "2025-03-12T14:11:31.336745",
+    "modified_date": "2025-03-12T14:11:41.446973",
+    "notes": ""
+  },
+  "blocks": {
+    "Block_1": {
+      "block_id": "Block_1",
+      "width_m": 20,
+      "height_m": 20,
+      "row_spacing_m": 6.004559807854086,
+      "ns_spacing_m": 1.0,
+      "gcr": 0.0,
+      "description": "New block Block_1",
+      "tracker_positions": [
+        {
+          "x": 0.0,
+          "y": 4.0,
+          "rotation": 0.0,
+          "template_name": "NXT-84",
+          "strings": [
+            {
+              "index": 0,
+              "positive_source_x": 0,
+              "positive_source_y": 0.0,
+              "negative_source_x": 2.172,
+              "negative_source_y": 36.754,
+              "num_modules": 28
+            },
+            {
+              "index": 1,
+              "positive_source_x": 0,
+              "positive_source_y": 36.754,
+              "negative_source_x": 2.172,
+              "negative_source_y": 73.508,
+              "num_modules": 28
+            },
+            {
+              "index": 2,
+              "positive_source_x": 0,
+              "positive_source_y": 74.508,
+              "negative_source_x": 2.172,
+              "negative_source_y": 111.262,
+              "num_modules": 28
+            }
+          ]
+        },
+        {
+          "x": 6.004559807854086,
+          "y": 4.0,
+          "rotation": 0.0,
+          "template_name": "NXT-84",
+          "strings": [
+            {
+              "index": 0,
+              "positive_source_x": 0,
+              "positive_source_y": 0.0,
+              "negative_source_x": 2.172,
+              "negative_source_y": 36.754,
+              "num_modules": 28
+            },
+            {
+              "index": 1,
+              "positive_source_x": 0,
+              "positive_source_y": 36.754,
+              "negative_source_x": 2.172,
+              "negative_source_y": 73.508,
+              "num_modules": 28
+            },
+            {
+              "index": 2,
+              "positive_source_x": 0,
+              "positive_source_y": 74.508,
+              "negative_source_x": 2.172,
+              "negative_source_y": 111.262,
+              "num_modules": 28
+            }
+          ]
+        }
+      ],
+      "device_x": 3.457279903927043,
+      "device_y": 0.0,
+      "device_spacing_m": 1.828799941478402,
+      "tracker_template_name": "NXT-84"
+    }
+  },
+  "selected_modules": [],
+  "selected_inverters": []
+}

@@ -1,8 +1,8 @@
-# Solar eBOS BOM Generator Software Specification (Updated)
+# Solar eBOS BOM Generator Software Specification (Revised)
 
 ## 1. System Overview
 
-A Python-based application for creating detailed Bills of Material (BOM) for solar project electrical Balance of System (eBOS) components, focusing on string-to-inverter connections. The application provides a comprehensive GUI for designing solar tracker layouts, configuring electrical components, and generating accurate material lists.
+A Python-based application for creating detailed Bills of Material (BOM) for solar project electrical Balance of System (eBOS) components, focusing on string-to-inverter connections. The application provides a comprehensive GUI for designing solar tracker layouts, configuring electrical components, and generating accurate material lists with project management capabilities.
 
 ## 2. Core Components
 
@@ -29,6 +29,10 @@ A Python-based application for creating detailed Bills of Material (BOM) for sol
   - Bifaciality factor (optional)
   - Default orientation preference
   - Cell count per module
+- Module library management
+  - Save/load module specifications
+  - Delete saved modules
+  - List available modules
 
 #### Module Data Model
 ```python
@@ -76,7 +80,8 @@ class ModuleSpec:
 - Real-time preview updates as parameters change
 - Support for both portrait and landscape module orientations
 - Calculation and visualization of total tracker dimensions
-- No string sizing validation required
+- Load saved templates for editing
+- Delete templates from library
 
 #### User Interface
 
@@ -156,6 +161,7 @@ class TrackerTemplate:
 - Display of device spacing in multiple units (feet and meters)
 - Tracker selection with visual highlighting
 - Keyboard controls for tracker deletion
+- Dual-unit display (feet/meters) for measurements
 
 #### Block Configuration Data Model
 ```python
@@ -201,6 +207,9 @@ class BlockConfig:
 - Startup voltage and maximum DC voltage parameters
 - Enhanced validation logic for inverter specifications
 - Save and load inverter configurations
+- Inverter library management:
+  - Add, edit, delete inverters
+  - Select from library for project use
 
 #### Inverter Data Model
 ```python
@@ -290,6 +299,7 @@ Support two wiring approaches, both with automatic cable routing:
 - Independent configuration of string and harness cable sizes
 - Visual representation of different cable sizes with line thickness
 - Current calculations based on module specifications and number of combined strings
+- Current labeling toggle for detailed electrical analysis
 
 #### Automatic Routing Algorithm
 
@@ -329,6 +339,88 @@ class WiringConfig:
 - Maximum inputs per downstream device
 - Collection point current ratings
 
+### 2.6 Project Management System
+
+#### Features
+
+- Project metadata management:
+  - Project name, description, and location
+  - Client information
+  - Creation and modification dates
+  - Notes and additional documentation
+- Project dashboard:
+  - Recent projects with card-based presentation
+  - Full project list with sorting and filtering
+  - Search functionality across project metadata
+  - One-click project access
+- Project operations:
+  - Create new projects
+  - Open existing projects
+  - Save project updates
+  - Delete projects with confirmation
+  - Rename projects
+- Multi-project workflow:
+  - Switch between projects
+  - Copy data between projects
+  - Status bar with current project info
+
+#### Project Data Model
+```python
+class Project:
+    metadata: ProjectMetadata
+    blocks: Dict[str, dict] = field(default_factory=dict)
+    selected_modules: List[str] = field(default_factory=list)
+    selected_inverters: List[str] = field(default_factory=list)
+    
+class ProjectMetadata:
+    name: str
+    description: Optional[str] = None
+    location: Optional[str] = None
+    client: Optional[str] = None
+    created_date: datetime = field(default_factory=datetime.now)
+    modified_date: datetime = field(default_factory=datetime.now)
+    notes: Optional[str] = None
+```
+
+### 2.7 BOM Generation
+
+#### Features
+
+- Component calculation:
+  - Automatic quantity calculation based on block configurations
+  - Cable length calculations for different wiring types
+  - Harness count based on number of strings
+  - Support for multiple component categories
+- BOM preview:
+  - Real-time BOM generation
+  - Component categorization and grouping
+  - Block-specific and project-wide views
+- Excel export:
+  - Formatted Excel output with project information
+  - Multiple sheets for summary and detailed views
+  - Automatic column sizing and formatting
+  - Project statistics summary
+- Component categorization:
+  - eBOS components
+  - Structural elements
+  - Interconnection equipment
+
+#### BOM Export Format
+
+- Project information sheet:
+  - Project name, client, and location
+  - System size and module specifications
+  - Inverter and DC collection types
+  - Project notes and description
+- BOM summary sheet:
+  - Component types and descriptions
+  - Total quantities with appropriate units
+  - Category grouping with visual separation
+- Block details sheet:
+  - Per-block component breakdown
+  - Component types and quantities by block
+  - Detailed component specifications
+
 ## 3. Technical Requirements
 
 ### 3.1 Data Validation
@@ -362,9 +454,18 @@ class WiringConfig:
 - Error handling for file operations
 - Support for multiple file types and validation
 
+### 3.4 State Management
+
+- Undo/redo system for block configurations
+- State preservation for project loading/saving
+- Deep state copying to prevent reference issues
+- Error recovery for file operations
+- Consistent state validation
+
 ## 4. User Interface Requirements
 
 - Python-based GUI framework (Tkinter)
+- Tab-based interface for different functions
 - Block-based navigation system
 - Drag-and-drop functionality for tracker placement with grid snapping
 - Form-based input for specifications
@@ -375,6 +476,8 @@ class WiringConfig:
 - Pan and zoom controls
 - Tracker selection with visual highlighting
 - Real-time calculation updates
+- Dual-unit display (feet/meters) for all dimensions
+- Selection highlighting for interactive elements
 
 ## 5. Data Structures
 
@@ -408,7 +511,16 @@ class WiringConfig:
     # See detailed model in section 2.5
 ```
 
-### 5.6 Tracker Position
+### 5.6 Project and Metadata
+```python
+class Project:
+    # See detailed model in section 2.6
+    
+class ProjectMetadata:
+    # See detailed model in section 2.6
+```
+
+### 5.7 Tracker Position
 ```python
 class TrackerPosition:
     x: float  # X coordinate in meters
@@ -418,7 +530,7 @@ class TrackerPosition:
     strings: List[StringPosition] = field(default_factory=list)  # List of strings on this tracker
 ```
 
-### 5.7 String Position
+### 5.8 String Position
 ```python
 class StringPosition:
     index: int  # Index of this string on the tracker
@@ -429,7 +541,7 @@ class StringPosition:
     num_modules: int  # Number of modules in this string
 ```
 
-### 5.8 Collection Point
+### 5.9 Collection Point
 ```python
 class CollectionPoint:
     x: float
@@ -438,7 +550,7 @@ class CollectionPoint:
     current_rating: float
 ```
 
-### 5.9 Device Input Point
+### 5.10 Device Input Point
 ```python
 class DeviceInputPoint:
     index: int  # Input number
@@ -447,7 +559,7 @@ class DeviceInputPoint:
     max_current: float  # Maximum current rating for this input
 ```
 
-### 5.10 MPPT Channel
+### 5.11 MPPT Channel
 ```python
 class MPPTChannel:
     max_input_current: float
@@ -457,7 +569,7 @@ class MPPTChannel:
     num_string_inputs: int
 ```
 
-### 5.11 State Management
+### 5.12 State Management
 ```python
 class UndoState:
     state: Any
@@ -478,43 +590,52 @@ class UndoManager:
 
 ## 6. Implementation Phases
 
-### Phase 1: Core Framework
+### Phase 1: Core Framework (Complete)
 1. Set up project structure
 2. Implement data models (Module, Tracker, Inverter)
 3. Create basic UI framework
 4. Implement file parsing (.pan, .ond)
 
-### Phase 2: Template System
+### Phase 2: Template System (Complete)
 1. Implement tracker template creator
 2. Add template management
 3. Create template visualization
 4. Implement validation rules
 
-### Phase 3: Block Configuration
+### Phase 3: Block Configuration (Complete)
 1. Develop block configuration interface
 2. Implement drag-and-drop functionality
 3. Add grid system
 4. Create block visualization
 
-### Phase 4: Wiring System
+### Phase 4: Wiring System (Complete)
 1. Implement string homerun configuration
 2. Add wire harness functionality
 3. Develop electrical validation
 4. Create wiring visualization
 
-### Phase 5: BOM Generation
+### Phase 5: BOM Generation (Complete)
 1. Implement quantity calculations
 2. Add length calculations
 3. Create Excel export functionality
 4. Add configuration save/load features
 
+### Phase 6: Project Management (Complete)
+1. Implement project creation and management
+2. Add project dashboard
+3. Add project search and filtering
+4. Create project save/load functionality
+
 ## 7. Output Requirements
 
 ### 7.1 BOM Excel Format
-- Part numbers
-- Quantities
-- Lengths
-- Ratings
+- Project information sheet
+- Component summary sheet:
+  - Part numbers
+  - Quantities
+  - Lengths
+  - Ratings
+- Block detail sheet with per-block breakdown
 - Components to include:
   - String cables
   - Wire harnesses
@@ -549,7 +670,8 @@ solar_bom/
 │   │   ├── module.py      # ModuleSpec, ModuleType, ModuleOrientation
 │   │   ├── inverter.py    # InverterSpec, MPPTChannel, MPPTConfig
 │   │   ├── tracker.py     # TrackerTemplate, TrackerPosition
-│   │   └── block.py       # BlockConfig, WiringType, DeviceType
+│   │   ├── block.py       # BlockConfig, WiringType, DeviceType
+│   │   └── project.py     # Project, ProjectMetadata
 │   │
 │   ├── ui/
 │   │   ├── __init__.py
@@ -557,19 +679,27 @@ solar_bom/
 │   │   ├── block_configurator.py  # BlockConfigurator UI
 │   │   ├── module_manager.py      # ModuleManager UI
 │   │   ├── inverter_manager.py    # InverterManager UI
-│   │   └── wiring_configurator.py # WiringConfigurator UI
+│   │   ├── wiring_configurator.py # WiringConfigurator UI
+│   │   ├── bom_manager.py         # BOMManager UI
+│   │   └── project_dashboard.py   # ProjectDashboard UI
 │   │
 │   └── utils/
 │       ├── __init__.py
 │       ├── pan_parser.py          # .pan file parsing
 │       ├── file_handlers.py       # File operations
 │       ├── undo_manager.py        # Undo/redo state management
-│       └── calculations.py        # Shared calculations/validations
+│       ├── calculations.py        # Shared calculations/validations
+│       ├── project_manager.py     # Project operations management
+│       └── bom_generator.py       # BOM generation utilities
 │
 ├── data/                          # Persistent storage directory
 │   ├── tracker_templates.json     # Saved tracker templates
 │   ├── module_templates.json      # Saved module specifications
 │   └── inverter_templates.json    # Saved inverter specifications
+│
+├── projects/                      # Project storage directory
+│   ├── .recent_projects           # Recent projects tracking
+│   └── *_project.json            # Individual project files
 │
 ├── tests/
 │   ├── __init__.py
@@ -622,6 +752,14 @@ solar_bom/
 - Display whip points for cable connections
 - Provide optional current labels on wire segments
 - Implement real-time updating as configuration changes
+
+### 10.6 Project Dashboard
+- Card-based layout for recent projects
+- Table view for all projects
+- Search and sort controls
+- Visual feedback for active project
+- Simple project creation flow
+- Confirmation for destructive actions
 
 ## 11. Implementation Best Practices
 
@@ -694,3 +832,5 @@ solar_bom/
 - Enhanced pan and zoom functionality
 - Tracker selection with visual highlighting
 - Device zone visualization with semi-transparency
+- Tab-based application interface
+- Status bar with project information
