@@ -221,11 +221,102 @@ class BOMManager(ttk.Frame):
         if not filepath:
             return
         
-        # Generate and export BOM
-        bom_generator = BOMGenerator(selected_blocks)
-        success = bom_generator.export_bom_to_excel(filepath)
+        # Get project information if available
+        project_info = None
+        try:
+            # Try different approaches to find the current project
+            main_app = None
+            
+            # First, try to get from the root window
+            root = self.winfo_toplevel()
+            if hasattr(root, 'current_project') and root.current_project:
+                main_app = root
+            
+            # Look up the widget hierarchy to find the main application
+            if not main_app:
+                widget = self
+                while widget:
+                    if hasattr(widget, 'current_project') and widget.current_project:
+                        main_app = widget
+                        break
+                    widget = widget.master
+            
+            # If we found the main app with a project, get the info
+            if main_app and main_app.current_project:
+                project = main_app.current_project
+                
+                # Get system size and module counts from blocks
+                system_size = 0
+                total_modules = 0
+                module_manufacturer = set()
+                module_model = set()
+                inverter_manufacturer = set()
+                inverter_model = set()
+                dc_collection_types = set()
+                
+                for block_id, block in selected_blocks.items():
+                    # Count modules
+                    if block.tracker_template and block.tracker_template.module_spec:
+                        module_spec = block.tracker_template.module_spec
+                        modules_per_tracker = block.tracker_template.get_total_modules()
+                        tracker_count = len(block.tracker_positions)
+                        block_modules = modules_per_tracker * tracker_count
+                        
+                        total_modules += block_modules
+                        
+                        # Add module info
+                        module_manufacturer.add(module_spec.manufacturer)
+                        module_model.add(module_spec.model)
+                        
+                        # Calculate system size
+                        system_size += (block_modules * module_spec.wattage) / 1000
+                    
+                    # Add inverter info
+                    if block.inverter:
+                        inverter_manufacturer.add(block.inverter.manufacturer)
+                        inverter_model.add(block.inverter.model)
+                    
+                    # Add DC collection type
+                    if block.wiring_config:
+                        dc_collection_types.add(block.wiring_config.wiring_type.value)
+                
+                # Create the project info dictionary
+                project_info = {
+                    'Project Name': project.metadata.name,
+                    'Customer': project.metadata.client or 'Unknown',
+                    'Location': project.metadata.location or 'Unknown',
+                    'System Size (kW DC)': round(system_size, 2),
+                    'Number of Modules': total_modules,
+                    'Module Manufacturer': ', '.join(module_manufacturer) if module_manufacturer else 'Unknown',
+                    'Module Model': ', '.join(module_model) if module_model else 'Unknown',
+                    'Inverter Manufacturer': ', '.join(inverter_manufacturer) if inverter_manufacturer else 'Unknown',
+                    'Inverter Model': ', '.join(inverter_model) if inverter_model else 'Unknown',
+                    'DC Collection': ', '.join(dc_collection_types) if dc_collection_types else 'Unknown',
+                    'Description': project.metadata.description or '',
+                    'Notes': project.metadata.notes or ''
+                }
+                
+                print("Project info for BOM:", project_info)
+        except Exception as e:
+            print(f"Error getting project info: {str(e)}")
         
-        if success:
-            messagebox.showinfo("Success", f"BOM exported successfully to {filepath}")
-        else:
-            messagebox.showerror("Error", "Failed to export BOM")
+        # Generate and export BOM
+        try:
+            bom_generator = BOMGenerator(selected_blocks)
+            success = bom_generator.export_bom_to_excel(filepath, project_info)
+            
+            if success:
+                messagebox.showinfo("Success", f"BOM exported successfully to {filepath}")
+            else:
+                messagebox.showerror("Error", "Failed to export BOM")
+        except PermissionError:
+            messagebox.showerror(
+                "Permission Error", 
+                f"Cannot write to {filepath}.\n\n"
+                "This error usually occurs when:\n"
+                "• The file is already open in Excel or another program\n"
+                "• You don't have permission to write to this location\n\n"
+                "Please close any programs that might be using this file, or choose a different filename/location."
+            )
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to export BOM: {str(e)}")

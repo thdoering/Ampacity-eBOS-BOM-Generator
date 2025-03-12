@@ -211,9 +211,17 @@ class InverterManager(ttk.Frame):
     def load_inverters(self):
         """Load saved inverters from JSON file"""
         inverter_path = Path('data/inverters.json')
+        
+        # Create directory if it doesn't exist
+        inverter_path.parent.mkdir(exist_ok=True)
+        
+        # Create empty file if it doesn't exist
         if not inverter_path.exists():
+            with open(inverter_path, 'w') as f:
+                json.dump({}, f)
+            self.inverters = {}
             return
-            
+        
         try:
             with open(inverter_path, 'r') as f:
                 data = json.load(f)
@@ -228,6 +236,7 @@ class InverterManager(ttk.Frame):
             self.update_inverter_list()
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load inverters: {str(e)}")
+            self.inverters = {}
             
     def save_inverters(self):
         """Save inverters to JSON file"""

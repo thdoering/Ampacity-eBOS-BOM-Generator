@@ -120,6 +120,28 @@ class SolarBOMApplication:
         block_configurator = BlockConfigurator(block_frame)
         block_configurator.pack(fill='both', expand=True, padx=5, pady=5)
         
+        # Create BOM manager tab
+        bom_frame = ttk.Frame(notebook)
+        notebook.add(bom_frame, text='BOM Generator')
+        
+        bom_manager = BOMManager(bom_frame)
+        bom_manager.pack(fill='both', expand=True, padx=5, pady=5)
+        
+        # Connect module manager to block configurator
+        def on_module_selected_for_block(module):
+            block_configurator.current_module = module
+        
+        # Function to update BOM manager with current blocks - MOVED THIS UP to fix scope issue
+        def update_bom_blocks():
+            bom_manager.set_blocks(block_configurator.blocks)
+            
+            # Update project with current blocks
+            if self.current_project:
+                # Store serialized block data in project
+                self.current_project.blocks = {
+                    block_id: block.to_dict() for block_id, block in block_configurator.blocks.items()
+                }
+        
         # Load blocks from project if available
         if self.current_project.blocks:
             # Get templates and inverters for block reconstruction
@@ -224,28 +246,8 @@ class SolarBOMApplication:
                 block_configurator.block_listbox.delete(0, tk.END)
                 for block_id in reconstructed_blocks:
                     block_configurator.block_listbox.insert(tk.END, block_id)
-        
-        # Create BOM manager tab
-        bom_frame = ttk.Frame(notebook)
-        notebook.add(bom_frame, text='BOM Generator')
-        
-        bom_manager = BOMManager(bom_frame)
-        bom_manager.pack(fill='both', expand=True, padx=5, pady=5)
-        
-        # Connect module manager to block configurator
-        def on_module_selected_for_block(module):
-            block_configurator.current_module = module
-        
-        # Function to update BOM manager with current blocks
-        def update_bom_blocks():
-            bom_manager.set_blocks(block_configurator.blocks)
-            
-            # Update project with current blocks
-            if self.current_project:
-                # Store serialized block data in project
-                self.current_project.blocks = {
-                    block_id: block.to_dict() for block_id, block in block_configurator.blocks.items()
-                }
+
+            update_bom_blocks()
         
         module_manager.on_module_selected = lambda module: (
             on_module_selected(module),
