@@ -90,12 +90,22 @@ class WiringConfigurator(tk.Toplevel):
         harness_cable_combo.grid(row=0, column=1, padx=5, pady=2)
         self.harness_cable_size_var.trace('w', lambda *args: self.draw_wiring_layout())
 
+        # Whip Cable Size
+        self.whip_frame = ttk.Frame(cable_frame)
+        self.whip_frame.grid(row=2, column=0, columnspan=2, padx=0, pady=5, sticky=(tk.W, tk.E))
+        ttk.Label(self.whip_frame, text="Whip Cable Size:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
+        self.whip_cable_size_var = tk.StringVar(value="6 AWG")
+        whip_cable_combo = ttk.Combobox(self.whip_frame, textvariable=self.whip_cable_size_var, state='readonly', width=10)
+        whip_cable_combo['values'] = list(self.AWG_SIZES.keys())
+        whip_cable_combo.grid(row=0, column=1, padx=5, pady=2)
+        self.whip_cable_size_var.trace('w', lambda *args: self.draw_wiring_layout())
+
         # Current label toggle button
         self.show_current_labels_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(cable_frame, text="Show Current Labels", 
                         variable=self.show_current_labels_var,
                         command=self.draw_wiring_layout).grid(
-                        row=2, column=0, columnspan=2, padx=5, pady=5, sticky=tk.W)
+                        row=3, column=0, columnspan=2, padx=5, pady=5, sticky=tk.W)
         
         # Right side - Visualization
         canvas_frame = ttk.LabelFrame(main_container, text="Wiring Layout", padding="5")
@@ -143,6 +153,9 @@ class WiringConfigurator(tk.Toplevel):
             
             if hasattr(self.block.wiring_config, 'harness_cable_size'):
                 self.harness_cable_size_var.set(self.block.wiring_config.harness_cable_size)
+
+            if hasattr(self.block.wiring_config, 'whip_cable_size'):
+                self.whip_cable_size_var.set(self.block.wiring_config.whip_cable_size)
             
             # Update UI based on wiring type
             self.update_ui_for_wiring_type()
@@ -361,7 +374,7 @@ class WiringConfigurator(tk.Toplevel):
                 points = [(20 + self.pan_x + x * scale, 
                         20 + self.pan_y + y * scale) for x, y in route]
                 if len(points) > 1:
-                    thickness = self.get_line_thickness_for_wire(self.string_cable_size_var.get())
+                    thickness = self.get_line_thickness_for_wire(self.whip_cable_size_var.get())
                     self.canvas.create_line(points, fill='red', width=thickness)
                     current = self.calculate_current_for_segment('whip', num_strings=1) # For homerun, it's 1 string per route
                     self.add_current_label(points, current, is_positive=True, segment_type='whip')
@@ -378,7 +391,7 @@ class WiringConfigurator(tk.Toplevel):
                 points = [(20 + self.pan_x + x * scale, 
                         20 + self.pan_y + y * scale) for x, y in route]
                 if len(points) > 1:
-                    thickness = self.get_line_thickness_for_wire(self.string_cable_size_var.get())
+                    thickness = self.get_line_thickness_for_wire(self.whip_cable_size_var.get())
                     self.canvas.create_line(points, fill='blue', width=thickness)
                     current = self.calculate_current_for_segment('whip', num_strings=1) # For homerun, it's 1 string per route
                     self.add_current_label(points, current, is_positive=True, segment_type='whip')
@@ -534,7 +547,7 @@ class WiringConfigurator(tk.Toplevel):
                     points = [(20 + self.pan_x + x * scale, 
                             20 + self.pan_y + y * scale) for x, y in route]
                     if len(points) > 1:
-                        line_thickness = self.get_line_thickness_for_wire(self.string_cable_size_var.get())
+                        line_thickness = self.get_line_thickness_for_wire(self.whip_cable_size_var.get())
                         line_id = self.canvas.create_line(points, fill='red', width=line_thickness)
                         # Add current label at midpoint of line
                         if len(points) >= 2 and self.show_current_labels_var.get():
@@ -557,7 +570,7 @@ class WiringConfigurator(tk.Toplevel):
                     points = [(20 + self.pan_x + x * scale, 
                             20 + self.pan_y + y * scale) for x, y in route]
                     if len(points) > 1:
-                        line_thickness = self.get_line_thickness_for_wire(self.string_cable_size_var.get())
+                        line_thickness = self.get_line_thickness_for_wire(self.whip_cable_size_var.get())
                         line_id = self.canvas.create_line(points, fill='blue', width=line_thickness)
                         # Add current label at midpoint of line
                         if len(points) >= 2 and self.show_current_labels_var.get():
@@ -668,7 +681,8 @@ class WiringConfigurator(tk.Toplevel):
                 strings_per_collection=strings_per_collection,
                 cable_routes=cable_routes,
                 string_cable_size=self.string_cable_size_var.get(),
-                harness_cable_size=self.harness_cable_size_var.get()
+                harness_cable_size=self.harness_cable_size_var.get(),
+                whip_cable_size=self.whip_cable_size_var.get()
                 )
             
             # Store the configuration in the block

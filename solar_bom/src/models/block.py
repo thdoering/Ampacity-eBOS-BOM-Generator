@@ -40,6 +40,7 @@ class WiringConfig:
     cable_routes: Dict[str, List[tuple[float, float]]]  # Route ID -> list of coordinates
     string_cable_size: str = "10 AWG"  # Default value
     harness_cable_size: str = "8 AWG"  # Default value
+    whip_cable_size: str = "8 AWG"  # Default value for whips
 
 @dataclass
 class BlockConfig:
