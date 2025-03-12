@@ -440,6 +440,27 @@ class BlockConfigurator(ttk.Frame):
         
         # Update canvas
         self.draw_block()
+
+        # Auto-select a template if available
+        if self.template_listbox.size() > 0:
+            # If the block has a template, try to select it in the listbox
+            if block.tracker_template and block.tracker_template.template_name:
+                # Look for the template name in the listbox
+                for i in range(self.template_listbox.size()):
+                    if self.template_listbox.get(i) == block.tracker_template.template_name:
+                        self.template_listbox.selection_clear(0, tk.END)
+                        self.template_listbox.selection_set(i)
+                        self.template_listbox.see(i)
+                        # Manually call the template selection handler
+                        self.on_template_select()
+                        break
+            # If no template was matched but there are templates, select the first one
+            if not self.drag_template and self.template_listbox.size() > 0:
+                self.template_listbox.selection_clear(0, tk.END)
+                self.template_listbox.selection_set(0)
+                self.template_listbox.see(0)
+                # Manually call the template selection handler
+                self.on_template_select()
         
     def clear_config_display(self):
         """Clear block configuration display"""
