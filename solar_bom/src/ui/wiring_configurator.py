@@ -807,14 +807,10 @@ class WiringConfigurator(tk.Toplevel):
         
         # Add starting point
         route.append((source_x, source_y))
-        
-        if self.wiring_type_var.get() == WiringType.HARNESS.value:
-            # For harness configuration, route directly to node point
-            route.append((dest_x, dest_y))
-        else:
-            # For homerun configuration, use horizontal-then-vertical routing
-            route.append((dest_x, source_y))  # Horizontal segment
-            route.append((dest_x, dest_y))    # Vertical segment
+
+        # Use horizontal-then-vertical routing for all configurations
+        route.append((dest_x, source_y))  # Horizontal segment
+        route.append((dest_x, dest_y))    # Vertical segment
         
         return route
     
