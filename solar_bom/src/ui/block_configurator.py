@@ -118,7 +118,7 @@ class BlockConfigurator(ttk.Frame):
         self.row_spacing_var = tk.StringVar(value="19.7")  # 6m in feet
         row_spacing_entry = ttk.Entry(spacing_frame, textvariable=self.row_spacing_var)
         row_spacing_entry.grid(row=0, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
-        self.row_spacing_var.trace('w', lambda *args: self.calculate_gcr())
+        self.row_spacing_var.trace('w', self.update_block_row_spacing)
 
         # GCR (Ground Coverage Ratio) - calculated
         ttk.Label(spacing_frame, text="GCR:").grid(row=0, column=2, padx=5, pady=2, sticky=tk.W)
@@ -407,6 +407,19 @@ class BlockConfigurator(ttk.Frame):
         if not self.current_block:
             return
             
+        # Check if block exists
+        if self.current_block not in self.blocks:
+            messagebox.showwarning("Warning", f"Block '{self.current_block}' not found. It may have been deleted already.")
+            
+            # Update listbox to remove this item
+            for i in range(self.block_listbox.size()):
+                if self.block_listbox.get(i) == self.current_block:
+                    self.block_listbox.delete(i)
+                    break
+                    
+            self.current_block = None
+            return
+            
         if messagebox.askyesno("Confirm", f"Delete block {self.current_block}?"):
             # Remove from dictionary
             del self.blocks[self.current_block]
@@ -431,6 +444,17 @@ class BlockConfigurator(ttk.Frame):
                 
         block_id = self.block_listbox.get(selection[0])
         self.current_block = block_id
+        
+        # Add error handling to check if block exists
+        if block_id not in self.blocks:
+            print(f"Warning: Block '{block_id}' not found in blocks dictionary")
+            messagebox.showwarning("Warning", f"Block '{block_id}' not found. It may have been deleted or corrupted.")
+            
+            # Remove this item from the listbox
+            self.block_listbox.delete(selection[0])
+            self.current_block = None
+            return
+            
         block = self.blocks[block_id]
         
         # Update UI with block data (convert meters to feet)
@@ -440,7 +464,7 @@ class BlockConfigurator(ttk.Frame):
         
         # Update canvas
         self.draw_block()
-
+        
         # Auto-select a template if available
         if self.template_listbox.size() > 0:
             # If the block has a template, try to select it in the listbox
@@ -789,9 +813,16 @@ class BlockConfigurator(ttk.Frame):
         if selection:
             template_name = self.template_listbox.get(selection[0])
             self.drag_template = self.tracker_templates.get(template_name)
-            # Update current block's template if one is selected
+            
+            # Update current block's template if one is selected and there are no existing trackers
             if self.current_block and self.drag_template:
-                self.blocks[self.current_block].tracker_template = self.drag_template
+                block = self.blocks[self.current_block]
+                
+                # Only update the block's template if there are no existing trackers
+                # or if the block doesn't have a template yet
+                if not block.tracker_positions or not block.tracker_template:
+                    block.tracker_template = self.drag_template
+                
                 self.calculate_gcr()  # Recalculate GCR with new template
                 
                 # Update string current values
@@ -1397,3 +1428,22 @@ class BlockConfigurator(ttk.Frame):
         self._notify_blocks_changed()
         
         messagebox.showinfo("Success", f"Block renamed to '{new_id}'")
+
+    def update_block_row_spacing(self, *args):
+        """Update the current block's row spacing from UI value"""
+        if not self.current_block:
+            return
+            
+        try:
+            # Get row spacing value and convert feet to meters
+            row_spacing_ft = float(self.row_spacing_var.get())
+            row_spacing_m = self.ft_to_m(row_spacing_ft)
+            
+            # Update block property
+            self.blocks[self.current_block].row_spacing_m = row_spacing_m
+            
+            # Update GCR after changing row spacing
+            self.calculate_gcr()
+        except (ValueError, KeyError):
+            # Ignore conversion errors or invalid block references
+            pass

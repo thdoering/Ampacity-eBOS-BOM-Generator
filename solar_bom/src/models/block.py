@@ -205,7 +205,10 @@ class BlockConfig:
             data['inverter_id'] = f"{self.inverter.manufacturer} {self.inverter.model}"
         
         # Add tracker template reference if exists
-        if self.tracker_template:
+        # Use the template from the first tracker position if available, otherwise use the block's template
+        if self.tracker_positions and self.tracker_positions[0].template:
+            data['tracker_template_name'] = self.tracker_positions[0].template.template_name
+        elif self.tracker_template:
             data['tracker_template_name'] = self.tracker_template.template_name
         
         # Add wiring config if exists
@@ -273,14 +276,22 @@ class BlockConfig:
         from .tracker import TrackerPosition, StringPosition
         
         for pos_data in data.get('tracker_positions', []):
-            if not tracker_template:
+            # Use the template_name from the position data to get the correct template
+            position_template = None
+            if 'template_name' in pos_data and pos_data['template_name'] in tracker_templates:
+                position_template = tracker_templates[pos_data['template_name']]
+            else:
+                # Fall back to block's template if position doesn't have a valid template
+                position_template = tracker_template
+                
+            if not position_template:
                 continue
                 
             pos = TrackerPosition(
                 x=pos_data['x'],
                 y=pos_data['y'],
                 rotation=pos_data['rotation'],
-                template=tracker_template
+                template=position_template
             )
             
             # Load strings data if available
