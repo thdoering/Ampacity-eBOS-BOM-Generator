@@ -20,5 +20,71 @@
       "isc": 18.42,
       "max_system_voltage": 1500.0
     }
+  },
+  "NXT-52-705W": {
+    "module_orientation": "Portrait",
+    "modules_per_string": 26,
+    "strings_per_tracker": 2,
+    "module_spacing_m": 0.01,
+    "motor_gap_m": 1.0,
+    "module_spec": {
+      "manufacturer": "CSI Solar",
+      "model": "CS7N-705TB-AG",
+      "type": "Bifacial",
+      "length_mm": 2384.0,
+      "width_mm": 1303.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 705.0,
+      "vmp": 40.2,
+      "imp": 17.55,
+      "voc": 48.1,
+      "isc": 18.54,
+      "max_system_voltage": 1500
+    }
+  },
+  "NXT-78-705W": {
+    "module_orientation": "Portrait",
+    "modules_per_string": 26,
+    "strings_per_tracker": 3,
+    "module_spacing_m": 0.01,
+    "motor_gap_m": 1.0,
+    "module_spec": {
+      "manufacturer": "CSI Solar",
+      "model": "CS7N-705TB-AG",
+      "type": "Bifacial",
+      "length_mm": 2384.0,
+      "width_mm": 1303.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 705.0,
+      "vmp": 40.2,
+      "imp": 17.55,
+      "voc": 48.1,
+      "isc": 18.54,
+      "max_system_voltage": 1500
+    }
+  },
+  "NXT-26-705W": {
+    "module_orientation": "Portrait",
+    "modules_per_string": 26,
+    "strings_per_tracker": 1,
+    "module_spacing_m": 0.01,
+    "motor_gap_m": 1.0,
+    "module_spec": {
+      "manufacturer": "CSI Solar",
+      "model": "CS7N-705TB-AG",
+      "type": "Bifacial",
+      "length_mm": 2384.0,
+      "width_mm": 1303.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 705.0,
+      "vmp": 40.2,
+      "imp": 17.55,
+      "voc": 48.1,
+      "isc": 18.54,
+      "max_system_voltage": 1500
+    }
   }
 }

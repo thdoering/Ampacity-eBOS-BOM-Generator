@@ -38,5 +38,25 @@
     "bifaciality_factor": null,
     "default_orientation": "Portrait",
     "cells_per_module": 72
+  },
+  "CSI Solar CS7N-705TB-AG": {
+    "manufacturer": "CSI Solar",
+    "model": "CS7N-705TB-AG",
+    "type": "Bifacial",
+    "length_mm": 2384.0,
+    "width_mm": 1303.0,
+    "depth_mm": 40,
+    "weight_kg": 25,
+    "wattage": 705.0,
+    "vmp": 40.2,
+    "imp": 17.55,
+    "voc": 48.1,
+    "isc": 18.54,
+    "max_system_voltage": 1500,
+    "efficiency": null,
+    "temperature_coefficient": null,
+    "bifaciality_factor": null,
+    "default_orientation": "Portrait",
+    "cells_per_module": 72
   }
 }

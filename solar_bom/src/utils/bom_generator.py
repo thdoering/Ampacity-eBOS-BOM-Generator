@@ -84,15 +84,18 @@ class BOMGenerator:
                         'category': 'eBOS'
                     }
                     
-                    # Count whips as separate items from string cables
-                    # Assuming two whips (pos and neg) per string
+                    # Get the whip cable size
+                    whip_cable_size = getattr(block.wiring_config, 'whip_cable_size', '6 AWG')  # Default to 6 AWG if not specified
+
+                    # Calculate whip length - estimate 2 whips per tracker with 3m (10ft) per whip
                     whip_count = len([pos for pos in block.tracker_positions])
-                    string_count = sum(len(pos.strings) for pos in block.tracker_positions)
-                    
-                    block_quantities['Whips'] = {
-                        'description': f'DC Whip Cable {cable_size}',
-                        'quantity': whip_count * 2,  # Positive and negative
-                        'unit': 'units',
+                    whip_length_per_tracker = 6  # 3m per whip x 2 whips = 6m
+                    whip_length_feet = round(whip_count * whip_length_per_tracker * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
+
+                    block_quantities[f'Whip Cable ({whip_cable_size})'] = {
+                        'description': f'DC Whip Cable {whip_cable_size}',
+                        'quantity': whip_length_feet,
+                        'unit': 'feet',
                         'category': 'eBOS'
                     }
                     
@@ -117,16 +120,19 @@ class BOMGenerator:
                 whip_count = len([pos for pos in block.tracker_positions])
                 harness_cable_size = block.wiring_config.harness_cable_size
                 
-                if 'harness_cable' in cable_lengths:
-                    # Convert whip length from meters to feet
-                    whip_length_feet = round(cable_lengths.get('harness_cable', 0) * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
-                    
-                    block_quantities[f'Trunk/Whip Cable ({harness_cable_size})'] = {
-                        'description': f'DC Trunk/Whip Cable {harness_cable_size}',
-                        'quantity': whip_length_feet,
-                        'unit': 'feet',
-                        'category': 'eBOS'
-                    }
+                # Add whip cables 
+                whip_cable_size = getattr(block.wiring_config, 'whip_cable_size', '6 AWG')  # Default to 6 AWG if not specified
+                # Calculate whip length - estimate 2 whips per tracker with 3m (10ft) per whip
+                whip_count = len([pos for pos in block.tracker_positions])
+                whip_length_per_tracker = 6  # 3m per whip x 2 whips = 6m
+                whip_length_feet = round(whip_count * whip_length_per_tracker * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
+
+                block_quantities[f'Whip Cable ({whip_cable_size})'] = {
+                    'description': f'DC Whip Cable {whip_cable_size}',
+                    'quantity': whip_length_feet,
+                    'unit': 'feet',
+                    'category': 'eBOS'
+                }
             
             quantities[block_id] = block_quantities
         

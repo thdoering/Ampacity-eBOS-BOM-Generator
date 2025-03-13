@@ -1,0 +1,17 @@
+{
+  "metadata": {
+    "name": "Agalinas",
+    "description": "",
+    "location": "",
+    "client": "RECON",
+    "created_date": "2025-03-13T09:09:12.295720",
+    "modified_date": "2025-03-13T09:12:30.471814",
+    "notes": ""
+  },
+  "blocks": {},
+  "selected_modules": [
+    "CSI Solar CS6W-530MB-AG",
+    "CSI Solar CS7N-705TB-AG"
+  ],
+  "selected_inverters": []
+}
