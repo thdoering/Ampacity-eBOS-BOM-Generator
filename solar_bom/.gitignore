@@ -15,3 +15,19 @@ env/
 # Project-specific
 data/*.json         # Ignores JSON files in data folder but keeps the folder
 *.log
+
+# User-generated template files
+data/tracker_templates.json
+data/module_templates.json
+data/inverter_templates.json
+
+# Project files and directories
+projects/
+.recent_projects
+
+# Block and template data 
+data/blocks/
+data/templates/
+
+# Any other user data subdirectories
+data/**/
