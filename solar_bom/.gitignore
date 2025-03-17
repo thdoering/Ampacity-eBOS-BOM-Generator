@@ -14,6 +14,7 @@ env/
 
 # Project-specific
 data/*.json         # Ignores JSON files in data folder but keeps the folder
+data/**/*.json     # Ignores JSON files in data folder and subfolders
 *.log
 
 # User-generated template files
@@ -37,3 +38,6 @@ data/**/
 */.recent_projects
 **/.recent_projects
 projects/.recent_projects
+
+# Make no exceptions
+!.gitignore
