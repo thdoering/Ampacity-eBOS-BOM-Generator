@@ -112,7 +112,7 @@ class BlockConfig:
     
     def calculate_cable_lengths(self) -> Dict[str, float]:
         """
-        Calculate required cable lengths for the block
+        Calculate required cable lengths for the block, separated by polarity
         Returns dictionary of cable types and their total lengths
         """
         if not self.wiring_config:
@@ -121,21 +121,11 @@ class BlockConfig:
         lengths = {}
         
         if self.wiring_config.wiring_type == WiringType.HOMERUN:
-            # Calculate individual string cable lengths
-            string_cable_length = 0
-            for route_id, route in self.wiring_config.cable_routes.items():
-                points = route
-                for i in range(len(points) - 1):
-                    dx = points[i+1][0] - points[i][0]
-                    dy = points[i+1][1] - points[i][1]
-                    string_cable_length += (dx**2 + dy**2)**0.5
-            
-            lengths["string_cable"] = string_cable_length
-            
-        else:  # Wire Harness configuration
-            # Calculate string cable lengths
-            string_cable_length = 0
-            harness_cable_length = 0
+            # Calculate individual string cable lengths by polarity
+            pos_string_cable_length = 0
+            neg_string_cable_length = 0
+            pos_whip_cable_length = 0
+            neg_whip_cable_length = 0
             
             for route_id, route in self.wiring_config.cable_routes.items():
                 points = route
@@ -145,14 +135,58 @@ class BlockConfig:
                     dy = points[i+1][1] - points[i][1]
                     route_length += (dx**2 + dy**2)**0.5
                 
-                # Determine if this is a string or harness route
-                if "node" in route_id or "src" in route_id:
-                    string_cable_length += route_length
-                elif "harness" in route_id or "main" in route_id:
-                    harness_cable_length += route_length
+                # Determine if this is a string or whip route and polarity
+                if "pos_src" in route_id:
+                    pos_string_cable_length += route_length
+                elif "neg_src" in route_id:
+                    neg_string_cable_length += route_length
+                elif "pos_dev" in route_id:
+                    pos_whip_cable_length += route_length
+                elif "neg_dev" in route_id:
+                    neg_whip_cable_length += route_length
             
-            lengths["string_cable"] = string_cable_length
-            lengths["harness_cable"] = harness_cable_length
+            lengths["string_cable_positive"] = pos_string_cable_length
+            lengths["string_cable_negative"] = neg_string_cable_length
+            lengths["whip_cable_positive"] = pos_whip_cable_length
+            lengths["whip_cable_negative"] = neg_whip_cable_length
+            
+        else:  # Wire Harness configuration
+            # Calculate cable lengths by type and polarity
+            pos_string_cable_length = 0
+            neg_string_cable_length = 0
+            pos_harness_cable_length = 0
+            neg_harness_cable_length = 0
+            pos_whip_cable_length = 0
+            neg_whip_cable_length = 0
+            
+            for route_id, route in self.wiring_config.cable_routes.items():
+                points = route
+                route_length = 0
+                for i in range(len(points) - 1):
+                    dx = points[i+1][0] - points[i][0]
+                    dy = points[i+1][1] - points[i][1]
+                    route_length += (dx**2 + dy**2)**0.5
+                
+                # Determine route type and polarity
+                if "pos_node" in route_id:
+                    pos_string_cable_length += route_length
+                elif "neg_node" in route_id:
+                    neg_string_cable_length += route_length
+                elif "pos_harness" in route_id:
+                    pos_harness_cable_length += route_length
+                elif "neg_harness" in route_id:
+                    neg_harness_cable_length += route_length
+                elif "pos_main" in route_id:
+                    pos_whip_cable_length += route_length
+                elif "neg_main" in route_id:
+                    neg_whip_cable_length += route_length
+            
+            lengths["string_cable_positive"] = pos_string_cable_length
+            lengths["string_cable_negative"] = neg_string_cable_length
+            lengths["harness_cable_positive"] = pos_harness_cable_length
+            lengths["harness_cable_negative"] = neg_harness_cable_length
+            lengths["whip_cable_positive"] = pos_whip_cable_length
+            lengths["whip_cable_negative"] = neg_whip_cable_length
             
         return lengths
     

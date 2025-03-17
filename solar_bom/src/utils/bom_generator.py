@@ -24,20 +24,10 @@ class BOMGenerator:
     
     def calculate_cable_quantities(self) -> Dict[str, Dict[str, Any]]:
         """
-        Calculate cable quantities by block and type
+        Calculate cable quantities by block and type, separating positive and negative
         
         Returns:
             Dictionary with quantities by block and component type
-            {
-                'block_id': {
-                    'component_type': {
-                        'description': description,
-                        'quantity': quantity,
-                        'unit': unit,
-                        'category': category  # Added to categorize components
-                    }
-                }
-            }
         """
         quantities = {}
         
@@ -68,71 +58,151 @@ class BOMGenerator:
                 }
             
             if block.wiring_config.wiring_type == WiringType.HOMERUN:
-                # For homerun, we track string cable length
-                if 'string_cable' in cable_lengths:
-                    length = cable_lengths['string_cable'] * self.CABLE_WASTE_FACTOR
+                # For homerun, we track string cable length - split by polarity
+                if 'string_cable_positive' in cable_lengths:
+                    length = cable_lengths['string_cable_positive'] * self.CABLE_WASTE_FACTOR
                     # Convert from meters to feet (1m = 3.28084ft)
                     length_feet = round(length * 3.28084, 1)
                     
                     # Get the cable size for more specific description
                     cable_size = block.wiring_config.string_cable_size
                     
-                    block_quantities[f'String Wire ({cable_size})'] = {
-                        'description': f'DC String Wire {cable_size}',
+                    block_quantities[f'Positive String Wire ({cable_size})'] = {
+                        'description': f'DC Positive String Wire {cable_size}',
+                        'quantity': length_feet,
+                        'unit': 'feet',
+                        'category': 'eBOS'
+                    }
+                
+                if 'string_cable_negative' in cable_lengths:
+                    length = cable_lengths['string_cable_negative'] * self.CABLE_WASTE_FACTOR
+                    # Convert from meters to feet (1m = 3.28084ft)
+                    length_feet = round(length * 3.28084, 1)
+                    
+                    cable_size = block.wiring_config.string_cable_size
+                    
+                    block_quantities[f'Negative String Wire ({cable_size})'] = {
+                        'description': f'DC Negative String Wire {cable_size}',
                         'quantity': length_feet,
                         'unit': 'feet',
                         'category': 'eBOS'
                     }
                     
-                    # Get the whip cable size
-                    whip_cable_size = getattr(block.wiring_config, 'whip_cable_size', '6 AWG')  # Default to 6 AWG if not specified
+                # Get the whip cable size
+                whip_cable_size = getattr(block.wiring_config, 'whip_cable_size', '6 AWG')  # Default to 6 AWG if not specified
 
-                    # Calculate whip length - estimate 2 whips per tracker with 3m (10ft) per whip
-                    whip_count = len([pos for pos in block.tracker_positions])
-                    whip_length_per_tracker = 6  # 3m per whip x 2 whips = 6m
-                    whip_length_feet = round(whip_count * whip_length_per_tracker * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
+                # Split whip cable by polarity
+                if 'whip_cable_positive' in cable_lengths:
+                    whip_length_feet = round(cable_lengths['whip_cable_positive'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
 
-                    block_quantities[f'Whip Cable ({whip_cable_size})'] = {
-                        'description': f'DC Whip Cable {whip_cable_size}',
+                    block_quantities[f'Positive Whip Cable ({whip_cable_size})'] = {
+                        'description': f'DC Positive Whip Cable {whip_cable_size}',
+                        'quantity': whip_length_feet,
+                        'unit': 'feet',
+                        'category': 'eBOS'
+                    }
+                
+                if 'whip_cable_negative' in cable_lengths:
+                    whip_length_feet = round(cable_lengths['whip_cable_negative'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
+
+                    block_quantities[f'Negative Whip Cable ({whip_cable_size})'] = {
+                        'description': f'DC Negative Whip Cable {whip_cable_size}',
                         'quantity': whip_length_feet,
                         'unit': 'feet',
                         'category': 'eBOS'
                     }
                     
             else:  # HARNESS configuration
-                # Add harnesses by number of strings they connect
+                # Add harnesses by number of strings they connect - split by polarity
                 harness_counts = self._count_harnesses_by_size(block)
                 
-                # Add each harness type
+                # Add each harness type, separately for positive and negative
                 for string_count, count in harness_counts.items():
                     harness_cable_size = block.wiring_config.harness_cable_size
                     string_cable_size = block.wiring_config.string_cable_size
                     
-                    block_quantities[f'{string_count}-String Harness'] = {
-                        'description': f'{string_count}-String Harness ({harness_cable_size} trunk, {string_cable_size} drops)',
+                    block_quantities[f'Positive {string_count}-String Harness'] = {
+                        'description': f'Positive {string_count}-String Harness ({harness_cable_size} trunk, {string_cable_size} drops)',
+                        'quantity': count,
+                        'unit': 'units',
+                        'category': 'eBOS'
+                    }
+                    
+                    block_quantities[f'Negative {string_count}-String Harness'] = {
+                        'description': f'Negative {string_count}-String Harness ({harness_cable_size} trunk, {string_cable_size} drops)',
                         'quantity': count,
                         'unit': 'units',
                         'category': 'eBOS'
                     }
                 
-                # Add trunk wire from harness to inverter (whips)
-                # Note: String cables are part of the harness in this configuration
-                whip_count = len([pos for pos in block.tracker_positions])
-                harness_cable_size = block.wiring_config.harness_cable_size
+                # Split string cables by polarity
+                if 'string_cable_positive' in cable_lengths:
+                    string_length_feet = round(cable_lengths['string_cable_positive'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
+                    string_cable_size = block.wiring_config.string_cable_size
+                    
+                    block_quantities[f'Positive String Wire ({string_cable_size})'] = {
+                        'description': f'DC Positive String Wire {string_cable_size}',
+                        'quantity': string_length_feet,
+                        'unit': 'feet',
+                        'category': 'eBOS'
+                    }
                 
-                # Add whip cables 
+                if 'string_cable_negative' in cable_lengths:
+                    string_length_feet = round(cable_lengths['string_cable_negative'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
+                    string_cable_size = block.wiring_config.string_cable_size
+                    
+                    block_quantities[f'Negative String Wire ({string_cable_size})'] = {
+                        'description': f'DC Negative String Wire {string_cable_size}',
+                        'quantity': string_length_feet,
+                        'unit': 'feet',
+                        'category': 'eBOS'
+                    }
+                
+                # Split trunk/harness cables by polarity
+                if 'harness_cable_positive' in cable_lengths:
+                    harness_length_feet = round(cable_lengths['harness_cable_positive'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
+                    harness_cable_size = block.wiring_config.harness_cable_size
+                    
+                    block_quantities[f'Positive Harness Cable ({harness_cable_size})'] = {
+                        'description': f'DC Positive Harness Cable {harness_cable_size}',
+                        'quantity': harness_length_feet,
+                        'unit': 'feet',
+                        'category': 'eBOS'
+                    }
+                
+                if 'harness_cable_negative' in cable_lengths:
+                    harness_length_feet = round(cable_lengths['harness_cable_negative'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
+                    harness_cable_size = block.wiring_config.harness_cable_size
+                    
+                    block_quantities[f'Negative Harness Cable ({harness_cable_size})'] = {
+                        'description': f'DC Negative Harness Cable {harness_cable_size}',
+                        'quantity': harness_length_feet,
+                        'unit': 'feet',
+                        'category': 'eBOS'
+                    }
+                
+                # Split whip cables by polarity
                 whip_cable_size = getattr(block.wiring_config, 'whip_cable_size', '6 AWG')  # Default to 6 AWG if not specified
-                # Calculate whip length - estimate 2 whips per tracker with 3m (10ft) per whip
-                whip_count = len([pos for pos in block.tracker_positions])
-                whip_length_per_tracker = 6  # 3m per whip x 2 whips = 6m
-                whip_length_feet = round(whip_count * whip_length_per_tracker * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
+                
+                if 'whip_cable_positive' in cable_lengths:
+                    whip_length_feet = round(cable_lengths['whip_cable_positive'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
 
-                block_quantities[f'Whip Cable ({whip_cable_size})'] = {
-                    'description': f'DC Whip Cable {whip_cable_size}',
-                    'quantity': whip_length_feet,
-                    'unit': 'feet',
-                    'category': 'eBOS'
-                }
+                    block_quantities[f'Positive Whip Cable ({whip_cable_size})'] = {
+                        'description': f'DC Positive Whip Cable {whip_cable_size}',
+                        'quantity': whip_length_feet,
+                        'unit': 'feet',
+                        'category': 'eBOS'
+                    }
+                
+                if 'whip_cable_negative' in cable_lengths:
+                    whip_length_feet = round(cable_lengths['whip_cable_negative'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
+
+                    block_quantities[f'Negative Whip Cable ({whip_cable_size})'] = {
+                        'description': f'DC Negative Whip Cable {whip_cable_size}',
+                        'quantity': whip_length_feet,
+                        'unit': 'feet',
+                        'category': 'eBOS'
+                    }
             
             quantities[block_id] = block_quantities
         
