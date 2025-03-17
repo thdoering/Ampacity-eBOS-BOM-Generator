@@ -41,6 +41,7 @@ class WiringConfig:
     string_cable_size: str = "10 AWG"  # Default value
     harness_cable_size: str = "8 AWG"  # Default value
     whip_cable_size: str = "8 AWG"  # Default value for whips
+    custom_whip_points: Dict[str, Dict[str, tuple[float, float]]] = field(default_factory=dict)   # Format: {'tracker_id': {'positive': (x, y), 'negative': (x, y)}}
 
 @dataclass
 class BlockConfig:
@@ -220,7 +221,8 @@ class BlockConfig:
                 'positive_collection_points': [],
                 'negative_collection_points': [],
                 'strings_per_collection': self.wiring_config.strings_per_collection,
-                'cable_routes': self.wiring_config.cable_routes
+                'cable_routes': self.wiring_config.cable_routes,
+                'custom_whip_points': getattr(self.wiring_config, 'custom_whip_points', {})
             }
             
             # Serialize collection points
@@ -341,7 +343,8 @@ class BlockConfig:
                 strings_per_collection=wiring_data.get('strings_per_collection', {}),
                 cable_routes=wiring_data.get('cable_routes', {}),
                 string_cable_size=wiring_data.get('string_cable_size', "10 AWG"),
-                harness_cable_size=wiring_data.get('harness_cable_size', "8 AWG")
+                harness_cable_size=wiring_data.get('harness_cable_size', "8 AWG"),
+                custom_whip_points=wiring_data.get('custom_whip_points', {})
             )
         
         return block

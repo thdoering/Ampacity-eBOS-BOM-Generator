@@ -58,5 +58,25 @@
     "bifaciality_factor": null,
     "default_orientation": "Portrait",
     "cells_per_module": 72
+  },
+  "ZnShine ZXM7-UHLDD144-580": {
+    "manufacturer": "ZnShine",
+    "model": "ZXM7-UHLDD144-580",
+    "type": "Mono PERC",
+    "length_mm": 2278.0,
+    "width_mm": 1134.0,
+    "depth_mm": 40,
+    "weight_kg": 25,
+    "wattage": 580.0,
+    "vmp": 42.8,
+    "imp": 13.56,
+    "voc": 51.5,
+    "isc": 14.35,
+    "max_system_voltage": 1500,
+    "efficiency": null,
+    "temperature_coefficient": null,
+    "bifaciality_factor": null,
+    "default_orientation": "Portrait",
+    "cells_per_module": 72
   }
 }

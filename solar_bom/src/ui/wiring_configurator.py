@@ -26,6 +26,12 @@ class WiringConfigurator(tk.Toplevel):
         self.pan_x = 0  # Pan offset in pixels
         self.pan_y = 0
         self.panning = False
+        self.selected_whips = set()  # Set of (tracker_id, polarity) tuples
+        self.dragging = False
+        self.drag_start_x = 0
+        self.drag_start_y = 0
+        self.drag_whips = False
+        self.selection_box = None
         
         # Set up window properties
         self.title("Wiring Configuration")
@@ -130,6 +136,26 @@ class WiringConfigurator(tk.Toplevel):
         self.canvas.bind('<Button-3>', self.start_pan)  
         self.canvas.bind('<B3-Motion>', self.update_pan)
         self.canvas.bind('<ButtonRelease-3>', self.end_pan)
+
+        # Bindings for whip point interaction
+        self.canvas.bind('<Button-1>', self.on_canvas_click)
+        self.canvas.bind('<B1-Motion>', self.on_canvas_drag)
+        self.canvas.bind('<ButtonRelease-1>', self.on_canvas_release)
+        
+        # Add keyboard shortcuts
+        self.canvas.bind('<Delete>', self.reset_selected_whips)
+        self.canvas.bind('<Control-a>', self.select_all_whips)
+        self.canvas.bind('<Escape>', self.clear_selection)
+        
+        # Add right-click menu
+        self.whip_menu = tk.Menu(self.canvas, tearoff=0)
+        self.whip_menu.add_command(label="Reset to Default", command=self.reset_selected_whips)
+        self.canvas.bind('<Button-3>', self.show_context_menu)
+        
+        # Add a reset button to the controls
+        ttk.Button(controls_frame, text="Reset All Whip Points", 
+                command=self.reset_all_whips).grid(
+                row=4, column=0, columnspan=2, padx=5, pady=5)
         
         # Bottom buttons
         button_frame = ttk.Frame(main_container)
@@ -141,7 +167,6 @@ class WiringConfigurator(tk.Toplevel):
         # Update UI based on initial wiring type
         self.update_ui_for_wiring_type()
 
-        # At the end of setup_ui method, add:
         # Initialize with existing configuration if available
         if self.block.wiring_config:
             # Set wiring type
@@ -252,8 +277,10 @@ class WiringConfigurator(tk.Toplevel):
             self.draw_collection_points(pos, x_base, y_base, scale)
 
             # Draw whip points for this tracker
-            pos_whip = self.calculate_whip_points(pos, True)
-            neg_whip = self.calculate_whip_points(pos, False)
+            tracker_idx = self.block.tracker_positions.index(pos)
+            pos_whip = self.get_whip_position(str(tracker_idx), 'positive')
+            tracker_idx = self.block.tracker_positions.index(pos)
+            neg_whip = self.get_whip_position(str(tracker_idx), 'negative')
             
             if pos_whip:
                 wx = 20 + self.pan_x + pos_whip[0] * scale
@@ -301,8 +328,10 @@ class WiringConfigurator(tk.Toplevel):
             
             # Collect all source points
             for pos in self.block.tracker_positions:
-                pos_whip = self.calculate_whip_points(pos, True)
-                neg_whip = self.calculate_whip_points(pos, False)
+                tracker_idx = self.block.tracker_positions.index(pos)
+                pos_whip = self.get_whip_position(str(tracker_idx), 'positive')
+                tracker_idx = self.block.tracker_positions.index(pos)
+                neg_whip = self.get_whip_position(str(tracker_idx), 'negative')
                 
                 for string in pos.strings:
                     whip_points_valid = pos_whip and neg_whip  # Check both whip points exist
@@ -404,8 +433,10 @@ class WiringConfigurator(tk.Toplevel):
                 neg_nodes = self.calculate_node_points(pos, False)  # Negative nodes
                 
                 # Get whip points
-                pos_whip = self.calculate_whip_points(pos, True)
-                neg_whip = self.calculate_whip_points(pos, False)
+                tracker_idx = self.block.tracker_positions.index(pos)
+                pos_whip = self.get_whip_position(str(tracker_idx), 'positive')
+                tracker_idx = self.block.tracker_positions.index(pos)
+                neg_whip = self.get_whip_position(str(tracker_idx), 'negative')
                 
                 # Draw string cables to node points
                 for i, string in enumerate(pos.strings):
@@ -607,6 +638,50 @@ class WiringConfigurator(tk.Toplevel):
                 outline='darkblue',
                 tags='collection_point'
             )
+        
+        # Draw whip points
+        tracker_idx = self.block.tracker_positions.index(pos)
+        tracker_id = str(tracker_idx)
+        
+        # Get whip point positions
+        pos_whip = self.get_whip_position(tracker_id, 'positive')
+        neg_whip = self.get_whip_position(tracker_id, 'negative')
+        
+        # Draw positive whip point
+        if pos_whip:
+            wx = 20 + self.pan_x + pos_whip[0] * scale
+            wy = 20 + self.pan_y + pos_whip[1] * scale
+            
+            # Highlight if selected
+            is_selected = (tracker_id, 'positive') in self.selected_whips
+            fill = 'red' if not is_selected else 'orange'
+            outline = 'darkred' if not is_selected else 'red'
+            size = 3 if not is_selected else 5
+            
+            self.canvas.create_oval(
+                wx - size, wy - size,
+                wx + size, wy + size,
+                fill=fill, outline=outline,
+                tags='whip_point'
+            )
+            
+        # Draw negative whip point
+        if neg_whip:
+            wx = 20 + self.pan_x + neg_whip[0] * scale
+            wy = 20 + self.pan_y + neg_whip[1] * scale
+            
+            # Highlight if selected
+            is_selected = (tracker_id, 'negative') in self.selected_whips
+            fill = 'blue' if not is_selected else 'cyan'
+            outline = 'darkblue' if not is_selected else 'blue'
+            size = 3 if not is_selected else 5
+            
+            self.canvas.create_oval(
+                wx - size, wy - size,
+                wx + size, wy + size,
+                fill=fill, outline=outline,
+                tags='whip_point'
+            )
 
     def on_wiring_type_change(self, event=None):
         """Handle wiring type selection change"""
@@ -641,8 +716,10 @@ class WiringConfigurator(tk.Toplevel):
                     continue
                     
                 # Get whip points for this tracker
-                pos_whip = self.calculate_whip_points(pos, True)
-                neg_whip = self.calculate_whip_points(pos, False)
+                tracker_idx = self.block.tracker_positions.index(pos)
+                pos_whip = self.get_whip_position(str(tracker_idx), 'positive')
+                tracker_idx = self.block.tracker_positions.index(pos)
+                neg_whip = self.get_whip_position(str(tracker_idx), 'negative')
                 
                 # Add collection points
                 if pos_whip:
@@ -673,6 +750,12 @@ class WiringConfigurator(tk.Toplevel):
                     else:
                         self.add_harness_routes(cable_routes, pos, string, idx, string_idx, pos_whip, neg_whip)
             
+            custom_whip_points = {}
+            if (hasattr(self.block, 'wiring_config') and 
+                self.block.wiring_config and 
+                hasattr(self.block.wiring_config, 'custom_whip_points')):
+                custom_whip_points = self.block.wiring_config.custom_whip_points
+
             # Create the WiringConfig instance
             wiring_config = WiringConfig(
                 wiring_type=wiring_type,
@@ -682,7 +765,8 @@ class WiringConfigurator(tk.Toplevel):
                 cable_routes=cable_routes,
                 string_cable_size=self.string_cable_size_var.get(),
                 harness_cable_size=self.harness_cable_size_var.get(),
-                whip_cable_size=self.whip_cable_size_var.get()
+                whip_cable_size=self.whip_cable_size_var.get(),
+                custom_whip_points=custom_whip_points
                 )
             
             # Store the configuration in the block
@@ -1018,3 +1102,259 @@ class WiringConfigurator(tk.Toplevel):
             
             if neg_whip and neg_dest:
                 cable_routes[f"neg_main_{tracker_idx}"] = [neg_whip, neg_dest]
+
+    def on_canvas_click(self, event):
+        """Handle canvas click events for whip point selection"""
+        if self.panning:  # Don't select while panning
+            return
+            
+        # Convert canvas coordinates to world coordinates
+        scale = self.get_canvas_scale()
+        world_x = (event.x - 20 - self.pan_x) / scale
+        world_y = (event.y - 20 - self.pan_y) / scale
+        
+        # Check if we clicked on a whip point
+        hit_whip = self.get_whip_at_position(world_x, world_y)
+        
+        if hit_whip:
+            tracker_id, polarity = hit_whip
+            # Toggle selection if Ctrl is pressed, otherwise select only this one
+            if event.state & 0x4:  # Ctrl key is pressed
+                if hit_whip in self.selected_whips:
+                    self.selected_whips.remove(hit_whip)
+                else:
+                    self.selected_whips.add(hit_whip)
+            else:
+                # Clear previous selection unless Shift is pressed
+                if not (event.state & 0x1):  # Shift key is not pressed
+                    self.selected_whips.clear()
+                self.selected_whips.add(hit_whip)
+                
+            self.drag_whips = True
+            self.drag_start_x = event.x
+            self.drag_start_y = event.y
+        else:
+            # Start selection box if not clicking on a whip point
+            if not (event.state & 0x4) and not (event.state & 0x1):  # Neither Ctrl nor Shift
+                self.selected_whips.clear()
+            self.drag_start_x = event.x
+            self.drag_start_y = event.y
+            self.dragging = True
+            
+        self.draw_wiring_layout()
+
+    def on_canvas_drag(self, event):
+        """Handle dragging of whip points or selection box"""
+        if self.panning:
+            return
+            
+        if self.drag_whips and self.selected_whips:
+            # Calculate movement in world coordinates
+            scale = self.get_canvas_scale()
+            dx = (event.x - self.drag_start_x) / scale
+            dy = (event.y - self.drag_start_y) / scale
+            
+            # Update custom whip point positions
+            for tracker_id, polarity in self.selected_whips:
+                if not hasattr(self.block, 'wiring_config') or not self.block.wiring_config:
+                    self.block.wiring_config = WiringConfig(
+                        wiring_type=WiringType(self.wiring_type_var.get()),
+                        positive_collection_points=[],
+                        negative_collection_points=[],
+                        strings_per_collection={},
+                        cable_routes={},
+                        custom_whip_points={}
+                    )
+                    
+                if 'custom_whip_points' not in self.block.wiring_config.__dict__:
+                    self.block.wiring_config.custom_whip_points = {}
+                    
+                if tracker_id not in self.block.wiring_config.custom_whip_points:
+                    self.block.wiring_config.custom_whip_points[tracker_id] = {}
+                    
+                # If this is the first time moving this whip, initialize with current position
+                if polarity not in self.block.wiring_config.custom_whip_points[tracker_id]:
+                    current_pos = self.get_whip_default_position(tracker_id, polarity)
+                    if current_pos:
+                        self.block.wiring_config.custom_whip_points[tracker_id][polarity] = current_pos
+                        
+                # Update position
+                if polarity in self.block.wiring_config.custom_whip_points[tracker_id]:
+                    old_x, old_y = self.block.wiring_config.custom_whip_points[tracker_id][polarity]
+                    self.block.wiring_config.custom_whip_points[tracker_id][polarity] = (old_x + dx, old_y + dy)
+            
+            # Update drag start for continuous dragging
+            self.drag_start_x = event.x
+            self.drag_start_y = event.y
+            
+            # Redraw
+            self.draw_wiring_layout()
+        elif self.dragging:
+            # Update selection box
+            if self.selection_box:
+                self.canvas.delete(self.selection_box)
+                
+            self.selection_box = self.canvas.create_rectangle(
+                self.drag_start_x, self.drag_start_y, event.x, event.y,
+                outline='blue', dash=(4, 4)
+            )
+
+    def on_canvas_release(self, event):
+        """Handle end of drag operation"""
+        if self.panning:
+            return
+            
+        if self.drag_whips:
+            self.drag_whips = False
+        elif self.dragging and self.selection_box:
+            # Convert selection box to world coordinates and select whips within it
+            scale = self.get_canvas_scale()
+            x1 = min(self.drag_start_x, event.x)
+            y1 = min(self.drag_start_y, event.y)
+            x2 = max(self.drag_start_x, event.x)
+            y2 = max(self.drag_start_y, event.y)
+            
+            # Convert to world coordinates
+            wx1 = (x1 - 20 - self.pan_x) / scale
+            wy1 = (y1 - 20 - self.pan_y) / scale
+            wx2 = (x2 - 20 - self.pan_x) / scale
+            wy2 = (y2 - 20 - self.pan_y) / scale
+            
+            # Select all whip points within this box
+            for tracker_idx, pos in enumerate(self.block.tracker_positions):
+                tracker_id = str(tracker_idx)
+                
+                # Check positive whip
+                pos_whip = self.get_whip_position(tracker_id, 'positive')
+                if pos_whip:
+                    if wx1 <= pos_whip[0] <= wx2 and wy1 <= pos_whip[1] <= wy2:
+                        self.selected_whips.add((tracker_id, 'positive'))
+                        
+                # Check negative whip
+                neg_whip = self.get_whip_position(tracker_id, 'negative')
+                if neg_whip:
+                    if wx1 <= neg_whip[0] <= wx2 and wy1 <= neg_whip[1] <= wy2:
+                        self.selected_whips.add((tracker_id, 'negative'))
+            
+            # Delete selection box
+            self.canvas.delete(self.selection_box)
+            self.selection_box = None
+            
+        self.dragging = False
+        self.draw_wiring_layout()
+
+    def reset_selected_whips(self, event=None):
+        """Reset selected whip points to their default positions"""
+        if not self.selected_whips:
+            return
+            
+        for tracker_id, polarity in self.selected_whips:
+            if (hasattr(self.block, 'wiring_config') and 
+                self.block.wiring_config and 
+                hasattr(self.block.wiring_config, 'custom_whip_points') and
+                tracker_id in self.block.wiring_config.custom_whip_points and
+                polarity in self.block.wiring_config.custom_whip_points[tracker_id]):
+                
+                # Remove custom position
+                del self.block.wiring_config.custom_whip_points[tracker_id][polarity]
+                
+                # Clean up empty entries
+                if not self.block.wiring_config.custom_whip_points[tracker_id]:
+                    del self.block.wiring_config.custom_whip_points[tracker_id]
+                    
+        self.draw_wiring_layout()
+
+    def reset_all_whips(self, event=None):
+        """Reset all whip points to their default positions"""
+        if hasattr(self.block, 'wiring_config') and self.block.wiring_config:
+            if hasattr(self.block.wiring_config, 'custom_whip_points'):
+                self.block.wiring_config.custom_whip_points = {}
+                
+        self.selected_whips.clear()
+        self.draw_wiring_layout()
+        
+    def select_all_whips(self, event=None):
+        """Select all whip points"""
+        self.selected_whips.clear()
+        
+        for tracker_idx, _ in enumerate(self.block.tracker_positions):
+            tracker_id = str(tracker_idx)
+            self.selected_whips.add((tracker_id, 'positive'))
+            self.selected_whips.add((tracker_id, 'negative'))
+            
+        self.draw_wiring_layout()
+        return "break"  # Prevent default Ctrl+A behavior
+        
+    def clear_selection(self, event=None):
+        """Clear whip point selection"""
+        self.selected_whips.clear()
+        self.draw_wiring_layout()
+
+    def get_whip_position(self, tracker_id, polarity):
+        """Get the current position of a whip point (custom or default)"""
+        # Check for custom position first
+        if (hasattr(self.block, 'wiring_config') and 
+            self.block.wiring_config and 
+            hasattr(self.block.wiring_config, 'custom_whip_points') and
+            tracker_id in self.block.wiring_config.custom_whip_points and
+            polarity in self.block.wiring_config.custom_whip_points[tracker_id]):
+            
+            return self.block.wiring_config.custom_whip_points[tracker_id][polarity]
+            
+        # Fall back to default position
+        return self.get_whip_default_position(tracker_id, polarity)
+        
+    def get_whip_default_position(self, tracker_id, polarity):
+        """Calculate the default position for a whip point"""
+        tracker_idx = int(tracker_id)
+        if tracker_idx < 0 or tracker_idx >= len(self.block.tracker_positions):
+            return None
+            
+        pos = self.block.tracker_positions[tracker_idx]
+        is_positive = (polarity == 'positive')
+        
+        # Use the existing calculation method
+        if is_positive:
+            return self.calculate_whip_points(pos, True)
+        else:
+            return self.calculate_whip_points(pos, False)
+            
+    def get_whip_at_position(self, x, y, tolerance=0.5):
+        """Find a whip point at the given position within tolerance"""
+        # Check each tracker's whip points
+        for tracker_idx, pos in enumerate(self.block.tracker_positions):
+            tracker_id = str(tracker_idx)
+            
+            # Check positive whip
+            pos_whip = self.get_whip_position(tracker_id, 'positive')
+            if pos_whip:
+                if abs(x - pos_whip[0]) <= tolerance and abs(y - pos_whip[1]) <= tolerance:
+                    return (tracker_id, 'positive')
+                    
+            # Check negative whip
+            neg_whip = self.get_whip_position(tracker_id, 'negative')
+            if neg_whip:
+                if abs(x - neg_whip[0]) <= tolerance and abs(y - neg_whip[1]) <= tolerance:
+                    return (tracker_id, 'negative')
+                    
+        return None
+    
+    def show_context_menu(self, event):
+        """Show context menu for whip points"""
+        # First, check if we clicked on a whip point
+        scale = self.get_canvas_scale()
+        world_x = (event.x - 20 - self.pan_x) / scale
+        world_y = (event.y - 20 - self.pan_y) / scale
+        
+        hit_whip = self.get_whip_at_position(world_x, world_y)
+        
+        if hit_whip:
+            # If hitting a whip point that's not selected, select only this one
+            if hit_whip not in self.selected_whips:
+                self.selected_whips.clear()
+                self.selected_whips.add(hit_whip)
+                self.draw_wiring_layout()
+            
+            # Show the context menu
+            self.whip_menu.post(event.x_root, event.y_root)
+            return "break"  # Prevent default right-click behavior
