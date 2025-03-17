@@ -31,3 +31,9 @@ data/templates/
 
 # Any other user data subdirectories
 data/**/
+
+# Recent projects file (in any directory)
+.recent_projects
+*/.recent_projects
+**/.recent_projects
+projects/.recent_projects
