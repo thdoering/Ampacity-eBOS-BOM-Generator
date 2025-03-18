@@ -1640,18 +1640,7 @@ class WiringConfigurator(tk.Toplevel):
         self.wire_warnings = {}
 
     def draw_wire_segment(self, points, wire_gauge, current, is_positive=True, segment_type="string"):
-        """Draw a wire segment with appropriate warnings based on loading
-        
-        Args:
-            points: List of coordinate tuples for line points
-            wire_gauge: Wire size (e.g., "10 AWG")
-            current: Current flowing through wire in amps
-            is_positive: Whether this is a positive (red) or negative (blue) wire
-            segment_type: "string", "harness" or "whip"
-            
-        Returns:
-            line_id: Canvas ID of the created line
-        """
+        """Draw a wire segment with warnings only for overloads"""
         # Get standard wire properties
         line_thickness = self.get_line_thickness_for_wire(wire_gauge)
         base_color = 'red' if is_positive else 'blue'
@@ -1669,27 +1658,13 @@ class WiringConfigurator(tk.Toplevel):
         nec_current = self.calculate_nec_current(current)
         load_percent = (nec_current / ampacity) * 100
         
-        # Add warning if needed based on load percentage
-        if load_percent >= 100:
+        # Only add warning if it's an overload (>100%)
+        if load_percent > 100:
             polarity = "positive" if is_positive else "negative"
             self.add_wire_warning(
                 line_id,
                 f"{polarity.capitalize()} {segment_type} {wire_gauge}: {load_percent:.0f}% (OVERLOAD)",
                 'overload'
-            )
-        elif load_percent >= 80:
-            polarity = "positive" if is_positive else "negative"
-            self.add_wire_warning(
-                line_id,
-                f"{polarity.capitalize()} {segment_type} {wire_gauge}: {load_percent:.0f}% (WARNING)",
-                'warning'
-            )
-        elif load_percent >= 60:
-            polarity = "positive" if is_positive else "negative"
-            self.add_wire_warning(
-                line_id,
-                f"{polarity.capitalize()} {segment_type} {wire_gauge}: {load_percent:.0f}% (CAUTION)",
-                'caution'
             )
         
         return line_id
@@ -1700,9 +1675,9 @@ class WiringConfigurator(tk.Toplevel):
         self.warning_panel = tk.Frame(self.canvas, bg='white', bd=1, relief=tk.RAISED)
         self.warning_panel.place(relx=1.0, rely=1.0, x=-5, y=-5, anchor='se')
         
-        # Add header
-        self.warning_header = tk.Label(self.warning_panel, text="Wire Warnings", 
-                                    bg='#f0f0f0', font=('Arial', 9, 'bold'),
+        # Add header - changed to be more specific
+        self.warning_header = tk.Label(self.warning_panel, text="Wire Overload Issues", 
+                                    bg='#ffdddd', font=('Arial', 9, 'bold'),
                                     padx=5, pady=2, anchor='w', width=30)
         self.warning_header.pack(side=tk.TOP, fill=tk.X)
         
