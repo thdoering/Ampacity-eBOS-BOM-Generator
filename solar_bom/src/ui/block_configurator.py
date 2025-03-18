@@ -12,9 +12,10 @@ from ..utils.undo_manager import UndoManager
 from copy import deepcopy
 
 class BlockConfigurator(ttk.Frame):
-    def __init__(self, parent):
+    def __init__(self, parent, current_project=None):
         super().__init__(parent)
         self.parent = parent
+        self.current_project = current_project
         
         # State management
         self.device_type_var = None
@@ -356,16 +357,18 @@ class BlockConfigurator(ttk.Frame):
                 template_name = self.template_listbox.get(selection[0])
                 selected_template = self.tracker_templates.get(template_name)
             
-            # Get row spacing value and convert feet to meters
-            try:
-                row_spacing_ft = float(self.row_spacing_var.get())
-                row_spacing_m = self.ft_to_m(row_spacing_ft)
-                device_width_m = 0.91  # 3ft in meters
-                initial_device_x = row_spacing_m / 2 + (device_width_m / 2)
-            except ValueError:
-                row_spacing_m = 6.0  # Default to 6m if invalid input
-                device_width_m = 0.91  # 3ft in meters
-                initial_device_x = row_spacing_m / 2 + (device_width_m / 2)
+            # Get row spacing from project if available
+            row_spacing_m = 6.0  # Default fallback
+            if self.current_project and hasattr(self.current_project, 'default_row_spacing_m'):
+                row_spacing_m = self.current_project.default_row_spacing_m
+                
+            # Update the row spacing variable in the UI
+            feet_value = self.m_to_ft(row_spacing_m)
+            self.row_spacing_var.set(str(round(feet_value, 6)))
+                
+            # Calculate device position based on row spacing    
+            device_width_m = 0.91  # 3ft in meters
+            initial_device_x = row_spacing_m / 2 + (device_width_m / 2)
             
             block = BlockConfig(
                 block_id=block_id,
@@ -373,7 +376,7 @@ class BlockConfigurator(ttk.Frame):
                 tracker_template=selected_template,
                 width_m=20,  # Initial minimum width
                 height_m=20,  # Initial minimum height
-                row_spacing_m=row_spacing_m,
+                row_spacing_m=row_spacing_m,  # Use project's default row spacing
                 ns_spacing_m=float(self.ns_spacing_var.get()),
                 gcr=0.0,  # This will be calculated when a tracker template is assigned
                 description=f"New block {block_id}",
@@ -1463,17 +1466,49 @@ class BlockConfigurator(ttk.Frame):
         """Update the current block's row spacing from UI value"""
         if not self.current_block:
             return
-            
+                
         try:
             # Get row spacing value and convert feet to meters
             row_spacing_ft = float(self.row_spacing_var.get())
             row_spacing_m = self.ft_to_m(row_spacing_ft)
             
-            # Update block property
-            self.blocks[self.current_block].row_spacing_m = row_spacing_m
+            # Check if value has actually changed
+            if abs(self.blocks[self.current_block].row_spacing_m - row_spacing_m) < 0.001:
+                return
+                
+            # Ask if change should apply to all blocks
+            response = messagebox.askyesnocancel(
+                "Update Row Spacing",
+                "Do you want to apply this row spacing to all blocks?\n\n"
+                "Yes - Apply to all blocks\n"
+                "No - Apply only to the current block\n"
+                "Cancel - Don't change row spacing"
+            )
             
+            if response is None:  # Cancel
+                # Reset the row spacing input to match the current block
+                self.row_spacing_var.set(str(self.m_to_ft(self.blocks[self.current_block].row_spacing_m)))
+                return
+                
+            if response:  # Yes - apply to all blocks
+                # Update all blocks
+                for block_id, block in self.blocks.items():
+                    block.row_spacing_m = row_spacing_m
+                    
+                # Update project default if possible
+                main_app = self.winfo_toplevel()
+                if hasattr(main_app, 'current_project') and main_app.current_project:
+                    main_app.current_project.default_row_spacing_m = row_spacing_m
+            else:  # No - apply only to current block
+                # Update current block only
+                self.blocks[self.current_block].row_spacing_m = row_spacing_m
+                
             # Update GCR after changing row spacing
             self.calculate_gcr()
+            
+            # Redraw the block
+            self.draw_block()
+            
         except (ValueError, KeyError):
             # Ignore conversion errors or invalid block references
             pass

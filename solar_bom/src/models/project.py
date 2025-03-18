@@ -26,6 +26,8 @@ class Project:
     selected_modules: List[str] = field(default_factory=list)
     # Store selected inverter IDs for this project
     selected_inverters: List[str] = field(default_factory=list)
+    # Default row spacing in meters 
+    default_row_spacing_m: float = 6.0  # Default value of 6m (approx 19.7ft)
     
     def update_modified_date(self):
         """Update the last modified date"""
@@ -45,7 +47,8 @@ class Project:
             },
             'blocks': self.blocks,
             'selected_modules': self.selected_modules,
-            'selected_inverters': self.selected_inverters
+            'selected_inverters': self.selected_inverters,
+            'default_row_spacing_m': self.default_row_spacing_m
         }
     
     @classmethod
@@ -65,7 +68,8 @@ class Project:
             metadata=metadata,
             blocks=data.get('blocks', {}),
             selected_modules=data.get('selected_modules', []),
-            selected_inverters=data.get('selected_inverters', [])
+            selected_inverters=data.get('selected_inverters', []),
+            default_row_spacing_m=data.get('default_row_spacing', 6.0)
         )
     
     def save(self, projects_dir: str = 'projects') -> bool:

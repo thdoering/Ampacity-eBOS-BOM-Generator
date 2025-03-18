@@ -117,7 +117,8 @@ class SolarBOMApplication:
         block_frame = ttk.Frame(notebook)
         notebook.add(block_frame, text='Block Layout')
         
-        block_configurator = BlockConfigurator(block_frame)
+        # Pass the current project to the block configurator
+        block_configurator = BlockConfigurator(block_frame, current_project=self.current_project)
         block_configurator.pack(fill='both', expand=True, padx=5, pady=5)
         
         # Create BOM manager tab
@@ -329,6 +330,42 @@ class SolarBOMApplication:
             "A tool for designing solar project layouts and generating accurate "
             "bills of material for electrical balance of system components."
         )
+
+    def create_new_project(self):
+        """Create a new project"""
+        from src.ui.project_dashboard import ProjectDialog
+        
+        dialog = ProjectDialog(self.root, title="Create New Project")
+        
+        if dialog.result:
+            from src.utils.project_manager import ProjectManager
+            project_manager = ProjectManager()
+            
+            # Unpack the result tuple with the new row spacing
+            if len(dialog.result) >= 6:  # Check if row spacing was included
+                name, description, client, location, notes, row_spacing_m = dialog.result
+            else:
+                # Fallback for backward compatibility
+                name, description, client, location, notes = dialog.result
+                row_spacing_m = 6.0  # Default to 6m
+            
+            # Create the project
+            project = project_manager.create_project(
+                name=name,
+                description=description,
+                client=client,
+                location=location,
+                notes=notes
+            )
+            
+            # Set default row spacing
+            project.default_row_spacing_m = row_spacing_m
+            
+            if project_manager.save_project(project):
+                messagebox.showinfo("Success", f"Project '{name}' created successfully")
+                self.load_project(project)
+            else:
+                messagebox.showerror("Error", f"Failed to create project '{name}'")
 
 
 def main():
