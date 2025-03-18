@@ -1169,6 +1169,7 @@ class BlockConfigurator(ttk.Frame):
                         rotation=pos_data['rotation'],
                         template=template
                     )
+                    pos.calculate_string_positions()  # Calculate string and collection point positions
                     block.tracker_positions.append(pos)
             
             # Restore wiring configuration if available
