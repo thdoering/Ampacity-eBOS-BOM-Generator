@@ -1067,7 +1067,18 @@ class BlockConfigurator(ttk.Frame):
                     'x': pos.x,
                     'y': pos.y,
                     'rotation': pos.rotation,
-                    'template_name': pos.template.template_name if pos.template else None
+                    'template_name': pos.template.template_name if pos.template else None,
+                    'strings': [
+                        {
+                            'index': string.index,
+                            'positive_source_x': string.positive_source_x,
+                            'positive_source_y': string.positive_source_y,
+                            'negative_source_x': string.negative_source_x,
+                            'negative_source_y': string.negative_source_y,
+                            'num_modules': string.num_modules
+                        }
+                        for string in pos.strings
+                    ]
                 })
                 
             current_state[id] = {
@@ -1084,7 +1095,7 @@ class BlockConfigurator(ttk.Frame):
                 'device_spacing_m': block.device_spacing_m
             }
             
-            # ADD THIS CODE HERE
+            # Add wiring configuration if exists
             if block.wiring_config:
                 # Serialize the wiring config
                 wiring_config_data = {
@@ -1113,7 +1124,6 @@ class BlockConfigurator(ttk.Frame):
                     'harness_cable_size': getattr(block.wiring_config, 'harness_cable_size', "8 AWG")
                 }
                 current_state[id]['wiring_config_data'] = wiring_config_data
-            # END OF ADDED CODE
                 
         return current_state
 
@@ -1158,6 +1168,9 @@ class BlockConfigurator(ttk.Frame):
             # Clear existing tracker positions
             block.tracker_positions = []
             
+            # Import necessary classes
+            from ..models.tracker import TrackerPosition, StringPosition
+            
             # Restore tracker positions
             for pos_data in block_data['tracker_positions']:
                 template = next((t for t in self.tracker_templates.values() 
@@ -1169,7 +1182,23 @@ class BlockConfigurator(ttk.Frame):
                         rotation=pos_data['rotation'],
                         template=template
                     )
-                    pos.calculate_string_positions()  # Calculate string and collection point positions
+                    
+                    # Restore string data if available
+                    if 'strings' in pos_data:
+                        for string_data in pos_data['strings']:
+                            string = StringPosition(
+                                index=string_data['index'],
+                                positive_source_x=string_data['positive_source_x'],
+                                positive_source_y=string_data['positive_source_y'],
+                                negative_source_x=string_data['negative_source_x'],
+                                negative_source_y=string_data['negative_source_y'],
+                                num_modules=string_data['num_modules']
+                            )
+                            pos.strings.append(string)
+                    else:
+                        # Fallback to calculation if string data not available
+                        pos.calculate_string_positions()
+                        
                     block.tracker_positions.append(pos)
             
             # Restore wiring configuration if available
