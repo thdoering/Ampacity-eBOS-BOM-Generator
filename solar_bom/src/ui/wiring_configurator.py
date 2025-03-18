@@ -119,6 +119,23 @@ class WiringConfigurator(tk.Toplevel):
         
         self.canvas = tk.Canvas(canvas_frame, width=800, height=600, bg='white')
         self.canvas.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+         # Add warning panel frame
+        self.warning_panel = tk.Frame(self.canvas, bg='white', bd=1, relief=tk.RAISED)
+        self.warning_panel.place(relx=1.0, rely=1.0, x=-5, y=-5, anchor='se')
+        
+        # Add header
+        self.warning_header = tk.Label(self.warning_panel, text="Wire Warnings", 
+                                    bg='#f0f0f0', font=('Arial', 9, 'bold'),
+                                    padx=5, pady=2, anchor='w', width=30)
+        self.warning_header.pack(side=tk.TOP, fill=tk.X)
+        
+        # Add scrollable warning list
+        self.warning_frame = tk.Frame(self.warning_panel, bg='white')
+        self.warning_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        
+        # Store warnings with their associated wire IDs
+        self.wire_warnings = {}  # Maps warning IDs to wire IDs
         
         # Bind canvas resize
         self.canvas.bind('<Configure>', self.on_canvas_resize)
@@ -203,6 +220,12 @@ class WiringConfigurator(tk.Toplevel):
         """Draw block layout with wiring visualization"""
         self.canvas.delete("all")
         scale = self.get_canvas_scale()
+        
+        # Clear previous warnings
+        self.clear_warnings()
+        
+        # Re-create warning panel (since we deleted all canvas items)
+        self.setup_warning_panel()
         
         # Draw existing trackers
         for pos in self.block.tracker_positions:
@@ -346,9 +369,9 @@ class WiringConfigurator(tk.Toplevel):
                         points = [(20 + self.pan_x + x * scale, 
                                 20 + self.pan_y + y * scale) for x, y in route1]
                         if len(points) > 1:
-                            line_thickness = self.get_line_thickness_for_wire(self.string_cable_size_var.get())
-                            self.canvas.create_line(points, fill='red', width=line_thickness)
                             current = self.calculate_current_for_segment('string')
+                            self.draw_wire_segment(points, self.string_cable_size_var.get(), 
+                                                current, is_positive=True, segment_type="string")
                             self.add_current_label(points, current, is_positive=True)
                         
                     if neg_whip:
@@ -361,9 +384,9 @@ class WiringConfigurator(tk.Toplevel):
                         points = [(20 + self.pan_x + x * scale, 
                                 20 + self.pan_y + y * scale) for x, y in route1]
                         if len(points) > 1:
-                            line_thickness = self.get_line_thickness_for_wire(self.string_cable_size_var.get())
-                            self.canvas.create_line(points, fill='blue', width=line_thickness)
                             current = self.calculate_current_for_segment('string')
+                            self.draw_wire_segment(points, self.string_cable_size_var.get(), 
+                                                current, is_positive=False, segment_type="string")
                             self.add_current_label(points, current, is_positive=False)
                                                 
                     pos_routes.append({
@@ -403,9 +426,9 @@ class WiringConfigurator(tk.Toplevel):
                 points = [(20 + self.pan_x + x * scale, 
                         20 + self.pan_y + y * scale) for x, y in route]
                 if len(points) > 1:
-                    thickness = self.get_line_thickness_for_wire(self.whip_cable_size_var.get())
-                    self.canvas.create_line(points, fill='red', width=thickness)
                     current = self.calculate_current_for_segment('whip', num_strings=1) # For homerun, it's 1 string per route
+                    self.draw_wire_segment(points, self.whip_cable_size_var.get(), 
+                                        current, is_positive=True, segment_type="whip")
                     self.add_current_label(points, current, is_positive=True, segment_type='whip')
             
             for i, route_info in enumerate(neg_routes_north + neg_routes_south):
@@ -420,10 +443,10 @@ class WiringConfigurator(tk.Toplevel):
                 points = [(20 + self.pan_x + x * scale, 
                         20 + self.pan_y + y * scale) for x, y in route]
                 if len(points) > 1:
-                    thickness = self.get_line_thickness_for_wire(self.whip_cable_size_var.get())
-                    self.canvas.create_line(points, fill='blue', width=thickness)
                     current = self.calculate_current_for_segment('whip', num_strings=1) # For homerun, it's 1 string per route
-                    self.add_current_label(points, current, is_positive=True, segment_type='whip')
+                    self.draw_wire_segment(points, self.whip_cable_size_var.get(), 
+                                        current, is_positive=False, segment_type="whip")
+                    self.add_current_label(points, current, is_positive=False, segment_type='whip')
                     
         else:  # Wire Harness configuration
             # Process each tracker
@@ -451,9 +474,9 @@ class WiringConfigurator(tk.Toplevel):
                     points = [(20 + self.pan_x + x * scale, 
                             20 + self.pan_y + y * scale) for x, y in route]
                     if len(points) > 1:
-                        line_thickness = self.get_line_thickness_for_wire(self.string_cable_size_var.get())
-                        self.canvas.create_line(points, fill='red', width=line_thickness)
                         current = self.calculate_current_for_segment('string')
+                        self.draw_wire_segment(points, self.string_cable_size_var.get(), 
+                                            current, is_positive=True, segment_type="string")
                         self.add_current_label(points, current, is_positive=True)
                         
                     # Negative string cable
@@ -467,9 +490,9 @@ class WiringConfigurator(tk.Toplevel):
                     points = [(20 + self.pan_x + x * scale, 
                             20 + self.pan_y + y * scale) for x, y in route]
                     if len(points) > 1:
-                        line_thickness = self.get_line_thickness_for_wire(self.string_cable_size_var.get())
-                        self.canvas.create_line(points, fill='blue', width=line_thickness)
                         current = self.calculate_current_for_segment('string')
+                        self.draw_wire_segment(points, self.string_cable_size_var.get(), 
+                                            current, is_positive=False, segment_type="string")
                         self.add_current_label(points, current, is_positive=False)
                 
                 # Draw node points
@@ -512,17 +535,17 @@ class WiringConfigurator(tk.Toplevel):
                     points = [(20 + self.pan_x + x * scale, 
                             20 + self.pan_y + y * scale) for x, y in route]
                     if len(points) > 1:
-                        line_thickness = self.get_line_thickness_for_wire(self.harness_cable_size_var.get())
-                        line_id = self.canvas.create_line(points, fill='red', width=line_thickness)
+                        # Calculate accumulated current based on position in chain
+                        # i+1 strings are accumulated at this point
+                        accumulated_strings = i + 1
+                        current = self.calculate_current_for_segment('string') * accumulated_strings
+                        self.draw_wire_segment(points, self.harness_cable_size_var.get(), 
+                                            current, is_positive=True, segment_type="harness")
                         # Add current label showing accumulated current
                         if len(points) >= 2 and self.show_current_labels_var.get():
                             mid_idx = len(points) // 2
                             mid_x = (points[mid_idx-1][0] + points[mid_idx][0]) / 2
                             mid_y = (points[mid_idx-1][1] + points[mid_idx][1]) / 2
-                            # Calculate accumulated current based on position in chain
-                            # i+1 strings are accumulated at this point
-                            accumulated_strings = i + 1
-                            current = self.calculate_current_for_segment('string') * accumulated_strings
                             self.canvas.create_text(mid_x, mid_y-10, text=f"{current:.1f}A", 
                                                 fill='red', font=('Arial', 8))
 
@@ -551,17 +574,17 @@ class WiringConfigurator(tk.Toplevel):
                     points = [(20 + self.pan_x + x * scale, 
                             20 + self.pan_y + y * scale) for x, y in route]
                     if len(points) > 1:
-                        line_thickness = self.get_line_thickness_for_wire(self.harness_cable_size_var.get())
-                        line_id = self.canvas.create_line(points, fill='blue', width=line_thickness)
+                        # Calculate accumulated current based on position in chain
+                        # i+1 strings are accumulated at this point
+                        accumulated_strings = i + 1
+                        current = self.calculate_current_for_segment('string') * accumulated_strings
+                        self.draw_wire_segment(points, self.harness_cable_size_var.get(), 
+                                            current, is_positive=False, segment_type="harness")
                         # Add current label showing accumulated current
                         if len(points) >= 2 and self.show_current_labels_var.get():
                             mid_idx = len(points) // 2
                             mid_x = (points[mid_idx-1][0] + points[mid_idx][0]) / 2
                             mid_y = (points[mid_idx-1][1] + points[mid_idx][1]) / 2
-                            # Calculate accumulated current based on position in chain
-                            # i+1 strings are accumulated at this point
-                            accumulated_strings = i + 1
-                            current = self.calculate_current_for_segment('string') * accumulated_strings
                             self.canvas.create_text(mid_x, mid_y+10, text=f"{current:.1f}A", 
                                                 fill='blue', font=('Arial', 8))
                                     
@@ -578,16 +601,16 @@ class WiringConfigurator(tk.Toplevel):
                     points = [(20 + self.pan_x + x * scale, 
                             20 + self.pan_y + y * scale) for x, y in route]
                     if len(points) > 1:
-                        line_thickness = self.get_line_thickness_for_wire(self.whip_cable_size_var.get())
-                        line_id = self.canvas.create_line(points, fill='red', width=line_thickness)
+                        # Total current for all strings on this tracker
+                        total_strings = len(pos.strings)
+                        current = self.calculate_current_for_segment('whip', total_strings)
+                        self.draw_wire_segment(points, self.whip_cable_size_var.get(), 
+                                            current, is_positive=True, segment_type="whip")
                         # Add current label at midpoint of line
                         if len(points) >= 2 and self.show_current_labels_var.get():
                             mid_idx = len(points) // 2
                             mid_x = (points[mid_idx-1][0] + points[mid_idx][0]) / 2
                             mid_y = (points[mid_idx-1][1] + points[mid_idx][1]) / 2
-                            # Total current for all strings on this tracker
-                            total_strings = len(pos.strings)
-                            current = self.calculate_current_for_segment('whip', total_strings)
                             self.canvas.create_text(mid_x, mid_y-10, text=f"{current:.1f}A", 
                                                 fill='red', font=('Arial', 8))
 
@@ -601,19 +624,19 @@ class WiringConfigurator(tk.Toplevel):
                     points = [(20 + self.pan_x + x * scale, 
                             20 + self.pan_y + y * scale) for x, y in route]
                     if len(points) > 1:
-                        line_thickness = self.get_line_thickness_for_wire(self.whip_cable_size_var.get())
-                        line_id = self.canvas.create_line(points, fill='blue', width=line_thickness)
+                        # Total current for all strings on this tracker
+                        total_strings = len(pos.strings)
+                        current = self.calculate_current_for_segment('whip', total_strings)
+                        self.draw_wire_segment(points, self.whip_cable_size_var.get(), 
+                                            current, is_positive=False, segment_type="whip")
                         # Add current label at midpoint of line
                         if len(points) >= 2 and self.show_current_labels_var.get():
                             mid_idx = len(points) // 2
                             mid_x = (points[mid_idx-1][0] + points[mid_idx][0]) / 2
                             mid_y = (points[mid_idx-1][1] + points[mid_idx][1]) / 2
-                            # Total current for all strings on this tracker
-                            total_strings = len(pos.strings)
-                            current = self.calculate_current_for_segment('whip', total_strings)
                             self.canvas.create_text(mid_x, mid_y+10, text=f"{current:.1f}A", 
                                                 fill='blue', font=('Arial', 8))
-
+                        
     def draw_collection_points(self, pos: TrackerPosition, x: float, y: float, scale: float):
         """Draw collection points for a tracker position"""
         for string in pos.strings:
@@ -773,6 +796,21 @@ class WiringConfigurator(tk.Toplevel):
             self.block.wiring_config = wiring_config
             
             tk.messagebox.showinfo("Success", "Wiring configuration applied successfully")
+
+            # Check MPPT capacity
+            if not self.validate_mppt_capacity():
+                mppt_warning = messagebox.askyesno(
+                    "MPPT Current Warning",
+                    "The selected inverter MPPT capacity may be insufficient for the total string current.\n\n"
+                    "Total string current exceeds the inverter MPPT capacity.\n"
+                    "This may require reconfiguring the wiring or choosing a different inverter.\n\n"
+                    "Do you want to apply this configuration anyway?",
+                    icon='warning'
+                )
+                
+                if not mppt_warning:
+                    return
+                
             if self.parent_notify_blocks_changed:
                 self.parent_notify_blocks_changed()
             self.destroy()
@@ -1358,3 +1396,320 @@ class WiringConfigurator(tk.Toplevel):
             # Show the context menu
             self.whip_menu.post(event.x_root, event.y_root)
             return "break"  # Prevent default right-click behavior
+        
+    def get_ampacity_for_wire_gauge(self, wire_gauge: str, temperature_rating: int = 90) -> float:
+        """
+        Get ampacity for given wire gauge and temperature rating
+        Based on NEC Table 310.15(B)(16)
+        """
+        # NEC Table 310.15(B)(16) values for common wire sizes (90°C column)
+        ampacity_table = {
+            "14 AWG": 25,
+            "12 AWG": 30,
+            "10 AWG": 40,
+            "8 AWG": 55,
+            "6 AWG": 75,
+            "4 AWG": 95,
+            "2 AWG": 130,
+            "1/0 AWG": 170,
+            "2/0 AWG": 195,
+            "4/0 AWG": 260
+        }
+        
+        return ampacity_table.get(wire_gauge, 0)
+
+    def calculate_nec_current(self, operating_current: float) -> float:
+        """Calculate NEC-compliant current (125% of operating current)"""
+        return operating_current * 1.25
+
+    def draw_wire_with_warning(self, points, wire_gauge, current, is_positive=True):
+        """Draw a wire segment with appropriate warnings based on loading"""
+        # Get standard wire properties
+        line_thickness = self.get_line_thickness_for_wire(wire_gauge)
+        base_color = 'red' if is_positive else 'blue'
+        
+        # Draw the wire with standard color
+        line_id = self.canvas.create_line(points, fill=base_color, width=line_thickness)
+        
+        # Check loading against ampacity
+        ampacity = self.get_ampacity_for_wire_gauge(wire_gauge)
+        if ampacity == 0:
+            return line_id  # Unknown wire size
+        
+        # Apply NEC factors (125% of continuous current)
+        nec_current = self.calculate_nec_current(current)
+        
+        # Calculate load percentage
+        load_percent = (nec_current / ampacity) * 100
+        
+        # Add warning indicator based on loading
+        if load_percent >= 100:
+            indicator_color = 'red'
+            bg_color = '#ffeeee'  # Light red background
+            indicator_text = "⚠ OVERLOAD"
+        elif load_percent >= 80:
+            indicator_color = '#dd6600'  # Dark orange - more readable
+            bg_color = '#fff0e0'  # Light orange background
+            indicator_text = "⚠ WARNING"
+        elif load_percent >= 60:
+            indicator_color = '#775500'  # Dark yellow/amber - more readable
+            bg_color = '#ffffd0'  # Light yellow background
+            indicator_text = "⚠ CAUTION"
+        else:
+            return line_id  # No warning needed
+        
+        # Find midpoint for warning
+        if len(points) >= 2:
+            mid_idx = len(points) // 2
+            mid_x = (points[mid_idx-1][0] + points[mid_idx][0]) / 2
+            mid_y = (points[mid_idx-1][1] + points[mid_idx][1]) / 2
+            
+            # Create warning indicator
+            tag_name = f"wire_warning_{line_id}"
+            
+            # Create a background rectangle for better visibility
+            self.canvas.create_rectangle(
+                mid_x - 40, mid_y - 12,
+                mid_x + 40, mid_y + 12,
+                fill=bg_color, outline=indicator_color,
+                tags=tag_name
+            )
+            
+            # Create warning text
+            self.canvas.create_text(
+                mid_x, mid_y,
+                text=f"{indicator_text} ({load_percent:.0f}%)",
+                fill=indicator_color,
+                font=('Arial', 8, 'bold'),
+                tags=tag_name
+            )
+        
+        return line_id
+    
+    def validate_mppt_capacity(self):
+        """Check if the inverter MPPT can handle the string current"""
+        if not self.block or not self.block.inverter:
+            return True
+            
+        # Calculate total strings
+        total_strings = sum(len(pos.strings) for pos in self.block.tracker_positions)
+        
+        # Get template
+        template = self.block.tracker_template
+        if not template or not template.module_spec:
+            return True
+        
+        # Calculate per-string current
+        string_current = template.module_spec.imp
+        
+        # Calculate total current 
+        total_current = string_current * total_strings
+        
+        # Get total MPPT capacity
+        total_mppt_capacity = sum(ch.max_input_current for ch in self.block.inverter.mppt_channels)
+        
+        return total_current <= total_mppt_capacity
+    
+    def add_wire_warning(self, wire_id, message, severity):
+        """Add a warning message to the warning panel
+        
+        Args:
+            wire_id: ID of the wire this warning refers to
+            message: Warning message text
+            severity: 'caution', 'warning' or 'overload'
+        """
+        # Create unique ID for this warning
+        warning_id = f"warning_{len(self.wire_warnings) + 1}"
+        
+        # Define colors based on severity
+        if severity == 'overload':
+            bg_color = '#ffdddd'
+            icon = "⚠"
+        elif severity == 'warning':
+            bg_color = '#fff0dd'
+            icon = "⚠"
+        else:  # caution
+            bg_color = '#ffffdd'
+            icon = "⚠"
+        
+        # Create warning entry in panel
+        warning_frame = tk.Frame(self.warning_frame, bg=bg_color, padx=2, pady=2)
+        warning_frame.pack(side=tk.TOP, fill=tk.X, padx=2, pady=1)
+        
+        # Add warning text
+        warning_label = tk.Label(warning_frame, text=f"{icon} {message}", 
+                                bg=bg_color, anchor='w', justify='left')
+        warning_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        # Store mapping between warning and wire
+        self.wire_warnings[warning_id] = wire_id
+        
+        # Bind click event to highlight the wire
+        warning_frame.bind("<Button-1>", lambda e, wid=wire_id: self.highlight_wire(wid))
+        warning_label.bind("<Button-1>", lambda e, wid=wire_id: self.highlight_wire(wid))
+        
+        return warning_id
+
+    def highlight_wire(self, wire_id):
+        """Highlight a wire when its warning is clicked"""
+        # Remove any existing highlights
+        self.canvas.delete("wire_highlight")
+        
+        # Get the wire's coordinates
+        wire_coords = self.canvas.coords(wire_id)
+        if not wire_coords:
+            return
+        
+        # Get the current width and convert to int before adding
+        try:
+            current_width = int(float(self.canvas.itemcget(wire_id, 'width')))
+        except (ValueError, TypeError):
+            current_width = 2  # Default width if conversion fails
+        
+        # Get wire color to determine a contrasting highlight color
+        wire_color = self.canvas.itemcget(wire_id, 'fill')
+        highlight_color = '#FF00FF'  # Bright magenta works well for both red and blue wires
+        
+        # Create dashed outline effect with double the thickness
+        self.canvas.create_line(
+            wire_coords,
+            width=current_width * 2 + 4,
+            fill=highlight_color,
+            dash=(8, 4),  # Dashed line pattern
+            tags="wire_highlight"
+        )
+        
+        # Animate the highlight line (expand and contract)
+        self.pulse_highlight(6, current_width * 2 + 4)
+        
+        # Also scroll to make this wire visible if it's outside view
+        if len(wire_coords) >= 2:
+            mid_x = (wire_coords[0] + wire_coords[2]) / 2
+            mid_y = (wire_coords[1] + wire_coords[3]) / 2
+            self.scroll_to_position(mid_x, mid_y)
+
+    def pulse_highlight(self, count, base_width):
+        """Create a pulsing effect for the highlight"""
+        if count <= 0 or not self.canvas.find_withtag("wire_highlight"):
+            return
+        
+        # Calculate width based on sine wave (pulsing effect)
+        import math
+        phase = count % 6  # 0 to 5
+        pulse_factor = 1 + 0.5 * math.sin(phase * math.pi / 3)  # 1.0 to 1.5
+        new_width = int(base_width * pulse_factor)
+        
+        # Update line width
+        self.canvas.itemconfigure("wire_highlight", width=new_width)
+        
+        # Schedule next pulse
+        self.after(150, lambda: self.pulse_highlight(count - 1, base_width))
+
+    def scroll_to_position(self, x, y):
+        """Scroll the canvas to make a position visible"""
+        # Get canvas dimensions
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+        
+        # Check if the point is outside the visible area
+        if x < 0 or x > canvas_width or y < 0 or y > canvas_height:
+            # Adjust pan to center on the point
+            self.pan_x = canvas_width/2 - x + 20
+            self.pan_y = canvas_height/2 - y + 20
+            
+            # Redraw with new pan values
+            self.draw_wiring_layout()
+
+    def flash_highlight(self, count):
+        """Flash the highlight by toggling visibility"""
+        if count <= 0:
+            return
+            
+        # Toggle visibility
+        current_state = self.canvas.itemcget("wire_highlight", 'state')
+        new_state = 'hidden' if current_state == 'normal' else 'normal'
+        self.canvas.itemconfigure("wire_highlight", state=new_state)
+        
+        # Schedule next toggle
+        self.after(300, lambda: self.flash_highlight(count - 1))
+
+    def clear_warnings(self):
+        """Clear all warnings from the panel"""
+        for widget in self.warning_frame.winfo_children():
+            widget.destroy()
+        self.wire_warnings = {}
+
+    def draw_wire_segment(self, points, wire_gauge, current, is_positive=True, segment_type="string"):
+        """Draw a wire segment with appropriate warnings based on loading
+        
+        Args:
+            points: List of coordinate tuples for line points
+            wire_gauge: Wire size (e.g., "10 AWG")
+            current: Current flowing through wire in amps
+            is_positive: Whether this is a positive (red) or negative (blue) wire
+            segment_type: "string", "harness" or "whip"
+            
+        Returns:
+            line_id: Canvas ID of the created line
+        """
+        # Get standard wire properties
+        line_thickness = self.get_line_thickness_for_wire(wire_gauge)
+        base_color = 'red' if is_positive else 'blue'
+        
+        # Draw the wire with standard color
+        line_id = self.canvas.create_line(points, fill=base_color, width=line_thickness,
+                                        tags=f"wire_{segment_type}")
+        
+        # Skip warnings if ampacity can't be determined
+        ampacity = self.get_ampacity_for_wire_gauge(wire_gauge)
+        if ampacity == 0:
+            return line_id
+        
+        # Calculate load percentage
+        nec_current = self.calculate_nec_current(current)
+        load_percent = (nec_current / ampacity) * 100
+        
+        # Add warning if needed based on load percentage
+        if load_percent >= 100:
+            polarity = "positive" if is_positive else "negative"
+            self.add_wire_warning(
+                line_id,
+                f"{polarity.capitalize()} {segment_type} {wire_gauge}: {load_percent:.0f}% (OVERLOAD)",
+                'overload'
+            )
+        elif load_percent >= 80:
+            polarity = "positive" if is_positive else "negative"
+            self.add_wire_warning(
+                line_id,
+                f"{polarity.capitalize()} {segment_type} {wire_gauge}: {load_percent:.0f}% (WARNING)",
+                'warning'
+            )
+        elif load_percent >= 60:
+            polarity = "positive" if is_positive else "negative"
+            self.add_wire_warning(
+                line_id,
+                f"{polarity.capitalize()} {segment_type} {wire_gauge}: {load_percent:.0f}% (CAUTION)",
+                'caution'
+            )
+        
+        return line_id
+    
+    def setup_warning_panel(self):
+        """Create warning panel in bottom right corner of canvas"""
+        # Create warning panel frame
+        self.warning_panel = tk.Frame(self.canvas, bg='white', bd=1, relief=tk.RAISED)
+        self.warning_panel.place(relx=1.0, rely=1.0, x=-5, y=-5, anchor='se')
+        
+        # Add header
+        self.warning_header = tk.Label(self.warning_panel, text="Wire Warnings", 
+                                    bg='#f0f0f0', font=('Arial', 9, 'bold'),
+                                    padx=5, pady=2, anchor='w', width=30)
+        self.warning_header.pack(side=tk.TOP, fill=tk.X)
+        
+        # Add scrollable warning list
+        self.warning_frame = tk.Frame(self.warning_panel, bg='white')
+        self.warning_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        
+        # Initialize warnings dictionary if it doesn't exist
+        if not hasattr(self, 'wire_warnings'):
+            self.wire_warnings = {}

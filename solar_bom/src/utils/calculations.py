@@ -253,3 +253,33 @@ def wire_harness_compatibility(
     is_acceptable = utilization <= 80
     
     return is_acceptable, utilization
+
+def calculate_nec_current(isc: float) -> float:
+    """Calculate NEC-compliant current (125% of Isc)"""
+    return isc * 1.25
+    
+def calculate_conductor_required_ampacity(isc: float) -> float:
+    """Calculate required conductor ampacity per NEC (156.25% of Isc)"""
+    # 156.25% comes from 125% * 125% (double 125% factor)
+    return isc * 1.5625
+
+def get_ampacity_for_wire_gauge(wire_gauge: str, temperature_rating: int = 90) -> float:
+    """
+    Get ampacity for given wire gauge and temperature rating
+    Based on NEC Table 310.15(B)(16)
+    """
+    # NEC Table 310.15(B)(16) values for common wire sizes (90°C column)
+    ampacity_table = {
+        "14 AWG": 25,
+        "12 AWG": 30,
+        "10 AWG": 40,
+        "8 AWG": 55,
+        "6 AWG": 75,
+        "4 AWG": 95,
+        "2 AWG": 130,
+        "1/0 AWG": 170,
+        "2/0 AWG": 195,
+        "4/0 AWG": 260
+    }
+    
+    return ampacity_table.get(wire_gauge, 0)
