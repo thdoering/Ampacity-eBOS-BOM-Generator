@@ -8,10 +8,12 @@ from ..models.module import ModuleSpec, ModuleType
 
 class TrackerTemplateCreator(ttk.Frame):
     def __init__(self, parent, module_spec: Optional[ModuleSpec] = None, 
-             on_template_saved: Optional[Callable[[TrackerTemplate], None]] = None):
+             on_template_saved: Optional[Callable[[TrackerTemplate], None]] = None,
+             on_template_deleted: Optional[Callable[[str], None]] = None):
         super().__init__(parent)
         self.parent = parent
         self.on_template_saved = on_template_saved
+        self.on_template_deleted = on_template_deleted
         self._module_spec = None
         self.templates = self.load_templates()
         self.setup_ui()  # Creates current_module_label
@@ -321,6 +323,10 @@ class TrackerTemplateCreator(ttk.Frame):
             del self.templates[name]
             self.save_templates()
             self.update_template_list()
+            
+            # Call the deletion callback if provided
+            if self.on_template_deleted:
+                self.on_template_deleted(name)
             
     def update_preview(self):
         """Update the preview canvas with current template layout"""

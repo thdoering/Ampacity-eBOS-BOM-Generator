@@ -116,12 +116,20 @@ class SolarBOMApplication:
             # Refresh templates in block configurator
             if hasattr(block_configurator, 'reload_templates'):
                 block_configurator.reload_templates()
+
+        # Define callback for tracker template deletion
+        def on_template_deleted(template_name):
+            print(f"Template deleted: {template_name}")
+            # Refresh templates in block configurator
+            if hasattr(block_configurator, 'reload_templates'):
+                block_configurator.reload_templates()
         
         # Create tracker template creator with callback to block configurator
         tracker_creator = TrackerTemplateCreator(
             tracker_frame,
             module_spec=None,
-            on_template_saved=on_template_saved
+            on_template_saved=on_template_saved,
+            on_template_deleted=on_template_deleted
         )
         tracker_creator.pack(fill='both', expand=True, padx=5, pady=5)
         
