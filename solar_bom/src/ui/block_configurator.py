@@ -121,7 +121,8 @@ class BlockConfigurator(ttk.Frame):
         self.row_spacing_var = tk.StringVar(value="19.7")  # 6m in feet
         row_spacing_entry = ttk.Entry(spacing_frame, textvariable=self.row_spacing_var)
         row_spacing_entry.grid(row=0, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
-        self.row_spacing_var.trace('w', self.update_block_row_spacing)
+        row_spacing_entry.bind('<FocusOut>', self.update_block_row_spacing)
+        row_spacing_entry.bind('<Return>', self.update_block_row_spacing)
 
         # GCR (Ground Coverage Ratio) - calculated
         ttk.Label(spacing_frame, text="GCR:").grid(row=0, column=2, padx=5, pady=2, sticky=tk.W)
@@ -465,8 +466,10 @@ class BlockConfigurator(ttk.Frame):
         block = self.blocks[block_id]
         
         # Update UI with block data (convert meters to feet)
+        self.updating_ui = True
         self.block_id_var.set(block.block_id)
         self.row_spacing_var.set(str(self.m_to_ft(block.row_spacing_m)))
+        self.updating_ui = False
         self.calculate_gcr()  # Update the GCR label
         
         # Update canvas
@@ -1466,12 +1469,12 @@ class BlockConfigurator(ttk.Frame):
         
         messagebox.showinfo("Success", f"Block renamed to '{new_id}'")
 
-    def update_block_row_spacing(self, *args):
+    def update_block_row_spacing(self, event=None, *args):
         """Update the current block's row spacing from UI value"""
         # Return early if we're programmatically updating the UI
-        if self.updating_ui:
+        if hasattr(self, 'updating_ui') and self.updating_ui:
             return
-
+            
         if not self.current_block:
             return
                 
@@ -1495,7 +1498,9 @@ class BlockConfigurator(ttk.Frame):
             
             if response is None:  # Cancel
                 # Reset the row spacing input to match the current block
+                self.updating_ui = True
                 self.row_spacing_var.set(str(self.m_to_ft(self.blocks[self.current_block].row_spacing_m)))
+                self.updating_ui = False
                 return
                 
             if response:  # Yes - apply to all blocks
