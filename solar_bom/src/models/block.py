@@ -252,6 +252,7 @@ class BlockConfig:
                 'wiring_type': self.wiring_config.wiring_type.value,
                 'string_cable_size': self.wiring_config.string_cable_size,
                 'harness_cable_size': self.wiring_config.harness_cable_size,
+                'whip_cable_size': getattr(self.wiring_config, 'whip_cable_size', "8 AWG"),
                 'positive_collection_points': [],
                 'negative_collection_points': [],
                 'strings_per_collection': self.wiring_config.strings_per_collection,
@@ -378,6 +379,7 @@ class BlockConfig:
                 cable_routes=wiring_data.get('cable_routes', {}),
                 string_cable_size=wiring_data.get('string_cable_size', "10 AWG"),
                 harness_cable_size=wiring_data.get('harness_cable_size', "8 AWG"),
+                whip_cable_size=wiring_data.get('whip_cable_size', "8 AWG"),
                 custom_whip_points=wiring_data.get('custom_whip_points', {})
             )
         

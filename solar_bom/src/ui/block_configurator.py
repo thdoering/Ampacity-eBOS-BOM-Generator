@@ -1131,7 +1131,8 @@ class BlockConfigurator(ttk.Frame):
                     'strings_per_collection': block.wiring_config.strings_per_collection,
                     'cable_routes': block.wiring_config.cable_routes,
                     'string_cable_size': getattr(block.wiring_config, 'string_cable_size', "10 AWG"),
-                    'harness_cable_size': getattr(block.wiring_config, 'harness_cable_size', "8 AWG")
+                    'harness_cable_size': getattr(block.wiring_config, 'harness_cable_size', "8 AWG"),
+                    'whip_cable_size': getattr(block.wiring_config, 'whip_cable_size', "8 AWG")
                 }
                 current_state[id]['wiring_config_data'] = wiring_config_data
                 
@@ -1244,7 +1245,8 @@ class BlockConfigurator(ttk.Frame):
                     strings_per_collection=wiring_data['strings_per_collection'],
                     cable_routes=wiring_data['cable_routes'],
                     string_cable_size=wiring_data.get('string_cable_size', "10 AWG"),
-                    harness_cable_size=wiring_data.get('harness_cable_size', "8 AWG")
+                    harness_cable_size=wiring_data.get('harness_cable_size', "8 AWG"),
+                    whip_cable_size=wiring_data.get('whip_cable_size', "8 AWG")
                 )
             
             self.blocks[id] = block
