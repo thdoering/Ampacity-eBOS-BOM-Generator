@@ -16,6 +16,8 @@ class BlockConfigurator(ttk.Frame):
         super().__init__(parent)
         self.parent = parent
         self.current_project = current_project
+
+        self.updating_ui = False  # Flag to prevent recursive updates
         
         # State management
         self.device_type_var = None
@@ -361,11 +363,7 @@ class BlockConfigurator(ttk.Frame):
             row_spacing_m = 6.0  # Default fallback
             if self.current_project and hasattr(self.current_project, 'default_row_spacing_m'):
                 row_spacing_m = self.current_project.default_row_spacing_m
-                
-            # Update the row spacing variable in the UI
-            feet_value = self.m_to_ft(row_spacing_m)
-            self.row_spacing_var.set(str(round(feet_value, 6)))
-                
+                    
             # Calculate device position based on row spacing    
             device_width_m = 0.91  # 3ft in meters
             initial_device_x = row_spacing_m / 2 + (device_width_m / 2)
@@ -390,6 +388,12 @@ class BlockConfigurator(ttk.Frame):
             
             # Update listbox
             self.block_listbox.insert(tk.END, block_id)
+            
+            # Update the row spacing variable in the UI without triggering callbacks
+            self.updating_ui = True
+            feet_value = self.m_to_ft(row_spacing_m)
+            self.row_spacing_var.set(str(round(feet_value, 1)))
+            self.updating_ui = False
             
             # Select new block
             self.block_listbox.selection_clear(0, tk.END)
@@ -1464,6 +1468,10 @@ class BlockConfigurator(ttk.Frame):
 
     def update_block_row_spacing(self, *args):
         """Update the current block's row spacing from UI value"""
+        # Return early if we're programmatically updating the UI
+        if self.updating_ui:
+            return
+
         if not self.current_block:
             return
                 
