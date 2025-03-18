@@ -1525,3 +1525,17 @@ class BlockConfigurator(ttk.Frame):
         except (ValueError, KeyError):
             # Ignore conversion errors or invalid block references
             pass
+
+    def reload_templates(self):
+        """Reload tracker templates from disk and update UI"""
+        self.load_templates()
+        self.update_template_list()
+        # If there's a current block, try to restore its template selection
+        if self.current_block and self.blocks[self.current_block].tracker_template:
+            template_name = self.blocks[self.current_block].tracker_template.template_name
+            for i in range(self.template_listbox.size()):
+                if self.template_listbox.get(i) == template_name:
+                    self.template_listbox.selection_clear(0, tk.END)
+                    self.template_listbox.selection_set(i)
+                    self.template_listbox.see(i)
+                    break

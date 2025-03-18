@@ -82,57 +82,21 @@ class SolarBOMApplication:
         notebook = ttk.Notebook(self.main_frame)
         notebook.pack(fill='both', expand=True, padx=10, pady=10)
         
-        # Create module manager tab
+        # Create frames for each tab
         module_frame = ttk.Frame(notebook)
-        notebook.add(module_frame, text='Modules')
-        
-        # Create tracker template creator tab
         tracker_frame = ttk.Frame(notebook)
-        tracker_creator = TrackerTemplateCreator(
-            tracker_frame,
-            module_spec=None,
-            on_template_saved=lambda template: print(f"Template saved: {template}")
-        )
-        tracker_creator.pack(fill='both', expand=True, padx=5, pady=5)
-        
-        # Create module manager with reference to tracker creator
-        def on_module_selected(module):
-            tracker_creator.module_spec = module
-            # Add module to project's selected modules
-            if module and module.model:
-                module_id = f"{module.manufacturer} {module.model}"
-                if module_id not in self.current_project.selected_modules:
-                    self.current_project.selected_modules.append(module_id)
-        
-        module_manager = ModuleManager(
-            module_frame,
-            on_module_selected=on_module_selected
-        )
-        module_manager.pack(fill='both', expand=True, padx=5, pady=5)
-        
-        # Add tracker frame to notebook
-        notebook.add(tracker_frame, text='Tracker Templates')
-        
-        # Create block configurator tab
         block_frame = ttk.Frame(notebook)
-        notebook.add(block_frame, text='Block Layout')
-        
-        # Pass the current project to the block configurator
-        block_configurator = BlockConfigurator(block_frame, current_project=self.current_project)
-        block_configurator.pack(fill='both', expand=True, padx=5, pady=5)
+        bom_frame = ttk.Frame(notebook)
         
         # Create BOM manager tab
-        bom_frame = ttk.Frame(notebook)
-        notebook.add(bom_frame, text='BOM Generator')
-        
         bom_manager = BOMManager(bom_frame)
         bom_manager.pack(fill='both', expand=True, padx=5, pady=5)
         
-        # Connect module manager to block configurator
-        def on_module_selected_for_block(module):
-            block_configurator.current_module = module
+        # Create block configurator tab first (so we can reference it later)
+        block_configurator = BlockConfigurator(block_frame, current_project=self.current_project)
+        block_configurator.pack(fill='both', expand=True, padx=5, pady=5)
         
-        # Function to update BOM manager with current blocks - MOVED THIS UP to fix scope issue
+        # Function to update BOM manager with current blocks
         def update_bom_blocks():
             bom_manager.set_blocks(block_configurator.blocks)
             
@@ -142,6 +106,51 @@ class SolarBOMApplication:
                 self.current_project.blocks = {
                     block_id: block.to_dict() for block_id, block in block_configurator.blocks.items()
                 }
+        
+        # Connect block configurator to BOM manager
+        block_configurator.on_blocks_changed = update_bom_blocks
+        
+        # Define callback for tracker template creation
+        def on_template_saved(template):
+            print(f"Template saved: {template}")
+            # Refresh templates in block configurator
+            if hasattr(block_configurator, 'reload_templates'):
+                block_configurator.reload_templates()
+        
+        # Create tracker template creator with callback to block configurator
+        tracker_creator = TrackerTemplateCreator(
+            tracker_frame,
+            module_spec=None,
+            on_template_saved=on_template_saved
+        )
+        tracker_creator.pack(fill='both', expand=True, padx=5, pady=5)
+        
+        # Define module selection callback
+        def on_module_selected(module):
+            # Update tracker creator
+            tracker_creator.module_spec = module
+            
+            # Add module to project's selected modules
+            if module and module.model:
+                module_id = f"{module.manufacturer} {module.model}"
+                if module_id not in self.current_project.selected_modules:
+                    self.current_project.selected_modules.append(module_id)
+            
+            # Update block configurator
+            block_configurator.current_module = module
+        
+        # Create module manager with callback
+        module_manager = ModuleManager(
+            module_frame,
+            on_module_selected=on_module_selected
+        )
+        module_manager.pack(fill='both', expand=True, padx=5, pady=5)
+        
+        # Add tabs to notebook
+        notebook.add(module_frame, text='Modules')
+        notebook.add(tracker_frame, text='Tracker Templates')
+        notebook.add(block_frame, text='Block Layout')
+        notebook.add(bom_frame, text='BOM Generator')
         
         # Load blocks from project if available
         if self.current_project.blocks:
@@ -153,37 +162,36 @@ class SolarBOMApplication:
             try:
                 templates_data = load_json_file('data/tracker_templates.json')
                 for name, template_data in templates_data.items():
-                    # Create proper objects here (simplified for example)
-                    from src.models.tracker import TrackerTemplate
-                    from src.models.module import ModuleSpec, ModuleType, ModuleOrientation
-                    
-                    # Create module spec from stored data
+                    # Extract the module spec data
                     module_data = template_data.get('module_spec', {})
+                    
+                    # Create proper ModuleSpec object with correct values
                     module_spec = ModuleSpec(
                         manufacturer=module_data.get('manufacturer', 'Default'),
                         model=module_data.get('model', 'Default'),
-                        type=ModuleType.MONO_PERC,
-                        length_mm=float(module_data.get('length_mm', 2000)),
-                        width_mm=float(module_data.get('width_mm', 1000)),
-                        depth_mm=float(module_data.get('depth_mm', 40)),
-                        weight_kg=float(module_data.get('weight_kg', 25)),
-                        wattage=float(module_data.get('wattage', 400)),
-                        vmp=float(module_data.get('vmp', 40)),
-                        imp=float(module_data.get('imp', 10)),
-                        voc=float(module_data.get('voc', 48)),
-                        isc=float(module_data.get('isc', 10.5)),
-                        max_system_voltage=float(module_data.get('max_system_voltage', 1500))
+                        type=ModuleType.MONO_PERC,  # Default type
+                        length_mm=module_data.get('length_mm', 2000),
+                        width_mm=module_data.get('width_mm', 1000),
+                        depth_mm=module_data.get('depth_mm', 40),
+                        weight_kg=module_data.get('weight_kg', 25),
+                        wattage=module_data.get('wattage', 400),
+                        vmp=module_data.get('vmp', 40),
+                        imp=module_data.get('imp', 10),
+                        voc=module_data.get('voc', 48),
+                        isc=module_data.get('isc', 10.5),
+                        max_system_voltage=module_data.get('max_system_voltage', 1500)
                     )
                     
-                    # Create tracker template
+                    # Create TrackerTemplate with the correct module_spec
+                    from src.models.tracker import TrackerTemplate, ModuleOrientation
                     tracker_templates[name] = TrackerTemplate(
                         template_name=name,
                         module_spec=module_spec,
                         module_orientation=ModuleOrientation(template_data.get('module_orientation', 'Portrait')),
-                        modules_per_string=int(template_data.get('modules_per_string', 28)),
-                        strings_per_tracker=int(template_data.get('strings_per_tracker', 2)),
-                        module_spacing_m=float(template_data.get('module_spacing_m', 0.01)),
-                        motor_gap_m=float(template_data.get('motor_gap_m', 1.0))
+                        modules_per_string=template_data.get('modules_per_string', 28),
+                        strings_per_tracker=template_data.get('strings_per_tracker', 2),
+                        module_spacing_m=template_data.get('module_spacing_m', 0.01),
+                        motor_gap_m=template_data.get('motor_gap_m', 1.0)
                     )
             except Exception as e:
                 print(f"Error loading templates: {str(e)}")
@@ -250,14 +258,6 @@ class SolarBOMApplication:
 
             update_bom_blocks()
         
-        module_manager.on_module_selected = lambda module: (
-            on_module_selected(module),
-            on_module_selected_for_block(module)
-        )
-        
-        # Connect block configurator to BOM manager
-        block_configurator.on_blocks_changed = update_bom_blocks
-        
         # Add status bar with project info
         status_frame = ttk.Frame(self.main_frame, relief=tk.SUNKEN, borderwidth=1)
         status_frame.pack(fill=tk.X, side=tk.BOTTOM)
@@ -279,59 +279,6 @@ class SolarBOMApplication:
         save_btn.pack(side=tk.RIGHT, padx=5, pady=2)
     
     def new_project(self):
-        """Create a new project"""
-        from src.ui.project_dashboard import ProjectDialog
-        
-        dialog = ProjectDialog(self.root, title="Create New Project")
-        
-        if dialog.result:
-            from src.utils.project_manager import ProjectManager
-            project_manager = ProjectManager()
-            
-            name, description, client, location, notes = dialog.result
-            
-            # Create the project
-            project = project_manager.create_project(
-                name=name,
-                description=description,
-                client=client,
-                location=location,
-                notes=notes
-            )
-            
-            if project_manager.save_project(project):
-                messagebox.showinfo("Success", f"Project '{name}' created successfully")
-                self.load_project(project)
-            else:
-                messagebox.showerror("Error", f"Failed to create project '{name}'")
-    
-    def save_project(self):
-        """Save the current project"""
-        if not self.current_project:
-            messagebox.showinfo("No Project", "No project is currently open")
-            return
-            
-        from src.utils.project_manager import ProjectManager
-        project_manager = ProjectManager()
-        
-        # Update project metadata
-        self.current_project.update_modified_date()
-        
-        if project_manager.save_project(self.current_project):
-            messagebox.showinfo("Success", "Project saved successfully")
-        else:
-            messagebox.showerror("Error", "Failed to save project")
-    
-    def show_about(self):
-        """Show about dialog"""
-        messagebox.showinfo(
-            "About Solar eBOS BOM Generator",
-            "Solar eBOS BOM Generator\n\n"
-            "A tool for designing solar project layouts and generating accurate "
-            "bills of material for electrical balance of system components."
-        )
-
-    def create_new_project(self):
         """Create a new project"""
         from src.ui.project_dashboard import ProjectDialog
         
@@ -366,6 +313,32 @@ class SolarBOMApplication:
                 self.load_project(project)
             else:
                 messagebox.showerror("Error", f"Failed to create project '{name}'")
+    
+    def save_project(self):
+        """Save the current project"""
+        if not self.current_project:
+            messagebox.showinfo("No Project", "No project is currently open")
+            return
+            
+        from src.utils.project_manager import ProjectManager
+        project_manager = ProjectManager()
+        
+        # Update project metadata
+        self.current_project.update_modified_date()
+        
+        if project_manager.save_project(self.current_project):
+            messagebox.showinfo("Success", "Project saved successfully")
+        else:
+            messagebox.showerror("Error", "Failed to save project")
+    
+    def show_about(self):
+        """Show about dialog"""
+        messagebox.showinfo(
+            "About Solar eBOS BOM Generator",
+            "Solar eBOS BOM Generator\n\n"
+            "A tool for designing solar project layouts and generating accurate "
+            "bills of material for electrical balance of system components."
+        )
 
 
 def main():
