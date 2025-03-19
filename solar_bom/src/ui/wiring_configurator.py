@@ -4,6 +4,7 @@ from typing import Optional, Dict, ClassVar, List
 from ..models.block import BlockConfig, WiringType, CollectionPoint, WiringConfig
 from ..models.module import ModuleOrientation
 from ..models.tracker import TrackerPosition
+from ..utils.calculations import get_ampacity_for_wire_gauge, calculate_nec_current, wire_harness_compatibility
 
 class WiringConfigurator(tk.Toplevel):
 
@@ -1397,31 +1398,6 @@ class WiringConfigurator(tk.Toplevel):
             self.whip_menu.post(event.x_root, event.y_root)
             return "break"  # Prevent default right-click behavior
         
-    def get_ampacity_for_wire_gauge(self, wire_gauge: str, temperature_rating: int = 90) -> float:
-        """
-        Get ampacity for given wire gauge and temperature rating
-        Based on NEC Table 310.15(B)(16)
-        """
-        # NEC Table 310.15(B)(16) values for common wire sizes (90°C column)
-        ampacity_table = {
-            "14 AWG": 25,
-            "12 AWG": 30,
-            "10 AWG": 40,
-            "8 AWG": 55,
-            "6 AWG": 75,
-            "4 AWG": 95,
-            "2 AWG": 130,
-            "1/0 AWG": 170,
-            "2/0 AWG": 195,
-            "4/0 AWG": 260
-        }
-        
-        return ampacity_table.get(wire_gauge, 0)
-
-    def calculate_nec_current(self, operating_current: float) -> float:
-        """Calculate NEC-compliant current (125% of operating current)"""
-        return operating_current * 1.25
-
     def draw_wire_with_warning(self, points, wire_gauge, current, is_positive=True):
         """Draw a wire segment with appropriate warnings based on loading"""
         # Get standard wire properties
@@ -1432,12 +1408,12 @@ class WiringConfigurator(tk.Toplevel):
         line_id = self.canvas.create_line(points, fill=base_color, width=line_thickness)
         
         # Check loading against ampacity
-        ampacity = self.get_ampacity_for_wire_gauge(wire_gauge)
+        ampacity = get_ampacity_for_wire_gauge(wire_gauge)
         if ampacity == 0:
             return line_id  # Unknown wire size
         
         # Apply NEC factors (125% of continuous current)
-        nec_current = self.calculate_nec_current(current)
+        nec_current = calculate_nec_current(current)
         
         # Calculate load percentage
         load_percent = (nec_current / ampacity) * 100
@@ -1650,12 +1626,12 @@ class WiringConfigurator(tk.Toplevel):
                                         tags=f"wire_{segment_type}")
         
         # Skip warnings if ampacity can't be determined
-        ampacity = self.get_ampacity_for_wire_gauge(wire_gauge)
+        ampacity = get_ampacity_for_wire_gauge(wire_gauge)
         if ampacity == 0:
             return line_id
         
         # Calculate load percentage
-        nec_current = self.calculate_nec_current(current)
+        nec_current = calculate_nec_current(current)
         load_percent = (nec_current / ampacity) * 100
         
         # Only add warning if it's an overload (>100%)
