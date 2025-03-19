@@ -1307,11 +1307,43 @@ class WiringConfigurator(tk.Toplevel):
         if is_harness:
             self.harness_frame.grid()
             self.harness_config_frame.grid()
-            self.populate_string_count_combobox()  # Use the new function name
+            
+            # Make sure we have the quick patterns section
+            if not hasattr(self, 'quick_patterns_frame'):
+                self.setup_quick_patterns_ui()
+                
+            self.populate_string_count_combobox()
         else:
             self.harness_frame.grid_remove()
             self.harness_config_frame.grid_remove()
         self.draw_wiring_layout()
+
+    def setup_quick_patterns_ui(self):
+        """Create UI section for quick harness patterns"""
+        # Add before the string grouping frame
+        self.quick_patterns_frame = ttk.LabelFrame(self.harness_config_frame, text="Quick Pattern Presets")
+        self.quick_patterns_frame.grid(row=1, column=0, columnspan=3, padx=5, pady=5, sticky=(tk.W, tk.E))
+        
+        # Add preset buttons
+        ttk.Button(self.quick_patterns_frame, text="Split Evenly in 2", 
+                command=lambda: self.apply_quick_pattern("split_even_2")).grid(
+                row=0, column=0, padx=5, pady=5)
+                
+        ttk.Button(self.quick_patterns_frame, text="Furthest String Separate", 
+                command=lambda: self.apply_quick_pattern("furthest_separate")).grid(
+                row=0, column=1, padx=5, pady=5)
+                
+        ttk.Button(self.quick_patterns_frame, text="Reset to Default", 
+                command=lambda: self.apply_quick_pattern("default")).grid(
+                row=0, column=2, padx=5, pady=5)
+        
+        # Move the existing string grouping frame to appear after quick patterns
+        if hasattr(self, 'string_grouping_frame'):
+            self.string_grouping_frame.grid(row=2, column=0, columnspan=3, padx=5, pady=5, sticky=(tk.W, tk.E))
+        
+        # Move the harness display frame to after string grouping
+        if hasattr(self, 'harness_display_frame'):
+            self.harness_display_frame.grid(row=3, column=0, columnspan=3, padx=5, pady=5, sticky=(tk.W, tk.E))
 
     def populate_string_count_combobox(self):
         """Populate the string count combobox with available tracker configurations"""
@@ -2320,3 +2352,93 @@ class WiringConfigurator(tk.Toplevel):
                 self.canvas.create_text(mid_x, mid_y + offset, 
                                     text=f"{current:.1f}A", 
                                     fill=color, font=('Arial', 8))
+                
+    def apply_quick_pattern(self, pattern_type):
+        """Apply a predefined harness pattern"""
+        if not self.string_count_var.get() or not hasattr(self, 'string_count_mapping'):
+            return
+        
+        # Get selected string count
+        selected_item = self.string_count_var.get()
+        if selected_item not in self.string_count_mapping:
+            return
+        
+        string_count = self.string_count_mapping[selected_item]
+        
+        # Initialize harness_groupings if needed
+        if not hasattr(self.block.wiring_config, 'harness_groupings'):
+            self.block.wiring_config.harness_groupings = {}
+        
+        # Reset existing harness configuration for this string count
+        self.block.wiring_config.harness_groupings[string_count] = []
+        
+        # Create harnesses based on selected pattern
+        if pattern_type == "split_even_2":
+            # Split strings evenly into 2 harnesses
+            half_point = string_count // 2
+            
+            # First half
+            harness1 = HarnessGroup(
+                string_indices=list(range(0, half_point)),
+                cable_size=self.harness_cable_size_var.get()
+            )
+            self.block.wiring_config.harness_groupings[string_count].append(harness1)
+            
+            # Second half
+            harness2 = HarnessGroup(
+                string_indices=list(range(half_point, string_count)),
+                cable_size=self.harness_cable_size_var.get()
+            )
+            self.block.wiring_config.harness_groupings[string_count].append(harness2)
+        
+        elif pattern_type == "furthest_separate":
+            # Determine which string is furthest from the device
+            pos_dest, neg_dest = self.get_device_destination_points()
+            if not pos_dest or not self.block.tracker_positions:
+                return
+                
+            # For each string in the selected tracker, calculate its distance from the device
+            furthest_string_idx = 0
+            max_distance = 0
+            
+            # Get the tracker position for this string count
+            for pos_idx, pos in enumerate(self.block.tracker_positions):
+                if len(pos.strings) != string_count:
+                    continue
+                    
+                # For each string in this tracker
+                for i, string in enumerate(pos.strings):
+                    # Calculate distance from string source to device
+                    source_x = pos.x + string.positive_source_x
+                    source_y = pos.y + string.positive_source_y
+                    
+                    # Pythagorean distance
+                    distance = ((source_x - pos_dest[0])**2 + (source_y - pos_dest[1])**2)**0.5
+                    
+                    if distance > max_distance:
+                        max_distance = distance
+                        furthest_string_idx = i
+            
+            # Create two harnesses: one for the furthest string, one for all others
+            harness1 = HarnessGroup(
+                string_indices=[furthest_string_idx],
+                cable_size=self.harness_cable_size_var.get()
+            )
+            self.block.wiring_config.harness_groupings[string_count].append(harness1)
+            
+            other_indices = [i for i in range(string_count) if i != furthest_string_idx]
+            if other_indices:
+                harness2 = HarnessGroup(
+                    string_indices=other_indices,
+                    cable_size=self.harness_cable_size_var.get()
+                )
+                self.block.wiring_config.harness_groupings[string_count].append(harness2)
+        
+        elif pattern_type == "default":
+            # Remove all custom harness definitions - will revert to default
+            if string_count in self.block.wiring_config.harness_groupings:
+                del self.block.wiring_config.harness_groupings[string_count]
+        
+        # Update the display and redraw
+        self.update_harness_display(string_count)
+        self.draw_wiring_layout()
