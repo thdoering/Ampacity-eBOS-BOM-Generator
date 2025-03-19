@@ -3,6 +3,8 @@ import json
 import os
 from ..models.module import ModuleSpec
 from ..models.inverter import InverterSpec
+from ..utils.pan_parser import parse_pan_file as _parse_pan_file
+from ..models.module import ModuleSpec, ModuleType
 
 def parse_pan_file(content: str) -> ModuleSpec:
     """
@@ -17,55 +19,32 @@ def parse_pan_file(content: str) -> ModuleSpec:
     Raises:
         ValueError: If required fields are missing or invalid
     """
-    # Initialize parameters dictionary
-    params = {}
-    
-    # Split content into lines and process
-    lines = content.split('\n')
-    
-    # Parameter mapping from PAN file to our names
-    param_mapping = {
-        'Model': 'model',
-        'Width': 'width',
-        'Isc': 'isc',
-        'Imp': 'imp',
-        'PNom': 'wattage',
-        'Voc': 'voc',
-        'Vmp': 'vmp'
-    }
-    
-    # Required parameters
-    required_params = set(param_mapping.values())
-    
-    # Extract parameters
-    for line in lines:
-        line = line.strip()
-        if '=' in line:
-            key, value = line.split('=', 1)
-            key = key.strip()
-            value = value.strip()
-            
-            if key in param_mapping:
-                params[param_mapping[key]] = value
-    
-    # Validate required parameters
-    missing_params = required_params - set(params.keys())
-    if missing_params:
-        raise ValueError(f"Missing required parameters: {', '.join(missing_params)}")
-    
-    # Convert values to appropriate types
     try:
+        # Use the implementation from pan_parser.py 
+        params = _parse_pan_file(content)
+        
+        # Create and return a ModuleSpec object
         return ModuleSpec(
+            manufacturer=params['manufacturer'],
             model=params['model'],
-            width=float(params['width']),
-            isc=float(params['isc']),
-            imp=float(params['imp']),
-            wattage=float(params['wattage']),
-            voc=float(params['voc']),
-            vmp=float(params['vmp'])
+            type=ModuleType.MONO_PERC,  # Default type
+            length_mm=params['length_mm'],
+            width_mm=params['width_mm'],
+            depth_mm=params['depth_mm'],
+            weight_kg=params['weight_kg'],
+            wattage=params['wattage'],
+            vmp=params['vmp'],
+            imp=params['imp'],
+            voc=params['voc'],
+            isc=params['isc'],
+            max_system_voltage=params['max_system_voltage'],
+            efficiency=params['efficiency'],
+            temperature_coefficient=params['temperature_coefficient']
         )
     except ValueError as e:
-        raise ValueError(f"Invalid parameter value: {str(e)}")
+        raise ValueError(f"Failed to parse PAN file: {str(e)}")
+    except KeyError as e:
+        raise ValueError(f"Missing required parameter in PAN file: {str(e)}")
 
 def parse_ond_file(content: str) -> InverterSpec:
     """
