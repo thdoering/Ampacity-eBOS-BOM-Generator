@@ -283,3 +283,104 @@ def get_ampacity_for_wire_gauge(wire_gauge: str, temperature_rating: int = 90) -
     }
     
     return ampacity_table.get(wire_gauge, 0)
+
+def validate_device_inputs(
+    num_inputs_required: int,
+    num_inputs_available: int
+) -> Tuple[bool, str]:
+    """
+    Validate if there are enough device inputs for the wiring configuration.
+    
+    Args:
+        num_inputs_required: Number of inputs needed for current configuration
+        num_inputs_available: Number of inputs available on device
+        
+    Returns:
+        Tuple containing:
+            - bool: True if valid, False if error
+            - str: Error message if invalid, empty string if valid
+    """
+    if num_inputs_required > num_inputs_available:
+        return False, f"Configuration requires {num_inputs_required} inputs, but device only has {num_inputs_available} inputs"
+    return True, ""
+
+def validate_input_current(
+    input_current: float,
+    max_input_current: float
+) -> Tuple[bool, str, float]:
+    """
+    Validate if the current flowing into an input is within limits.
+    
+    Args:
+        input_current: Current flowing into the input (A)
+        max_input_current: Maximum rated current for the input (A)
+        
+    Returns:
+        Tuple containing:
+            - bool: True if valid, False if error
+            - str: Error message if invalid, empty string if valid
+            - float: Utilization percentage
+    """
+    # Apply NEC 125% safety factor
+    design_current = input_current * 1.25
+    utilization = (design_current / max_input_current) * 100
+    
+    if design_current > max_input_current:
+        return False, f"Input current ({design_current:.1f}A) exceeds maximum rated current ({max_input_current:.1f}A)", utilization
+    return True, "", utilization
+
+def validate_mppt_channel(
+    channel_current: float,
+    max_channel_current: float
+) -> Tuple[bool, str, float]:
+    """
+    Validate if the current flowing into an MPPT channel is within limits.
+    
+    Args:
+        channel_current: Current flowing into the MPPT channel (A)
+        max_channel_current: Maximum rated current for the MPPT channel (A)
+        
+    Returns:
+        Tuple containing:
+            - bool: True if valid, False if error
+            - str: Error message if invalid, empty string if valid
+            - float: Utilization percentage
+    """
+    # Apply NEC 125% safety factor
+    design_current = channel_current * 1.25
+    utilization = (design_current / max_channel_current) * 100
+    
+    if design_current > max_channel_current:
+        return False, f"MPPT channel current ({design_current:.1f}A) exceeds maximum rated current ({max_channel_current:.1f}A)", utilization
+    return True, "", utilization
+
+def calculate_harness_inputs_required(
+    trackers: List[Dict],
+    harness_groupings: Dict[str, List[Dict]],
+    wiring_type: str
+) -> int:
+    """
+    Calculate the number of inputs required based on wiring configuration.
+    
+    Args:
+        trackers: List of tracker information dictionaries
+        harness_groupings: Dictionary mapping tracker IDs to lists of harness groups
+        wiring_type: Type of wiring ('String Homerun' or 'Wire Harness')
+        
+    Returns:
+        int: Number of inputs required
+    """
+    if wiring_type == 'String Homerun':
+        # Each string requires its own input
+        return sum(len(tracker.get('strings', [])) for tracker in trackers)
+    else:  # Wire Harness
+        input_count = 0
+        for tracker_idx, tracker in enumerate(trackers):
+            tracker_id = str(tracker_idx)
+            if tracker_id in harness_groupings and harness_groupings[tracker_id]:
+                # Each harness group requires one input
+                input_count += len(harness_groupings[tracker_id])
+            else:
+                # Default: one harness per tracker if not specified
+                input_count += 1
+        return input_count

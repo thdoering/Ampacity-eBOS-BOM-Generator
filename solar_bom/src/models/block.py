@@ -29,6 +29,12 @@ class DeviceInputPoint:
     x: float  # X coordinate relative to device corner
     y: float  # Y coordinate relative to device corner
     max_current: float  # Maximum current rating for this input
+
+@dataclass
+class HarnessGroup:
+    """Represents a group of strings combined into a harness"""
+    string_indices: List[int]  # Indices of strings in this harness
+    cable_size: str = "8 AWG"  # Cable size for this harness
     
 @dataclass
 class WiringConfig:
@@ -42,6 +48,7 @@ class WiringConfig:
     harness_cable_size: str = "8 AWG"  # Default value
     whip_cable_size: str = "8 AWG"  # Default value for whips
     custom_whip_points: Dict[str, Dict[str, tuple[float, float]]] = field(default_factory=dict)   # Format: {'tracker_id': {'positive': (x, y), 'negative': (x, y)}}
+    harness_groupings: Dict[int, List[HarnessGroup]] = field(default_factory=dict)
 
 @dataclass
 class BlockConfig:

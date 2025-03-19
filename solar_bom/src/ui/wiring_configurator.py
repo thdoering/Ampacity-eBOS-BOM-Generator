@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import Optional, Dict, ClassVar, List
-from ..models.block import BlockConfig, WiringType, CollectionPoint, WiringConfig
+from ..models.block import BlockConfig, WiringType, CollectionPoint, WiringConfig, HarnessGroup
 from ..models.module import ModuleOrientation
 from ..models.tracker import TrackerPosition
 from ..utils.calculations import get_ampacity_for_wire_gauge, calculate_nec_current, wire_harness_compatibility
@@ -78,6 +78,41 @@ class WiringConfigurator(tk.Toplevel):
         # Cable Specifications
         cable_frame = ttk.LabelFrame(controls_frame, text="Cable Specifications", padding="5")
         cable_frame.grid(row=1, column=0, columnspan=2, padx=5, pady=10, sticky=(tk.W, tk.E))
+
+        # Add Tracker Harness Configuration section - only visible in Wire Harness mode
+        self.harness_config_frame = ttk.LabelFrame(controls_frame, text="Tracker Harness Configuration", padding="5")
+        self.harness_config_frame.grid(row=2, column=0, columnspan=2, padx=5, pady=10, sticky=(tk.W, tk.E))
+
+        # String count selector instead of tracker selector
+        ttk.Label(self.harness_config_frame, text="Configure trackers with:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
+        self.string_count_var = tk.StringVar()
+        self.string_count_combobox = ttk.Combobox(self.harness_config_frame, textvariable=self.string_count_var, state='readonly')
+        self.string_count_combobox.grid(row=0, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        self.string_count_combobox.bind('<<ComboboxSelected>>', self.on_string_count_selected)
+
+        # Add tracker count label
+        self.tracker_count_label = ttk.Label(self.harness_config_frame, text="")
+        self.tracker_count_label.grid(row=0, column=2, padx=5, pady=2, sticky=tk.W)
+
+        # String grouping frame
+        self.string_grouping_frame = ttk.Frame(self.harness_config_frame)
+        self.string_grouping_frame.grid(row=1, column=0, columnspan=3, padx=5, pady=5, sticky=(tk.W, tk.E))
+
+        # Add a subframe for string checkboxes
+        self.string_check_frame = ttk.Frame(self.string_grouping_frame)
+        self.string_check_frame.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        # Add Create Harness button
+        ttk.Button(self.string_grouping_frame, text="Create Harness from Selected", 
+                command=self.create_harness_from_selected).grid(row=1, column=0, padx=5, pady=5)
+
+        # Harness display frame
+        self.harness_display_frame = ttk.LabelFrame(self.harness_config_frame, text="Current Harnesses")
+        self.harness_display_frame.grid(row=2, column=0, columnspan=3, padx=5, pady=5, sticky=(tk.W, tk.E))
+
+        # Initially hide harness configuration if not in harness mode
+        if self.wiring_type_var.get() != WiringType.HARNESS.value:
+            self.harness_config_frame.grid_remove()
 
         # String Cable Size
         ttk.Label(cable_frame, text="String Cable Size:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
@@ -451,192 +486,397 @@ class WiringConfigurator(tk.Toplevel):
                     
         else:  # Wire Harness configuration
             # Process each tracker
-            for pos in self.block.tracker_positions:
-                # Calculate node points
-                pos_nodes = self.calculate_node_points(pos, True)  # Positive nodes
-                neg_nodes = self.calculate_node_points(pos, False)  # Negative nodes
+            for pos_idx, pos in enumerate(self.block.tracker_positions):
+                tracker_id = str(pos_idx)
                 
-                # Get whip points
-                tracker_idx = self.block.tracker_positions.index(pos)
-                pos_whip = self.get_whip_position(str(tracker_idx), 'positive')
-                tracker_idx = self.block.tracker_positions.index(pos)
-                neg_whip = self.get_whip_position(str(tracker_idx), 'negative')
+                # Get whip points for this tracker
+                pos_whip = self.get_whip_position(tracker_id, 'positive')
+                neg_whip = self.get_whip_position(tracker_id, 'negative')
                 
-                # Draw string cables to node points
-                for i, string in enumerate(pos.strings):
-                    # Positive string cable
-                    source_x = pos.x + string.positive_source_x
-                    source_y = pos.y + string.positive_source_y
-                    route = self.calculate_cable_route(
-                        source_x, source_y,
-                        pos_nodes[i][0], pos_nodes[i][1],
-                        True, i
-                    )
-                    points = [(20 + self.pan_x + x * scale, 
-                            20 + self.pan_y + y * scale) for x, y in route]
-                    if len(points) > 1:
-                        current = self.calculate_current_for_segment('string')
-                        self.draw_wire_segment(points, self.string_cable_size_var.get(), 
-                                            current, is_positive=True, segment_type="string")
-                        self.add_current_label(points, current, is_positive=True)
-                        
-                    # Negative string cable
-                    source_x = pos.x + string.negative_source_x
-                    source_y = pos.y + string.negative_source_y
-                    route = self.calculate_cable_route(
-                        source_x, source_y,
-                        neg_nodes[i][0], neg_nodes[i][1],
-                        False, i
-                    )
-                    points = [(20 + self.pan_x + x * scale, 
-                            20 + self.pan_y + y * scale) for x, y in route]
-                    if len(points) > 1:
-                        current = self.calculate_current_for_segment('string')
-                        self.draw_wire_segment(points, self.string_cable_size_var.get(), 
-                                            current, is_positive=False, segment_type="string")
-                        self.add_current_label(points, current, is_positive=False)
+                # Check if we have custom harness groupings for this tracker
+                string_count = len(pos.strings)
+                has_custom_groupings = (hasattr(self.block.wiring_config, 'harness_groupings') and 
+                                    string_count in self.block.wiring_config.harness_groupings and 
+                                    self.block.wiring_config.harness_groupings[string_count])
                 
-                # Draw node points
-                for nx, ny in pos_nodes:
-                    x = 20 + self.pan_x + nx * scale
-                    y = 20 + self.pan_y + ny * scale
-                    self.canvas.create_oval(x-3, y-3, x+3, y+3, fill='red', outline='darkred')
-                
-                for nx, ny in neg_nodes:
-                    x = 20 + self.pan_x + nx * scale
-                    y = 20 + self.pan_y + ny * scale
-                    self.canvas.create_oval(x-3, y-3, x+3, y+3, fill='blue', outline='darkblue')
-                
-                # Route from node points through whip points to device
-                pos_dest, neg_dest = self.get_device_destination_points()
-                
-                # Draw node connections - bottom to top for north device
-                # Positive harness
-                sorted_pos_nodes = sorted(pos_nodes, key=lambda p: p[1], reverse=True)  # Sort by y coordinate
-                for i in range(len(sorted_pos_nodes)):
-                    start = sorted_pos_nodes[i]
-                    if i < len(sorted_pos_nodes) - 1:
-                        # Connect to next node
-                        end = sorted_pos_nodes[i + 1]
+                # If no custom groupings, use the default behavior (all strings in one harness)
+                if not has_custom_groupings:
+                    # Default behavior - one harness for all strings
+                    # Calculate node points
+                    pos_nodes = self.calculate_node_points(pos, True)  # Positive nodes
+                    neg_nodes = self.calculate_node_points(pos, False)  # Negative nodes
+                    
+                    # Draw string cables to node points
+                    for i, string in enumerate(pos.strings):
+                        # Positive string cable
+                        source_x = pos.x + string.positive_source_x
+                        source_y = pos.y + string.positive_source_y
                         route = self.calculate_cable_route(
-                            start[0], start[1],
-                            end[0], end[1],
-                            True, 0
+                            source_x, source_y,
+                            pos_nodes[i][0], pos_nodes[i][1],
+                            True, i
                         )
-                    else:
-                        # Last (northernmost) node routes to whip point
-                        if pos_whip:
+                        points = [(20 + self.pan_x + x * scale, 
+                                20 + self.pan_y + y * scale) for x, y in route]
+                        if len(points) > 1:
+                            current = self.calculate_current_for_segment('string')
+                            self.draw_wire_segment(points, self.string_cable_size_var.get(), 
+                                                current, is_positive=True, segment_type="string")
+                            self.add_current_label(points, current, is_positive=True)
+                            
+                        # Negative string cable
+                        source_x = pos.x + string.negative_source_x
+                        source_y = pos.y + string.negative_source_y
+                        route = self.calculate_cable_route(
+                            source_x, source_y,
+                            neg_nodes[i][0], neg_nodes[i][1],
+                            False, i
+                        )
+                        points = [(20 + self.pan_x + x * scale, 
+                                20 + self.pan_y + y * scale) for x, y in route]
+                        if len(points) > 1:
+                            current = self.calculate_current_for_segment('string')
+                            self.draw_wire_segment(points, self.string_cable_size_var.get(), 
+                                                current, is_positive=False, segment_type="string")
+                            self.add_current_label(points, current, is_positive=False)
+                    
+                    # Draw node points
+                    for nx, ny in pos_nodes:
+                        x = 20 + self.pan_x + nx * scale
+                        y = 20 + self.pan_y + ny * scale
+                        self.canvas.create_oval(x-3, y-3, x+3, y+3, fill='red', outline='darkred')
+                    
+                    for nx, ny in neg_nodes:
+                        x = 20 + self.pan_x + nx * scale
+                        y = 20 + self.pan_y + ny * scale
+                        self.canvas.create_oval(x-3, y-3, x+3, y+3, fill='blue', outline='darkblue')
+                    
+                    # Draw node connections - bottom to top for north device
+                    # Positive harness
+                    sorted_pos_nodes = sorted(pos_nodes, key=lambda p: p[1], reverse=True)  # Sort by y coordinate
+                    for i in range(len(sorted_pos_nodes)):
+                        start = sorted_pos_nodes[i]
+                        if i < len(sorted_pos_nodes) - 1:
+                            # Connect to next node
+                            end = sorted_pos_nodes[i + 1]
                             route = self.calculate_cable_route(
                                 start[0], start[1],
-                                pos_whip[0], pos_whip[1],
+                                end[0], end[1],
                                 True, 0
                             )
                         else:
-                            continue
-                    points = [(20 + self.pan_x + x * scale, 
-                            20 + self.pan_y + y * scale) for x, y in route]
-                    if len(points) > 1:
-                        # Calculate accumulated current based on position in chain
-                        # i+1 strings are accumulated at this point
-                        accumulated_strings = i + 1
-                        current = self.calculate_current_for_segment('string') * accumulated_strings
-                        self.draw_wire_segment(points, self.harness_cable_size_var.get(), 
-                                            current, is_positive=True, segment_type="harness")
-                        # Add current label showing accumulated current
-                        if len(points) >= 2 and self.show_current_labels_var.get():
-                            mid_idx = len(points) // 2
-                            mid_x = (points[mid_idx-1][0] + points[mid_idx][0]) / 2
-                            mid_y = (points[mid_idx-1][1] + points[mid_idx][1]) / 2
-                            self.canvas.create_text(mid_x, mid_y-10, text=f"{current:.1f}A", 
-                                                fill='red', font=('Arial', 8))
+                            # Last (northernmost) node routes to whip point
+                            if pos_whip:
+                                route = self.calculate_cable_route(
+                                    start[0], start[1],
+                                    pos_whip[0], pos_whip[1],
+                                    True, 0
+                                )
+                            else:
+                                continue
+                        points = [(20 + self.pan_x + x * scale, 
+                                20 + self.pan_y + y * scale) for x, y in route]
+                        if len(points) > 1:
+                            # Calculate accumulated current based on position in chain
+                            # i+1 strings are accumulated at this point
+                            accumulated_strings = i + 1
+                            current = self.calculate_current_for_segment('string') * accumulated_strings
+                            self.draw_wire_segment(points, self.harness_cable_size_var.get(), 
+                                                current, is_positive=True, segment_type="harness")
+                            # Add current label showing accumulated current
+                            if len(points) >= 2 and self.show_current_labels_var.get():
+                                mid_idx = len(points) // 2
+                                mid_x = (points[mid_idx-1][0] + points[mid_idx][0]) / 2
+                                mid_y = (points[mid_idx-1][1] + points[mid_idx][1]) / 2
+                                self.canvas.create_text(mid_x, mid_y-10, text=f"{current:.1f}A", 
+                                                    fill='red', font=('Arial', 8))
 
-                # Negative harness
-                sorted_neg_nodes = sorted(neg_nodes, key=lambda p: p[1], reverse=True)  # Sort by y coordinate
-                for i in range(len(sorted_neg_nodes)):
-                    start = sorted_neg_nodes[i]
-                    if i < len(sorted_neg_nodes) - 1:
-                        # Connect to next node
-                        end = sorted_neg_nodes[i + 1]
-                        route = self.calculate_cable_route(
-                            start[0], start[1],
-                            end[0], end[1],
-                            False, 0
-                        )
-                    else:
-                        # Last (northernmost) node routes to whip point
-                        if neg_whip:
+                    # Negative harness
+                    sorted_neg_nodes = sorted(neg_nodes, key=lambda p: p[1], reverse=True)  # Sort by y coordinate
+                    for i in range(len(sorted_neg_nodes)):
+                        start = sorted_neg_nodes[i]
+                        if i < len(sorted_neg_nodes) - 1:
+                            # Connect to next node
+                            end = sorted_neg_nodes[i + 1]
                             route = self.calculate_cable_route(
                                 start[0], start[1],
-                                neg_whip[0], neg_whip[1],
+                                end[0], end[1],
                                 False, 0
                             )
                         else:
+                            # Last (northernmost) node routes to whip point
+                            if neg_whip:
+                                route = self.calculate_cable_route(
+                                    start[0], start[1],
+                                    neg_whip[0], neg_whip[1],
+                                    False, 0
+                                )
+                            else:
+                                continue
+                        points = [(20 + self.pan_x + x * scale, 
+                                20 + self.pan_y + y * scale) for x, y in route]
+                        if len(points) > 1:
+                            # Calculate accumulated current based on position in chain
+                            # i+1 strings are accumulated at this point
+                            accumulated_strings = i + 1
+                            current = self.calculate_current_for_segment('string') * accumulated_strings
+                            self.draw_wire_segment(points, self.harness_cable_size_var.get(), 
+                                                current, is_positive=False, segment_type="harness")
+                            # Add current label showing accumulated current
+                            if len(points) >= 2 and self.show_current_labels_var.get():
+                                mid_idx = len(points) // 2
+                                mid_x = (points[mid_idx-1][0] + points[mid_idx][0]) / 2
+                                mid_y = (points[mid_idx-1][1] + points[mid_idx][1]) / 2
+                                self.canvas.create_text(mid_x, mid_y+10, text=f"{current:.1f}A", 
+                                                    fill='blue', font=('Arial', 8))
+                else:
+                    # Process each harness group
+                    for harness_idx, harness in enumerate(self.block.wiring_config.harness_groupings[string_count]):
+                        string_indices = harness.string_indices
+                        if not string_indices:
                             continue
-                    points = [(20 + self.pan_x + x * scale, 
-                            20 + self.pan_y + y * scale) for x, y in route]
-                    if len(points) > 1:
-                        # Calculate accumulated current based on position in chain
-                        # i+1 strings are accumulated at this point
-                        accumulated_strings = i + 1
-                        current = self.calculate_current_for_segment('string') * accumulated_strings
-                        self.draw_wire_segment(points, self.harness_cable_size_var.get(), 
-                                            current, is_positive=False, segment_type="harness")
-                        # Add current label showing accumulated current
-                        if len(points) >= 2 and self.show_current_labels_var.get():
-                            mid_idx = len(points) // 2
-                            mid_x = (points[mid_idx-1][0] + points[mid_idx][0]) / 2
-                            mid_y = (points[mid_idx-1][1] + points[mid_idx][1]) / 2
-                            self.canvas.create_text(mid_x, mid_y+10, text=f"{current:.1f}A", 
-                                                fill='blue', font=('Arial', 8))
+                        
+                        # Calculate node positions for this harness group
+                        pos_nodes = []
+                        neg_nodes = []
+                        horizontal_offset = 0.6  # ~2ft offset from tracker
+                        vertical_spacing = 0.3   # Spacing between harness nodes
+                        
+                        # Place harness nodes with vertical offsets to avoid overlap
+                        harness_offset_y = harness_idx * vertical_spacing
+                        
+                        for string_idx in string_indices:
+                            if string_idx < len(pos.strings):
+                                string = pos.strings[string_idx]
+                                
+                                # Create positive node
+                                node_x = pos.x + string.positive_source_x - horizontal_offset
+                                node_y = pos.y + string.positive_source_y + harness_offset_y
+                                pos_nodes.append((node_x, node_y))
+                                
+                                # Create negative node
+                                node_x = pos.x + string.negative_source_x + horizontal_offset
+                                node_y = pos.y + string.negative_source_y + harness_offset_y
+                                neg_nodes.append((node_x, node_y))
+                        
+                        # Draw string connections to nodes
+                        for i, string_idx in enumerate(string_indices):
+                            if string_idx < len(pos.strings):
+                                string = pos.strings[string_idx]
+                                
+                                # Positive string cable
+                                source_x = pos.x + string.positive_source_x
+                                source_y = pos.y + string.positive_source_y
+                                route = self.calculate_cable_route(
+                                    source_x, source_y,
+                                    pos_nodes[i][0], pos_nodes[i][1],
+                                    True, i
+                                )
+                                points = [(20 + self.pan_x + x * scale, 
+                                        20 + self.pan_y + y * scale) for x, y in route]
+                                if len(points) > 1:
+                                    current = self.calculate_current_for_segment('string')
+                                    self.draw_wire_segment(points, self.string_cable_size_var.get(), 
+                                                        current, is_positive=True, segment_type="string")
+                                    self.add_current_label(points, current, is_positive=True)
                                     
-                # Route from whip point to device
-                pos_dest, neg_dest = self.get_device_destination_points()
-
-                # Draw positive whip to device route
-                if pos_whip and pos_dest:
-                    route = self.calculate_cable_route(
-                        pos_whip[0], pos_whip[1],
-                        pos_dest[0], pos_dest[1],
-                        True, 0
-                    )
-                    points = [(20 + self.pan_x + x * scale, 
-                            20 + self.pan_y + y * scale) for x, y in route]
-                    if len(points) > 1:
-                        # Total current for all strings on this tracker
-                        total_strings = len(pos.strings)
-                        current = self.calculate_current_for_segment('whip', total_strings)
-                        self.draw_wire_segment(points, self.whip_cable_size_var.get(), 
-                                            current, is_positive=True, segment_type="whip")
-                        # Add current label at midpoint of line
-                        if len(points) >= 2 and self.show_current_labels_var.get():
-                            mid_idx = len(points) // 2
-                            mid_x = (points[mid_idx-1][0] + points[mid_idx][0]) / 2
-                            mid_y = (points[mid_idx-1][1] + points[mid_idx][1]) / 2
-                            self.canvas.create_text(mid_x, mid_y-10, text=f"{current:.1f}A", 
-                                                fill='red', font=('Arial', 8))
-
-                # Draw negative whip to device route
-                if neg_whip and neg_dest:
-                    route = self.calculate_cable_route(
-                        neg_whip[0], neg_whip[1],
-                        neg_dest[0], neg_dest[1],
-                        False, 0
-                    )
-                    points = [(20 + self.pan_x + x * scale, 
-                            20 + self.pan_y + y * scale) for x, y in route]
-                    if len(points) > 1:
-                        # Total current for all strings on this tracker
-                        total_strings = len(pos.strings)
-                        current = self.calculate_current_for_segment('whip', total_strings)
-                        self.draw_wire_segment(points, self.whip_cable_size_var.get(), 
-                                            current, is_positive=False, segment_type="whip")
-                        # Add current label at midpoint of line
-                        if len(points) >= 2 and self.show_current_labels_var.get():
-                            mid_idx = len(points) // 2
-                            mid_x = (points[mid_idx-1][0] + points[mid_idx][0]) / 2
-                            mid_y = (points[mid_idx-1][1] + points[mid_idx][1]) / 2
-                            self.canvas.create_text(mid_x, mid_y+10, text=f"{current:.1f}A", 
-                                                fill='blue', font=('Arial', 8))
+                                # Negative string cable
+                                source_x = pos.x + string.negative_source_x
+                                source_y = pos.y + string.negative_source_y
+                                route = self.calculate_cable_route(
+                                    source_x, source_y,
+                                    neg_nodes[i][0], neg_nodes[i][1],
+                                    False, i
+                                )
+                                points = [(20 + self.pan_x + x * scale, 
+                                        20 + self.pan_y + y * scale) for x, y in route]
+                                if len(points) > 1:
+                                    current = self.calculate_current_for_segment('string')
+                                    self.draw_wire_segment(points, self.string_cable_size_var.get(), 
+                                                        current, is_positive=False, segment_type="string")
+                                    self.add_current_label(points, current, is_positive=False)
+                        
+                        # Draw node points for this harness
+                        for nx, ny in pos_nodes:
+                            x = 20 + self.pan_x + nx * scale
+                            y = 20 + self.pan_y + ny * scale
+                            self.canvas.create_oval(x-3, y-3, x+3, y+3, fill='red', outline='darkred')
+                        
+                        for nx, ny in neg_nodes:
+                            x = 20 + self.pan_x + nx * scale
+                            y = 20 + self.pan_y + ny * scale
+                            self.canvas.create_oval(x-3, y-3, x+3, y+3, fill='blue', outline='darkblue')
+                        
+                        # Generate harness-specific whip points
+                        harness_pos_whip = None
+                        harness_neg_whip = None
+                        
+                        # Calculate position for this harness's whip point, offset from tracker whip
+                        if pos_whip:
+                            harness_pos_whip = (pos_whip[0], pos_whip[1] + harness_idx * vertical_spacing)
+                        if neg_whip:
+                            harness_neg_whip = (neg_whip[0], neg_whip[1] + harness_idx * vertical_spacing)
+                        
+                        # Draw harness connections
+                        if pos_nodes:
+                            # Sort nodes by y-coordinate
+                            sorted_pos_nodes = sorted(pos_nodes, key=lambda p: p[1], reverse=True)
+                            
+                            # Connect nodes in sequence
+                            for i in range(len(sorted_pos_nodes)):
+                                start = sorted_pos_nodes[i]
+                                if i < len(sorted_pos_nodes) - 1:
+                                    # Connect to next node
+                                    end = sorted_pos_nodes[i + 1]
+                                    route = self.calculate_cable_route(
+                                        start[0], start[1],
+                                        end[0], end[1],
+                                        True, 0
+                                    )
+                                else:
+                                    # Last node routes to harness whip point
+                                    if harness_pos_whip:
+                                        route = self.calculate_cable_route(
+                                            start[0], start[1],
+                                            harness_pos_whip[0], harness_pos_whip[1],
+                                            True, 0
+                                        )
+                                    else:
+                                        continue
+                                
+                                points = [(20 + self.pan_x + x * scale, 
+                                        20 + self.pan_y + y * scale) for x, y in route]
+                                if len(points) > 1:
+                                    # Calculate current for this harness
+                                    strings_in_harness = len(string_indices)
+                                    current = self.calculate_current_for_segment('string') * strings_in_harness
+                                    
+                                    # Draw with the harness's cable size if specified, else use default
+                                    cable_size = harness.cable_size if hasattr(harness, 'cable_size') else self.harness_cable_size_var.get()
+                                    
+                                    self.draw_wire_segment(points, cable_size, 
+                                                        current, is_positive=True, segment_type="harness")
+                                    
+                                    # Add current label
+                                    if len(points) >= 2 and self.show_current_labels_var.get():
+                                        mid_idx = len(points) // 2
+                                        mid_x = (points[mid_idx-1][0] + points[mid_idx][0]) / 2
+                                        mid_y = (points[mid_idx-1][1] + points[mid_idx][1]) / 2
+                                        self.canvas.create_text(mid_x, mid_y-10, text=f"{current:.1f}A", 
+                                                            fill='red', font=('Arial', 8))
+                        
+                        if neg_nodes:
+                            # Same for negative nodes
+                            sorted_neg_nodes = sorted(neg_nodes, key=lambda p: p[1], reverse=True)
+                            
+                            for i in range(len(sorted_neg_nodes)):
+                                start = sorted_neg_nodes[i]
+                                if i < len(sorted_neg_nodes) - 1:
+                                    end = sorted_neg_nodes[i + 1]
+                                    route = self.calculate_cable_route(
+                                        start[0], start[1],
+                                        end[0], end[1],
+                                        False, 0
+                                    )
+                                else:
+                                    if harness_neg_whip:
+                                        route = self.calculate_cable_route(
+                                            start[0], start[1],
+                                            harness_neg_whip[0], harness_neg_whip[1],
+                                            False, 0
+                                        )
+                                    else:
+                                        continue
+                                        
+                                points = [(20 + self.pan_x + x * scale, 
+                                        20 + self.pan_y + y * scale) for x, y in route]
+                                if len(points) > 1:
+                                    strings_in_harness = len(string_indices)
+                                    current = self.calculate_current_for_segment('string') * strings_in_harness
+                                    
+                                    cable_size = harness.cable_size if hasattr(harness, 'cable_size') else self.harness_cable_size_var.get()
+                                    
+                                    self.draw_wire_segment(points, cable_size, 
+                                                        current, is_positive=False, segment_type="harness")
+                                    
+                                    if len(points) >= 2 and self.show_current_labels_var.get():
+                                        mid_idx = len(points) // 2
+                                        mid_x = (points[mid_idx-1][0] + points[mid_idx][0]) / 2
+                                        mid_y = (points[mid_idx-1][1] + points[mid_idx][1]) / 2
+                                        self.canvas.create_text(mid_x, mid_y+10, text=f"{current:.1f}A", 
+                                                            fill='blue', font=('Arial', 8))
+                        
+                        # Draw harness whip points
+                        if harness_pos_whip:
+                            wx = 20 + self.pan_x + harness_pos_whip[0] * scale
+                            wy = 20 + self.pan_y + harness_pos_whip[1] * scale
+                            self.canvas.create_oval(
+                                wx - 3, wy - 3,
+                                wx + 3, wy + 3,
+                                fill='pink', outline='deeppink',
+                                tags=f'harness_{harness_idx}_pos_whip'
+                            )
+                        
+                        if harness_neg_whip:
+                            wx = 20 + self.pan_x + harness_neg_whip[0] * scale
+                            wy = 20 + self.pan_y + harness_neg_whip[1] * scale
+                            self.canvas.create_oval(
+                                wx - 3, wy - 3,
+                                wx + 3, wy + 3,
+                                fill='teal', outline='darkcyan',
+                                tags=f'harness_{harness_idx}_neg_whip'
+                            )
+                        
+                        # Route from harness whip points to device
+                        pos_dest, neg_dest = self.get_device_destination_points()
+                        
+                        # Draw positive whip to device route
+                        if harness_pos_whip and pos_dest:
+                            route = self.calculate_cable_route(
+                                harness_pos_whip[0], harness_pos_whip[1],
+                                pos_dest[0], pos_dest[1],
+                                True, harness_idx
+                            )
+                            points = [(20 + self.pan_x + x * scale, 
+                                    20 + self.pan_y + y * scale) for x, y in route]
+                            if len(points) > 1:
+                                # Calculate current for this harness
+                                strings_in_harness = len(string_indices)
+                                current = self.calculate_current_for_segment('whip', strings_in_harness)
+                                
+                                self.draw_wire_segment(points, self.whip_cable_size_var.get(), 
+                                                    current, is_positive=True, segment_type="whip")
+                                
+                                if len(points) >= 2 and self.show_current_labels_var.get():
+                                    mid_idx = len(points) // 2
+                                    mid_x = (points[mid_idx-1][0] + points[mid_idx][0]) / 2
+                                    mid_y = (points[mid_idx-1][1] + points[mid_idx][1]) / 2
+                                    self.canvas.create_text(mid_x, mid_y-10, text=f"{current:.1f}A", 
+                                                        fill='red', font=('Arial', 8))
+                        
+                        # Draw negative whip to device route
+                        if harness_neg_whip and neg_dest:
+                            route = self.calculate_cable_route(
+                                harness_neg_whip[0], harness_neg_whip[1],
+                                neg_dest[0], neg_dest[1],
+                                False, harness_idx
+                            )
+                            points = [(20 + self.pan_x + x * scale, 
+                                    20 + self.pan_y + y * scale) for x, y in route]
+                            if len(points) > 1:
+                                # Calculate current for this harness
+                                strings_in_harness = len(string_indices)
+                                current = self.calculate_current_for_segment('whip', strings_in_harness)
+                                
+                                self.draw_wire_segment(points, self.whip_cable_size_var.get(), 
+                                                    current, is_positive=False, segment_type="whip")
+                                
+                                if len(points) >= 2 and self.show_current_labels_var.get():
+                                    mid_idx = len(points) // 2
+                                    mid_x = (points[mid_idx-1][0] + points[mid_idx][0]) / 2
+                                    mid_y = (points[mid_idx-1][1] + points[mid_idx][1]) / 2
+                                    self.canvas.create_text(mid_x, mid_y+10, text=f"{current:.1f}A", 
+                                                        fill='blue', font=('Arial', 8))
                         
     def draw_collection_points(self, pos: TrackerPosition, x: float, y: float, scale: float):
         """Draw collection points for a tracker position"""
@@ -1664,3 +1904,186 @@ class WiringConfigurator(tk.Toplevel):
         # Initialize warnings dictionary if it doesn't exist
         if not hasattr(self, 'wire_warnings'):
             self.wire_warnings = {}
+
+    def update_ui_for_wiring_type(self):
+        """Update UI elements based on selected wiring type"""
+        is_harness = self.wiring_type_var.get() == WiringType.HARNESS.value
+        if is_harness:
+            self.harness_frame.grid()
+            self.harness_config_frame.grid()
+            self.populate_string_count_combobox()  # Use the new function name
+        else:
+            self.harness_frame.grid_remove()
+            self.harness_config_frame.grid_remove()
+        self.draw_wiring_layout()
+
+    def populate_string_count_combobox(self):
+        """Populate the string count combobox with available tracker configurations"""
+        # Count trackers by string count
+        tracker_counts = {}
+        for pos in self.block.tracker_positions:
+            if not pos.strings:
+                continue
+            string_count = len(pos.strings)
+            if string_count not in tracker_counts:
+                tracker_counts[string_count] = 0
+            tracker_counts[string_count] += 1
+        
+        # Generate descriptive items
+        items = []
+        self.string_count_mapping = {}  # Store mapping for display items to string counts
+        
+        for string_count, count in sorted(tracker_counts.items()):
+            item = f"{string_count} string{'s' if string_count != 1 else ''} ({count} tracker{'s' if count != 1 else ''})"
+            items.append(item)
+            self.string_count_mapping[item] = string_count
+        
+        self.string_count_combobox['values'] = items
+        if items:
+            self.string_count_combobox.current(0)
+            self.on_string_count_selected()
+
+    def on_string_count_selected(self, event=None):
+        """Handle string count selection from combobox"""
+        if not self.string_count_var.get() or not hasattr(self, 'string_count_mapping'):
+            return
+        
+        # Get selected string count
+        selected_item = self.string_count_var.get()
+        if selected_item not in self.string_count_mapping:
+            return
+        
+        string_count = self.string_count_mapping[selected_item]
+        
+        # Count trackers with this string count
+        tracker_count = sum(1 for pos in self.block.tracker_positions if len(pos.strings) == string_count)
+        self.tracker_count_label.config(text=f"{tracker_count} tracker{'s' if tracker_count != 1 else ''}")
+        
+        # Clear string grouping frame
+        for widget in self.string_check_frame.winfo_children():
+            widget.destroy()
+        
+        # Create string checkboxes
+        self.string_vars = []
+        for i in range(string_count):
+            var = tk.BooleanVar(value=False)
+            self.string_vars.append(var)
+            check = ttk.Checkbutton(self.string_check_frame, text=f"String {i+1}", variable=var)
+            check.grid(row=i, column=0, sticky=tk.W, padx=5, pady=2)
+        
+        # Update harness display
+        self.update_harness_display(string_count)
+
+    def update_harness_display(self, string_count):
+        """Update the display of current harnesses for the selected string count"""
+        # Clear current display
+        for widget in self.harness_display_frame.winfo_children():
+            widget.destroy()
+        
+        # Check if harness groupings exist for this string count
+        if not hasattr(self.block.wiring_config, 'harness_groupings') or \
+        string_count not in self.block.wiring_config.harness_groupings or \
+        not self.block.wiring_config.harness_groupings[string_count]:
+            ttk.Label(self.harness_display_frame, text="Default configuration: all strings in one harness").grid(
+                row=0, column=0, padx=5, pady=5)
+            return
+        
+        # Display each harness
+        for i, harness in enumerate(self.block.wiring_config.harness_groupings[string_count]):
+            harness_frame = ttk.Frame(self.harness_display_frame)
+            harness_frame.grid(row=i, column=0, sticky=(tk.W, tk.E), padx=5, pady=2)
+            
+            # Get string indices as a comma-separated list
+            string_indices = [str(idx+1) for idx in harness.string_indices]
+            strings_text = f"Strings: {', '.join(string_indices)}"
+            
+            ttk.Label(harness_frame, text=f"Harness {i+1}: {strings_text}").grid(
+                row=0, column=0, sticky=tk.W)
+            
+            ttk.Label(harness_frame, text=f"Cable: {harness.cable_size}").grid(
+                row=0, column=1, padx=10, sticky=tk.W)
+            
+            ttk.Button(harness_frame, text="Delete", 
+                    command=lambda h=i, sc=string_count: self.delete_harness(sc, h)).grid(
+                    row=0, column=2, padx=5)
+
+
+    def create_harness_from_selected(self):
+        """Create a new harness from the selected strings"""
+        if not self.string_count_var.get() or not hasattr(self, 'string_count_mapping'):
+            return
+        
+        # Get selected string count
+        selected_item = self.string_count_var.get()
+        if selected_item not in self.string_count_mapping:
+            return
+        
+        string_count = self.string_count_mapping[selected_item]
+        
+        # Get selected string indices
+        selected_indices = [i for i, var in enumerate(self.string_vars) if var.get()]
+        
+        if not selected_indices:
+            messagebox.showwarning("Warning", "No strings selected")
+            return
+        
+        # Ensure wiring config and harness_groupings are initialized
+        if not hasattr(self.block, 'wiring_config') or not self.block.wiring_config:
+            self.block.wiring_config = WiringConfig(
+                wiring_type=WiringType(self.wiring_type_var.get()),
+                positive_collection_points=[],
+                negative_collection_points=[],
+                strings_per_collection={},
+                cable_routes={},
+                harness_groupings={}
+            )
+        
+        if not hasattr(self.block.wiring_config, 'harness_groupings'):
+            self.block.wiring_config.harness_groupings = {}
+        
+        if string_count not in self.block.wiring_config.harness_groupings:
+            self.block.wiring_config.harness_groupings[string_count] = []
+        
+        # Check if any selected strings are already in a harness
+        used_strings = []
+        for harness in self.block.wiring_config.harness_groupings[string_count]:
+            used_strings.extend(harness.string_indices)
+        
+        overlap = set(selected_indices) & set(used_strings)
+        if overlap:
+            overlap_strings = [str(i+1) for i in overlap]
+            messagebox.showwarning("Warning", 
+                                f"String(s) {', '.join(overlap_strings)} are already in a harness. "
+                                "Please remove them from existing harnesses first.")
+            return
+        
+        # Create new harness
+        new_harness = HarnessGroup(
+            string_indices=selected_indices,
+            cable_size=self.harness_cable_size_var.get()
+        )
+        
+        # Add to harness groupings
+        self.block.wiring_config.harness_groupings[string_count].append(new_harness)
+        
+        # Update display
+        self.update_harness_display(string_count)
+        
+        # Update the wiring visualization
+        self.draw_wiring_layout()
+
+    def delete_harness(self, string_count, harness_idx):
+        """Delete a harness from the configuration"""
+        if string_count in self.block.wiring_config.harness_groupings and \
+        harness_idx < len(self.block.wiring_config.harness_groupings[string_count]):
+            del self.block.wiring_config.harness_groupings[string_count][harness_idx]
+            
+            # If no harnesses left, remove the string count entry
+            if not self.block.wiring_config.harness_groupings[string_count]:
+                del self.block.wiring_config.harness_groupings[string_count]
+                
+            # Update display
+            self.update_harness_display(string_count)
+            
+            # Update the wiring visualization
+            self.draw_wiring_layout()
