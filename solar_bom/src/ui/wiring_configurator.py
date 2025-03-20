@@ -27,7 +27,7 @@ class WiringConfigurator(tk.Toplevel):
         self.pan_x = 0  # Pan offset in pixels
         self.pan_y = 0
         self.panning = False
-        self.selected_whips = set()  # Set of (tracker_id, polarity) tuples
+        self.selected_whips = set()  # Set of (tracker_id, harness_idx, polarity) tuples
         self.dragging = False
         self.drag_start_x = 0
         self.drag_start_y = 0
@@ -792,7 +792,6 @@ class WiringConfigurator(tk.Toplevel):
         hit_whip = self.get_whip_at_position(world_x, world_y)
         
         if hit_whip:
-            tracker_id, polarity = hit_whip
             # Toggle selection if Ctrl is pressed, otherwise select only this one
             if event.state & 0x4:  # Ctrl key is pressed
                 if hit_whip in self.selected_whips:
@@ -830,33 +829,71 @@ class WiringConfigurator(tk.Toplevel):
             dy = (event.y - self.drag_start_y) / scale
             
             # Update custom whip point positions
-            for tracker_id, polarity in self.selected_whips:
-                if not hasattr(self.block, 'wiring_config') or not self.block.wiring_config:
-                    self.block.wiring_config = WiringConfig(
-                        wiring_type=WiringType(self.wiring_type_var.get()),
-                        positive_collection_points=[],
-                        negative_collection_points=[],
-                        strings_per_collection={},
-                        cable_routes={},
-                        custom_whip_points={}
-                    )
+            for whip_info in self.selected_whips:
+                if len(whip_info) == 3:
+                    tracker_id, harness_idx, polarity = whip_info
                     
-                if 'custom_whip_points' not in self.block.wiring_config.__dict__:
-                    self.block.wiring_config.custom_whip_points = {}
-                    
-                if tracker_id not in self.block.wiring_config.custom_whip_points:
-                    self.block.wiring_config.custom_whip_points[tracker_id] = {}
-                    
-                # If this is the first time moving this whip, initialize with current position
-                if polarity not in self.block.wiring_config.custom_whip_points[tracker_id]:
-                    current_pos = self.get_whip_default_position(tracker_id, polarity)
-                    if current_pos:
-                        self.block.wiring_config.custom_whip_points[tracker_id][polarity] = current_pos
+                    # Handle harness-specific whip points
+                    if harness_idx is not None:
+                        # Ensure custom_harness_whip_points exists
+                        if not hasattr(self.block, 'wiring_config'):
+                            continue
+                        if not self.block.wiring_config:
+                            continue
+                        if not hasattr(self.block.wiring_config, 'custom_harness_whip_points'):
+                            self.block.wiring_config.custom_harness_whip_points = {}
                         
-                # Update position
-                if polarity in self.block.wiring_config.custom_whip_points[tracker_id]:
-                    old_x, old_y = self.block.wiring_config.custom_whip_points[tracker_id][polarity]
-                    self.block.wiring_config.custom_whip_points[tracker_id][polarity] = (old_x + dx, old_y + dy)
+                        # Ensure tracker_id entry exists
+                        if tracker_id not in self.block.wiring_config.custom_harness_whip_points:
+                            self.block.wiring_config.custom_harness_whip_points[tracker_id] = {}
+                        
+                        # Ensure harness_idx entry exists
+                        if harness_idx not in self.block.wiring_config.custom_harness_whip_points[tracker_id]:
+                            self.block.wiring_config.custom_harness_whip_points[tracker_id][harness_idx] = {}
+                        
+                        # Get current position or default position
+                        if polarity not in self.block.wiring_config.custom_harness_whip_points[tracker_id][harness_idx]:
+                            current_pos = self.get_whip_default_position(tracker_id, polarity, harness_idx)
+                            if current_pos:
+                                self.block.wiring_config.custom_harness_whip_points[tracker_id][harness_idx][polarity] = current_pos
+                        
+                        # Update position
+                        if polarity in self.block.wiring_config.custom_harness_whip_points[tracker_id][harness_idx]:
+                            old_x, old_y = self.block.wiring_config.custom_harness_whip_points[tracker_id][harness_idx][polarity]
+                            self.block.wiring_config.custom_harness_whip_points[tracker_id][harness_idx][polarity] = (old_x + dx, old_y + dy)
+                    
+                else:
+                    # Handle legacy format (tracker_id, polarity)
+                    tracker_id, polarity = whip_info
+                    harness_idx = None
+                    
+                    # Update regular whip point
+                    if not hasattr(self.block, 'wiring_config') or not self.block.wiring_config:
+                        self.block.wiring_config = WiringConfig(
+                            wiring_type=WiringType(self.wiring_type_var.get()),
+                            positive_collection_points=[],
+                            negative_collection_points=[],
+                            strings_per_collection={},
+                            cable_routes={},
+                            custom_whip_points={}
+                        )
+                        
+                    if 'custom_whip_points' not in self.block.wiring_config.__dict__:
+                        self.block.wiring_config.custom_whip_points = {}
+                        
+                    if tracker_id not in self.block.wiring_config.custom_whip_points:
+                        self.block.wiring_config.custom_whip_points[tracker_id] = {}
+                        
+                    # If this is the first time moving this whip, initialize with current position
+                    if polarity not in self.block.wiring_config.custom_whip_points[tracker_id]:
+                        current_pos = self.get_whip_default_position(tracker_id, polarity)
+                        if current_pos:
+                            self.block.wiring_config.custom_whip_points[tracker_id][polarity] = current_pos
+                            
+                    # Update position
+                    if polarity in self.block.wiring_config.custom_whip_points[tracker_id]:
+                        old_x, old_y = self.block.wiring_config.custom_whip_points[tracker_id][polarity]
+                        self.block.wiring_config.custom_whip_points[tracker_id][polarity] = (old_x + dx, old_y + dy)
             
             # Update drag start for continuous dragging
             self.drag_start_x = event.x
@@ -965,21 +1002,30 @@ class WiringConfigurator(tk.Toplevel):
         self.selected_whips.clear()
         self.draw_wiring_layout()
 
-    def get_whip_position(self, tracker_id, polarity):
+    def get_whip_position(self, tracker_id, polarity, harness_idx=None):
         """Get the current position of a whip point (custom or default)"""
-        # Check for custom position first
+        # Check for custom harness whip points first
+        if (harness_idx is not None and 
+            hasattr(self.block, 'wiring_config') and 
+            self.block.wiring_config and 
+            hasattr(self.block.wiring_config, 'custom_harness_whip_points') and
+            tracker_id in self.block.wiring_config.custom_harness_whip_points and
+            harness_idx in self.block.wiring_config.custom_harness_whip_points[tracker_id] and
+            polarity in self.block.wiring_config.custom_harness_whip_points[tracker_id][harness_idx]):
+            return self.block.wiring_config.custom_harness_whip_points[tracker_id][harness_idx][polarity]
+        
+        # Check for custom tracker whip points
         if (hasattr(self.block, 'wiring_config') and 
             self.block.wiring_config and 
             hasattr(self.block.wiring_config, 'custom_whip_points') and
             tracker_id in self.block.wiring_config.custom_whip_points and
             polarity in self.block.wiring_config.custom_whip_points[tracker_id]):
-            
             return self.block.wiring_config.custom_whip_points[tracker_id][polarity]
             
         # Fall back to default position
-        return self.get_whip_default_position(tracker_id, polarity)
+        return self.get_whip_default_position(tracker_id, polarity, harness_idx)
         
-    def get_whip_default_position(self, tracker_id, polarity):
+    def get_whip_default_position(self, tracker_id, polarity, harness_idx=None):
         """Calculate the default position for a whip point"""
         tracker_idx = int(tracker_id)
         if tracker_idx < 0 or tracker_idx >= len(self.block.tracker_positions):
@@ -989,24 +1035,47 @@ class WiringConfigurator(tk.Toplevel):
         is_positive = (polarity == 'positive')
         
         # Use the existing calculation method
-        if is_positive:
-            return self.calculate_whip_points(pos, True)
-        else:
-            return self.calculate_whip_points(pos, False)
+        whip_pos = self.calculate_whip_points(pos, is_positive)
+        
+        # If this is a harness-specific whip, apply an offset
+        if harness_idx is not None:
+            vertical_spacing = 0.3  # Same as in draw_custom_harnesses
+            if whip_pos:
+                return (whip_pos[0], whip_pos[1] + harness_idx * vertical_spacing)
+        
+        return whip_pos
             
     def get_whip_at_position(self, x, y, tolerance=0.5):
         """Find a whip point at the given position within tolerance"""
-        # Check each tracker's whip points
+        # Check each tracker's harness whip points
         for tracker_idx, pos in enumerate(self.block.tracker_positions):
             tracker_id = str(tracker_idx)
+            string_count = len(pos.strings)
             
-            # Check positive whip
+            if (hasattr(self.block, 'wiring_config') and 
+                self.block.wiring_config and 
+                hasattr(self.block.wiring_config, 'harness_groupings') and
+                string_count in self.block.wiring_config.harness_groupings):
+                
+                for harness_idx, _ in enumerate(self.block.wiring_config.harness_groupings[string_count]):
+                    # Check positive harness whip
+                    pos_whip = self.get_whip_position(tracker_id, 'positive', harness_idx)
+                    if pos_whip:
+                        if abs(x - pos_whip[0]) <= tolerance and abs(y - pos_whip[1]) <= tolerance:
+                            return (tracker_id, harness_idx, 'positive')
+                    
+                    # Check negative harness whip
+                    neg_whip = self.get_whip_position(tracker_id, 'negative', harness_idx)
+                    if neg_whip:
+                        if abs(x - neg_whip[0]) <= tolerance and abs(y - pos_whip[1]) <= tolerance:
+                            return (tracker_id, harness_idx, 'negative')
+            
+            # Check regular tracker whip points
             pos_whip = self.get_whip_position(tracker_id, 'positive')
             if pos_whip:
                 if abs(x - pos_whip[0]) <= tolerance and abs(y - pos_whip[1]) <= tolerance:
                     return (tracker_id, 'positive')
                     
-            # Check negative whip
             neg_whip = self.get_whip_position(tracker_id, 'negative')
             if neg_whip:
                 if abs(x - neg_whip[0]) <= tolerance and abs(y - neg_whip[1]) <= tolerance:
@@ -1612,30 +1681,90 @@ class WiringConfigurator(tk.Toplevel):
         """Draw whip points for a tracker"""
         scale = self.get_canvas_scale()
         tracker_idx = self.block.tracker_positions.index(pos)
-        pos_whip = self.get_whip_position(str(tracker_idx), 'positive')
-        neg_whip = self.get_whip_position(str(tracker_idx), 'negative')
+        tracker_id = str(tracker_idx)
+        string_count = len(pos.strings)
+        
+        # Draw regular tracker whip points
+        pos_whip = self.get_whip_position(tracker_id, 'positive')
+        neg_whip = self.get_whip_position(tracker_id, 'negative')
         
         if pos_whip:
             wx = 20 + self.pan_x + pos_whip[0] * scale
             wy = 20 + self.pan_y + pos_whip[1] * scale
+            
+            # Check if selected
+            is_selected = (tracker_id, 'positive') in self.selected_whips
+            fill_color = 'orange' if is_selected else 'pink'
+            outline_color = 'red' if is_selected else 'deeppink'
+            size = 5 if is_selected else 3
+            
             self.canvas.create_oval(
-                wx - 3, wy - 3,
-                wx + 3, wy + 3,
-                fill='pink',
-                outline='deeppink',
+                wx - size, wy - size,
+                wx + size, wy + size,
+                fill=fill_color, outline=outline_color,
                 tags='whip_point'
             )
         
         if neg_whip:
             wx = 20 + self.pan_x + neg_whip[0] * scale
             wy = 20 + self.pan_y + neg_whip[1] * scale
+            
+            # Check if selected
+            is_selected = (tracker_id, 'negative') in self.selected_whips
+            fill_color = 'cyan' if is_selected else 'teal'
+            outline_color = 'blue' if is_selected else 'darkcyan'
+            size = 5 if is_selected else 3
+            
             self.canvas.create_oval(
-                wx - 3, wy - 3,
-                wx + 3, wy + 3,
-                fill='teal',
-                outline='darkcyan',
+                wx - size, wy - size,
+                wx + size, wy + size,
+                fill=fill_color, outline=outline_color,
                 tags='whip_point'
             )
+        
+        # Draw harness-specific whip points
+        if (hasattr(self.block, 'wiring_config') and 
+            self.block.wiring_config and 
+            hasattr(self.block.wiring_config, 'harness_groupings') and
+            string_count in self.block.wiring_config.harness_groupings):
+            
+            for harness_idx, _ in enumerate(self.block.wiring_config.harness_groupings[string_count]):
+                harness_pos_whip = self.get_whip_position(tracker_id, 'positive', harness_idx)
+                harness_neg_whip = self.get_whip_position(tracker_id, 'negative', harness_idx)
+                
+                if harness_pos_whip:
+                    wx = 20 + self.pan_x + harness_pos_whip[0] * scale
+                    wy = 20 + self.pan_y + harness_pos_whip[1] * scale
+                    
+                    # Check if selected
+                    is_selected = (tracker_id, harness_idx, 'positive') in self.selected_whips
+                    fill_color = 'orange' if is_selected else 'pink'
+                    outline_color = 'red' if is_selected else 'deeppink'
+                    size = 5 if is_selected else 3
+                    
+                    self.canvas.create_oval(
+                        wx - size, wy - size,
+                        wx + size, wy + size,
+                        fill=fill_color, outline=outline_color,
+                        tags=f'harness_whip_point_{harness_idx}_positive'
+                    )
+                
+                if harness_neg_whip:
+                    wx = 20 + self.pan_x + harness_neg_whip[0] * scale
+                    wy = 20 + self.pan_y + harness_neg_whip[1] * scale
+                    
+                    # Check if selected
+                    is_selected = (tracker_id, harness_idx, 'negative') in self.selected_whips
+                    fill_color = 'cyan' if is_selected else 'teal'
+                    outline_color = 'blue' if is_selected else 'darkcyan'
+                    size = 5 if is_selected else 3
+                    
+                    self.canvas.create_oval(
+                        wx - size, wy - size,
+                        wx + size, wy + size,
+                        fill=fill_color, outline=outline_color,
+                        tags=f'harness_whip_point_{harness_idx}_negative'
+                    )
 
     def draw_string_homerun_wiring(self):
         """Draw string homerun wiring configuration"""
@@ -1948,6 +2077,8 @@ class WiringConfigurator(tk.Toplevel):
     def draw_custom_harnesses(self, pos, pos_whip, neg_whip, string_count):
         """Draw custom harness configurations"""
         scale = self.get_canvas_scale()
+        tracker_idx = self.block.tracker_positions.index(pos)
+        tracker_id = str(tracker_idx)
         
         # Process each harness group
         for harness_idx, harness in enumerate(self.block.wiring_config.harness_groupings[string_count]):
@@ -2026,14 +2157,15 @@ class WiringConfigurator(tk.Toplevel):
                 y = 20 + self.pan_y + ny * scale
                 self.canvas.create_oval(x-3, y-3, x+3, y+3, fill='blue', outline='darkblue')
             
-            # Generate harness-specific whip points
-            harness_pos_whip = None
-            harness_neg_whip = None
+            # Get harness-specific whip points - check for custom positions first
+            harness_pos_whip = self.get_whip_position(tracker_id, 'positive', harness_idx)
+            harness_neg_whip = self.get_whip_position(tracker_id, 'negative', harness_idx)
             
-            # Calculate position for this harness's whip point, offset from tracker whip
-            if pos_whip:
+            # If no custom position, calculate default positions
+            if not harness_pos_whip and pos_whip:
                 harness_pos_whip = (pos_whip[0], pos_whip[1] + harness_idx * vertical_spacing)
-            if neg_whip:
+                
+            if not harness_neg_whip and neg_whip:
                 harness_neg_whip = (neg_whip[0], neg_whip[1] + harness_idx * vertical_spacing)
             
             # Draw harness connections
@@ -2129,21 +2261,37 @@ class WiringConfigurator(tk.Toplevel):
             if harness_pos_whip:
                 wx = 20 + self.pan_x + harness_pos_whip[0] * scale
                 wy = 20 + self.pan_y + harness_pos_whip[1] * scale
+                
+                # Check if this harness whip point is selected
+                is_selected = (tracker_id, harness_idx, 'positive') in self.selected_whips
+                fill_color = 'orange' if is_selected else 'pink'
+                outline_color = 'red' if is_selected else 'deeppink'
+                size = 5 if is_selected else 3
+                
                 self.canvas.create_oval(
-                    wx - 3, wy - 3,
-                    wx + 3, wy + 3,
-                    fill='pink', outline='deeppink',
-                    tags=f'harness_{harness_idx}_pos_whip'
+                    wx - size, wy - size,
+                    wx + size, wy + size,
+                    fill=fill_color, 
+                    outline=outline_color,
+                    tags=f'harness_whip_point_{harness_idx}_positive'
                 )
             
             if harness_neg_whip:
                 wx = 20 + self.pan_x + harness_neg_whip[0] * scale
                 wy = 20 + self.pan_y + harness_neg_whip[1] * scale
+                
+                # Check if this harness whip point is selected
+                is_selected = (tracker_id, harness_idx, 'negative') in self.selected_whips
+                fill_color = 'cyan' if is_selected else 'teal'
+                outline_color = 'blue' if is_selected else 'darkcyan'
+                size = 5 if is_selected else 3
+                
                 self.canvas.create_oval(
-                    wx - 3, wy - 3,
-                    wx + 3, wy + 3,
-                    fill='teal', outline='darkcyan',
-                    tags=f'harness_{harness_idx}_neg_whip'
+                    wx - size, wy - size,
+                    wx + size, wy + size,
+                    fill=fill_color, 
+                    outline=outline_color,
+                    tags=f'harness_whip_point_{harness_idx}_negative'
                 )
             
             # Route from harness whip points to device

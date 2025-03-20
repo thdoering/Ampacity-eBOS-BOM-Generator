@@ -49,6 +49,7 @@ class WiringConfig:
     whip_cable_size: str = "8 AWG"  # Default value for whips
     custom_whip_points: Dict[str, Dict[str, tuple[float, float]]] = field(default_factory=dict)   # Format: {'tracker_id': {'positive': (x, y), 'negative': (x, y)}}
     harness_groupings: Dict[int, List[HarnessGroup]] = field(default_factory=dict)
+    custom_harness_whip_points: Dict[str, Dict[int, Dict[str, tuple[float, float]]]] = field(default_factory=dict)  # Format: {'tracker_id': {harness_idx: {'positive': (x, y), 'negative': (x, y)}}}
 
 @dataclass
 class BlockConfig:
