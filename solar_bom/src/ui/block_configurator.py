@@ -350,7 +350,7 @@ class BlockConfigurator(ttk.Frame):
     def create_new_block(self):
         """Create a new block configuration"""
         # Generate unique block ID
-        block_id = f"Block_{len(self.blocks) + 1}"
+        block_id = f"Block_{len(self.blocks) + 1:02d}"
         
         try:
             # Get selected template if any
