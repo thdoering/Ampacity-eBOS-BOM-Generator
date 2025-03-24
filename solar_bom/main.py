@@ -98,17 +98,26 @@ class SolarBOMApplication:
         
         # Function to update BOM manager with current blocks
         def update_bom_blocks():
+            """Update BOM manager with current blocks and save to project"""
+            # First convert blocks to a serializable format 
+            serialized_blocks = {}
+            
+            # Debug output to verify all blocks exist
+            print(f"Updating BOM with {len(block_configurator.blocks)} blocks:")
+            for block_id, block in block_configurator.blocks.items():
+                print(f"  - {block_id}")
+                serialized_blocks[block_id] = block.to_dict()
+            
+            # Check if any blocks are missing from serialized version
+            if len(serialized_blocks) != len(block_configurator.blocks):
+                print("WARNING: Some blocks were not properly serialized!")
+            
+            # Update the BOM manager with the current blocks
             bom_manager.set_blocks(block_configurator.blocks)
             
             # Update project with current blocks
             if self.current_project:
-                # Store serialized block data in project
-                self.current_project.blocks = {
-                    block_id: block.to_dict() for block_id, block in block_configurator.blocks.items()
-                }
-        
-        # Connect block configurator to BOM manager
-        block_configurator.on_blocks_changed = update_bom_blocks
+                self.current_project.blocks = serialized_blocks
         
         # Define callback for tracker template creation
         def on_template_saved(template):

@@ -1541,3 +1541,18 @@ class BlockConfigurator(ttk.Frame):
                     self.template_listbox.selection_set(i)
                     self.template_listbox.see(i)
                     break
+
+    def check_block_wiring_status(self):
+        """Check if any blocks are missing wiring configuration and notify user"""
+        blocks_without_wiring = []
+        for block_id, block in self.blocks.items():
+            if not block.wiring_config:
+                blocks_without_wiring.append(block_id)
+        
+        if blocks_without_wiring:
+            message = "The following blocks have no wiring configuration:\n"
+            message += "\n".join(sorted(blocks_without_wiring))
+            message += "\n\nBlocks without wiring configuration will have limited BOM output."
+            messagebox.showwarning("Missing Wiring Configurations", message)
+            return False
+        return True

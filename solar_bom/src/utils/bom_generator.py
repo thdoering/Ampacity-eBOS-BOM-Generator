@@ -32,11 +32,8 @@ class BOMGenerator:
         quantities = {}
         
         for block_id, block in self.blocks.items():
-            if not block.wiring_config:
-                continue
                 
             block_quantities = {}
-            cable_lengths = block.calculate_cable_lengths()
             
             # Get tracker counts categorized by strings per tracker
             tracker_counts = {}
@@ -56,6 +53,19 @@ class BOMGenerator:
                     'unit': 'units',
                     'category': 'Structural'
                 }
+            
+            # If block has no wiring config, add a note and store the block with just trackers
+            if not block.wiring_config:
+                block_quantities["No Wiring Configuration"] = {
+                    'description': f"Block requires wiring configuration",
+                    'quantity': 1,
+                    'unit': 'warning',
+                    'category': 'Warnings'
+                }
+                quantities[block_id] = block_quantities
+                continue
+                
+            cable_lengths = block.calculate_cable_lengths()
             
             if block.wiring_config.wiring_type == WiringType.HOMERUN:
                 # For homerun, we track string cable length - split by polarity
@@ -243,6 +253,13 @@ class BOMGenerator:
         Returns:
             DataFrame with summary data
         """
+
+        # Print diagnostic info
+        print(f"Generating summary from {len(quantities)} blocks:")
+        for block_id in sorted(quantities.keys()):
+            component_count = len(quantities[block_id])
+            print(f"  - {block_id}: {component_count} components")
+
         # Initialize dictionaries to track totals by component, description, and category
         component_totals = {}
         
@@ -328,6 +345,31 @@ class BOMGenerator:
             # Generate summary and detailed data
             summary_data = self.generate_summary_data(quantities)
             detailed_data = self.generate_detailed_data(quantities)
+
+            # Check for missing blocks
+            all_block_ids = set(self.blocks.keys())
+            blocks_with_quantities = set(quantities.keys())
+            missing_blocks = all_block_ids - blocks_with_quantities
+            
+            if missing_blocks:
+                print(f"WARNING: {len(missing_blocks)} blocks missing from quantities:")
+                for block_id in sorted(missing_blocks):
+                    print(f"  - {block_id}")
+                    
+                    # Add empty entries for missing blocks to make them visible
+                    if block_id not in quantities:
+                        quantities[block_id] = {
+                            "Missing Data": {
+                                'description': "Block data missing in BOM generation",
+                                'quantity': 0,
+                                'unit': 'note',
+                                'category': 'Warnings'
+                            }
+                        }
+            
+            # Re-generate data with missing blocks included
+            if missing_blocks:
+                detailed_data = self.generate_detailed_data(quantities)
             
             # Generate project info if not provided
             if project_info is None:
@@ -431,6 +473,9 @@ class BOMGenerator:
         # Category styles
         category_fill = PatternFill(start_color="E6E6E6", end_color="E6E6E6", fill_type="solid")
         
+        # Warning style
+        warning_fill = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type="solid")  # Light red
+        
         # Format headers
         for col_num, column_title in enumerate(data.columns, 1):
             cell = worksheet.cell(row=start_row, column=col_num)
@@ -447,16 +492,32 @@ class BOMGenerator:
                                                     max_row=start_row+len(data), 
                                                     min_col=1, 
                                                     max_col=len(data.columns)), 1):
+            # Get the row index
+            row_index = start_row + i
+            
+            # Check if this is a warning row
+            is_warning = False
+            if 'Unit' in data.columns:
+                unit_col_idx = list(data.columns).index('Unit')
+                unit_value = worksheet.cell(row=row_index, column=unit_col_idx + 1).value
+                if unit_value and 'warning' in str(unit_value).lower():
+                    is_warning = True
+            
             # Check if category has changed
             if 'Category' in data.columns:
-                row_index = start_row + i
-                category = worksheet.cell(row=row_index, column=1).value
+                category_col_idx = list(data.columns).index('Category')
+                category = worksheet.cell(row=row_index, column=category_col_idx + 1).value
                 
                 if category != current_category:
                     current_category = category
                     # Add subtle highlight for category rows
                     for cell in row:
                         cell.fill = category_fill
+            
+            # Apply warning formatting if this is a warning row
+            if is_warning:
+                for cell in row:
+                    cell.fill = warning_fill
             
             # Add borders to all cells
             for cell in row:

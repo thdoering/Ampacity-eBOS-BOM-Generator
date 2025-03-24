@@ -127,6 +127,9 @@ class BOMManager(ttk.Frame):
             blocks: Dictionary of block configurations (id -> BlockConfig)
         """
         self.blocks = blocks
+        print(f"BOM Manager received {len(blocks)} blocks:")
+        for block_id in sorted(blocks.keys()):
+            print(f"  - {block_id}")
         self.update_block_list()
     
     def update_block_list(self):
@@ -137,8 +140,11 @@ class BOMManager(ttk.Frame):
         
         self.selected_blocks = []
         
+        # Sort block IDs for consistent order
+        sorted_block_ids = sorted(self.blocks.keys())
+        
         # Add blocks to listbox
-        for block_id, block in self.blocks.items():
+        for block_id in sorted_block_ids:
             # Add block to listbox with checkbox
             self.block_listbox.insert(
                 '', 'end', 
@@ -146,6 +152,8 @@ class BOMManager(ttk.Frame):
                 tags=('checked',)
             )
             self.selected_blocks.append(block_id)
+        
+        print(f"BOM block list updated with {len(self.selected_blocks)} blocks")
         
         # Update preview
         self.update_preview()
@@ -210,6 +218,19 @@ class BOMManager(ttk.Frame):
         if not selected_blocks:
             messagebox.showwarning("Warning", "No blocks selected for BOM export")
             return
+        
+        # Check for blocks without wiring configuration
+        blocks_without_wiring = []
+        for block_id, block in selected_blocks.items():
+            if not hasattr(block, 'wiring_config') or not block.wiring_config:
+                blocks_without_wiring.append(block_id)
+        
+        if blocks_without_wiring:
+            message = "The following selected blocks have no wiring configuration:\n"
+            message += "\n".join(sorted(blocks_without_wiring))
+            message += "\n\nThese blocks will have limited BOM output. Do you want to continue?"
+            if not messagebox.askyesno("Missing Wiring Configurations", message, icon='warning'):
+                return
         
         # Ask for export location
         filepath = filedialog.asksaveasfilename(
@@ -293,7 +314,8 @@ class BOMManager(ttk.Frame):
                     'Inverter Model': ', '.join(inverter_model) if inverter_model else 'Unknown',
                     'DC Collection': ', '.join(dc_collection_types) if dc_collection_types else 'Unknown',
                     'Description': project.metadata.description or '',
-                    'Notes': project.metadata.notes or ''
+                    'Notes': project.metadata.notes or '',
+                    'Blocks Without Wiring': len(blocks_without_wiring) if blocks_without_wiring else 0
                 }
                 
                 print("Project info for BOM:", project_info)
