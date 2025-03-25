@@ -145,52 +145,6 @@ class BOMGenerator:
                         'category': 'eBOS'
                     }
                 
-                # Split string cables by polarity
-                if 'string_cable_positive' in cable_lengths:
-                    string_length_feet = round(cable_lengths['string_cable_positive'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
-                    string_cable_size = block.wiring_config.string_cable_size
-                    
-                    block_quantities[f'Positive String Wire ({string_cable_size})'] = {
-                        'description': f'DC Positive String Wire {string_cable_size}',
-                        'quantity': string_length_feet,
-                        'unit': 'feet',
-                        'category': 'eBOS'
-                    }
-                
-                if 'string_cable_negative' in cable_lengths:
-                    string_length_feet = round(cable_lengths['string_cable_negative'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
-                    string_cable_size = block.wiring_config.string_cable_size
-                    
-                    block_quantities[f'Negative String Wire ({string_cable_size})'] = {
-                        'description': f'DC Negative String Wire {string_cable_size}',
-                        'quantity': string_length_feet,
-                        'unit': 'feet',
-                        'category': 'eBOS'
-                    }
-                
-                # Split trunk/harness cables by polarity
-                if 'harness_cable_positive' in cable_lengths:
-                    harness_length_feet = round(cable_lengths['harness_cable_positive'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
-                    harness_cable_size = block.wiring_config.harness_cable_size
-                    
-                    block_quantities[f'Positive Harness Cable ({harness_cable_size})'] = {
-                        'description': f'DC Positive Harness Cable {harness_cable_size}',
-                        'quantity': harness_length_feet,
-                        'unit': 'feet',
-                        'category': 'eBOS'
-                    }
-                
-                if 'harness_cable_negative' in cable_lengths:
-                    harness_length_feet = round(cable_lengths['harness_cable_negative'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
-                    harness_cable_size = block.wiring_config.harness_cable_size
-                    
-                    block_quantities[f'Negative Harness Cable ({harness_cable_size})'] = {
-                        'description': f'DC Negative Harness Cable {harness_cable_size}',
-                        'quantity': harness_length_feet,
-                        'unit': 'feet',
-                        'category': 'eBOS'
-                    }
-                
                 # Split whip cables by polarity
                 whip_cable_size = getattr(block.wiring_config, 'whip_cable_size', '6 AWG')  # Default to 6 AWG if not specified
                 
