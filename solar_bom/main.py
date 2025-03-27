@@ -102,10 +102,7 @@ class SolarBOMApplication:
             # First convert blocks to a serializable format 
             serialized_blocks = {}
             
-            # Debug output to verify all blocks exist
-            print(f"Updating BOM with {len(block_configurator.blocks)} blocks:")
             for block_id, block in block_configurator.blocks.items():
-                print(f"  - {block_id}")
                 serialized_blocks[block_id] = block.to_dict()
             
             # Check if any blocks are missing from serialized version
@@ -337,6 +334,9 @@ class SolarBOMApplication:
             messagebox.showinfo("No Project", "No project is currently open")
             return
             
+        # Update project blocks from UI before saving
+        self.update_project_blocks()
+            
         from src.utils.project_manager import ProjectManager
         project_manager = ProjectManager()
         
@@ -347,6 +347,31 @@ class SolarBOMApplication:
             messagebox.showinfo("Success", "Project saved successfully")
         else:
             messagebox.showerror("Error", "Failed to save project")
+
+    def update_project_blocks(self):
+        """Update project with current blocks from UI before saving"""
+        if not hasattr(self, 'current_project') or not self.current_project:
+            return
+            
+        # Find the BlockConfigurator instance in the UI
+        block_configurator = None
+        for widget in self.main_frame.winfo_children():
+            if isinstance(widget, ttk.Notebook):
+                for tab_id in widget.tabs():
+                    tab_frame = widget.nametowidget(tab_id)
+                    for child in tab_frame.winfo_children():
+                        if hasattr(child, 'blocks') and hasattr(child, 'draw_block'):
+                            block_configurator = child
+                            break
+                            
+        if block_configurator and hasattr(block_configurator, 'blocks'):
+            # Convert blocks to serializable format
+            serialized_blocks = {}
+            for block_id, block in block_configurator.blocks.items():
+                serialized_blocks[block_id] = block.to_dict()
+                
+            # Update the project's blocks
+            self.current_project.blocks = serialized_blocks
     
     def show_about(self):
         """Show about dialog"""
