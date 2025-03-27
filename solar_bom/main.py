@@ -102,10 +102,7 @@ class SolarBOMApplication:
             # First convert blocks to a serializable format 
             serialized_blocks = {}
             
-            # Debug output to verify all blocks exist
-            print(f"Updating BOM with {len(block_configurator.blocks)} blocks:")
             for block_id, block in block_configurator.blocks.items():
-                print(f"  - {block_id}")
                 serialized_blocks[block_id] = block.to_dict()
             
             # Check if any blocks are missing from serialized version
