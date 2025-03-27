@@ -170,6 +170,8 @@ class BOMGenerator:
             
             quantities[block_id] = block_quantities
         
+        quantities = self.analyze_wire_segments(quantities)
+
         return quantities
         
     def _count_harnesses_by_size(self, block: BlockConfig) -> Dict[int, int]:
@@ -207,12 +209,6 @@ class BOMGenerator:
         Returns:
             DataFrame with summary data
         """
-
-        # Print diagnostic info
-        print(f"Generating summary from {len(quantities)} blocks:")
-        for block_id in sorted(quantities.keys()):
-            component_count = len(quantities[block_id])
-            print(f"  - {block_id}: {component_count} components")
 
         # Initialize dictionaries to track totals by component, description, and category
         component_totals = {}
@@ -306,10 +302,7 @@ class BOMGenerator:
             missing_blocks = all_block_ids - blocks_with_quantities
             
             if missing_blocks:
-                print(f"WARNING: {len(missing_blocks)} blocks missing from quantities:")
                 for block_id in sorted(missing_blocks):
-                    print(f"  - {block_id}")
-                    
                     # Add empty entries for missing blocks to make them visible
                     if block_id not in quantities:
                         quantities[block_id] = {
@@ -554,3 +547,98 @@ class BOMGenerator:
         info['DC Collection'] = ', '.join(dc_collection_types) if dc_collection_types else 'Unknown'
         
         return info
+
+    def analyze_wire_segments(self, quantities: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+        """Analyze wire segments and add segment counts to quantities"""
+        for block_id, block in self.blocks.items():
+            block_quantities = quantities.get(block_id, {})
+            
+            # Skip blocks without wiring config
+            if not block.wiring_config:
+                continue
+            
+            # Get realistic cable routes if available, otherwise use regular routes
+            cable_routes = getattr(block.wiring_config, 'realistic_cable_routes', {})
+            if not cable_routes:
+                cable_routes = block.wiring_config.cable_routes
+            
+            # Group routes by type and analyze segments
+            string_segments_pos = []
+            string_segments_neg = []
+            whip_segments_pos = []
+            whip_segments_neg = []
+            
+            for route_id, route in cable_routes.items():
+                # Skip routes with less than 2 points
+                if len(route) < 2:
+                    continue
+                    
+                # Calculate segment length
+                segment_length = 0
+                for i in range(len(route) - 1):
+                    dx = route[i+1][0] - route[i][0]
+                    dy = route[i+1][1] - route[i][1]
+                    segment_length += (dx**2 + dy**2)**0.5
+                
+                # Convert to feet
+                segment_length_feet = segment_length * 3.28084
+                
+                # Categorize by route type and polarity
+                if "pos_src" in route_id or "pos_node" in route_id:
+                    string_segments_pos.append(segment_length_feet)
+                elif "neg_src" in route_id or "neg_node" in route_id:
+                    string_segments_neg.append(segment_length_feet)
+                elif "pos_dev" in route_id or "pos_main" in route_id:
+                    whip_segments_pos.append(segment_length_feet)
+                elif "neg_dev" in route_id or "neg_main" in route_id:
+                    whip_segments_neg.append(segment_length_feet)
+            
+            # Process string segments
+            self._add_segment_analysis(block_quantities, string_segments_pos, 
+                                    block.wiring_config.string_cable_size, 
+                                    "Positive String Cable", 5)
+            self._add_segment_analysis(block_quantities, string_segments_neg, 
+                                    block.wiring_config.string_cable_size, 
+                                    "Negative String Cable", 5)
+            
+            # Process whip segments
+            whip_size = getattr(block.wiring_config, 'whip_cable_size', "8 AWG")
+            self._add_segment_analysis(block_quantities, whip_segments_pos, 
+                                    whip_size, "Positive Whip Cable", 10)
+            self._add_segment_analysis(block_quantities, whip_segments_neg, 
+                                    whip_size, "Negative Whip Cable", 10)
+                    
+            # Update quantities
+            quantities[block_id] = block_quantities
+            
+        return quantities
+
+    def _add_segment_analysis(self, block_quantities, segments, cable_size, 
+                            prefix, length_increment=5):
+        """Add segment analysis for a specific cable type"""
+        if not segments:
+            return
+            
+        # Add waste factor
+        segments = [s * self.CABLE_WASTE_FACTOR for s in segments]
+        
+        # Round up to nearest increment
+        rounded_segments = [length_increment * ((s + length_increment - 0.1) // length_increment + 1) 
+                        for s in segments]
+        
+        # Count segments by length
+        segment_counts = {}
+        for length in rounded_segments:
+            if length not in segment_counts:
+                segment_counts[length] = 0
+            segment_counts[length] += 1
+        
+        # Add segment counts to quantities
+        for length, count in segment_counts.items():
+            segment_key = f"{prefix} Segment {int(length)}ft ({cable_size})"
+            block_quantities[segment_key] = {
+                'description': f"{int(length)}ft {prefix} Segment ({cable_size})",
+                'quantity': count,
+                'unit': 'segments',
+                'category': 'eBOS Segments'
+            }

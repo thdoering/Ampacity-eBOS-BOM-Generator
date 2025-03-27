@@ -44,6 +44,7 @@ class WiringConfig:
     negative_collection_points: List[CollectionPoint]
     strings_per_collection: Dict[int, int]  # Collection point ID -> number of strings
     cable_routes: Dict[str, List[tuple[float, float]]]  # Route ID -> list of coordinates
+    realistic_cable_routes: Dict[str, List[tuple[float, float]]] = field(default_factory=dict)  # Realistic route ID -> list of coordinates (for BOM)
     string_cable_size: str = "10 AWG"  # Default value
     harness_cable_size: str = "8 AWG"  # Default value
     whip_cable_size: str = "8 AWG"  # Default value for whips
@@ -127,6 +128,11 @@ class BlockConfig:
             return {}
             
         lengths = {}
+
+        # Use realistic_cable_routes if available, otherwise fall back to regular cable_routes
+        cable_routes = getattr(self.wiring_config, 'realistic_cable_routes', {})
+        if not cable_routes:
+            cable_routes = self.wiring_config.cable_routes
         
         if self.wiring_config.wiring_type == WiringType.HOMERUN:
             # Calculate individual string cable lengths by polarity
@@ -265,6 +271,7 @@ class BlockConfig:
                 'negative_collection_points': [],
                 'strings_per_collection': self.wiring_config.strings_per_collection,
                 'cable_routes': self.wiring_config.cable_routes,
+                'realistic_cable_routes': getattr(self.wiring_config, 'realistic_cable_routes', {}),
                 'custom_whip_points': getattr(self.wiring_config, 'custom_whip_points', {})
             }
             
@@ -385,6 +392,7 @@ class BlockConfig:
                 negative_collection_points=negative_points,
                 strings_per_collection=wiring_data.get('strings_per_collection', {}),
                 cable_routes=wiring_data.get('cable_routes', {}),
+                realistic_cable_routes=wiring_data.get('realistic_cable_routes', {}),
                 string_cable_size=wiring_data.get('string_cable_size', "10 AWG"),
                 harness_cable_size=wiring_data.get('harness_cable_size', "8 AWG"),
                 whip_cable_size=wiring_data.get('whip_cable_size', "8 AWG"),

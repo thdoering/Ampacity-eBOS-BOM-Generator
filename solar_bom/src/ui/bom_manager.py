@@ -127,9 +127,6 @@ class BOMManager(ttk.Frame):
             blocks: Dictionary of block configurations (id -> BlockConfig)
         """
         self.blocks = blocks
-        print(f"BOM Manager received {len(blocks)} blocks:")
-        for block_id in sorted(blocks.keys()):
-            print(f"  - {block_id}")
         self.update_block_list()
     
     def update_block_list(self):
@@ -152,8 +149,6 @@ class BOMManager(ttk.Frame):
                 tags=('checked',)
             )
             self.selected_blocks.append(block_id)
-        
-        print(f"BOM block list updated with {len(self.selected_blocks)} blocks")
         
         # Update preview
         self.update_preview()
