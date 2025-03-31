@@ -51,6 +51,7 @@ class WiringConfig:
     custom_whip_points: Dict[str, Dict[str, tuple[float, float]]] = field(default_factory=dict)   # Format: {'tracker_id': {'positive': (x, y), 'negative': (x, y)}}
     harness_groupings: Dict[int, List[HarnessGroup]] = field(default_factory=dict)
     custom_harness_whip_points: Dict[str, Dict[int, Dict[str, tuple[float, float]]]] = field(default_factory=dict)  # Format: {'tracker_id': {harness_idx: {'positive': (x, y), 'negative': (x, y)}}}
+    use_custom_positions_for_bom: bool = False  # New field - default to FALSE
 
 @dataclass
 class BlockConfig:
@@ -129,8 +130,15 @@ class BlockConfig:
             
         lengths = {}
 
+         # Check if we should use custom positions for BOM
+        use_custom_positions = getattr(self.wiring_config, 'use_custom_positions_for_bom', False)
+
         # Use realistic_cable_routes if available, otherwise fall back to regular cable_routes
-        cable_routes = getattr(self.wiring_config, 'realistic_cable_routes', {})
+        cable_routes = {}
+        if use_custom_positions and hasattr(self.wiring_config, 'realistic_cable_routes'):
+            cable_routes = self.wiring_config.realistic_cable_routes
+
+        # If no realistic cable routes or not using custom positions, use standard cable_routes
         if not cable_routes:
             cable_routes = self.wiring_config.cable_routes
         

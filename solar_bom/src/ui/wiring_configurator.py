@@ -102,6 +102,13 @@ class WiringConfigurator(tk.Toplevel):
         self.string_check_frame = ttk.Frame(self.string_grouping_frame)
         self.string_check_frame.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
 
+        # Add checkbox for using custom positions in BOM calculations
+        self.use_custom_positions_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(controls_frame, text="Use custom whip positions in BOM calculations", 
+                        variable=self.use_custom_positions_var,
+                        command=self.draw_wiring_layout).grid(
+                        row=6, column=0, columnspan=2, padx=5, pady=5, sticky=tk.W)
+
         # Add Create Harness button
         ttk.Button(self.string_grouping_frame, text="Create Harness from Selected", 
                 command=self.create_harness_from_selected).grid(row=1, column=0, padx=5, pady=5)
@@ -234,6 +241,10 @@ class WiringConfigurator(tk.Toplevel):
 
             if hasattr(self.block.wiring_config, 'whip_cable_size'):
                 self.whip_cable_size_var.set(self.block.wiring_config.whip_cable_size)
+
+            # Set use_custom_positions_for_bom checkbox
+            if hasattr(self.block.wiring_config, 'use_custom_positions_for_bom'):
+                self.use_custom_positions_var.set(self.block.wiring_config.use_custom_positions_for_bom)
             
             # Update UI based on wiring type
             self.update_ui_for_wiring_type()
@@ -430,7 +441,8 @@ class WiringConfigurator(tk.Toplevel):
                 string_cable_size=self.string_cable_size_var.get(),
                 harness_cable_size=self.harness_cable_size_var.get(),
                 whip_cable_size=self.whip_cable_size_var.get(),
-                custom_whip_points=custom_whip_points
+                custom_whip_points=custom_whip_points,
+                use_custom_positions_for_bom=self.use_custom_positions_var.get()
                 )
             
             # Store the configuration in the block
