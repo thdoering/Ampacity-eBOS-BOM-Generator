@@ -1,4 +1,4 @@
-# Solar eBOS BOM Generator Software Specification (Revised)
+# Solar eBOS BOM Generator Software Specification (Updated)
 
 ## 1. System Overview
 
@@ -125,8 +125,11 @@ class TrackerTemplate:
   - Visual safety zones around devices with configurable clearance
   - Device dimensions and clearances in feet/meters
 - Navigation and visualization controls:
-  - Pan and zoom functionality for large layouts
+  - Advanced pan and zoom functionality for large layouts
   - Dynamic scaling based on block size
+  - Mouse wheel zoom with smooth scaling
+  - Middle/right mouse button panning
+  - Dynamic redrawing with scale preservation
   - Undo/redo system for all block modifications
 - Block management features:
   - Create new blocks
@@ -159,8 +162,11 @@ class TrackerTemplate:
   - Visual gridlines showing valid placement positions
 - Real-time updates of the GCR (Ground Coverage Ratio) as row spacing changes
 - Display of device spacing in multiple units (feet and meters)
-- Tracker selection with visual highlighting
-- Keyboard controls for tracker deletion
+- Tracker selection with visual highlighting:
+  - Multi-select capability with shift/ctrl modifiers
+  - Visual feedback for selected elements with color changes
+  - Drag to select multiple elements with selection box
+  - Keyboard shortcuts for selection manipulation (Ctrl+A, Delete, Esc)
 - Dual-unit display (feet/meters) for measurements
 
 #### Block Configuration Data Model
@@ -289,6 +295,21 @@ Support two wiring approaches, both with automatic cable routing:
    - Cable sizing based on combined current
    - Fewer inputs on downstream device
    - Less total cable length but higher gauge wire
+   - Advanced string grouping capabilities for creating custom harnesses
+   - Custom harness configuration with individual string selection
+   - Multiple harness support per tracker with different cable sizes
+   - Support for individual whip point positioning for routing optimization
+   - Realistic cable routing calculation options for accurate BOM generation
+
+#### Harness Configuration Options
+- Flexible string grouping within trackers
+- Multiple independent harnesses per tracker
+- Separate cable sizing for string, harness and whip cables
+- Customizable whip points with visual interactive positioning
+- Quick pattern templates for common harness configurations:
+  - Split evenly in two harnesses
+  - Separate furthest string from others
+  - Default single harness configuration
 
 #### Cable Specifications
 - Support for different cable sizes:
@@ -325,8 +346,13 @@ class WiringConfig:
     negative_collection_points: List[CollectionPoint]
     strings_per_collection: Dict[int, int]  # Collection point ID -> number of strings
     cable_routes: Dict[str, List[tuple[float, float]]]  # Route ID -> list of coordinates
+    realistic_cable_routes: Dict[str, List[tuple[float, float]]]  # Realistic routes for BOM
     string_cable_size: str = "10 AWG"  # Default string cable size
     harness_cable_size: str = "8 AWG"  # Default harness cable size
+    whip_cable_size: str = "8 AWG"  # Default whip cable size
+    custom_whip_points: Dict[str, Dict[str, tuple[float, float]]]  # Custom whip positions
+    harness_groupings: Dict[int, List[HarnessGroup]]  # Custom harness configurations
+    use_custom_positions_for_bom: bool = False  # Use custom positions for BOM calculations
 ```
 
 #### Validation Rules
@@ -371,6 +397,7 @@ class Project:
     blocks: Dict[str, dict] = field(default_factory=dict)
     selected_modules: List[str] = field(default_factory=list)
     selected_inverters: List[str] = field(default_factory=list)
+    default_row_spacing_m: float = 6.0  # Default row spacing in meters
     
 class ProjectMetadata:
     name: str
@@ -391,6 +418,11 @@ class ProjectMetadata:
   - Cable length calculations for different wiring types
   - Harness count based on number of strings
   - Support for multiple component categories
+  - Segment-based cable length calculations for higher accuracy
+  - Wire size-specific component categorization
+  - Support for mixed cable sizes in complex harness configurations
+  - Optional use of custom routing positions for BOM calculations
+  - Automatic segment length rounding to standard increments
 - BOM preview:
   - Real-time BOM generation
   - Component categorization and grouping
@@ -420,6 +452,39 @@ class ProjectMetadata:
   - Per-block component breakdown
   - Component types and quantities by block
   - Detailed component specifications
+- Segment-based wire listings with specific lengths
+- Detailed harness breakdown by string count and cable size
+- Polarity-specific component listings (positive/negative separate)
+- Warning indicators for sections with electrical concerns
+- Enhanced project statistics and electrical configuration summary
+
+#### Cable Segment Analysis
+- Breakdown of cable runs into practical installation segments
+- Length-specific segment counts for installation planning
+- Standardized length increments with appropriate waste factors
+- Separation of string, harness, and whip cable segments
+- Support for mixed cable gauge systems within the same installation
+
+### 2.8 Whip Point Management
+
+#### Features
+- Interactive positioning of connection points
+  - Drag-and-drop interface for whip point placement
+  - Visual feedback for selected points
+  - Single and multi-point selection
+  - Reset to default positions
+- Harness-specific whip points
+  - Vertical offset for multiple harnesses
+  - Independent positioning for each harness group
+  - Custom routing from collection nodes to whip points
+- Position memory
+  - Persistence of custom point positions between sessions
+  - Optional use of custom positions for BOM calculations
+  - Quick reset options for individual or all whip points
+- Visual differentiation
+  - Color-coding by polarity and selection state
+  - Size changes for selected points
+  - Distinct visualization for harness-specific points
 
 ## 3. Technical Requirements
 
@@ -431,6 +496,12 @@ class ProjectMetadata:
 - String cable sizing validation
 - Harness cable sizing validation
 - No validation of string sizing required
+- Real-time current calculation and visualization
+- Wire gauge selection validation against current loads
+- Visual warning system for approaching/exceeding ampacity limits
+- Highlighting of problematic wire segments with overload indicators
+- MPPT channel capacity validation against total string current
+- Interactive warning panel with problem descriptions and locations
 
 ### 3.2 Calculations
 
@@ -442,6 +513,11 @@ class ProjectMetadata:
 - String electrical characteristics with temperature effects
 - Wire harness compatibility checking
 - Ground Coverage Ratio (GCR) calculations
+- Load percentage calculations relative to NEC requirements
+- Ampacity verification for different wire gauges (4, 6, 8, 10 AWG)
+- Harness compatibility checking with current load visualization
+- Real-time calculation of accumulated current in wire harnesses
+- Dynamic current labeling with visual indicators
 
 ### 3.3 File Handling
 
@@ -473,11 +549,28 @@ class ProjectMetadata:
 - 2D layout visualization
 - Error messaging for invalid configurations
 - Undo/redo functionality with descriptive actions
-- Pan and zoom controls
+- Advanced pan and zoom controls in layout visualizations
+  - Mouse wheel zoom with smooth scaling
+  - Middle/right mouse button panning
+  - Dynamic redrawing with scale preservation
+- Interactive element manipulation:
+  - Selection of single or multiple whip points
+  - Drag-and-drop repositioning of connection points
+  - Rectangle selection for multiple elements
+  - Context menus for quick actions
+- Status and warning visualization:
+  - Current load indicators with color coding
+  - Warning panel for electrical issues
+  - Visual highlights for overloaded segments
+  - Interactive wire highlighting on warning selection
 - Tracker selection with visual highlighting
 - Real-time calculation updates
 - Dual-unit display (feet/meters) for all dimensions
 - Selection highlighting for interactive elements
+- Multi-select capability with shift/ctrl modifiers
+- Visual feedback for selected elements with color changes
+- Drag to select multiple elements with selection box
+- Keyboard shortcuts for selection manipulation (Ctrl+A, Delete, Esc)
 
 ## 5. Data Structures
 
@@ -588,6 +681,13 @@ class UndoManager:
     can_redo() -> bool
 ```
 
+### 5.13 Harness Group
+```python
+class HarnessGroup:
+    string_indices: List[int]  # Indices of strings in this harness
+    cable_size: str  # Cable size for this harness
+```
+
 ## 6. Implementation Phases
 
 ### Phase 1: Core Framework (Complete)
@@ -626,6 +726,12 @@ class UndoManager:
 3. Add project search and filtering
 4. Create project save/load functionality
 
+### Phase 7: Advanced Wiring Features (Complete)
+1. Implement custom harness grouping
+2. Add interactive whip point positioning
+3. Develop electrical warning system
+4. Create realistic routing calculations for BOM
+
 ## 7. Output Requirements
 
 ### 7.1 BOM Excel Format
@@ -637,11 +743,12 @@ class UndoManager:
   - Ratings
 - Block detail sheet with per-block breakdown
 - Components to include:
-  - String cables
-  - Wire harnesses
+  - String cables (by polarity and size)
+  - Wire harnesses (by string count and size)
   - Wire management
-  - Whips
+  - Whips (by polarity and size)
   - Above ground wire management
+  - Standard segment lengths with counts
 
 ### 7.2 Configuration Saves
 - JSON format for all configurations
@@ -651,6 +758,7 @@ class UndoManager:
 - Tracker templates store full module specifications
 - Inverter configurations maintain detailed MPPT channel information
 - Wiring configurations with cable sizes and current ratings
+- Custom whip point positions and harness groupings
 
 ## 8. Testing Requirements
 - Unit tests for core functionality
@@ -658,6 +766,7 @@ class UndoManager:
 - Validation testing for electrical rules
 - User acceptance testing for workflow
 - Performance testing for large layouts
+- Electrical limit testing with various wire configurations
 
 ## 9. Directory Structure
 ```
@@ -752,6 +861,8 @@ solar_bom/
 - Display whip points for cable connections
 - Provide optional current labels on wire segments
 - Implement real-time updating as configuration changes
+- Highlight overloaded segments with warning indicators
+- Show accumulated current at harness junction points
 
 ### 10.6 Project Dashboard
 - Card-based layout for recent projects
@@ -760,6 +871,14 @@ solar_bom/
 - Visual feedback for active project
 - Simple project creation flow
 - Confirmation for destructive actions
+
+### 10.7 Whip Point Interaction
+- Highlight selected whip points with color changes
+- Support multi-selection via drag box or Ctrl+click
+- Display context menu for quick actions
+- Provide visual feedback during dragging operations
+- Animate highlights when clicking on warning messages
+- Enable keyboard shortcuts for common operations
 
 ## 11. Implementation Best Practices
 
@@ -803,6 +922,7 @@ solar_bom/
 - Calculate power loss for system efficiency analysis
 - Validate string configurations against inverter specifications
 - Apply proper safety factors to current calculations
+- Separate calculations for different wire gauges
 
 ## 12. Advanced Features
 
@@ -812,6 +932,7 @@ solar_bom/
 - Conductor ampacity based on NEC guidelines
 - String electrical characteristics with temperature effects
 - Wire harness compatibility checking
+- Segment-specific load calculations
 
 ### 12.2 Block Management Enhancements
 - Copy existing blocks with incremental naming
@@ -825,6 +946,9 @@ solar_bom/
 - Collection point current ratings
 - Whip point identification and routing
 - Node-to-node harness routing optimization
+- Custom harness grouping with string-level control
+- Interactive whip point repositioning
+- Multiple independent harnesses per tracker
 
 ### 12.4 User Interface Improvements
 - Real-time GCR calculations and display
@@ -834,3 +958,5 @@ solar_bom/
 - Device zone visualization with semi-transparency
 - Tab-based application interface
 - Status bar with project information
+- Electrical warning panel with interactive highlighting
+- Context menus for common operations
