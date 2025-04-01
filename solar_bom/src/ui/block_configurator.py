@@ -42,6 +42,7 @@ class BlockConfigurator(ttk.Frame):
         self.pan_start_y = 0
         self.inverters = {}  # Store inverter configurations
         self.on_blocks_changed = None  # Callback for when blocks change
+        self.show_realistic_wiring_var = tk.BooleanVar(value=True)
 
 
         # Initialize undo manager
@@ -204,6 +205,14 @@ class BlockConfigurator(ttk.Frame):
         # Configure Wiring button
         ttk.Button(config_frame, text="Configure Wiring", 
                 command=self.configure_wiring).grid(row=7, column=0, columnspan=2, padx=5, pady=5)
+        
+        # Add toggle for realistic wiring display
+        ttk.Checkbutton(
+            config_frame, 
+            text="Show Realistic Wiring", 
+            variable=self.show_realistic_wiring_var,
+            command=self.draw_block
+        ).grid(row=8, column=0, columnspan=2, padx=5, pady=5, sticky=tk.W)
 
         # Templates List Frame
         templates_frame = ttk.LabelFrame(config_frame, text="Tracker Templates", padding="5")
@@ -592,6 +601,9 @@ class BlockConfigurator(ttk.Frame):
                 x = 10 + self.pan_x + pos.x * scale
                 y = 10 + self.pan_y + pos.y * scale
                 self.draw_tracker(x, y, pos.template)
+
+            # Draw realistic wiring if available
+            self.draw_realistic_wiring()
         
         except (ValueError, TypeError):
             # Silently ignore transient errors during editing
@@ -1556,3 +1568,214 @@ class BlockConfigurator(ttk.Frame):
             messagebox.showwarning("Missing Wiring Configurations", message)
             return False
         return True
+    
+    def draw_realistic_wiring(self):
+        """Draw realistic wiring routes in the block that go directly under trackers"""
+        if not self.current_block or not self.blocks[self.current_block].wiring_config:
+            return
+            
+        # Check if realistic wiring should be shown
+        if not hasattr(self, 'show_realistic_wiring_var') or not self.show_realistic_wiring_var.get():
+            return
+            
+        block = self.blocks[self.current_block]
+        scale = self.get_canvas_scale()
+        wiring_config = block.wiring_config
+        
+        # For each tracker, draw realistic routes
+        for tracker_idx, pos in enumerate(block.tracker_positions):
+            tracker_id = str(tracker_idx)
+            
+            # Calculate tracker dimensions
+            if pos.template.module_orientation == ModuleOrientation.PORTRAIT:
+                module_height = pos.template.module_spec.width_mm / 1000
+                module_width = pos.template.module_spec.length_mm / 1000
+            else:
+                module_height = pos.template.module_spec.length_mm / 1000
+                module_width = pos.template.module_spec.width_mm / 1000
+                
+            tracker_width = module_width
+            tracker_height = (pos.template.modules_per_string * module_height + 
+                            (pos.template.modules_per_string - 1) * pos.template.module_spacing_m +
+                            pos.template.motor_gap_m)
+            
+            # Calculate tracker center line (where torque tube would be)
+            tracker_center_x = pos.x + (tracker_width / 2)
+            
+            # Add debug markers for north and south ends
+            north_x = tracker_center_x
+            north_y = pos.y
+            south_x = tracker_center_x
+            south_y = pos.y + tracker_height
+
+            north_pixel_x = 10 + self.pan_x + north_x * scale
+            north_pixel_y = 10 + self.pan_y + north_y * scale
+            south_pixel_x = 10 + self.pan_x + south_x * scale
+            south_pixel_y = 10 + self.pan_y + south_y * scale
+
+            # Draw "N" at north end and "S" at south end
+            self.canvas.create_text(north_pixel_x, north_pixel_y - 10, text="N", fill="black")
+            self.canvas.create_text(south_pixel_x, south_pixel_y + 10, text="S", fill="black")
+            
+            # Get whip points
+            pos_whip = self.get_whip_position(tracker_id, 'positive')
+            neg_whip = self.get_whip_position(tracker_id, 'negative')
+            
+            if not pos_whip or not neg_whip:
+                continue
+            
+            # Get device destination points
+            pos_dest, neg_dest = self.get_device_destination_points()
+            
+            # For each string, draw realistic routes
+            for string_idx, string in enumerate(pos.strings):
+                # Calculate source positions
+                source_pos_x = pos.x + string.positive_source_x
+                source_pos_y = pos.y + string.positive_source_y
+                source_neg_x = pos.x + string.negative_source_x
+                source_neg_y = pos.y + string.negative_source_y
+                
+                # Create direct routes under the tracker - direction depends on device position
+                
+                # Positive string to whip route
+                pos_route = [
+                    (source_pos_x, source_pos_y),  # Start at source
+                    (tracker_center_x, source_pos_y),  # Move to center line
+                    (tracker_center_x, pos_whip[1]),  # Travel along center to whip height
+                    pos_whip  # End at whip point
+                ]
+                
+                # Draw positive string route
+                self.draw_realistic_route(pos_route, scale, "#4CAF50", 1.5, (5, 3), f"string_pos_{tracker_idx}_{string_idx}")
+                
+                # Negative string to whip route
+                neg_route = [
+                    (source_neg_x, source_neg_y),  # Start at source
+                    (tracker_center_x, source_neg_y),  # Move to center line
+                    (tracker_center_x, neg_whip[1]),  # Travel along center to whip height
+                    neg_whip  # End at whip point
+                ]
+                
+                # Draw negative string route
+                self.draw_realistic_route(neg_route, scale, "#2196F3", 1.5, (5, 3), f"string_neg_{tracker_idx}_{string_idx}")
+            
+            # Draw whip to device routes
+            if pos_whip and pos_dest:
+                # Create direct route from whip to device
+                whip_route = [
+                    pos_whip,
+                    (pos_whip[0], pos_dest[1]),  # Vertical segment to device height
+                    pos_dest  # To device
+                ]
+                self.draw_realistic_route(whip_route, scale, "#9C27B0", 2.5, (5, 3), f"whip_pos_{tracker_idx}")
+            
+            if neg_whip and neg_dest:
+                # Create direct route from whip to device
+                whip_route = [
+                    neg_whip,
+                    (neg_whip[0], neg_dest[1]),  # Vertical segment to device height
+                    neg_dest  # To device
+                ]
+                self.draw_realistic_route(whip_route, scale, "#FF9800", 2.5, (5, 3), f"whip_neg_{tracker_idx}")
+
+    def draw_realistic_route(self, points, scale, color, width, dash, tag):
+        """Draw a realistic route on the canvas"""
+        if len(points) < 2:
+            return
+            
+        # Convert points to canvas coordinates
+        canvas_points = []
+        for x, y in points:
+            canvas_x = 10 + self.pan_x + x * scale
+            canvas_y = 10 + self.pan_y + y * scale
+            canvas_points.append(canvas_x)
+            canvas_points.append(canvas_y)
+        
+        # Draw the route
+        self.canvas.create_line(
+            canvas_points,
+            fill=color,
+            width=width,
+            dash=dash,
+            tags=("realistic_wiring", tag)
+        )
+
+    def calculate_avoiding_route(self, start, end, block):
+        """Calculate a route from start to end that avoids tracker positions"""
+        # Simple implementation - just creates a route with one intermediate point
+        # For a real implementation, you would need pathfinding to avoid obstacles
+        
+        # Extract coordinates
+        start_x, start_y = start
+        end_x, end_y = end
+        
+        # Create a simple horizontal then vertical route
+        return [
+            start,
+            (end_x, start_y),
+            end
+        ]
+
+    def get_whip_position(self, tracker_id, polarity):
+        """Test function to place whip points at specific positions"""
+        if not self.current_block:
+            return None
+            
+        block = self.blocks[self.current_block]
+        tracker_idx = int(tracker_id)
+        
+        # Check for custom whip points first
+        if (hasattr(block, 'wiring_config') and 
+            block.wiring_config and 
+            hasattr(block.wiring_config, 'custom_whip_points') and
+            tracker_id in block.wiring_config.custom_whip_points and
+            polarity in block.wiring_config.custom_whip_points[tracker_id]):
+            return block.wiring_config.custom_whip_points[tracker_id][polarity]
+        
+        if 0 <= tracker_idx < len(block.tracker_positions):
+            pos = block.tracker_positions[tracker_idx]
+            
+            # Calculate tracker dimensions
+            if pos.template.module_orientation == ModuleOrientation.PORTRAIT:
+                module_height = pos.template.module_spec.length_mm / 1000
+                module_width = pos.template.module_spec.width_mm / 1000
+            else:
+                module_height = pos.template.module_spec.width_mm / 1000
+                module_width = pos.template.module_spec.length_mm / 1000
+                
+            tracker_width = module_height
+            tracker_length = (pos.template.modules_per_string * module_width + 
+                        (pos.template.modules_per_string - 1) * pos.template.module_spacing_m +
+                        pos.template.motor_gap_m)
+            
+            # Force whips to be at the "south" end (y + length)
+            whip_offset = 0.5
+            y_position = pos.y + tracker_length + whip_offset
+            
+            # Determine x position based on polarity
+            if polarity == 'positive':
+                x_position = pos.x - whip_offset  # Left side
+            else:
+                x_position = pos.x + tracker_width + whip_offset  # Right side
+                
+            print(f"TEST: Tracker at y={pos.y}, length={tracker_length}, setting whip at y={y_position}")
+            return (x_position, y_position)
+        
+        return None
+    
+    def get_device_destination_points(self):
+        """Get the two main destination points on the device (positive and negative)"""
+        if not self.current_block:
+            return None, None
+                
+        device_width = 0.91  # 3ft in meters
+        device_x = self.blocks[self.current_block].device_x
+        device_y = self.blocks[self.current_block].device_y
+            
+        # Positive point on left side, halfway up
+        positive_point = (device_x, device_y + (device_width / 2))
+            
+        # Negative point on right side, halfway up
+        negative_point = (device_x + device_width, device_y + (device_width / 2))
+            
+        return positive_point, negative_point
