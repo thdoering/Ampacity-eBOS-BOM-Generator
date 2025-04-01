@@ -1586,18 +1586,10 @@ class BlockConfigurator(ttk.Frame):
         for tracker_idx, pos in enumerate(block.tracker_positions):
             tracker_id = str(tracker_idx)
             
-            # Calculate tracker dimensions
-            if pos.template.module_orientation == ModuleOrientation.PORTRAIT:
-                module_height = pos.template.module_spec.width_mm / 1000
-                module_width = pos.template.module_spec.length_mm / 1000
-            else:
-                module_height = pos.template.module_spec.length_mm / 1000
-                module_width = pos.template.module_spec.width_mm / 1000
-                
-            tracker_width = module_width
-            tracker_height = (pos.template.modules_per_string * module_height + 
-                            (pos.template.modules_per_string - 1) * pos.template.module_spacing_m +
-                            pos.template.motor_gap_m)
+            # Get tracker dimensions directly from the template
+            dims = pos.template.get_physical_dimensions()
+            tracker_length = dims[0]  # Length in meters (north-south direction)
+            tracker_width = dims[1]  # Width in meters (east-west direction)
             
             # Calculate tracker center line (where torque tube would be)
             tracker_center_x = pos.x + (tracker_width / 2)
@@ -1606,7 +1598,7 @@ class BlockConfigurator(ttk.Frame):
             north_x = tracker_center_x
             north_y = pos.y
             south_x = tracker_center_x
-            south_y = pos.y + tracker_height
+            south_y = pos.y + tracker_length
 
             north_pixel_x = 10 + self.pan_x + north_x * scale
             north_pixel_y = 10 + self.pan_y + north_y * scale
@@ -1629,18 +1621,15 @@ class BlockConfigurator(ttk.Frame):
             
             # For each string, draw realistic routes
             for string_idx, string in enumerate(pos.strings):
-                # Calculate source positions
-                source_pos_x = pos.x + string.positive_source_x
+                # Source points are already at the center line (torque tube)
                 source_pos_y = pos.y + string.positive_source_y
-                source_neg_x = pos.x + string.negative_source_x
                 source_neg_y = pos.y + string.negative_source_y
                 
-                # Create direct routes under the tracker - direction depends on device position
+                # Create direct routes from source to whip along the center line
                 
-                # Positive string to whip route
+                # Positive string to whip route - direct along torque tube
                 pos_route = [
-                    (source_pos_x, source_pos_y),  # Start at source
-                    (tracker_center_x, source_pos_y),  # Move to center line
+                    (tracker_center_x, source_pos_y),  # Start at source on center line
                     (tracker_center_x, pos_whip[1]),  # Travel along center to whip height
                     pos_whip  # End at whip point
                 ]
@@ -1648,10 +1637,9 @@ class BlockConfigurator(ttk.Frame):
                 # Draw positive string route
                 self.draw_realistic_route(pos_route, scale, "#4CAF50", 1.5, (5, 3), f"string_pos_{tracker_idx}_{string_idx}")
                 
-                # Negative string to whip route
+                # Negative string to whip route - direct along torque tube
                 neg_route = [
-                    (source_neg_x, source_neg_y),  # Start at source
-                    (tracker_center_x, source_neg_y),  # Move to center line
+                    (tracker_center_x, source_neg_y),  # Start at source on center line
                     (tracker_center_x, neg_whip[1]),  # Travel along center to whip height
                     neg_whip  # End at whip point
                 ]
@@ -1659,22 +1647,20 @@ class BlockConfigurator(ttk.Frame):
                 # Draw negative string route
                 self.draw_realistic_route(neg_route, scale, "#2196F3", 1.5, (5, 3), f"string_neg_{tracker_idx}_{string_idx}")
             
-            # Draw whip to device routes
+            # Draw whip to device routes - VERTICAL FIRST, THEN HORIZONTAL
             if pos_whip and pos_dest:
-                # Create direct route from whip to device
                 whip_route = [
-                    pos_whip,
-                    (pos_whip[0], pos_dest[1]),  # Vertical segment to device height
-                    pos_dest  # To device
+                    pos_whip,  # Start at whip point
+                    (pos_dest[0], pos_whip[1]),  # Horizontal segment to device x-position
+                    pos_dest  # End at device
                 ]
                 self.draw_realistic_route(whip_route, scale, "#9C27B0", 2.5, (5, 3), f"whip_pos_{tracker_idx}")
             
             if neg_whip and neg_dest:
-                # Create direct route from whip to device
                 whip_route = [
-                    neg_whip,
-                    (neg_whip[0], neg_dest[1]),  # Vertical segment to device height
-                    neg_dest  # To device
+                    neg_whip,  # Start at whip point
+                    (neg_dest[0], neg_whip[1]),  # Horizontal segment to device x-position
+                    neg_dest  # End at device
                 ]
                 self.draw_realistic_route(whip_route, scale, "#FF9800", 2.5, (5, 3), f"whip_neg_{tracker_idx}")
 
@@ -1717,7 +1703,7 @@ class BlockConfigurator(ttk.Frame):
         ]
 
     def get_whip_position(self, tracker_id, polarity):
-        """Test function to place whip points at specific positions"""
+        """Get whip position for a tracker, with both whips on the tracker center line"""
         if not self.current_block:
             return None
             
@@ -1735,30 +1721,26 @@ class BlockConfigurator(ttk.Frame):
         if 0 <= tracker_idx < len(block.tracker_positions):
             pos = block.tracker_positions[tracker_idx]
             
-            # Calculate tracker dimensions
-            if pos.template.module_orientation == ModuleOrientation.PORTRAIT:
-                module_height = pos.template.module_spec.length_mm / 1000
-                module_width = pos.template.module_spec.width_mm / 1000
-            else:
-                module_height = pos.template.module_spec.width_mm / 1000
-                module_width = pos.template.module_spec.length_mm / 1000
-                
-            tracker_width = module_height
-            tracker_length = (pos.template.modules_per_string * module_width + 
-                        (pos.template.modules_per_string - 1) * pos.template.module_spacing_m +
-                        pos.template.motor_gap_m)
+            # Get tracker dimensions directly from the template
+            dims = pos.template.get_physical_dimensions()
+            tracker_length = dims[0]  # Length in meters (north-south direction)
+            tracker_width = dims[1]  # Width in meters (east-west direction)
             
-            # Force whips to be at the "south" end (y + length)
+            # Calculate tracker center line position
+            tracker_center_x = pos.x + (tracker_width / 2)
+            
+            # Place whip at the "south" end
             whip_offset = 0.5
             y_position = pos.y + tracker_length + whip_offset
             
-            # Determine x position based on polarity
+            # Both positive and negative whip points are on the center line
+            # with just a small horizontal offset for clarity
+            small_offset = 0.1  # Small offset for visual distinction
             if polarity == 'positive':
-                x_position = pos.x - whip_offset  # Left side
+                x_position = tracker_center_x - small_offset  # Slightly left of center
             else:
-                x_position = pos.x + tracker_width + whip_offset  # Right side
+                x_position = tracker_center_x + small_offset  # Slightly right of center
                 
-            print(f"TEST: Tracker at y={pos.y}, length={tracker_length}, setting whip at y={y_position}")
             return (x_position, y_position)
         
         return None
