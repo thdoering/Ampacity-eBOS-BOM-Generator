@@ -1729,9 +1729,27 @@ class BlockConfigurator(ttk.Frame):
             # Calculate tracker center line position
             tracker_center_x = pos.x + (tracker_width / 2)
             
-            # Place whip at the "south" end
-            whip_offset = 0.5
-            y_position = pos.y + tracker_length + whip_offset
+            # Determine which end of the tracker is closer to the device
+            device_y = block.device_y
+            tracker_north_y = pos.y
+            tracker_south_y = pos.y + tracker_length
+            
+            # Calculate distances to both ends
+            distance_to_north = abs(device_y - tracker_north_y)
+            distance_to_south = abs(device_y - tracker_south_y)
+            
+            # Determine which end is closer
+            device_is_north = distance_to_north < distance_to_south
+            
+            # Place whip at the appropriate end
+            whip_offset = 0.5  # Offset from tracker end in meters
+            
+            if device_is_north:
+                # Place on north side (top of tracker)
+                y_position = tracker_north_y - whip_offset
+            else:
+                # Place on south side (bottom of tracker)
+                y_position = tracker_south_y + whip_offset
             
             # Both positive and negative whip points are on the center line
             # with just a small horizontal offset for clarity
