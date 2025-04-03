@@ -130,16 +130,11 @@ class BlockConfig:
             
         lengths = {}
 
-         # Check if we should use custom positions for BOM
-        use_custom_positions = getattr(self.wiring_config, 'use_custom_positions_for_bom', False)
-
-        # Use realistic_cable_routes if available, otherwise fall back to regular cable_routes
+        # Use realistic_cable_routes if available
         cable_routes = {}
-        if use_custom_positions and hasattr(self.wiring_config, 'realistic_cable_routes'):
+        if hasattr(self.wiring_config, 'realistic_cable_routes') and self.wiring_config.realistic_cable_routes:
             cable_routes = self.wiring_config.realistic_cable_routes
-
-        # If no realistic cable routes or not using custom positions, use standard cable_routes
-        if not cable_routes:
+        else:
             cable_routes = self.wiring_config.cable_routes
         
         if self.wiring_config.wiring_type == WiringType.HOMERUN:

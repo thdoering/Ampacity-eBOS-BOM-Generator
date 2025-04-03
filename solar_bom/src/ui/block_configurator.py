@@ -1570,7 +1570,7 @@ class BlockConfigurator(ttk.Frame):
         return True
     
     def draw_realistic_wiring(self):
-        """Draw realistic wiring routes in the block that go directly under trackers"""
+        """Draw realistic wiring routes in the block that go directly under trackers and store for BOM"""
         if not self.current_block or not self.blocks[self.current_block].wiring_config:
             return
             
@@ -1582,7 +1582,10 @@ class BlockConfigurator(ttk.Frame):
         scale = self.get_canvas_scale()
         wiring_config = block.wiring_config
         
-        # For each tracker, draw realistic routes
+        # Create a new dict for realistic routes
+        block_realistic_routes = {}
+        
+        # For each tracker, calculate and draw realistic routes
         for tracker_idx, pos in enumerate(block.tracker_positions):
             tracker_id = str(tracker_idx)
             
@@ -1637,6 +1640,9 @@ class BlockConfigurator(ttk.Frame):
                 # Draw positive string route
                 self.draw_realistic_route(pos_route, scale, "#4CAF50", 1.5, (5, 3), f"string_pos_{tracker_idx}_{string_idx}")
                 
+                # Store route for BOM calculations - important new line
+                block_realistic_routes[f"pos_src_{tracker_idx}_{string_idx}"] = pos_route
+                
                 # Negative string to whip route - direct along torque tube
                 neg_route = [
                     (tracker_center_x, source_neg_y),  # Start at source on center line
@@ -1646,8 +1652,11 @@ class BlockConfigurator(ttk.Frame):
                 
                 # Draw negative string route
                 self.draw_realistic_route(neg_route, scale, "#2196F3", 1.5, (5, 3), f"string_neg_{tracker_idx}_{string_idx}")
+                
+                # Store route for BOM calculations - important new line
+                block_realistic_routes[f"neg_src_{tracker_idx}_{string_idx}"] = neg_route
             
-            # Draw whip to device routes - VERTICAL FIRST, THEN HORIZONTAL
+            # Draw whip to device routes
             if pos_whip and pos_dest:
                 whip_route = [
                     pos_whip,  # Start at whip point
@@ -1655,6 +1664,9 @@ class BlockConfigurator(ttk.Frame):
                     pos_dest  # End at device
                 ]
                 self.draw_realistic_route(whip_route, scale, "#9C27B0", 2.5, (5, 3), f"whip_pos_{tracker_idx}")
+                
+                # Store route for BOM calculations - important new line
+                block_realistic_routes[f"pos_dev_{tracker_idx}"] = whip_route
             
             if neg_whip and neg_dest:
                 whip_route = [
@@ -1663,6 +1675,12 @@ class BlockConfigurator(ttk.Frame):
                     neg_dest  # End at device
                 ]
                 self.draw_realistic_route(whip_route, scale, "#FF9800", 2.5, (5, 3), f"whip_neg_{tracker_idx}")
+                
+                # Store route for BOM calculations - important new line
+                block_realistic_routes[f"neg_dev_{tracker_idx}"] = whip_route
+        
+        # Update the wiring config with routes from block configurator
+        wiring_config.realistic_cable_routes = block_realistic_routes
 
     def draw_realistic_route(self, points, scale, color, width, dash, tag):
         """Draw a realistic route on the canvas"""

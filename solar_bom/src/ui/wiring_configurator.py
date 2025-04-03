@@ -102,13 +102,6 @@ class WiringConfigurator(tk.Toplevel):
         self.string_check_frame = ttk.Frame(self.string_grouping_frame)
         self.string_check_frame.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
 
-        # Add checkbox for using custom positions in BOM calculations
-        self.use_custom_positions_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(controls_frame, text="Use custom whip positions in BOM calculations", 
-                        variable=self.use_custom_positions_var,
-                        command=self.draw_wiring_layout).grid(
-                        row=6, column=0, columnspan=2, padx=5, pady=5, sticky=tk.W)
-
         # Add Create Harness button
         ttk.Button(self.string_grouping_frame, text="Create Harness from Selected", 
                 command=self.create_harness_from_selected).grid(row=1, column=0, padx=5, pady=5)
@@ -380,7 +373,6 @@ class WiringConfigurator(tk.Toplevel):
             negative_collection_points = []
             strings_per_collection = {}
             cable_routes = {}
-            realistic_cable_routes = {}  # New dictionary for realistic routes
             
             # Process each tracker position to capture collection points and routes
             for idx, pos in enumerate(self.block.tracker_positions):
@@ -419,11 +411,9 @@ class WiringConfigurator(tk.Toplevel):
                 for string_idx, string in enumerate(pos.strings):
                     if wiring_type == WiringType.HOMERUN:
                         self.add_homerun_routes(cable_routes, pos, string, idx, string_idx, pos_whip, neg_whip)
-                        self.add_realistic_homerun_routes(realistic_cable_routes, pos, string, idx, string_idx, pos_whip, neg_whip)
                     else:
                         self.add_harness_routes(cable_routes, pos, string, idx, string_idx, pos_whip, neg_whip)
-                        self.add_realistic_harness_routes(realistic_cable_routes, pos, string, idx, string_idx, pos_whip, neg_whip)
-            
+                        
             custom_whip_points = {}
             if (hasattr(self.block, 'wiring_config') and 
                 self.block.wiring_config and 
@@ -437,12 +427,10 @@ class WiringConfigurator(tk.Toplevel):
                 negative_collection_points=negative_collection_points,
                 strings_per_collection=strings_per_collection,
                 cable_routes=cable_routes,
-                realistic_cable_routes=realistic_cable_routes,  # Add realistic routes
                 string_cable_size=self.string_cable_size_var.get(),
                 harness_cable_size=self.harness_cable_size_var.get(),
                 whip_cable_size=self.whip_cable_size_var.get(),
-                custom_whip_points=custom_whip_points,
-                use_custom_positions_for_bom=self.use_custom_positions_var.get()
+                custom_whip_points=custom_whip_points
                 )
             
             # Store the configuration in the block
@@ -2606,107 +2594,3 @@ class WiringConfigurator(tk.Toplevel):
         # Update the display and redraw
         self.update_harness_display(string_count)
         self.draw_wiring_layout()
-
-    def calculate_realistic_cable_route(self, source_x: float, source_y: float, 
-                                   dest_x: float, dest_y: float,
-                                   tracker_position=None) -> List[tuple[float, float]]:
-        """Calculate realistic under-tracker cable route for BOM calculations"""
-        route = []
-        
-        # Add starting point
-        route.append((source_x, source_y))
-        
-        # Add ending point - for realistic routing, we go directly from source to destination
-        # This represents how cables would actually be run under trackers
-        route.append((dest_x, dest_y))
-        
-        return route
-    
-    def add_realistic_homerun_routes(self, realistic_cable_routes, pos, string, tracker_idx, string_idx, pos_whip, neg_whip):
-        """Add realistic homerun routes that represent under-tracker routing"""
-        # Source to whip routes
-        if pos_whip:
-            realistic_cable_routes[f"pos_src_{tracker_idx}_{string_idx}"] = self.calculate_realistic_cable_route(
-                pos.x + string.positive_source_x, 
-                pos.y + string.positive_source_y,
-                pos_whip[0], pos_whip[1],
-                pos
-            )
-        
-        if neg_whip:
-            realistic_cable_routes[f"neg_src_{tracker_idx}_{string_idx}"] = self.calculate_realistic_cable_route(
-                pos.x + string.negative_source_x, 
-                pos.y + string.negative_source_y,
-                neg_whip[0], neg_whip[1],
-                pos
-            )
-        
-        # Whip to device routes
-        pos_dest, neg_dest = self.get_device_destination_points()
-        if pos_whip and pos_dest:
-            realistic_cable_routes[f"pos_dev_{tracker_idx}_{string_idx}"] = self.calculate_realistic_cable_route(
-                pos_whip[0], pos_whip[1],
-                pos_dest[0], pos_dest[1]
-            )
-        
-        if neg_whip and neg_dest:
-            realistic_cable_routes[f"neg_dev_{tracker_idx}_{string_idx}"] = self.calculate_realistic_cable_route(
-                neg_whip[0], neg_whip[1],
-                neg_dest[0], neg_dest[1]
-            )
-
-    def add_realistic_harness_routes(self, realistic_cable_routes, pos, string, tracker_idx, string_idx, pos_whip, neg_whip):
-        """Add realistic harness routes that represent under-tracker routing"""
-        # Calculate node points
-        pos_nodes = self.calculate_node_points(pos, True)
-        neg_nodes = self.calculate_node_points(pos, False)
-        
-        # String to node routes
-        if pos_nodes and len(pos_nodes) > string_idx:
-            realistic_cable_routes[f"pos_node_{tracker_idx}_{string_idx}"] = self.calculate_realistic_cable_route(
-                pos.x + string.positive_source_x, 
-                pos.y + string.positive_source_y,
-                pos_nodes[string_idx][0], pos_nodes[string_idx][1],
-                pos
-            )
-        
-        if neg_nodes and len(neg_nodes) > string_idx:
-            realistic_cable_routes[f"neg_node_{tracker_idx}_{string_idx}"] = self.calculate_realistic_cable_route(
-                pos.x + string.negative_source_x, 
-                pos.y + string.negative_source_y,
-                neg_nodes[string_idx][0], neg_nodes[string_idx][1],
-                pos
-            )
-        
-        # Only add harness routes once per tracker
-        if string_idx == 0:
-            # For realistic routes, connect each node directly to the whip point
-            if pos_nodes and pos_whip:
-                for i, node in enumerate(pos_nodes):
-                    realistic_cable_routes[f"pos_harness_{tracker_idx}_{i}"] = self.calculate_realistic_cable_route(
-                        node[0], node[1],
-                        pos_whip[0], pos_whip[1],
-                        pos
-                    )
-            
-            if neg_nodes and neg_whip:
-                for i, node in enumerate(neg_nodes):
-                    realistic_cable_routes[f"neg_harness_{tracker_idx}_{i}"] = self.calculate_realistic_cable_route(
-                        node[0], node[1],
-                        neg_whip[0], neg_whip[1],
-                        pos
-                    )
-            
-            # Whip to device routes
-            pos_dest, neg_dest = self.get_device_destination_points()
-            if pos_whip and pos_dest:
-                realistic_cable_routes[f"pos_main_{tracker_idx}"] = self.calculate_realistic_cable_route(
-                    pos_whip[0], pos_whip[1],
-                    pos_dest[0], pos_dest[1]
-                )
-            
-            if neg_whip and neg_dest:
-                realistic_cable_routes[f"neg_main_{tracker_idx}"] = self.calculate_realistic_cable_route(
-                    neg_whip[0], neg_whip[1],
-                    neg_dest[0], neg_dest[1]
-                )
