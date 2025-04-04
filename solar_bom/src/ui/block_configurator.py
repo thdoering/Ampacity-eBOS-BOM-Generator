@@ -1570,8 +1570,8 @@ class BlockConfigurator(ttk.Frame):
         return True
     
     def draw_realistic_wiring(self):
-        """Draw realistic wiring routes in the block that go directly under trackers and store for BOM"""
-        if not self.current_block or not self.blocks[self.current_block].wiring_config:
+        """Draw realistic wiring routes in the block that go directly under trackers"""
+        if not self.current_block:
             return
             
         # Check if realistic wiring should be shown
@@ -1580,12 +1580,15 @@ class BlockConfigurator(ttk.Frame):
             
         block = self.blocks[self.current_block]
         scale = self.get_canvas_scale()
-        wiring_config = block.wiring_config
         
-        # Create a new dict for realistic routes
-        block_realistic_routes = {}
+        # Initialize realistic routes dictionary directly on the block (not on wiring_config)
+        block.block_realistic_routes = {}
         
-        # For each tracker, calculate and draw realistic routes
+        # Skip if no wiring config (for drawing routes only)
+        if not block.wiring_config:
+            return
+        
+        # For each tracker, draw realistic routes
         for tracker_idx, pos in enumerate(block.tracker_positions):
             tracker_id = str(tracker_idx)
             
@@ -1640,8 +1643,8 @@ class BlockConfigurator(ttk.Frame):
                 # Draw positive string route
                 self.draw_realistic_route(pos_route, scale, "#4CAF50", 1.5, (5, 3), f"string_pos_{tracker_idx}_{string_idx}")
                 
-                # Store route for BOM calculations - important new line
-                block_realistic_routes[f"pos_src_{tracker_idx}_{string_idx}"] = pos_route
+                # Store route in the block object directly
+                block.block_realistic_routes[f"pos_src_{tracker_idx}_{string_idx}"] = pos_route
                 
                 # Negative string to whip route - direct along torque tube
                 neg_route = [
@@ -1653,34 +1656,39 @@ class BlockConfigurator(ttk.Frame):
                 # Draw negative string route
                 self.draw_realistic_route(neg_route, scale, "#2196F3", 1.5, (5, 3), f"string_neg_{tracker_idx}_{string_idx}")
                 
-                # Store route for BOM calculations - important new line
-                block_realistic_routes[f"neg_src_{tracker_idx}_{string_idx}"] = neg_route
+                # Store route in the block object directly
+                block.block_realistic_routes[f"neg_src_{tracker_idx}_{string_idx}"] = neg_route
             
-            # Draw whip to device routes
+            # Draw whip to device routes - VERTICAL FIRST, THEN HORIZONTAL
             if pos_whip and pos_dest:
+                # Give positive route a small offset to the left of center
+                center_offset = 0.1  # Small offset in meters
+                adjusted_dest = (pos_dest[0] - center_offset, pos_dest[1])
+                
                 whip_route = [
                     pos_whip,  # Start at whip point
-                    (pos_dest[0], pos_whip[1]),  # Horizontal segment to device x-position
-                    pos_dest  # End at device
+                    (adjusted_dest[0], pos_whip[1]),  # Horizontal segment to device x-position
+                    adjusted_dest  # End at offset center
                 ]
                 self.draw_realistic_route(whip_route, scale, "#9C27B0", 2.5, (5, 3), f"whip_pos_{tracker_idx}")
                 
-                # Store route for BOM calculations - important new line
-                block_realistic_routes[f"pos_dev_{tracker_idx}"] = whip_route
+                # Store route in the block object directly
+                block.block_realistic_routes[f"pos_dev_{tracker_idx}"] = whip_route
             
             if neg_whip and neg_dest:
+                # Give negative route a small offset to the right of center
+                center_offset = 0.1  # Small offset in meters
+                adjusted_dest = (neg_dest[0] + center_offset, neg_dest[1])
+                
                 whip_route = [
                     neg_whip,  # Start at whip point
-                    (neg_dest[0], neg_whip[1]),  # Horizontal segment to device x-position
-                    neg_dest  # End at device
+                    (adjusted_dest[0], neg_whip[1]),  # Horizontal segment to device x-position
+                    adjusted_dest  # End at offset center
                 ]
                 self.draw_realistic_route(whip_route, scale, "#FF9800", 2.5, (5, 3), f"whip_neg_{tracker_idx}")
                 
-                # Store route for BOM calculations - important new line
-                block_realistic_routes[f"neg_dev_{tracker_idx}"] = whip_route
-        
-        # Update the wiring config with routes from block configurator
-        wiring_config.realistic_cable_routes = block_realistic_routes
+                # Store route in the block object directly
+                block.block_realistic_routes[f"neg_dev_{tracker_idx}"] = whip_route
 
     def draw_realistic_route(self, points, scale, color, width, dash, tag):
         """Draw a realistic route on the canvas"""
@@ -1782,7 +1790,7 @@ class BlockConfigurator(ttk.Frame):
         return None
     
     def get_device_destination_points(self):
-        """Get the two main destination points on the device (positive and negative)"""
+        """Get the center point of the device for both positive and negative destinations"""
         if not self.current_block:
             return None, None
                 
@@ -1790,10 +1798,11 @@ class BlockConfigurator(ttk.Frame):
         device_x = self.blocks[self.current_block].device_x
         device_y = self.blocks[self.current_block].device_y
             
-        # Positive point on left side, halfway up
-        positive_point = (device_x, device_y + (device_width / 2))
+        # Calculate center of device
+        center_x = device_x + (device_width / 2)
+        center_y = device_y + (device_width / 2)  # Device is square, so width = height
+        
+        # Use the same center point for both positive and negative
+        device_center = (center_x, center_y)
             
-        # Negative point on right side, halfway up
-        negative_point = (device_x + device_width, device_y + (device_width / 2))
-            
-        return positive_point, negative_point
+        return device_center, device_center

@@ -234,10 +234,6 @@ class WiringConfigurator(tk.Toplevel):
 
             if hasattr(self.block.wiring_config, 'whip_cable_size'):
                 self.whip_cable_size_var.set(self.block.wiring_config.whip_cable_size)
-
-            # Set use_custom_positions_for_bom checkbox
-            if hasattr(self.block.wiring_config, 'use_custom_positions_for_bom'):
-                self.use_custom_positions_var.set(self.block.wiring_config.use_custom_positions_for_bom)
             
             # Update UI based on wiring type
             self.update_ui_for_wiring_type()

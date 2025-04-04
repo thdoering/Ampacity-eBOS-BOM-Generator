@@ -70,6 +70,7 @@ class BlockConfig:
     device_y: float = 0.0  # Y coordinate of device in meters
     device_spacing_m: float = 1.83  # 6ft in meters default
     input_points: List[DeviceInputPoint] = field(default_factory=list)
+    block_realistic_routes: Dict[str, List[tuple[float, float]]] = field(default_factory=dict)
     
     # Optional fields with defaults must come after
     description: Optional[str] = None
@@ -130,12 +131,12 @@ class BlockConfig:
             
         lengths = {}
 
-        # Use realistic_cable_routes if available
-        cable_routes = {}
-        if hasattr(self.wiring_config, 'realistic_cable_routes') and self.wiring_config.realistic_cable_routes:
-            cable_routes = self.wiring_config.realistic_cable_routes
+        # Always use block_realistic_routes if available
+        if hasattr(self, 'block_realistic_routes') and self.block_realistic_routes:
+            # Use block configurator's realistic routes
+            cable_routes = self.block_realistic_routes
         else:
-            cable_routes = self.wiring_config.cable_routes
+            return lengths
         
         if self.wiring_config.wiring_type == WiringType.HOMERUN:
             # Calculate individual string cable lengths by polarity
@@ -144,7 +145,7 @@ class BlockConfig:
             pos_whip_cable_length = 0
             neg_whip_cable_length = 0
             
-            for route_id, route in self.wiring_config.cable_routes.items():
+            for route_id, route in cable_routes.items():
                 points = route
                 route_length = 0
                 for i in range(len(points) - 1):
@@ -176,7 +177,7 @@ class BlockConfig:
             pos_whip_cable_length = 0
             neg_whip_cable_length = 0
             
-            for route_id, route in self.wiring_config.cable_routes.items():
+            for route_id, route in cable_routes.items():
                 points = route
                 route_length = 0
                 for i in range(len(points) - 1):
