@@ -169,6 +169,15 @@ class TrackerTemplate:
   - Keyboard shortcuts for selection manipulation (Ctrl+A, Delete, Esc)
 - Dual-unit display (feet/meters) for measurements
 
+#### Block Configurator Realistic Wiring Features
+
+- Dedicated realistic cable routing calculations for accurate BOM generation
+- Routes follow torque tubes and module layouts physically instead of abstract connections
+- Stored independently of wiring configurator visualization routes
+- Direct visualization of realistic routes with color-coding and appropriate wire thicknesses
+- Automatic routing to device center with small offsets for visual clarity
+- North-South tracker orientation markers for reference
+
 #### Block Configuration Data Model
 ```python
 class BlockConfig:
@@ -464,6 +473,16 @@ class ProjectMetadata:
 - Standardized length increments with appropriate waste factors
 - Separation of string, harness, and whip cable segments
 - Support for mixed cable gauge systems within the same installation
+
+#### Cable Route Calculation Priority
+
+- BOM calculations exclusively use block configurator's realistic routes when available
+- Cable length calculation is handled directly by the block configurator
+- Realistic routing better estimates true installation patterns:
+  - String cables routed along torque tubes to whip points
+  - Whip cables routed from whip points to device center
+  - Routes consider tracker structure and physical installation constraints
+- No fallback to wiring configurator routes for BOM calculations
 
 ### 2.8 Whip Point Management
 
@@ -864,7 +883,14 @@ solar_bom/
 - Highlight overloaded segments with warning indicators
 - Show accumulated current at harness junction points
 
-### 10.6 Project Dashboard
+### 10.6 Separation of Configurator Roles
+- Wiring Configurator: Used for DC collection visualization and configuration (source grouping, string routing)
+- Block Configurator: Used for physical layout visualization and cable route length calculations
+- Clear separation between wiring visualization and BOM calculation
+- Realistic wiring routes calculated in block configurator follow physical paths along tracker structures
+- Whip connections route to device center for more accurate installation representation
+
+### 10.7 Project Dashboard
 - Card-based layout for recent projects
 - Table view for all projects
 - Search and sort controls
@@ -872,7 +898,7 @@ solar_bom/
 - Simple project creation flow
 - Confirmation for destructive actions
 
-### 10.7 Whip Point Interaction
+### 10.8 Whip Point Interaction
 - Highlight selected whip points with color changes
 - Support multi-selection via drag box or Ctrl+click
 - Display context menu for quick actions
