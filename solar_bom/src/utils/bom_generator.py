@@ -32,7 +32,7 @@ class BOMGenerator:
         quantities = {}
         
         for block_id, block in self.blocks.items():
-                
+            
             block_quantities = {}
             
             # Get tracker counts categorized by strings per tracker
@@ -170,7 +170,18 @@ class BOMGenerator:
             
             quantities[block_id] = block_quantities
         
+        # Store the original quantities before segment analysis
+        original_quantities = {}
+        for block_id, block_quantities in quantities.items():
+            original_quantities[block_id] = {k: v.copy() for k, v in block_quantities.items() if 'Whip Cable' in k and v['unit'] == 'feet'}
+        
         quantities = self.analyze_wire_segments(quantities)
+        
+        # Restore total whip cable entries that might have been overwritten
+        for block_id, original_block_quantities in original_quantities.items():
+            if block_id in quantities:
+                for item_key, item_details in original_block_quantities.items():
+                    quantities[block_id][item_key] = item_details
 
         return quantities
         
@@ -593,29 +604,26 @@ class BOMGenerator:
                 elif "neg_dev" in route_id or "neg_main" in route_id:
                     whip_segments_neg.append(segment_length_feet)
             
-            # Process string segments
-            self._add_segment_analysis(block_quantities, string_segments_pos, 
-                                    block.wiring_config.string_cable_size, 
-                                    "Positive String Cable", 5)
-            self._add_segment_analysis(block_quantities, string_segments_neg, 
-                                    block.wiring_config.string_cable_size, 
-                                    "Negative String Cable", 5)
-            
             # Process whip segments
             whip_size = getattr(block.wiring_config, 'whip_cable_size', "8 AWG")
             self._add_segment_analysis(block_quantities, whip_segments_pos, 
-                                    whip_size, "Positive Whip Cable", 10)
+                                    whip_size, "Positive Whip Cable", 1)
             self._add_segment_analysis(block_quantities, whip_segments_neg, 
-                                    whip_size, "Negative Whip Cable", 10)
+                                    whip_size, "Negative Whip Cable", 1)
+            
+            # Calculate and add total entries from segments
+            self.calculate_totals_from_segments(block_quantities, whip_size, "Positive Whip Cable")
+            self.calculate_totals_from_segments(block_quantities, whip_size, "Negative Whip Cable")
                     
             # Update quantities
             quantities[block_id] = block_quantities
-            
+        
         return quantities
 
     def _add_segment_analysis(self, block_quantities, segments, cable_size, 
-                            prefix, length_increment=5):
+                       prefix, length_increment=5):
         """Add segment analysis for a specific cable type"""
+        
         if not segments:
             return
             
@@ -632,7 +640,7 @@ class BOMGenerator:
             if length not in segment_counts:
                 segment_counts[length] = 0
             segment_counts[length] += 1
-        
+            
         # Add segment counts to quantities
         for length, count in segment_counts.items():
             segment_key = f"{prefix} Segment {int(length)}ft ({cable_size})"
@@ -642,3 +650,33 @@ class BOMGenerator:
                 'unit': 'segments',
                 'category': 'eBOS Segments'
             }
+
+    def calculate_totals_from_segments(self, block_quantities, cable_size, prefix):
+        """Calculate and add total cable entry from segment entries"""
+        total_length = 0
+        segment_entries = {}
+        
+        # Find all segment entries for this cable type
+        for key, details in block_quantities.items():
+            if prefix in key and "Segment" in key and details['unit'] == 'segments':
+                # Extract length from key (format: "{prefix} Segment {length}ft ({cable_size})")
+                try:
+                    segment_str = key.split("Segment ")[1].split("ft")[0]
+                    length = float(segment_str)
+                    count = details['quantity']
+                    total_length += length * count
+                    segment_entries[key] = details
+                except (ValueError, IndexError):
+                    continue
+        
+        # Only add total if we found segments
+        if total_length > 0:
+            total_key = f"{prefix} ({cable_size})"
+            block_quantities[total_key] = {
+                'description': f'DC {prefix} {cable_size}',
+                'quantity': round(total_length, 1),
+                'unit': 'feet',
+                'category': 'eBOS'
+            }
+            
+        return total_length > 0
