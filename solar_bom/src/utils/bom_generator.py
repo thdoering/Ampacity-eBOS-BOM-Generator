@@ -604,14 +604,26 @@ class BOMGenerator:
                 elif "neg_dev" in route_id or "neg_main" in route_id:
                     whip_segments_neg.append(segment_length_feet)
             
-            # Process whip segments
+            # Process string segments only for HOMERUN wiring
+            if block.wiring_config.wiring_type == WiringType.HOMERUN:
+                string_size = block.wiring_config.string_cable_size
+                self._add_segment_analysis(block_quantities, string_segments_pos, 
+                                        string_size, "Positive String Cable", 5)
+                self._add_segment_analysis(block_quantities, string_segments_neg, 
+                                        string_size, "Negative String Cable", 5)
+                
+                # Calculate and add total string entries from segments
+                self.calculate_totals_from_segments(block_quantities, string_size, "Positive String Cable")
+                self.calculate_totals_from_segments(block_quantities, string_size, "Negative String Cable")
+            
+            # Process whip segments for all wiring types
             whip_size = getattr(block.wiring_config, 'whip_cable_size', "8 AWG")
             self._add_segment_analysis(block_quantities, whip_segments_pos, 
                                     whip_size, "Positive Whip Cable", 1)
             self._add_segment_analysis(block_quantities, whip_segments_neg, 
                                     whip_size, "Negative Whip Cable", 1)
             
-            # Calculate and add total entries from segments
+            # Calculate and add total whip entries from segments
             self.calculate_totals_from_segments(block_quantities, whip_size, "Positive Whip Cable")
             self.calculate_totals_from_segments(block_quantities, whip_size, "Negative Whip Cable")
                     
