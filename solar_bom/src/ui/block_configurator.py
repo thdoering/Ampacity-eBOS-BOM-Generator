@@ -43,6 +43,7 @@ class BlockConfigurator(ttk.Frame):
         self.inverters = {}  # Store inverter configurations
         self.on_blocks_changed = None  # Callback for when blocks change
         self.show_realistic_wiring_var = tk.BooleanVar(value=True)
+        self.device_placement_mode = tk.StringVar(value="row_center")  # Default to row center
 
 
         # Initialize undo manager
@@ -198,6 +199,20 @@ class BlockConfigurator(ttk.Frame):
             self.update_device_spacing_display(),
             self.draw_block()
         ))
+
+        # Add placement mode radio buttons
+        placement_frame = ttk.LabelFrame(device_frame, text="Device Placement Mode")
+        placement_frame.grid(row=7, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
+
+        ttk.Radiobutton(placement_frame, text="Center Between Rows", 
+                    variable=self.device_placement_mode, value="row_center",
+                    command=self.update_device_placement).grid(
+                    row=0, column=0, padx=5, pady=2, sticky=tk.W)
+
+        ttk.Radiobutton(placement_frame, text="Align With Tracker", 
+                    variable=self.device_placement_mode, value="tracker_align",
+                    command=self.update_device_placement).grid(
+                    row=1, column=0, padx=5, pady=2, sticky=tk.W)
 
         # Add spacing after device frame
         ttk.Label(config_frame, text="").grid(row=6, column=0, pady=5)  # Spacer
@@ -376,7 +391,13 @@ class BlockConfigurator(ttk.Frame):
                     
             # Calculate device position based on row spacing    
             device_width_m = 0.91  # 3ft in meters
-            initial_device_x = row_spacing_m / 2 + (device_width_m / 2)
+            # Calculate device position based on placement mode
+            if self.device_placement_mode.get() == "row_center":
+                # Center between rows
+                initial_device_x = row_spacing_m / 2 + (device_width_m / 2)
+            else:
+                # Will be updated when a tracker is placed
+                initial_device_x = row_spacing_m / 2 + (device_width_m / 2)  # Default until tracker placed
             
             block = BlockConfig(
                 block_id=block_id,
@@ -736,7 +757,7 @@ class BlockConfigurator(ttk.Frame):
         """Handle canvas release for tracker placement"""
         if not self.dragging or not self.current_block or not self.drag_template:
             return
-                            
+                                
         self.dragging = False
         self.canvas.delete('drag_preview')
         
@@ -777,11 +798,20 @@ class BlockConfigurator(ttk.Frame):
         pos.calculate_string_positions() # Calculate string and collection point positions
         block.tracker_positions.append(pos)
         
+        # Update device position if in tracker align mode
+        if self.device_placement_mode.get() == "tracker_align" and len(block.tracker_positions) == 1:
+            # This is the first tracker, align device with it
+            if self.drag_template:
+                module_width = self.drag_template.module_spec.length_mm / 1000
+                device_width_m = 0.91
+                block.device_x = x_m + (module_width / 2) - (device_width_m / 2)
+        
         # Update block display
         self.draw_block()
 
         # Notify blocks changed
         self._notify_blocks_changed()
+
 
     def load_templates(self):
         """Load tracker templates from file"""
@@ -1806,3 +1836,35 @@ class BlockConfigurator(ttk.Frame):
         device_center = (center_x, center_y)
             
         return device_center, device_center
+    
+    def update_device_placement(self):
+        """Update device position based on selected placement mode"""
+        if not self.current_block:
+            return
+            
+        block = self.blocks[self.current_block]
+        mode = self.device_placement_mode.get()
+        
+        if mode == "row_center":
+            # Place device at the center of row spacing
+            block.device_x = block.row_spacing_m / 2
+        elif mode == "tracker_align":
+            # Find the first tracker or use default position
+            if block.tracker_positions:
+                # Align with the first tracker's center
+                pos = block.tracker_positions[0]
+                if pos.template:
+                    # Get tracker dimensions to find center
+                    module_width = pos.template.module_spec.length_mm / 1000
+                    device_width_m = 0.91  # 3ft in meters
+                    # Adjust device position so centers align
+                    block.device_x = pos.x + (module_width / 2) - (device_width_m / 2)
+                else:
+                    # Fallback if no template
+                    block.device_x = pos.x + 1.0  # 1m offset as fallback
+            else:
+                # No trackers, default to row center
+                block.device_x = block.row_spacing_m / 2
+        
+        # Redraw with new device position
+        self.draw_block()
