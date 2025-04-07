@@ -35,6 +35,8 @@ class HarnessGroup:
     """Represents a group of strings combined into a harness"""
     string_indices: List[int]  # Indices of strings in this harness
     cable_size: str = "8 AWG"  # Cable size for this harness
+    fuse_rating_amps: int = 15  # Fuse rating in amps
+    use_fuse: bool = True  # Whether to use fuses for this harness (default to True for 2+ strings)
     
 @dataclass
 class WiringConfig:

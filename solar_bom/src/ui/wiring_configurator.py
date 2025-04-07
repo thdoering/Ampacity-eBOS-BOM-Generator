@@ -16,6 +16,9 @@ class WiringConfigurator(tk.Toplevel):
         "10 AWG": 5.26
     }
 
+    # Standard fuse ratings in amps
+    FUSE_RATINGS: ClassVar[List[int]] = [5, 10, 15, 20, 25, 30, 35, 40, 45]
+
     def __init__(self, parent, block: BlockConfig):
         super().__init__(parent)
         self.parent = parent
@@ -37,7 +40,7 @@ class WiringConfigurator(tk.Toplevel):
         # Set up window properties
         self.title("Wiring Configuration")
         self.geometry("1200x800")
-        self.minsize(800, 600)
+        self.minsize(1000, 600)
         
         # Initialize UI
         self.setup_ui()
@@ -1487,23 +1490,46 @@ class WiringConfigurator(tk.Toplevel):
         
         # Display each harness
         for i, harness in enumerate(self.block.wiring_config.harness_groupings[string_count]):
-            harness_frame = ttk.Frame(self.harness_display_frame)
-            harness_frame.grid(row=i, column=0, sticky=(tk.W, tk.E), padx=5, pady=2)
+            # Use a LabelFrame instead of a Frame to better separate harnesses
+            harness_frame = ttk.LabelFrame(self.harness_display_frame, text=f"Harness {i+1}")
+            harness_frame.grid(row=i, column=0, sticky=(tk.W, tk.E), padx=5, pady=5)
             
+            # First row: String info
             # Get string indices as a comma-separated list
             string_indices = [str(idx+1) for idx in harness.string_indices]
             strings_text = f"Strings: {', '.join(string_indices)}"
+            ttk.Label(harness_frame, text=strings_text).grid(
+                row=0, column=0, columnspan=2, sticky=tk.W, padx=5, pady=2)
             
-            ttk.Label(harness_frame, text=f"Harness {i+1}: {strings_text}").grid(
-                row=0, column=0, sticky=tk.W)
-            
+            # Second row: Cable info
             ttk.Label(harness_frame, text=f"Cable: {harness.cable_size}").grid(
-                row=0, column=1, padx=10, sticky=tk.W)
+                row=1, column=0, sticky=tk.W, padx=5, pady=2)
             
-            ttk.Button(harness_frame, text="Delete", 
+            # Add fuse information if harness has multiple strings
+            has_multiple_strings = len(harness.string_indices) > 1
+            use_fuse = getattr(harness, 'use_fuse', has_multiple_strings)
+            
+            if has_multiple_strings and use_fuse:
+                fuse_rating = getattr(harness, 'fuse_rating_amps', 15)
+                fuse_text = f"Fuse: {fuse_rating}A ({len(harness.string_indices)} required)"
+                ttk.Label(harness_frame, text=fuse_text).grid(
+                    row=1, column=1, sticky=tk.W, padx=5, pady=2)
+            elif has_multiple_strings:
+                ttk.Label(harness_frame, text="No Fuses").grid(
+                    row=1, column=1, sticky=tk.W, padx=5, pady=2)
+            
+            # Third row: Buttons - in their own frame
+            button_frame = ttk.Frame(harness_frame)
+            button_frame.grid(row=2, column=0, columnspan=2, pady=5)
+            
+            # Place Edit and Delete buttons side by side
+            ttk.Button(button_frame, text="Edit", 
+                    command=lambda h=i, sc=string_count: self.edit_harness(sc, h)).grid(
+                    row=0, column=0, padx=5)
+            
+            ttk.Button(button_frame, text="Delete", 
                     command=lambda h=i, sc=string_count: self.delete_harness(sc, h)).grid(
-                    row=0, column=2, padx=5)
-
+                    row=0, column=1, padx=5)
 
     def create_harness_from_selected(self):
         """Create a new harness from the selected strings"""
@@ -1554,10 +1580,15 @@ class WiringConfigurator(tk.Toplevel):
                                 "Please remove them from existing harnesses first.")
             return
         
+        # Calculate recommended fuse size
+        recommended_fuse = self.calculate_recommended_fuse_size(selected_indices)
+
         # Create new harness
         new_harness = HarnessGroup(
             string_indices=selected_indices,
-            cable_size=self.harness_cable_size_var.get()
+            cable_size=self.harness_cable_size_var.get(),
+            fuse_rating_amps=recommended_fuse,
+            use_fuse=len(selected_indices) > 1  # Only use fuses for 2+ strings
         )
         
         # Add to harness groupings
@@ -2590,3 +2621,131 @@ class WiringConfigurator(tk.Toplevel):
         # Update the display and redraw
         self.update_harness_display(string_count)
         self.draw_wiring_layout()
+
+    def edit_harness(self, string_count, harness_idx):
+        """Edit harness properties including fuse configuration"""
+        if string_count not in self.block.wiring_config.harness_groupings or \
+        harness_idx >= len(self.block.wiring_config.harness_groupings[string_count]):
+            return
+            
+        harness = self.block.wiring_config.harness_groupings[string_count][harness_idx]
+        
+        # Create dialog window
+        dialog = tk.Toplevel(self)
+        dialog.title(f"Edit Harness {harness_idx + 1}")
+        dialog.transient(self)
+        dialog.grab_set()
+        
+        # Center dialog
+        x = self.winfo_rootx() + 50
+        y = self.winfo_rooty() + 50
+        dialog.geometry(f"+{x}+{y}")
+        
+        dialog_frame = ttk.Frame(dialog, padding="10")
+        dialog_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Cable size
+        ttk.Label(dialog_frame, text="Cable Size:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+        cable_size_var = tk.StringVar(value=harness.cable_size)
+        cable_combo = ttk.Combobox(dialog_frame, textvariable=cable_size_var, state='readonly')
+        cable_combo['values'] = list(self.AWG_SIZES.keys())
+        cable_combo.grid(row=0, column=1, padx=5, pady=5, sticky=(tk.W, tk.E))
+        
+        # Use fuse option - only for harnesses with multiple strings
+        use_fuse_frame = ttk.Frame(dialog_frame)
+        use_fuse_frame.grid(row=1, column=0, columnspan=2, padx=5, pady=5, sticky=tk.W)
+        
+        # Default use_fuse to True for harnesses with multiple strings
+        has_multiple_strings = len(harness.string_indices) > 1
+        default_use_fuse = getattr(harness, 'use_fuse', has_multiple_strings)
+        
+        use_fuse_var = tk.BooleanVar(value=default_use_fuse)
+        fuse_check = ttk.Checkbutton(use_fuse_frame, text="Use Fuse Protection", 
+                    variable=use_fuse_var)
+        fuse_check.grid(row=0, column=0, sticky=tk.W)
+        
+        # Disable checkbox for single-string harnesses
+        if not has_multiple_strings:
+            fuse_check.configure(state='disabled')
+            use_fuse_var.set(False)
+        
+        # Fuse rating - only enabled if use_fuse is True
+        fuse_frame = ttk.LabelFrame(dialog_frame, text="Fuse Configuration")
+        fuse_frame.grid(row=2, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
+        
+        ttk.Label(fuse_frame, text="Fuse Rating (A):").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+        
+        # Calculate recommended fuse size based on NEC (1.25 × Isc)
+        recommended_fuse = self.calculate_recommended_fuse_size(harness.string_indices)
+        
+        # Use existing fuse rating or recommended
+        current_rating = getattr(harness, 'fuse_rating_amps', recommended_fuse)
+        fuse_rating_var = tk.StringVar(value=str(current_rating))
+        
+        fuse_combo = ttk.Combobox(fuse_frame, textvariable=fuse_rating_var, state='readonly')
+        fuse_combo['values'] = [str(r) for r in self.FUSE_RATINGS if r >= recommended_fuse]
+        fuse_combo.grid(row=0, column=1, padx=5, pady=5, sticky=(tk.W, tk.E))
+        
+        # Recommendation label
+        recommendation_label = ttk.Label(fuse_frame, 
+                                        text=f"NEC minimum: {recommended_fuse}A (1.25 × Isc)")
+        recommendation_label.grid(row=1, column=0, columnspan=2, padx=5, pady=5, sticky=tk.W)
+        
+        # Add fuse quantity info - one per string for harnesses with multiple strings
+        if has_multiple_strings:
+            quantity_label = ttk.Label(fuse_frame, 
+                                    text=f"Fuses required: {len(harness.string_indices)} (one per string)")
+            quantity_label.grid(row=2, column=0, columnspan=2, padx=5, pady=5, sticky=tk.W)
+        
+        # Update fuse frame state based on use_fuse checkbox
+        def update_fuse_frame_state():
+            state = 'normal' if use_fuse_var.get() and has_multiple_strings else 'disabled'
+            for child in fuse_frame.winfo_children():
+                if child.winfo_class() != 'TLabel':  # Don't disable labels
+                    child.configure(state=state)
+        
+        # Call initially and add trace
+        update_fuse_frame_state()
+        use_fuse_var.trace('w', lambda *args: update_fuse_frame_state())
+        
+        # Button frame
+        button_frame = ttk.Frame(dialog_frame)
+        button_frame.grid(row=3, column=0, columnspan=2, pady=10)
+        
+        # Save button
+        def save_changes():
+            # Update harness properties
+            harness.cable_size = cable_size_var.get()
+            harness.use_fuse = use_fuse_var.get() and has_multiple_strings
+            try:
+                harness.fuse_rating_amps = int(fuse_rating_var.get())
+            except ValueError:
+                harness.fuse_rating_amps = recommended_fuse
+            
+            # Update the display
+            self.update_harness_display(string_count)
+            dialog.destroy()
+        
+        ttk.Button(button_frame, text="Save", command=save_changes).grid(
+            row=0, column=0, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).grid(
+            row=0, column=1, padx=5)
+        
+    def calculate_recommended_fuse_size(self, string_indices):
+        """Calculate recommended fuse size based on NEC (1.25 × Isc)"""
+        if not self.block.tracker_template or not self.block.tracker_template.module_spec:
+            return 15  # Default if no module spec available
+        
+        # Get Isc from module spec
+        isc = self.block.tracker_template.module_spec.isc
+        
+        # Calculate NEC minimum (1.25 × Isc)
+        nec_min = isc * 1.25
+        
+        # Round up to the nearest standard fuse size
+        for rating in self.FUSE_RATINGS:
+            if rating >= nec_min:
+                return rating
+        
+        # If it's larger than our highest rating, return the highest
+        return self.FUSE_RATINGS[-1]

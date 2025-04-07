@@ -145,6 +145,16 @@ class BOMGenerator:
                         'category': 'eBOS'
                     }
                 
+                # Count fuses by rating
+                fuse_counts = self._count_fuses_by_rating(block)
+                for rating, count in fuse_counts.items():
+                    block_quantities[f'DC String Fuse {rating}A'] = {
+                        'description': f'DC String Fuse {rating}A',
+                        'quantity': count,
+                        'unit': 'units',
+                        'category': 'eBOS'
+                    }
+                
                 # Split whip cables by polarity
                 whip_cable_size = getattr(block.wiring_config, 'whip_cable_size', '6 AWG')  # Default to 6 AWG if not specified
                 
@@ -692,3 +702,51 @@ class BOMGenerator:
             }
             
         return total_length > 0
+    
+    def _count_fuses_by_rating(self, block: BlockConfig) -> Dict[int, int]:
+        """
+        Count fuses by rating
+        
+        Args:
+            block: Block configuration
+            
+        Returns:
+            Dictionary mapping fuse rating to count
+        """
+        fuse_counts = {}
+        
+        if not block.wiring_config or block.wiring_config.wiring_type != WiringType.HARNESS:
+            return fuse_counts
+            
+        # Check all string counts
+        for string_count, harness_groups in getattr(block.wiring_config, 'harness_groupings', {}).items():
+            for harness in harness_groups:
+                # Only count fuses if use_fuse is True and there's more than one string
+                use_fuse = getattr(harness, 'use_fuse', len(harness.string_indices) > 1)
+                if use_fuse and len(harness.string_indices) > 1:
+                    rating = getattr(harness, 'fuse_rating_amps', 15)
+                    
+                    # Count one fuse per string in the harness (positive side only)
+                    num_strings = len(harness.string_indices)
+                    fuse_counts[rating] = fuse_counts.get(rating, 0) + num_strings
+        
+        # Check for trackers without custom harness configuration
+        if not hasattr(block.wiring_config, 'harness_groupings') or not block.wiring_config.harness_groupings:
+            # Calculate default fuse rating
+            default_rating = 15
+            if block.tracker_template and block.tracker_template.module_spec:
+                isc = block.tracker_template.module_spec.isc
+                nec_min = isc * 1.25
+                for rating in [5, 10, 15, 20, 25, 30, 35, 40, 45]:
+                    if rating >= nec_min:
+                        default_rating = rating
+                        break
+            
+            # Count trackers with multiple strings
+            for pos in block.tracker_positions:
+                string_count = len(pos.strings)
+                if string_count > 1:  # Only count for 2+ strings
+                    # Add one fuse per string (positive side only)
+                    fuse_counts[default_rating] = fuse_counts.get(default_rating, 0) + string_count
+        
+        return fuse_counts
