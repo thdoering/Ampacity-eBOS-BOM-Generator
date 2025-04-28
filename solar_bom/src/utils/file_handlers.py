@@ -217,3 +217,14 @@ def validate_file_type(filepath: str, allowed_extensions: list) -> bool:
     """
     ext = get_file_extension(filepath)
     return ext and ext.lower() in [x.lower() for x in allowed_extensions]
+
+def get_app_base_path():
+    """Get base path for the application, works in both script and frozen modes"""
+    import sys
+    import os
+    if getattr(sys, 'frozen', False):
+        # Running as compiled exe
+        return os.path.dirname(sys.executable)
+    else:
+        # Running as script
+        return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
