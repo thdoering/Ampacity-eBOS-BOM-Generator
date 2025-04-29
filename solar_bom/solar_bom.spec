@@ -1,4 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
+import sys
+from version import get_version  # Import the version
 
 block_cipher = None
 
@@ -31,7 +33,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='Solar eBOS BOM Generator',
+    name=f'Solar eBOS BOM Generator v{get_version()}',  # Include version in name
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

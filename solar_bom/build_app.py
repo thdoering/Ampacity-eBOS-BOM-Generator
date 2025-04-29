@@ -2,6 +2,7 @@ import os
 import sys
 import shutil
 from pathlib import Path
+from version import get_version
 
 # Add necessary directories to path
 def setup_environment():
@@ -27,6 +28,9 @@ def setup_environment():
             shutil.copy(source, dest)
     
     return base_dir
+
+# Print version info at startup
+print(f"Solar eBOS BOM Generator {get_version()}")
 
 # Main function
 if __name__ == "__main__":

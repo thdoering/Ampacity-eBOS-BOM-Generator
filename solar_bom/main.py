@@ -8,14 +8,15 @@ from src.ui.block_configurator import BlockConfigurator
 from src.ui.inverter_manager import InverterManager
 from src.ui.bom_manager import BOMManager
 from src.ui.project_dashboard import ProjectDashboard
-
+from version import get_version, get_version_info
 
 class SolarBOMApplication:
     """Main application class for Solar eBOS BOM Generator"""
     
     def __init__(self, root):
         self.root = root
-        self.root.title("Solar eBOS BOM Generator")
+        version = get_version()
+        self.root.title("Solar eBOS BOM Generator v{version}")
         
         # Current project context
         self.current_project = None
@@ -95,7 +96,7 @@ class SolarBOMApplication:
         # Create block configurator tab first (so we can reference it later)
         block_configurator = BlockConfigurator(block_frame, current_project=self.current_project)
         block_configurator.pack(fill='both', expand=True, padx=5, pady=5)
-        
+
         # Function to update BOM manager with current blocks
         def update_bom_blocks():
             """Update BOM manager with current blocks and save to project"""
@@ -327,7 +328,18 @@ class SolarBOMApplication:
                 self.load_project(project)
             else:
                 messagebox.showerror("Error", f"Failed to create project '{name}'")
-    
+
+    def show_about(self):
+        """Show about dialog with version info"""
+        from version import get_version_info
+        messagebox.showinfo(
+            "About Solar eBOS BOM Generator",
+            f"Solar eBOS BOM Generator\n\n"
+            f"{get_version_info()}\n\n"
+            f"A tool for designing solar project layouts and generating accurate "
+            f"bills of material for electrical balance of system components."
+        )
+
     def save_project(self):
         """Save the current project"""
         if not self.current_project:
