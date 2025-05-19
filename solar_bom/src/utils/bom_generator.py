@@ -432,6 +432,12 @@ class BOMGenerator:
             writer.close()
             writer = None  # Set to None after closing to avoid double close in finally block
             
+            # Open the Excel file (Windows specific)
+            try:
+                os.startfile(filepath)
+            except Exception as e:
+                print(f"File was saved but could not be opened automatically: {str(e)}")
+
             return True
         except Exception as e:
             print(f"Error exporting BOM: {str(e)}")
