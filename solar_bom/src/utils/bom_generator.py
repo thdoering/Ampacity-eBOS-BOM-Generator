@@ -756,15 +756,18 @@ class BOMGenerator:
             
         # Check all string counts
         for string_count, harness_groups in getattr(block.wiring_config, 'harness_groupings', {}).items():
+            # Count trackers with this string count - this is the key fix
+            tracker_count = sum(1 for pos in block.tracker_positions if len(pos.strings) == string_count)
+            
             for harness in harness_groups:
                 # Only count fuses if use_fuse is True and there's more than one string
                 use_fuse = getattr(harness, 'use_fuse', len(harness.string_indices) > 1)
                 if use_fuse and len(harness.string_indices) > 1:
                     rating = getattr(harness, 'fuse_rating_amps', 15)
                     
-                    # Count one fuse per string in the harness (positive side only)
+                    # Count one fuse per string in the harness, multiplied by tracker count
                     num_strings = len(harness.string_indices)
-                    fuse_counts[rating] = fuse_counts.get(rating, 0) + num_strings
+                    fuse_counts[rating] = fuse_counts.get(rating, 0) + (num_strings * tracker_count)
         
         # Check for trackers without custom harness configuration
         if not hasattr(block.wiring_config, 'harness_groupings') or not block.wiring_config.harness_groupings:
