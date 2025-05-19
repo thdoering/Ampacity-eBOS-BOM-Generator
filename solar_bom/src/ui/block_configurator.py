@@ -482,6 +482,12 @@ class BlockConfigurator(ttk.Frame):
                 
         block_id = self.block_listbox.get(selection[0])
         self.current_block = block_id
+
+        # Add this check to preserve realistic routes if they exist
+        if block_id in self.blocks and hasattr(self.blocks[block_id], 'wiring_config') and self.blocks[block_id].wiring_config:
+            # If the block has existing realistic routes, keep a copy
+            cable_routes = getattr(self.blocks[block_id], 'block_realistic_routes', None)
+            wiring_routes = self.blocks[block_id].wiring_config.cable_routes
         
         # Add error handling to check if block exists
         if block_id not in self.blocks:
@@ -502,6 +508,13 @@ class BlockConfigurator(ttk.Frame):
         self.updating_ui = False
         self.calculate_gcr()  # Update the GCR label
         
+        # After all other initialization, just before draw_block(), restore the routes if needed
+        if block_id in self.blocks and hasattr(self.blocks[block_id], 'wiring_config') and self.blocks[block_id].wiring_config:
+            if cable_routes and not hasattr(self.blocks[block_id], 'block_realistic_routes'):
+                self.blocks[block_id].block_realistic_routes = cable_routes
+            if wiring_routes and not self.blocks[block_id].wiring_config.cable_routes:
+                self.blocks[block_id].wiring_config.cable_routes = wiring_routes
+
         # Update canvas
         self.draw_block()
         

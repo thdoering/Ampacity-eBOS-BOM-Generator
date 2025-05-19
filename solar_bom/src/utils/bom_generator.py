@@ -209,15 +209,45 @@ class BOMGenerator:
         
         if not block.wiring_config or block.wiring_config.wiring_type != WiringType.HARNESS:
             return harness_counts
-            
-        # Count strings per tracker
-        for pos in block.tracker_positions:
-            if pos.template:
-                string_count = len(pos.strings)
-                if string_count not in harness_counts:
-                    harness_counts[string_count] = 0
-                harness_counts[string_count] += 1
+        
+        # Check if we have custom harness groupings
+        has_custom_groupings = (hasattr(block.wiring_config, 'harness_groupings') and 
+                            block.wiring_config.harness_groupings)
+        
+        if has_custom_groupings:
+            # Count custom harness groups
+            for string_count, harness_groups in block.wiring_config.harness_groupings.items():
+                # Count trackers with this string count
+                tracker_count = sum(1 for pos in block.tracker_positions if len(pos.strings) == string_count)
                 
+                # For each harness group configuration, multiply by number of trackers
+                for harness in harness_groups:
+                    # The key is the number of strings in this harness group
+                    actual_string_count = len(harness.string_indices)
+                    if actual_string_count not in harness_counts:
+                        harness_counts[actual_string_count] = 0
+                    harness_counts[actual_string_count] += tracker_count
+                
+                # Check for unconfigured strings
+                all_configured_indices = set()
+                for harness in harness_groups:
+                    all_configured_indices.update(harness.string_indices)
+                
+                unconfigured_strings = string_count - len(all_configured_indices)
+                if unconfigured_strings > 0:
+                    # Add default harness for unconfigured strings
+                    if unconfigured_strings not in harness_counts:
+                        harness_counts[unconfigured_strings] = 0
+                    harness_counts[unconfigured_strings] += tracker_count
+        else:
+            # Use the default behavior - one harness per tracker
+            for pos in block.tracker_positions:
+                if pos.template:
+                    string_count = len(pos.strings)
+                    if string_count not in harness_counts:
+                        harness_counts[string_count] = 0
+                    harness_counts[string_count] += 1
+        
         return harness_counts
     
     def generate_summary_data(self, quantities: Dict[str, Dict[str, Any]]) -> pd.DataFrame:

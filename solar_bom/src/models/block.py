@@ -130,18 +130,24 @@ class BlockConfig:
         """
         if not self.wiring_config:
             return {}
-            
+                
         lengths = {}
 
-        # Always use block_realistic_routes if available
-        if hasattr(self, 'block_realistic_routes') and self.block_realistic_routes:
-            # Use block configurator's realistic routes
-            cable_routes = self.block_realistic_routes
-        else:
-            return lengths
+        # Get a MERGED set of cable routes from both realistic and regular routes
+        cable_routes = {}
+        realistic_routes = getattr(self, 'block_realistic_routes', {}) or {}
+        wiring_routes = getattr(self.wiring_config, 'cable_routes', {}) or {}
         
+        # Merge both sets of routes, with realistic routes taking precedence
+        cable_routes.update(wiring_routes)
+        cable_routes.update(realistic_routes)
+        
+        # If still no routes, return empty dictionary
+        if not cable_routes:
+            return lengths
+
         if self.wiring_config.wiring_type == WiringType.HOMERUN:
-            # Calculate individual string cable lengths by polarity
+            # For homerun, we track string cable length - split by polarity
             pos_string_cable_length = 0
             neg_string_cable_length = 0
             pos_whip_cable_length = 0
@@ -160,9 +166,9 @@ class BlockConfig:
                     pos_string_cable_length += route_length
                 elif "neg_src" in route_id:
                     neg_string_cable_length += route_length
-                elif "pos_dev" in route_id:
+                elif "pos_dev" in route_id or "pos_main" in route_id:
                     pos_whip_cable_length += route_length
-                elif "neg_dev" in route_id:
+                elif "neg_dev" in route_id or "neg_main" in route_id:
                     neg_whip_cable_length += route_length
             
             lengths["string_cable_positive"] = pos_string_cable_length
@@ -187,18 +193,19 @@ class BlockConfig:
                     dy = points[i+1][1] - points[i][1]
                     route_length += (dx**2 + dy**2)**0.5
                 
-                # Determine route type and polarity
-                if "pos_node" in route_id:
+                # Determine route type and polarity - with more flexible matching
+                if "pos_src" in route_id or "pos_node" in route_id:
                     pos_string_cable_length += route_length
-                elif "neg_node" in route_id:
+                elif "neg_src" in route_id or "neg_node" in route_id:
                     neg_string_cable_length += route_length
                 elif "pos_harness" in route_id:
                     pos_harness_cable_length += route_length
                 elif "neg_harness" in route_id:
                     neg_harness_cable_length += route_length
-                elif "pos_main" in route_id:
+                # More flexible whip route pattern matching
+                elif "pos_main" in route_id or "pos_dev" in route_id or ("whip_pos" in route_id):
                     pos_whip_cable_length += route_length
-                elif "neg_main" in route_id:
+                elif "neg_main" in route_id or "neg_dev" in route_id or ("whip_neg" in route_id):
                     neg_whip_cable_length += route_length
             
             lengths["string_cable_positive"] = pos_string_cable_length
@@ -280,6 +287,22 @@ class BlockConfig:
                 'realistic_cable_routes': getattr(self.wiring_config, 'realistic_cable_routes', {}),
                 'custom_whip_points': getattr(self.wiring_config, 'custom_whip_points', {})
             }
+
+            # Line to include harness_groupings:
+            if hasattr(self.wiring_config, 'harness_groupings'):
+                # Need special handling since each harness contains objects
+                harness_groups_data = {}
+                for string_count, harness_list in self.wiring_config.harness_groupings.items():
+                    harness_groups_data[string_count] = [
+                        {
+                            'string_indices': harness.string_indices,
+                            'cable_size': getattr(harness, 'cable_size', "8 AWG"),
+                            'fuse_rating_amps': getattr(harness, 'fuse_rating_amps', 15),
+                            'use_fuse': getattr(harness, 'use_fuse', True)
+                        }
+                        for harness in harness_list
+                    ]
+                wiring_data['harness_groupings'] = harness_groups_data
             
             # Serialize collection points
             for point in self.wiring_config.positive_collection_points:
@@ -391,6 +414,25 @@ class BlockConfig:
                 )
                 negative_points.append(point)
             
+            harness_groupings = {}
+            if 'harness_groupings' in wiring_data:
+                from ..models.block import HarnessGroup  # Import at the top of the function if not already there
+                
+                for string_count_str, harness_list_data in wiring_data['harness_groupings'].items():
+                    string_count = int(string_count_str)
+                    harness_list = []
+                    
+                    for harness_data in harness_list_data:
+                        harness = HarnessGroup(
+                            string_indices=harness_data['string_indices'],
+                            cable_size=harness_data.get('cable_size', "8 AWG"),
+                            fuse_rating_amps=harness_data.get('fuse_rating_amps', 15),
+                            use_fuse=harness_data.get('use_fuse', True)
+                        )
+                        harness_list.append(harness)
+                        
+                    harness_groupings[string_count] = harness_list
+
             # Create wiring config
             block.wiring_config = WiringConfig(
                 wiring_type=WiringType(wiring_data['wiring_type']),
@@ -402,7 +444,8 @@ class BlockConfig:
                 string_cable_size=wiring_data.get('string_cable_size', "10 AWG"),
                 harness_cable_size=wiring_data.get('harness_cable_size', "8 AWG"),
                 whip_cable_size=wiring_data.get('whip_cable_size', "8 AWG"),
-                custom_whip_points=wiring_data.get('custom_whip_points', {})
+                custom_whip_points=wiring_data.get('custom_whip_points', {}),
+                harness_groupings=harness_groupings
             )
         
         return block
