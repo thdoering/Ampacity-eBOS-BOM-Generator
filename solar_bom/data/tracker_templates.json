@@ -218,5 +218,93 @@
       "isc": 14.35,
       "max_system_voltage": 1500
     }
+  },
+  "ATI-104-590W": {
+    "module_orientation": "Portrait",
+    "modules_per_string": 26,
+    "strings_per_tracker": 4,
+    "module_spacing_m": 0.01,
+    "motor_gap_m": 1.0,
+    "module_spec": {
+      "manufacturer": "VSUN",
+      "model": "VSUN590N-144BMH-DG",
+      "type": "Mono PERC",
+      "length_mm": 2278.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 590.0,
+      "vmp": 44.5,
+      "imp": 13.26,
+      "voc": 52.48,
+      "isc": 13.93,
+      "max_system_voltage": 1500
+    }
+  },
+  "ATI-75-595W": {
+    "module_orientation": "Portrait",
+    "modules_per_string": 25,
+    "strings_per_tracker": 3,
+    "module_spacing_m": 0.01,
+    "motor_gap_m": 1.0,
+    "module_spec": {
+      "manufacturer": "JA Solar",
+      "model": "JAM72D40",
+      "type": "Mono PERC",
+      "length_mm": 2278.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 595.0,
+      "vmp": 44.64,
+      "imp": 13.33,
+      "voc": 52.58,
+      "isc": 13.99,
+      "max_system_voltage": 1500
+    }
+  },
+  "ATI-100-595W": {
+    "module_orientation": "Portrait",
+    "modules_per_string": 25,
+    "strings_per_tracker": 4,
+    "module_spacing_m": 0.01,
+    "motor_gap_m": 1.0,
+    "module_spec": {
+      "manufacturer": "JA Solar",
+      "model": "JAM72D40",
+      "type": "Mono PERC",
+      "length_mm": 2278.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 595.0,
+      "vmp": 44.64,
+      "imp": 13.33,
+      "voc": 52.58,
+      "isc": 13.99,
+      "max_system_voltage": 1500
+    }
+  },
+  "ATI-50-595W": {
+    "module_orientation": "Portrait",
+    "modules_per_string": 25,
+    "strings_per_tracker": 2,
+    "module_spacing_m": 0.01,
+    "motor_gap_m": 1.0,
+    "module_spec": {
+      "manufacturer": "JA Solar",
+      "model": "JAM72D40",
+      "type": "Mono PERC",
+      "length_mm": 2278.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 595.0,
+      "vmp": 44.64,
+      "imp": 13.33,
+      "voc": 52.58,
+      "isc": 13.99,
+      "max_system_voltage": 1500
+    }
   }
 }
