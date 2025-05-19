@@ -1428,10 +1428,10 @@ class BlockConfigurator(ttk.Frame):
             number = int(match.group(2))  # The number part
             
             # Try incrementing the number until we find an unused ID
-            new_id = f"{base_name}{number + 1}"
+            new_id = f"{base_name}{number + 1:02d}"
             while new_id in self.blocks:
                 number += 1
-                new_id = f"{base_name}{number}"
+                new_id = f"{base_name}{number:02d}"
         else:
             # If no numeric suffix, use the old method
             base_id = f"{source_id}_copy"
