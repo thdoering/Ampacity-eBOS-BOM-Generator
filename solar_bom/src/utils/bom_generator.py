@@ -186,12 +186,6 @@ class BOMGenerator:
             original_quantities[block_id] = {k: v.copy() for k, v in block_quantities.items() if 'Whip Cable' in k and v['unit'] == 'feet'}
         
         quantities = self.analyze_wire_segments(quantities)
-        
-        # Restore total whip cable entries that might have been overwritten
-        for block_id, original_block_quantities in original_quantities.items():
-            if block_id in quantities:
-                for item_key, item_details in original_block_quantities.items():
-                    quantities[block_id][item_key] = item_details
 
         return quantities
         
@@ -686,7 +680,7 @@ class BOMGenerator:
         return quantities
 
     def _add_segment_analysis(self, block_quantities, segments, cable_size, 
-                       prefix, length_increment=5):
+                   prefix, length_increment=5):
         """Add segment analysis for a specific cable type"""
         
         if not segments:
@@ -695,8 +689,11 @@ class BOMGenerator:
         # Add waste factor
         segments = [s * self.CABLE_WASTE_FACTOR for s in segments]
         
+        # Always use 5ft increment for whip cables, otherwise use the passed-in increment
+        actual_increment = 5 if "Whip Cable" in prefix else length_increment
+        
         # Round up to nearest increment
-        rounded_segments = [length_increment * ((s + length_increment - 0.1) // length_increment + 1) 
+        rounded_segments = [actual_increment * ((s + actual_increment - 0.1) // actual_increment + 1) 
                         for s in segments]
         
         # Count segments by length
@@ -736,10 +733,15 @@ class BOMGenerator:
         
         # Only add total if we found segments
         if total_length > 0:
+            # For whip cables, ensure the total is an integer (no decimal places)
+            # This maintains the 5ft increment pattern
+            if "Whip Cable" in prefix:
+                total_length = int(total_length)
+            
             total_key = f"{prefix} ({cable_size})"
             block_quantities[total_key] = {
                 'description': f'DC {prefix} {cable_size}',
-                'quantity': round(total_length, 1),
+                'quantity': total_length if "Whip Cable" in prefix else round(total_length, 1),
                 'unit': 'feet',
                 'category': 'eBOS'
             }
