@@ -260,7 +260,6 @@ class BOMGenerator:
         Returns:
             DataFrame with summary data
         """
-
         # Initialize dictionaries to track totals by component, description, and category
         component_totals = {}
         
@@ -272,6 +271,10 @@ class BOMGenerator:
                 unit = details['unit']
                 category = details['category']
                 
+                # Skip tracker entries (structural category with "Tracker" in component type)
+                if category == 'Structural' and 'Tracker' in component_type:
+                    continue
+                    
                 key = (component_type, description, unit, category)
                 if key not in component_totals:
                     component_totals[key] = 0
@@ -312,6 +315,10 @@ class BOMGenerator:
                 unit = details['unit']
                 category = details['category']
                 
+                # Skip tracker entries (structural category with "Tracker" in component type)
+                if category == 'Structural' and 'Tracker' in component_type:
+                    continue
+                    
                 detailed_data.append({
                     'Block': block_id,
                     'Category': category,
