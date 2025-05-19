@@ -419,6 +419,13 @@ class WiringConfigurator(tk.Toplevel):
                 hasattr(self.block.wiring_config, 'custom_whip_points')):
                 custom_whip_points = self.block.wiring_config.custom_whip_points
 
+            # Get harness groupings from the existing configuration
+            harness_groupings = {}
+            if (hasattr(self.block, 'wiring_config') and 
+                self.block.wiring_config and 
+                hasattr(self.block.wiring_config, 'harness_groupings')):
+                harness_groupings = self.block.wiring_config.harness_groupings
+
             # Create the WiringConfig instance
             wiring_config = WiringConfig(
                 wiring_type=wiring_type,
@@ -429,7 +436,8 @@ class WiringConfigurator(tk.Toplevel):
                 string_cable_size=self.string_cable_size_var.get(),
                 harness_cable_size=self.harness_cable_size_var.get(),
                 whip_cable_size=self.whip_cable_size_var.get(),
-                custom_whip_points=custom_whip_points
+                custom_whip_points=custom_whip_points,
+                harness_groupings=harness_groupings
                 )
             
             # Store the configuration in the block
