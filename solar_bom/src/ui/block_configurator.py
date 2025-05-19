@@ -417,8 +417,8 @@ class BlockConfigurator(ttk.Frame):
             # Add to blocks dictionary
             self.blocks[block_id] = block
             
-            # Update listbox
-            self.block_listbox.insert(tk.END, block_id)
+            # Update listbox with sorted blocks
+            self.update_block_listbox()
             
             # Update the row spacing variable in the UI without triggering callbacks
             self.updating_ui = True
@@ -462,10 +462,8 @@ class BlockConfigurator(ttk.Frame):
             # Remove from dictionary
             del self.blocks[self.current_block]
             
-            # Update listbox
-            selection = self.block_listbox.curselection()
-            if selection:
-                self.block_listbox.delete(selection[0])
+            # Update listbox with sorted blocks
+            self.update_block_listbox()
                 
             # Clear current block
             self.current_block = None
@@ -1454,8 +1452,8 @@ class BlockConfigurator(ttk.Frame):
         # Save state for undo
         self._push_state("Copy block")
         
-        # Update listbox
-        self.block_listbox.insert(tk.END, new_id)
+        # Update listbox with sorted blocks
+        self.update_block_listbox()
         
         # Select the new block
         self.block_listbox.selection_clear(0, tk.END)
@@ -1507,11 +1505,11 @@ class BlockConfigurator(ttk.Frame):
         # Add back to dictionary with new ID
         self.blocks[new_id] = block
         
-        # Update the listbox - find the exact item that matches the old ID
+        # Update listbox with sorted blocks
+        self.update_block_listbox()
+        # Select the renamed block
         for i in range(self.block_listbox.size()):
-            if self.block_listbox.get(i) == old_id:
-                self.block_listbox.delete(i)
-                self.block_listbox.insert(i, new_id)
+            if self.block_listbox.get(i) == new_id:
                 self.block_listbox.selection_set(i)
                 break
         
@@ -1881,3 +1879,20 @@ class BlockConfigurator(ttk.Frame):
         
         # Redraw with new device position
         self.draw_block()
+
+    def update_block_listbox(self):
+        """Update the block listbox with sorted block IDs"""
+        self.block_listbox.delete(0, tk.END)
+        
+        # Sort blocks by numerical value
+        def get_block_number(block_id):
+            import re
+            match = re.search(r'(\d+)$', block_id)
+            if match:
+                return int(match.group(1))
+            return 0  # Default to 0 if no number found
+        
+        sorted_block_ids = sorted(self.blocks.keys(), key=get_block_number)
+        
+        for block_id in sorted_block_ids:
+            self.block_listbox.insert(tk.END, block_id)
