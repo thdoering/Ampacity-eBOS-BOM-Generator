@@ -208,10 +208,21 @@ class WiringConfigurator(tk.Toplevel):
         self.whip_menu.add_command(label="Reset to Default", command=self.reset_selected_whips)
         self.canvas.bind('<Button-3>', self.show_context_menu)
         
-        # Add a reset button to the controls
-        ttk.Button(controls_frame, text="Reset All Whip Points", 
-                command=self.reset_all_whips).grid(
-                row=4, column=0, columnspan=2, padx=5, pady=5)
+        # Add routing controls
+        routing_frame = ttk.Frame(controls_frame)
+        routing_frame.grid(row=4, column=0, columnspan=2, padx=5, pady=5)
+
+        ttk.Button(routing_frame, text="Reset All Whip Points", 
+                command=self.reset_all_whips).grid(row=0, column=0, padx=5)
+
+        # Add realistic/conceptual toggle
+        self.routing_mode_var = tk.StringVar(value="realistic")
+        ttk.Radiobutton(routing_frame, text="Realistic Routing", 
+                    variable=self.routing_mode_var, value="realistic",
+                    command=self.draw_wiring_layout).grid(row=0, column=1, padx=5)
+        ttk.Radiobutton(routing_frame, text="Conceptual Routing", 
+                    variable=self.routing_mode_var, value="conceptual",
+                    command=self.draw_wiring_layout).grid(row=0, column=2, padx=5)
         
         # Bottom buttons
         button_frame = ttk.Frame(main_container)
