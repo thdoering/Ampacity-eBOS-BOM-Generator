@@ -1998,9 +1998,18 @@ class WiringConfigurator(tk.Toplevel):
             y = 20 + self.pan_y + ny * scale
             self.canvas.create_oval(x-3, y-3, x+3, y+3, fill='blue', outline='darkblue')
         
-        # Draw node connections - bottom to top for north device
+        # Determine device position relative to tracker
+        device_is_north = self.block.device_y < pos.y
+
+        # Draw node connections - order depends on device position
         # Positive harness
-        sorted_pos_nodes = sorted(pos_nodes, key=lambda p: p[1], reverse=True)  # Sort by y coordinate
+        if device_is_north:
+            # Device north of tracker: connect from south to north (current logic)
+            sorted_pos_nodes = sorted(pos_nodes, key=lambda p: p[1], reverse=True)
+        else:
+            # Device south of tracker: connect from north to south (reversed)
+            sorted_pos_nodes = sorted(pos_nodes, key=lambda p: p[1], reverse=False)
+
         for i in range(len(sorted_pos_nodes)):
             start = sorted_pos_nodes[i]
             if i < len(sorted_pos_nodes) - 1:
@@ -2039,7 +2048,13 @@ class WiringConfigurator(tk.Toplevel):
                                         fill='red', font=('Arial', 8))
 
         # Negative harness
-        sorted_neg_nodes = sorted(neg_nodes, key=lambda p: p[1], reverse=True)  # Sort by y coordinate
+        if device_is_north:
+            # Device north of tracker: connect from south to north (current logic)
+            sorted_neg_nodes = sorted(neg_nodes, key=lambda p: p[1], reverse=True)
+        else:
+            # Device south of tracker: connect from north to south (reversed)
+            sorted_neg_nodes = sorted(neg_nodes, key=lambda p: p[1], reverse=False)
+
         for i in range(len(sorted_neg_nodes)):
             start = sorted_neg_nodes[i]
             if i < len(sorted_neg_nodes) - 1:
@@ -2207,10 +2222,18 @@ class WiringConfigurator(tk.Toplevel):
             if not harness_neg_whip and neg_whip:
                 harness_neg_whip = (neg_whip[0], neg_whip[1] + harness_idx * vertical_spacing)
             
+            # Determine device position relative to tracker
+            device_is_north = self.block.device_y < pos.y
+
             # Draw harness connections
             if pos_nodes:
-                # Sort nodes by y-coordinate
-                sorted_pos_nodes = sorted(pos_nodes, key=lambda p: p[1], reverse=True)
+                # Sort nodes by y-coordinate based on device position
+                if device_is_north:
+                    # Device north of tracker: connect from south to north
+                    sorted_pos_nodes = sorted(pos_nodes, key=lambda p: p[1], reverse=True)
+                else:
+                    # Device south of tracker: connect from north to south
+                    sorted_pos_nodes = sorted(pos_nodes, key=lambda p: p[1], reverse=False)
                 
                 # Connect nodes in sequence
                 for i in range(len(sorted_pos_nodes)):
@@ -2257,7 +2280,12 @@ class WiringConfigurator(tk.Toplevel):
             
             if neg_nodes:
                 # Same for negative nodes
-                sorted_neg_nodes = sorted(neg_nodes, key=lambda p: p[1], reverse=True)
+                if device_is_north:
+                    # Device north of tracker: connect from south to north
+                    sorted_neg_nodes = sorted(neg_nodes, key=lambda p: p[1], reverse=True)
+                else:
+                    # Device south of tracker: connect from north to south
+                    sorted_neg_nodes = sorted(neg_nodes, key=lambda p: p[1], reverse=False)
                 
                 for i in range(len(sorted_neg_nodes)):
                     start = sorted_neg_nodes[i]
