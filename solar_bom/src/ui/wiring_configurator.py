@@ -282,11 +282,8 @@ class WiringConfigurator(tk.Toplevel):
         self.draw_device()
         self.draw_device_destination_points()
 
-        # Draw routes if wiring type is selected
-        if self.wiring_type_var.get() == WiringType.HOMERUN.value:
-            self.draw_string_homerun_wiring()
-        else:  # Wire Harness configuration
-            self.draw_wire_harness_wiring()
+        # Draw routes based on current routing mode
+        self.draw_current_routes()
                         
     def draw_collection_points(self, pos: TrackerPosition, x: float, y: float, scale: float):
         """Draw collection points for a tracker position"""
@@ -384,15 +381,17 @@ class WiringConfigurator(tk.Toplevel):
             strings_per_collection = {}
             cable_routes = {}
             
-            # Process each tracker position to capture collection points and routes
+            # Get routes based on current routing mode
+            cable_routes = self.get_current_routes()
+
+            # Process each tracker position to capture collection points
             for idx, pos in enumerate(self.block.tracker_positions):
                 if not pos.template:
                     continue
                     
                 # Get whip points for this tracker
-                tracker_idx = self.block.tracker_positions.index(pos)
+                tracker_idx = idx
                 pos_whip = self.get_whip_position(str(tracker_idx), 'positive')
-                tracker_idx = self.block.tracker_positions.index(pos)
                 neg_whip = self.get_whip_position(str(tracker_idx), 'negative')
                 
                 # Add collection points
@@ -416,13 +415,6 @@ class WiringConfigurator(tk.Toplevel):
                         current_rating=self.calculate_current_for_segment('whip', num_strings=len(pos.strings))
                     )
                     negative_collection_points.append(collection_point)
-                
-                # Add routes based on wiring type - these methods should populate the cable_routes dict
-                for string_idx, string in enumerate(pos.strings):
-                    if wiring_type == WiringType.HOMERUN:
-                        self.add_homerun_routes(cable_routes, pos, string, idx, string_idx, pos_whip, neg_whip)
-                    else:
-                        self.add_harness_routes(cable_routes, pos, string, idx, string_idx, pos_whip, neg_whip)
                         
             custom_whip_points = {}
             if (hasattr(self.block, 'wiring_config') and 
@@ -2796,3 +2788,260 @@ class WiringConfigurator(tk.Toplevel):
         
         # If it's larger than our highest rating, return the highest
         return self.FUSE_RATINGS[-1]
+    
+    def calculate_realistic_routes(self):
+        """Calculate realistic routes that follow tracker centerlines"""
+        realistic_routes = {}
+        
+        if self.wiring_type_var.get() == WiringType.HOMERUN.value:
+            return self.calculate_realistic_homerun_routes()
+        else:
+            return self.calculate_realistic_harness_routes()
+
+    def calculate_realistic_homerun_routes(self):
+        """Calculate realistic routes for homerun wiring"""
+        realistic_routes = {}
+        
+        for tracker_idx, pos in enumerate(self.block.tracker_positions):
+            tracker_id = str(tracker_idx)
+            
+            # Get tracker dimensions
+            dims = pos.template.get_physical_dimensions()
+            tracker_width = dims[1]   # Width in meters (east-west direction)
+            tracker_center_x = pos.x + (tracker_width / 2)
+            
+            # Get whip points and device destinations
+            pos_whip = self.get_whip_position(tracker_id, 'positive')
+            neg_whip = self.get_whip_position(tracker_id, 'negative')
+            pos_dest, neg_dest = self.get_device_destination_points()
+            
+            if not pos_whip or not neg_whip or not pos_dest or not neg_dest:
+                continue
+            
+            # For homerun: each string routes individually to device
+            for string_idx, string in enumerate(pos.strings):
+                source_pos_y = pos.y + string.positive_source_y
+                source_neg_y = pos.y + string.negative_source_y
+                
+                # String to whip routes
+                pos_route = [
+                    (tracker_center_x, source_pos_y),
+                    (tracker_center_x, pos_whip[1]),
+                    pos_whip
+                ]
+                realistic_routes[f"pos_src_{tracker_idx}_{string_idx}"] = pos_route
+                
+                neg_route = [
+                    (tracker_center_x, source_neg_y),
+                    (tracker_center_x, neg_whip[1]),
+                    neg_whip
+                ]
+                realistic_routes[f"neg_src_{tracker_idx}_{string_idx}"] = neg_route
+                
+                # Individual whip to device routes for each string
+                center_offset = 0.1
+                pos_adjusted_dest = (pos_dest[0] - center_offset, pos_dest[1])
+                neg_adjusted_dest = (neg_dest[0] + center_offset, neg_dest[1])
+                
+                pos_whip_route = [
+                    pos_whip,
+                    (pos_adjusted_dest[0], pos_whip[1]),
+                    pos_adjusted_dest
+                ]
+                realistic_routes[f"pos_dev_{tracker_idx}_{string_idx}"] = pos_whip_route
+                
+                neg_whip_route = [
+                    neg_whip,
+                    (neg_adjusted_dest[0], neg_whip[1]),
+                    neg_adjusted_dest
+                ]
+                realistic_routes[f"neg_dev_{tracker_idx}_{string_idx}"] = neg_whip_route
+        
+        return realistic_routes
+
+    def calculate_realistic_harness_routes(self):
+        """Calculate realistic routes for harness wiring"""
+        realistic_routes = {}
+        
+        for tracker_idx, pos in enumerate(self.block.tracker_positions):
+            tracker_id = str(tracker_idx)
+            
+            # Get tracker dimensions
+            dims = pos.template.get_physical_dimensions()
+            tracker_width = dims[1]
+            tracker_center_x = pos.x + (tracker_width / 2)
+            
+            # Get whip points and device destinations
+            pos_whip = self.get_whip_position(tracker_id, 'positive')
+            neg_whip = self.get_whip_position(tracker_id, 'negative')
+            pos_dest, neg_dest = self.get_device_destination_points()
+            
+            if not pos_whip or not neg_whip or not pos_dest or not neg_dest:
+                continue
+            
+            # For harness: strings route to collection points, then combined to device
+            for string_idx, string in enumerate(pos.strings):
+                source_pos_y = pos.y + string.positive_source_y
+                source_neg_y = pos.y + string.negative_source_y
+                
+                # String to whip routes (combined at whip point)
+                pos_route = [
+                    (tracker_center_x, source_pos_y),
+                    (tracker_center_x, pos_whip[1]),
+                    pos_whip
+                ]
+                realistic_routes[f"pos_src_{tracker_idx}_{string_idx}"] = pos_route
+                
+                neg_route = [
+                    (tracker_center_x, source_neg_y),
+                    (tracker_center_x, neg_whip[1]),
+                    neg_whip
+                ]
+                realistic_routes[f"neg_src_{tracker_idx}_{string_idx}"] = neg_route
+            
+            # Single whip to device route per tracker (combines all strings)
+            center_offset = 0.1
+            pos_adjusted_dest = (pos_dest[0] - center_offset, pos_dest[1])
+            neg_adjusted_dest = (neg_dest[0] + center_offset, neg_dest[1])
+            
+            pos_main_route = [
+                pos_whip,
+                (pos_adjusted_dest[0], pos_whip[1]),
+                pos_adjusted_dest
+            ]
+            realistic_routes[f"pos_main_{tracker_idx}"] = pos_main_route
+            
+            neg_main_route = [
+                neg_whip,
+                (neg_adjusted_dest[0], neg_whip[1]),
+                neg_adjusted_dest
+            ]
+            realistic_routes[f"neg_main_{tracker_idx}"] = neg_main_route
+        
+        return realistic_routes
+
+    def get_current_routes(self):
+        """Get routes based on current routing mode (realistic or conceptual)"""
+        if self.routing_mode_var.get() == "realistic":
+            return self.calculate_realistic_routes()
+        else:
+            # Use existing conceptual routing logic
+            cable_routes = {}
+            
+            for idx, pos in enumerate(self.block.tracker_positions):
+                if not pos.template:
+                    continue
+                    
+                tracker_idx = idx
+                pos_whip = self.get_whip_position(str(tracker_idx), 'positive')
+                neg_whip = self.get_whip_position(str(tracker_idx), 'negative')
+                
+                for string_idx, string in enumerate(pos.strings):
+                    if self.wiring_type_var.get() == WiringType.HOMERUN.value:
+                        self.add_homerun_routes(cable_routes, pos, string, tracker_idx, string_idx, pos_whip, neg_whip)
+                    else:
+                        self.add_harness_routes(cable_routes, pos, string, tracker_idx, string_idx, pos_whip, neg_whip)
+            
+            return cable_routes
+        
+    def draw_current_routes(self):
+        """Draw routes based on current routing mode and wiring type"""
+        if self.routing_mode_var.get() == "realistic":
+            self.draw_realistic_routes()
+        else:
+            # Use original conceptual drawing methods
+            if self.wiring_type_var.get() == WiringType.HOMERUN.value:
+                self.draw_string_homerun_wiring()
+            else:  # Wire Harness configuration
+                self.draw_wire_harness_wiring()
+
+    def add_current_label_to_route(self, canvas_points, current, is_positive, segment_type):
+        """Add current label to a route"""
+        if len(canvas_points) < 2:
+            return
+            
+        # Find midpoint
+        mid_idx = len(canvas_points) // 2
+        mid_x, mid_y = canvas_points[mid_idx]
+        
+        # Adjust label position
+        offset = -8 if is_positive else 8
+        color = 'red' if is_positive else 'blue'
+        
+        self.canvas.create_text(mid_x, mid_y + offset, text=f"{current:.1f}A", 
+                            fill=color, font=('Arial', 8))
+        
+    def draw_realistic_routes(self):
+        """Draw realistic routes that follow tracker centerlines (torque tubes)"""
+        scale = self.get_canvas_scale()
+        
+        for tracker_idx, pos in enumerate(self.block.tracker_positions):
+            if not pos.template:
+                continue
+                
+            # Get tracker dimensions and calculate centerline
+            dims = pos.template.get_physical_dimensions()
+            tracker_width = dims[1]
+            tracker_center_x = pos.x + (tracker_width / 2)  # This is the torque tube location
+            
+            # Get whip and device points
+            tracker_id = str(tracker_idx)
+            pos_whip = self.get_whip_position(tracker_id, 'positive')
+            neg_whip = self.get_whip_position(tracker_id, 'negative')
+            pos_dest, neg_dest = self.get_device_destination_points()
+            
+            if not pos_whip or not neg_whip:
+                continue
+            
+            # For each string, route along the centerline (torque tube)
+            for string_idx, string in enumerate(pos.strings):
+                source_pos_y = pos.y + string.positive_source_y
+                source_neg_y = pos.y + string.negative_source_y
+                
+                # Route from source along centerline to whip point
+                pos_route = [
+                    (tracker_center_x, source_pos_y),     # Start at centerline
+                    (tracker_center_x, pos_whip[1]),      # Travel along centerline
+                    pos_whip                              # End at whip point
+                ]
+                
+                neg_route = [
+                    (tracker_center_x, source_neg_y),     # Start at centerline  
+                    (tracker_center_x, neg_whip[1]),      # Travel along centerline
+                    neg_whip                              # End at whip point
+                ]
+                
+                # Convert to canvas coordinates and draw
+                pos_canvas = [(20 + self.pan_x + x * scale, 20 + self.pan_y + y * scale) for x, y in pos_route]
+                neg_canvas = [(20 + self.pan_x + x * scale, 20 + self.pan_y + y * scale) for x, y in neg_route]
+                
+                # Draw with normal line thickness
+                pos_flat = []
+                for x, y in pos_canvas:
+                    pos_flat.extend([x, y])
+                neg_flat = []
+                for x, y in neg_canvas:
+                    neg_flat.extend([x, y])
+                    
+                line_thickness = self.get_line_thickness_for_wire(self.string_cable_size_var.get())
+                self.canvas.create_line(pos_flat, fill='red', width=line_thickness)
+                self.canvas.create_line(neg_flat, fill='blue', width=line_thickness)
+            
+            # Draw whip to device connections
+            if pos_dest and neg_dest:
+                pos_whip_route = [pos_whip, (pos_dest[0], pos_whip[1]), pos_dest]
+                neg_whip_route = [neg_whip, (neg_dest[0], neg_whip[1]), neg_dest]
+                
+                pos_canvas = [(20 + self.pan_x + x * scale, 20 + self.pan_y + y * scale) for x, y in pos_whip_route]
+                neg_canvas = [(20 + self.pan_x + x * scale, 20 + self.pan_y + y * scale) for x, y in neg_whip_route]
+                
+                pos_flat = []
+                for x, y in pos_canvas:
+                    pos_flat.extend([x, y])
+                neg_flat = []
+                for x, y in neg_canvas:
+                    neg_flat.extend([x, y])
+                
+                whip_thickness = self.get_line_thickness_for_wire(self.whip_cable_size_var.get())
+                self.canvas.create_line(pos_flat, fill='red', width=whip_thickness)
+                self.canvas.create_line(neg_flat, fill='blue', width=whip_thickness)
