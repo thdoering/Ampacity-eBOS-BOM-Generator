@@ -139,7 +139,7 @@ class WiringConfigurator(tk.Toplevel):
         self.whip_frame = ttk.Frame(cable_frame)
         self.whip_frame.grid(row=2, column=0, columnspan=2, padx=0, pady=5, sticky=(tk.W, tk.E))
         ttk.Label(self.whip_frame, text="Whip Cable Size:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
-        self.whip_cable_size_var = tk.StringVar(value="6 AWG")
+        self.whip_cable_size_var = tk.StringVar(value="8 AWG")
         whip_cable_combo = ttk.Combobox(self.whip_frame, textvariable=self.whip_cable_size_var, state='readonly', width=10)
         whip_cable_combo['values'] = list(self.AWG_SIZES.keys())
         whip_cable_combo.grid(row=0, column=1, padx=5, pady=2)
