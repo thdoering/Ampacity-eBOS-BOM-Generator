@@ -1153,6 +1153,73 @@ class WiringConfigurator(tk.Toplevel):
                     
         return None
     
+    def get_harness_collection_point(self, tracker_pos, string, harness_idx, is_positive, routing_mode):
+        """Get harness collection point coordinates based on routing mode"""
+        if routing_mode == "realistic":
+            # Realistic: Use tracker centerline with small offset
+            dims = tracker_pos.template.get_physical_dimensions()
+            tracker_width = dims[1]
+            tracker_center_x = tracker_pos.x + (tracker_width / 2)
+            
+            offset = -0.5 if is_positive else 0.5
+            node_x = tracker_center_x + offset
+            node_y = tracker_pos.y + (string.positive_source_y if is_positive else string.negative_source_y)
+            
+            return (node_x, node_y)
+        else:
+            # Conceptual: Use existing logic with horizontal offset and vertical spacing
+            horizontal_offset = 0.6
+            vertical_spacing = 0.3
+            harness_offset_y = harness_idx * vertical_spacing
+            
+            if is_positive:
+                node_x = tracker_pos.x + string.positive_source_x - horizontal_offset
+                node_y = tracker_pos.y + string.positive_source_y + harness_offset_y
+            else:
+                node_x = tracker_pos.x + string.negative_source_x + horizontal_offset
+                node_y = tracker_pos.y + string.negative_source_y + harness_offset_y
+                
+            return (node_x, node_y)
+
+    def get_harness_whip_point(self, tracker_id, harness_idx, polarity, routing_mode):
+        """Get harness-specific whip point coordinates based on routing mode"""
+        # First check for custom positions
+        if (hasattr(self.block, 'wiring_config') and 
+            self.block.wiring_config and 
+            hasattr(self.block.wiring_config, 'custom_harness_whip_points') and
+            tracker_id in self.block.wiring_config.custom_harness_whip_points and
+            harness_idx in self.block.wiring_config.custom_harness_whip_points[tracker_id] and
+            polarity in self.block.wiring_config.custom_harness_whip_points[tracker_id][harness_idx]):
+            return self.block.wiring_config.custom_harness_whip_points[tracker_id][harness_idx][polarity]
+        
+        # Get base whip position
+        base_whip = self.get_whip_position(tracker_id, polarity)
+        if not base_whip:
+            return None
+        
+        if routing_mode == "realistic":
+            # Realistic: All harness whips at same Y position (no vertical spacing)
+            return base_whip
+        else:
+            # Conceptual: Add vertical spacing between harness whips
+            vertical_spacing = 0.3
+            return (base_whip[0], base_whip[1] + harness_idx * vertical_spacing)
+
+    def get_string_source_to_harness_route(self, source_point, harness_point, routing_mode):
+        """Get route from string source to harness collection point"""
+        if routing_mode == "realistic":
+            # Realistic: Follow centerline then horizontal to harness point
+            tracker_center_x = (source_point[0] + harness_point[0]) / 2  # Approximate centerline
+            return [
+                source_point,
+                (tracker_center_x, source_point[1]),
+                (tracker_center_x, harness_point[1]),
+                harness_point
+            ]
+        else:
+            # Conceptual: Direct connection
+            return [source_point, harness_point]
+
     def show_context_menu(self, event):
         """Show context menu for whip points"""
         # First, check if we clicked on a whip point
@@ -2008,19 +2075,26 @@ class WiringConfigurator(tk.Toplevel):
         """Draw default harness configuration (all strings in one harness)"""
         scale = self.get_canvas_scale()
         
-        # Calculate node points
-        pos_nodes = self.calculate_node_points(pos, True)  # Positive nodes
-        neg_nodes = self.calculate_node_points(pos, False)  # Negative nodes
-        
+        # Calculate node points using position helpers
+        routing_mode = self.routing_mode_var.get()
+        pos_nodes = []
+        neg_nodes = []
+
+        for i, string in enumerate(pos.strings):
+            pos_node = self.get_harness_collection_point(pos, string, 0, True, routing_mode)  # harness_idx=0 for default
+            neg_node = self.get_harness_collection_point(pos, string, 0, False, routing_mode)
+            pos_nodes.append(pos_node)
+            neg_nodes.append(neg_node)
+
         # Draw string cables to node points
         for i, string in enumerate(pos.strings):
             # Positive string cable
             source_x = pos.x + string.positive_source_x
             source_y = pos.y + string.positive_source_y
-            route = self.calculate_cable_route(
-                source_x, source_y,
-                pos_nodes[i][0], pos_nodes[i][1],
-                True, i
+            route = self.get_string_source_to_harness_route(
+                (source_x, source_y), 
+                pos_nodes[i], 
+                routing_mode
             )
             points = [(20 + self.pan_x + x * scale, 
                     20 + self.pan_y + y * scale) for x, y in route]
@@ -2033,10 +2107,10 @@ class WiringConfigurator(tk.Toplevel):
             # Negative string cable
             source_x = pos.x + string.negative_source_x
             source_y = pos.y + string.negative_source_y
-            route = self.calculate_cable_route(
-                source_x, source_y,
-                neg_nodes[i][0], neg_nodes[i][1],
-                False, i
+            route = self.get_string_source_to_harness_route(
+                (source_x, source_y), 
+                neg_nodes[i], 
+                routing_mode
             )
             points = [(20 + self.pan_x + x * scale, 
                     20 + self.pan_y + y * scale) for x, y in route]
@@ -2202,25 +2276,18 @@ class WiringConfigurator(tk.Toplevel):
             # Calculate node positions for this harness group
             pos_nodes = []
             neg_nodes = []
-            horizontal_offset = 0.6  # ~2ft offset from tracker
-            vertical_spacing = 0.3   # Spacing between harness nodes
-            
-            # Place harness nodes with vertical offsets to avoid overlap
-            harness_offset_y = harness_idx * vertical_spacing
-            
+            routing_mode = self.routing_mode_var.get()
+
             for string_idx in string_indices:
                 if string_idx < len(pos.strings):
                     string = pos.strings[string_idx]
                     
-                    # Create positive node
-                    node_x = pos.x + string.positive_source_x - horizontal_offset
-                    node_y = pos.y + string.positive_source_y + harness_offset_y
-                    pos_nodes.append((node_x, node_y))
+                    # Use position helpers
+                    pos_node = self.get_harness_collection_point(pos, string, harness_idx, True, routing_mode)
+                    neg_node = self.get_harness_collection_point(pos, string, harness_idx, False, routing_mode)
                     
-                    # Create negative node
-                    node_x = pos.x + string.negative_source_x + horizontal_offset
-                    node_y = pos.y + string.negative_source_y + harness_offset_y
-                    neg_nodes.append((node_x, node_y))
+                    pos_nodes.append(pos_node)
+                    neg_nodes.append(neg_node)
             
             # Draw string connections to nodes
             for i, string_idx in enumerate(string_indices):
@@ -2230,10 +2297,10 @@ class WiringConfigurator(tk.Toplevel):
                     # Positive string cable
                     source_x = pos.x + string.positive_source_x
                     source_y = pos.y + string.positive_source_y
-                    route = self.calculate_cable_route(
-                        source_x, source_y,
-                        pos_nodes[i][0], pos_nodes[i][1],
-                        True, i
+                    route = self.get_string_source_to_harness_route(
+                        (source_x, source_y), 
+                        pos_nodes[i], 
+                        routing_mode
                     )
                     points = [(20 + self.pan_x + x * scale, 
                             20 + self.pan_y + y * scale) for x, y in route]
@@ -2246,10 +2313,10 @@ class WiringConfigurator(tk.Toplevel):
                     # Negative string cable
                     source_x = pos.x + string.negative_source_x
                     source_y = pos.y + string.negative_source_y
-                    route = self.calculate_cable_route(
-                        source_x, source_y,
-                        neg_nodes[i][0], neg_nodes[i][1],
-                        False, i
+                    route = self.get_string_source_to_harness_route(
+                        (source_x, source_y), 
+                        neg_nodes[i], 
+                        routing_mode
                     )
                     points = [(20 + self.pan_x + x * scale, 
                             20 + self.pan_y + y * scale) for x, y in route]
@@ -2270,16 +2337,9 @@ class WiringConfigurator(tk.Toplevel):
                 y = 20 + self.pan_y + ny * scale
                 self.canvas.create_oval(x-3, y-3, x+3, y+3, fill='blue', outline='darkblue')
             
-            # Get harness-specific whip points - check for custom positions first
-            harness_pos_whip = self.get_whip_position(tracker_id, 'positive', harness_idx)
-            harness_neg_whip = self.get_whip_position(tracker_id, 'negative', harness_idx)
-            
-            # If no custom position, calculate default positions
-            if not harness_pos_whip and pos_whip:
-                harness_pos_whip = (pos_whip[0], pos_whip[1] + harness_idx * vertical_spacing)
-                
-            if not harness_neg_whip and neg_whip:
-                harness_neg_whip = (neg_whip[0], neg_whip[1] + harness_idx * vertical_spacing)
+            # Get harness-specific whip points using helper
+            harness_pos_whip = self.get_harness_whip_point(tracker_id, harness_idx, 'positive', routing_mode)
+            harness_neg_whip = self.get_harness_whip_point(tracker_id, harness_idx, 'negative', routing_mode)
             
             # Determine device position relative to tracker
             device_is_north = self.block.device_y < pos.y
@@ -2450,25 +2510,18 @@ class WiringConfigurator(tk.Toplevel):
         # Calculate node positions for unconfigured strings
         pos_nodes = []
         neg_nodes = []
-        horizontal_offset = 0.6  # ~2ft offset from tracker
-        vertical_spacing = 0.3   # Spacing between harness nodes
-        
-        # Place harness nodes with vertical offsets to avoid overlap
-        harness_offset_y = harness_idx * vertical_spacing
-        
+        routing_mode = self.routing_mode_var.get()
+
         for string_idx in unconfigured_indices:
             if string_idx < len(pos.strings):
                 string = pos.strings[string_idx]
                 
-                # Create positive node
-                node_x = pos.x + string.positive_source_x - horizontal_offset
-                node_y = pos.y + string.positive_source_y + harness_offset_y
-                pos_nodes.append((node_x, node_y))
+                # Use position helpers
+                pos_node = self.get_harness_collection_point(pos, string, harness_idx, True, routing_mode)
+                neg_node = self.get_harness_collection_point(pos, string, harness_idx, False, routing_mode)
                 
-                # Create negative node
-                node_x = pos.x + string.negative_source_x + horizontal_offset
-                node_y = pos.y + string.negative_source_y + harness_offset_y
-                neg_nodes.append((node_x, node_y))
+                pos_nodes.append(pos_node)
+                neg_nodes.append(neg_node)
         
         # Draw string connections to nodes
         for i, string_idx in enumerate(unconfigured_indices):
@@ -2478,10 +2531,10 @@ class WiringConfigurator(tk.Toplevel):
                 # Positive string cable
                 source_x = pos.x + string.positive_source_x
                 source_y = pos.y + string.positive_source_y
-                route = self.calculate_cable_route(
-                    source_x, source_y,
-                    pos_nodes[i][0], pos_nodes[i][1],
-                    True, i
+                route = self.get_string_source_to_harness_route(
+                    (source_x, source_y), 
+                    pos_nodes[i], 
+                    routing_mode
                 )
                 points = [(20 + self.pan_x + x * scale, 
                         20 + self.pan_y + y * scale) for x, y in route]
@@ -2494,10 +2547,10 @@ class WiringConfigurator(tk.Toplevel):
                 # Negative string cable
                 source_x = pos.x + string.negative_source_x
                 source_y = pos.y + string.negative_source_y
-                route = self.calculate_cable_route(
-                    source_x, source_y,
-                    neg_nodes[i][0], neg_nodes[i][1],
-                    False, i
+                route = self.get_string_source_to_harness_route(
+                    (source_x, source_y), 
+                    neg_nodes[i], 
+                    routing_mode
                 )
                 points = [(20 + self.pan_x + x * scale, 
                         20 + self.pan_y + y * scale) for x, y in route]
@@ -2522,11 +2575,10 @@ class WiringConfigurator(tk.Toplevel):
         harness_pos_whip = None
         harness_neg_whip = None
         
-        # Calculate position for this harness's whip point
-        if pos_whip:
-            harness_pos_whip = (pos_whip[0], pos_whip[1] + harness_idx * vertical_spacing)
-        if neg_whip:
-            harness_neg_whip = (neg_whip[0], neg_whip[1] + harness_idx * vertical_spacing)
+        # Get harness-specific whip points using helper
+        tracker_id = str(self.block.tracker_positions.index(pos))
+        harness_pos_whip = self.get_harness_whip_point(tracker_id, harness_idx, 'positive', routing_mode)
+        harness_neg_whip = self.get_harness_whip_point(tracker_id, harness_idx, 'negative', routing_mode)
         
         # Draw harness connections (simplified for unconfigured)
         if pos_nodes:
@@ -2844,137 +2896,6 @@ class WiringConfigurator(tk.Toplevel):
         
         # If it's larger than our highest rating, return the highest
         return self.FUSE_RATINGS[-1]
-    
-    def calculate_realistic_routes(self):
-        """Calculate realistic routes that follow tracker centerlines"""
-        realistic_routes = {}
-        
-        if self.wiring_type_var.get() == WiringType.HOMERUN.value:
-            return self.calculate_realistic_homerun_routes()
-        else:
-            return self.calculate_realistic_harness_routes()
-
-    def calculate_realistic_homerun_routes(self):
-        """Calculate realistic routes for homerun wiring"""
-        realistic_routes = {}
-        
-        for tracker_idx, pos in enumerate(self.block.tracker_positions):
-            tracker_id = str(tracker_idx)
-            
-            # Get tracker dimensions
-            dims = pos.template.get_physical_dimensions()
-            tracker_width = dims[1]   # Width in meters (east-west direction)
-            tracker_center_x = pos.x + (tracker_width / 2)
-            
-            # Get whip points and device destinations
-            pos_whip = self.get_whip_position(tracker_id, 'positive')
-            neg_whip = self.get_whip_position(tracker_id, 'negative')
-            pos_dest, neg_dest = self.get_device_destination_points()
-            
-            if not pos_whip or not neg_whip or not pos_dest or not neg_dest:
-                continue
-            
-            # For homerun: each string routes individually to device
-            for string_idx, string in enumerate(pos.strings):
-                source_pos_y = pos.y + string.positive_source_y
-                source_neg_y = pos.y + string.negative_source_y
-                
-                # String to whip routes
-                pos_route = [
-                    (tracker_center_x, source_pos_y),
-                    (tracker_center_x, pos_whip[1]),
-                    pos_whip
-                ]
-                realistic_routes[f"pos_src_{tracker_idx}_{string_idx}"] = pos_route
-                
-                neg_route = [
-                    (tracker_center_x, source_neg_y),
-                    (tracker_center_x, neg_whip[1]),
-                    neg_whip
-                ]
-                realistic_routes[f"neg_src_{tracker_idx}_{string_idx}"] = neg_route
-                
-                # Individual whip to device routes for each string
-                center_offset = 0.1
-                pos_adjusted_dest = (pos_dest[0] - center_offset, pos_dest[1])
-                neg_adjusted_dest = (neg_dest[0] + center_offset, neg_dest[1])
-                
-                pos_whip_route = [
-                    pos_whip,
-                    (pos_adjusted_dest[0], pos_whip[1]),
-                    pos_adjusted_dest
-                ]
-                realistic_routes[f"pos_dev_{tracker_idx}_{string_idx}"] = pos_whip_route
-                
-                neg_whip_route = [
-                    neg_whip,
-                    (neg_adjusted_dest[0], neg_whip[1]),
-                    neg_adjusted_dest
-                ]
-                realistic_routes[f"neg_dev_{tracker_idx}_{string_idx}"] = neg_whip_route
-        
-        return realistic_routes
-
-    def calculate_realistic_harness_routes(self):
-        """Calculate realistic routes for harness wiring"""
-        realistic_routes = {}
-        
-        for tracker_idx, pos in enumerate(self.block.tracker_positions):
-            tracker_id = str(tracker_idx)
-            
-            # Get tracker dimensions
-            dims = pos.template.get_physical_dimensions()
-            tracker_width = dims[1]
-            tracker_center_x = pos.x + (tracker_width / 2)
-            
-            # Get whip points and device destinations
-            pos_whip = self.get_whip_position(tracker_id, 'positive')
-            neg_whip = self.get_whip_position(tracker_id, 'negative')
-            pos_dest, neg_dest = self.get_device_destination_points()
-            
-            if not pos_whip or not neg_whip or not pos_dest or not neg_dest:
-                continue
-            
-            # For harness: strings route to collection points, then combined to device
-            for string_idx, string in enumerate(pos.strings):
-                source_pos_y = pos.y + string.positive_source_y
-                source_neg_y = pos.y + string.negative_source_y
-                
-                # String to whip routes (combined at whip point)
-                pos_route = [
-                    (tracker_center_x, source_pos_y),
-                    (tracker_center_x, pos_whip[1]),
-                    pos_whip
-                ]
-                realistic_routes[f"pos_src_{tracker_idx}_{string_idx}"] = pos_route
-                
-                neg_route = [
-                    (tracker_center_x, source_neg_y),
-                    (tracker_center_x, neg_whip[1]),
-                    neg_whip
-                ]
-                realistic_routes[f"neg_src_{tracker_idx}_{string_idx}"] = neg_route
-            
-            # Single whip to device route per tracker (combines all strings)
-            center_offset = 0.1
-            pos_adjusted_dest = (pos_dest[0] - center_offset, pos_dest[1])
-            neg_adjusted_dest = (neg_dest[0] + center_offset, neg_dest[1])
-            
-            pos_main_route = [
-                pos_whip,
-                (pos_adjusted_dest[0], pos_whip[1]),
-                pos_adjusted_dest
-            ]
-            realistic_routes[f"pos_main_{tracker_idx}"] = pos_main_route
-            
-            neg_main_route = [
-                neg_whip,
-                (neg_adjusted_dest[0], neg_whip[1]),
-                neg_adjusted_dest
-            ]
-            realistic_routes[f"neg_main_{tracker_idx}"] = neg_main_route
-        
-        return realistic_routes
 
     def get_current_routes(self):
         """Get routes based on current routing mode (realistic or conceptual)"""
@@ -3001,26 +2922,13 @@ class WiringConfigurator(tk.Toplevel):
                         self.add_harness_routes(cable_routes, pos, string, tracker_idx, string_idx, pos_whip, neg_whip)
             
             return cable_routes
-
-    def calculate_realistic_routes_for_bom(self):
-        """Calculate realistic routes with full positive/negative separation for accurate BOM"""
-        realistic_routes = {}
-        
-        if self.wiring_type_var.get() == WiringType.HOMERUN.value:
-            return self.calculate_realistic_homerun_routes()
-        else:
-            return self.calculate_realistic_harness_routes()
         
     def draw_current_routes(self):
-        """Draw routes based on current routing mode and wiring type"""
-        if self.routing_mode_var.get() == "realistic":
-            self.draw_realistic_routes()
-        else:
-            # Use original conceptual drawing methods
-            if self.wiring_type_var.get() == WiringType.HOMERUN.value:
-                self.draw_string_homerun_wiring()
-            else:  # Wire Harness configuration
-                self.draw_wire_harness_wiring()
+        """Draw routes based on current wiring type (always uses conceptual logic with positioning variants)"""
+        if self.wiring_type_var.get() == WiringType.HOMERUN.value:
+            self.draw_string_homerun_wiring()
+        else:  # Wire Harness configuration
+            self.draw_wire_harness_wiring()
 
     def add_current_label_to_route(self, canvas_points, current, is_positive, segment_type):
         """Add current label to a route"""
@@ -3037,181 +2945,6 @@ class WiringConfigurator(tk.Toplevel):
         
         self.canvas.create_text(mid_x, mid_y + offset, text=f"{current:.1f}A", 
                             fill=color, font=('Arial', 8))
-        
-    def draw_realistic_routes(self):
-        """Draw realistic routes that follow tracker centerlines (torque tubes)"""
-        scale = self.get_canvas_scale()
-        
-        for tracker_idx, pos in enumerate(self.block.tracker_positions):
-            if not pos.template:
-                continue
-                
-            # Get tracker dimensions and calculate centerline
-            dims = pos.template.get_physical_dimensions()
-            tracker_width = dims[1]
-            tracker_center_x = pos.x + (tracker_width / 2)  # This is the torque tube location
-            
-            # Get whip and device points
-            tracker_id = str(tracker_idx)
-            pos_whip = self.get_whip_position(tracker_id, 'positive')
-            neg_whip = self.get_whip_position(tracker_id, 'negative')
-            pos_dest, neg_dest = self.get_device_destination_points()
-            
-            if not pos_whip or not neg_whip:
-                continue
-            
-            if self.wiring_type_var.get() == WiringType.HOMERUN.value:
-                # HOMERUN: Each string shows individual cable to whip
-                for string_idx, string in enumerate(pos.strings):
-                    source_pos_y = pos.y + string.positive_source_y
-                    source_neg_y = pos.y + string.negative_source_y
-                    
-                    # Individual string routes
-                    pos_route = [(tracker_center_x, source_pos_y), (tracker_center_x, pos_whip[1]), pos_whip]
-                    neg_route = [(tracker_center_x, source_neg_y), (tracker_center_x, neg_whip[1]), neg_whip]
-                    
-                    # Draw with string cable thickness
-                    self.draw_realistic_cable_segment(pos_route, self.string_cable_size_var.get(), True)
-                    self.draw_realistic_cable_segment(neg_route, self.string_cable_size_var.get(), False)
-                    
-                    # Individual whip routes per string
-                    if pos_dest and neg_dest:
-                        pos_whip_route = [pos_whip, (pos_dest[0], pos_whip[1]), pos_dest]
-                        neg_whip_route = [neg_whip, (neg_dest[0], neg_whip[1]), neg_dest]
-                        
-                        self.draw_realistic_cable_segment(pos_whip_route, self.whip_cable_size_var.get(), True)
-                        self.draw_realistic_cable_segment(neg_whip_route, self.whip_cable_size_var.get(), False)
-            
-            else:
-                # HARNESS: Realistic harness system with collection points
-                if pos.strings:
-                    # Small offset from centerline for visual separation
-                    pos_offset = -0.5  # Left of centerline for positive
-                    neg_offset = 0.5   # Right of centerline for negative
-                    
-                    pos_harness_x = tracker_center_x + pos_offset
-                    neg_harness_x = tracker_center_x + neg_offset
-                    
-                    # Determine device position relative to tracker
-                    device_is_north = self.block.device_y < pos.y
-                    
-                    # Create harness points at same Y as source points
-                    pos_harness_points = []
-                    neg_harness_points = []
-                    
-                    for string_idx, string in enumerate(pos.strings):
-                        string_pos_y = pos.y + string.positive_source_y
-                        string_neg_y = pos.y + string.negative_source_y
-                        
-                        # Create harness points at offset X but same Y as source
-                        pos_harness_point = (pos_harness_x, string_pos_y)
-                        neg_harness_point = (neg_harness_x, string_neg_y)
-                        
-                        pos_harness_points.append(pos_harness_point)
-                        neg_harness_points.append(neg_harness_point)
-                        
-                        # Draw horizontal string connections: source → harness point
-                        pos_string_route = [
-                            (tracker_center_x, string_pos_y),    # Source point on centerline
-                            pos_harness_point                     # Harness point at offset
-                        ]
-                        neg_string_route = [
-                            (tracker_center_x, string_neg_y),    # Source point on centerline  
-                            neg_harness_point                     # Harness point at offset
-                        ]
-                        
-                        # Draw string cables with string cable thickness
-                        self.draw_realistic_cable_segment(pos_string_route, self.string_cable_size_var.get(), True)
-                        self.draw_realistic_cable_segment(neg_string_route, self.string_cable_size_var.get(), False)
-
-                        # Add current labels for string cables if enabled
-                        if self.show_current_labels_var.get():
-                            string_current = self.calculate_current_for_segment('string')
-                            self.add_realistic_current_label(pos_string_route, string_current, True)
-                            self.add_realistic_current_label(neg_string_route, string_current, False)
-                    
-                    # Sort harness points by Y coordinate based on device direction
-                    if device_is_north:
-                        # Device north of tracker: connect from south to north
-                        sorted_pos_points = sorted(pos_harness_points, key=lambda p: p[1], reverse=True)
-                        sorted_neg_points = sorted(neg_harness_points, key=lambda p: p[1], reverse=True)
-                    else:
-                        # Device south of tracker: connect from north to south
-                        sorted_pos_points = sorted(pos_harness_points, key=lambda p: p[1], reverse=False)
-                        sorted_neg_points = sorted(neg_harness_points, key=lambda p: p[1], reverse=False)
-                    
-                    # Draw vertical harness cables connecting harness points in sequence
-                    for i in range(len(sorted_pos_points)):
-                        start_point = sorted_pos_points[i]
-                        if i < len(sorted_pos_points) - 1:
-                            # Connect to next harness point
-                            end_point = sorted_pos_points[i + 1]
-                            harness_route = [start_point, end_point]
-                        else:
-                            # Last point connects to whip point
-                            harness_route = [start_point, pos_whip]
-                        
-                        # Draw harness cable with harness cable thickness
-                        self.draw_realistic_cable_segment(harness_route, self.harness_cable_size_var.get(), True)
-
-                        # Add current labels for harness cables if enabled
-                        if self.show_current_labels_var.get():
-                            # Current accumulates as we go through harness points
-                            accumulated_strings = i + 1
-                            harness_current = self.calculate_current_for_segment('string') * accumulated_strings
-                            self.add_realistic_current_label(harness_route, harness_current, True)
-                    
-                    # Same for negative harness
-                    for i in range(len(sorted_neg_points)):
-                        start_point = sorted_neg_points[i]
-                        if i < len(sorted_neg_points) - 1:
-                            # Connect to next harness point
-                            end_point = sorted_neg_points[i + 1]
-                            harness_route = [start_point, end_point]
-                        else:
-                            # Last point connects to whip point
-                            harness_route = [start_point, neg_whip]
-                        
-                        # Draw harness cable with harness cable thickness
-                        self.draw_realistic_cable_segment(harness_route, self.harness_cable_size_var.get(), False)
-
-                        # Add current labels for harness cables if enabled
-                        if self.show_current_labels_var.get():
-                            # Current accumulates as we go through harness points
-                            accumulated_strings = i + 1
-                            harness_current = self.calculate_current_for_segment('string') * accumulated_strings
-                            self.add_realistic_current_label(harness_route, harness_current, False)
-                
-                # Single whip to device per tracker
-                if pos_dest and neg_dest:
-                    pos_whip_route = [pos_whip, (pos_dest[0], pos_whip[1]), pos_dest]
-                    neg_whip_route = [neg_whip, (neg_dest[0], neg_whip[1]), neg_dest]
-                    
-                    # Draw whip cables with whip cable thickness
-                    self.draw_realistic_cable_segment(pos_whip_route, self.whip_cable_size_var.get(), True)
-                    self.draw_realistic_cable_segment(neg_whip_route, self.whip_cable_size_var.get(), False)
-
-        # Add current validation for realistic mode too
-        self.validate_and_show_current_warnings()
-
-    def draw_realistic_cable_segment(self, route, wire_gauge, is_positive):
-        """Helper method to draw a cable segment with proper thickness"""
-        scale = self.get_canvas_scale()
-        
-        # Convert to canvas coordinates
-        canvas_points = [(20 + self.pan_x + x * scale, 20 + self.pan_y + y * scale) for x, y in route]
-        
-        # Convert to flat list for drawing
-        flat_points = []
-        for x, y in canvas_points:
-            flat_points.extend([x, y])
-        
-        # Draw with appropriate thickness and normal colors
-        line_thickness = self.get_line_thickness_for_wire(wire_gauge)
-        color = 'red' if is_positive else 'blue'
-        
-        # Draw the wire
-        self.canvas.create_line(flat_points, fill=color, width=line_thickness)
 
     def validate_and_show_current_warnings(self):
         """Validate current loads and show warnings for both routing modes"""
@@ -3283,24 +3016,3 @@ class WiringConfigurator(tk.Toplevel):
                 pass
         return 1
     
-    def add_realistic_current_label(self, route, current, is_positive):
-        """Add current label to a realistic route"""
-        if len(route) < 2:
-            return
-            
-        scale = self.get_canvas_scale()
-        
-        # Find midpoint of route
-        mid_idx = len(route) // 2
-        mid_point = route[mid_idx] if mid_idx < len(route) else route[-1]
-        
-        # Convert to canvas coordinates
-        canvas_x = 20 + self.pan_x + mid_point[0] * scale
-        canvas_y = 20 + self.pan_y + mid_point[1] * scale
-        
-        # Adjust label position
-        offset = -8 if is_positive else 8
-        color = 'red' if is_positive else 'blue'
-        
-        self.canvas.create_text(canvas_x, canvas_y + offset, text=f"{current:.1f}A", 
-                            fill=color, font=('Arial', 8))
