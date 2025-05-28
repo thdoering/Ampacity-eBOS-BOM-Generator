@@ -248,6 +248,10 @@ class WiringConfigurator(tk.Toplevel):
 
             if hasattr(self.block.wiring_config, 'whip_cable_size'):
                 self.whip_cable_size_var.set(self.block.wiring_config.whip_cable_size)
+
+            # Restore routing mode
+            if hasattr(self.block.wiring_config, 'routing_mode'):
+                self.routing_mode_var.set(self.block.wiring_config.routing_mode)
             
             # Update UI based on wiring type
             self.update_ui_for_wiring_type()
@@ -442,6 +446,9 @@ class WiringConfigurator(tk.Toplevel):
                 custom_whip_points=custom_whip_points,
                 harness_groupings=harness_groupings
                 )
+            
+            # Store the routing mode for BOM warnings
+            wiring_config.routing_mode = self.routing_mode_var.get()
             
             # Store the configuration in the block
             self.block.wiring_config = wiring_config

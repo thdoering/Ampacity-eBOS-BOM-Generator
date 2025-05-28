@@ -54,6 +54,7 @@ class WiringConfig:
     harness_groupings: Dict[int, List[HarnessGroup]] = field(default_factory=dict)
     custom_harness_whip_points: Dict[str, Dict[int, Dict[str, tuple[float, float]]]] = field(default_factory=dict)  # Format: {'tracker_id': {harness_idx: {'positive': (x, y), 'negative': (x, y)}}}
     use_custom_positions_for_bom: bool = False  # New field - default to FALSE
+    routing_mode: str = "realistic"
 
 @dataclass
 class BlockConfig:
@@ -133,14 +134,8 @@ class BlockConfig:
                 
         lengths = {}
 
-        # Get a MERGED set of cable routes from both realistic and regular routes
-        cable_routes = {}
-        realistic_routes = getattr(self, 'block_realistic_routes', {}) or {}
-        wiring_routes = getattr(self.wiring_config, 'cable_routes', {}) or {}
-        
-        # Merge both sets of routes, with realistic routes taking precedence
-        cable_routes.update(wiring_routes)
-        cable_routes.update(realistic_routes)
+        # Use routes from wiring configuration only
+        cable_routes = getattr(self.wiring_config, 'cable_routes', {}) or {}
         
         # If still no routes, return empty dictionary
         if not cable_routes:
@@ -280,6 +275,7 @@ class BlockConfig:
                 'string_cable_size': self.wiring_config.string_cable_size,
                 'harness_cable_size': self.wiring_config.harness_cable_size,
                 'whip_cable_size': getattr(self.wiring_config, 'whip_cable_size', "8 AWG"),
+                'routing_mode': getattr(self.wiring_config, 'routing_mode', 'realistic'),
                 'positive_collection_points': [],
                 'negative_collection_points': [],
                 'strings_per_collection': self.wiring_config.strings_per_collection,
@@ -445,7 +441,8 @@ class BlockConfig:
                 harness_cable_size=wiring_data.get('harness_cable_size', "8 AWG"),
                 whip_cable_size=wiring_data.get('whip_cable_size', "8 AWG"),
                 custom_whip_points=wiring_data.get('custom_whip_points', {}),
-                harness_groupings=harness_groupings
+                harness_groupings=harness_groupings,
+                routing_mode=wiring_data.get('routing_mode', 'realistic')
             )
         
         return block

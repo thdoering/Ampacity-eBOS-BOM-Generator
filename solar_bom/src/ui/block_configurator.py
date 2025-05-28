@@ -42,9 +42,7 @@ class BlockConfigurator(ttk.Frame):
         self.pan_start_y = 0
         self.inverters = {}  # Store inverter configurations
         self.on_blocks_changed = None  # Callback for when blocks change
-        self.show_realistic_wiring_var = tk.BooleanVar(value=True)
         self.device_placement_mode = tk.StringVar(value="row_center")  # Default to row center
-
 
         # Initialize undo manager
         self.undo_manager = UndoManager()
@@ -220,14 +218,6 @@ class BlockConfigurator(ttk.Frame):
         # Configure Wiring button
         ttk.Button(config_frame, text="Configure Wiring", 
                 command=self.configure_wiring).grid(row=7, column=0, columnspan=2, padx=5, pady=5)
-        
-        # Add toggle for realistic wiring display
-        ttk.Checkbutton(
-            config_frame, 
-            text="Show Realistic Wiring", 
-            variable=self.show_realistic_wiring_var,
-            command=self.draw_block
-        ).grid(row=8, column=0, columnspan=2, padx=5, pady=5, sticky=tk.W)
 
         # Templates List Frame
         templates_frame = ttk.LabelFrame(config_frame, text="Tracker Templates", padding="5")
@@ -634,12 +624,63 @@ class BlockConfigurator(ttk.Frame):
                 y = 10 + self.pan_y + pos.y * scale
                 self.draw_tracker(x, y, pos.template)
 
-            # Draw realistic wiring if available
-            self.draw_realistic_wiring()
+            # Draw wiring routes from wiring configuration
+            self.draw_wiring_from_config()
         
         except (ValueError, TypeError):
             # Silently ignore transient errors during editing
             pass
+
+    def draw_wiring_from_config(self):
+        """Draw wiring routes from the wiring configuration"""
+        if not self.current_block:
+            return
+            
+        block = self.blocks[self.current_block]
+        
+        # Skip if no wiring config
+        if not block.wiring_config or not block.wiring_config.cable_routes:
+            return
+        
+        scale = self.get_canvas_scale()
+        
+        # Draw all routes from the wiring configuration
+        for route_id, route_points in block.wiring_config.cable_routes.items():
+            if len(route_points) < 2:
+                continue
+                
+            # Convert route points to canvas coordinates
+            canvas_points = []
+            for x, y in route_points:
+                canvas_x = 10 + self.pan_x + x * scale
+                canvas_y = 10 + self.pan_y + y * scale
+                canvas_points.extend([canvas_x, canvas_y])
+            
+            # Determine wire properties based on route type
+            is_positive = 'pos_' in route_id
+            if 'src_' in route_id:
+                wire_gauge = block.wiring_config.string_cable_size
+                line_thickness = self.get_line_thickness_for_wire_gauge(wire_gauge)
+            elif 'harness_' in route_id or 'main_' in route_id:
+                wire_gauge = block.wiring_config.harness_cable_size
+                line_thickness = self.get_line_thickness_for_wire_gauge(wire_gauge)
+            else:  # whip routes (dev_, main_)
+                wire_gauge = getattr(block.wiring_config, 'whip_cable_size', '6 AWG')
+                line_thickness = self.get_line_thickness_for_wire_gauge(wire_gauge)
+            
+            # Draw the route
+            color = 'red' if is_positive else 'blue'
+            self.canvas.create_line(canvas_points, fill=color, width=line_thickness, tags='wiring')
+
+    def get_line_thickness_for_wire_gauge(self, wire_gauge: str) -> float:
+        """Convert wire gauge to line thickness for display"""
+        thickness_map = {
+            "4 AWG": 5.0,
+            "6 AWG": 4.0,
+            "8 AWG": 3.0, 
+            "10 AWG": 2.0
+        }
+        return thickness_map.get(wire_gauge, 2.0)
 
     def draw_tracker(self, x, y, template, tag=None):
         """Draw a tracker on the canvas with detailed module layout.
@@ -1404,7 +1445,14 @@ class BlockConfigurator(ttk.Frame):
             return
             
         from .wiring_configurator import WiringConfigurator
-        WiringConfigurator(self, self.blocks[self.current_block])
+        wiring_config = WiringConfigurator(self, self.blocks[self.current_block])
+
+        # Update block display when wiring configurator closes
+        def on_wiring_closed():
+            self.draw_block()  # Redraw to show new wiring routes
+            
+        # The wiring configurator will call this when it's destroyed/closed
+        wiring_config.protocol("WM_DELETE_WINDOW", lambda: (on_wiring_closed(), wiring_config.destroy()))
 
     def copy_block(self):
         """Create a copy of the currently selected block with incremented name"""

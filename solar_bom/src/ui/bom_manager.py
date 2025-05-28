@@ -214,6 +214,24 @@ class BOMManager(ttk.Frame):
             messagebox.showwarning("Warning", "No blocks selected for BOM export")
             return
         
+        # Check if any blocks are using conceptual routing
+        conceptual_blocks = []
+        for block_id, block in selected_blocks.items():
+            if (hasattr(block, 'wiring_config') and 
+                block.wiring_config and 
+                hasattr(block.wiring_config, 'routing_mode') and
+                getattr(block.wiring_config, 'routing_mode', 'realistic') == 'conceptual'):
+                conceptual_blocks.append(block_id)
+
+        if conceptual_blocks:
+            message = "WARNING: The following blocks are using conceptual wiring routing:\n"
+            message += "\n".join(sorted(conceptual_blocks))
+            message += "\n\nConceptual routing may not accurately represent actual cable lengths."
+            message += "\nFor accurate BOM calculations, use realistic routing in the wiring configurator."
+            message += "\n\nDo you want to continue with BOM export?"
+            if not messagebox.askyesno("Conceptual Routing Warning", message, icon='warning'):
+                return
+        
         # Check for blocks without wiring configuration
         blocks_without_wiring = []
         for block_id, block in selected_blocks.items():
