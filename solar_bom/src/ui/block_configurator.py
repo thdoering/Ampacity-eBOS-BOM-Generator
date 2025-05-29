@@ -645,7 +645,12 @@ class BlockConfigurator(ttk.Frame):
         scale = self.get_canvas_scale()
         
         # Draw all routes from the wiring configuration
-        for route_id, route_points in block.wiring_config.cable_routes.items():
+        # Use realistic routes if available, otherwise fall back to conceptual routes
+        routes_to_use = getattr(block.wiring_config, 'realistic_cable_routes', {})
+        if not routes_to_use:
+            routes_to_use = block.wiring_config.cable_routes
+
+        for route_id, route_points in routes_to_use.items():
             if len(route_points) < 2:
                 continue
                 
@@ -658,18 +663,29 @@ class BlockConfigurator(ttk.Frame):
             
             # Determine wire properties based on route type
             is_positive = 'pos_' in route_id
-            if 'src_' in route_id:
+            if 'src_' in route_id or 'node_' in route_id:
                 wire_gauge = block.wiring_config.string_cable_size
                 line_thickness = self.get_line_thickness_for_wire_gauge(wire_gauge)
-            elif 'harness_' in route_id or 'main_' in route_id:
+            elif 'harness_' in route_id:
                 wire_gauge = block.wiring_config.harness_cable_size
+                line_thickness = self.get_line_thickness_for_wire_gauge(wire_gauge)
+            elif 'extender_' in route_id:
+                wire_gauge = getattr(block.wiring_config, 'extender_cable_size', '8 AWG')
                 line_thickness = self.get_line_thickness_for_wire_gauge(wire_gauge)
             else:  # whip routes (dev_, main_)
                 wire_gauge = getattr(block.wiring_config, 'whip_cable_size', '8 AWG')
                 line_thickness = self.get_line_thickness_for_wire_gauge(wire_gauge)
             
             # Draw the route
-            color = 'red' if is_positive else 'blue'
+            # Use the same color scheme as wiring configurator
+            if 'src_' in route_id or 'node_' in route_id:
+                color = '#FFB6C1' if is_positive else '#B0FFFF'  # Light Pink/Cyan (string)
+            elif 'harness_' in route_id:
+                color = '#FF0000' if is_positive else '#0000FF'  # Red/Blue (harness)
+            elif 'extender_' in route_id:
+                color = '#8B0000' if is_positive else '#800080'  # Dark Red/Purple (extender)
+            else:  # whip routes
+                color = '#FFA500' if is_positive else '#40E0D0'  # Orange/Turquoise (whip)
             self.canvas.create_line(canvas_points, fill=color, width=line_thickness, tags='wiring')
 
     def get_line_thickness_for_wire_gauge(self, wire_gauge: str) -> float:

@@ -160,7 +160,7 @@ class WiringConfigurator(tk.Toplevel):
         self.show_current_labels_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(cable_frame, text="Show Current Labels", 
                         variable=self.show_current_labels_var,
-                        command=self.draw_wiring_layout).grid(
+                        command=self.toggle_current_labels).grid(
                         row=4, column=0, columnspan=2, padx=5, pady=5, sticky=tk.W)
         
         # Right side - Visualization
@@ -197,6 +197,9 @@ class WiringConfigurator(tk.Toplevel):
         
         # Store warnings with their associated wire IDs
         self.wire_warnings = {}  # Maps warning IDs to wire IDs
+        self.current_labels = {}  # Maps label_id to {'text_id': canvas_id, 'wire_midpoint': (x,y), 'current_pos': (x,y), 'leader_id': None}
+        self.dragging_label = None
+        self.label_drag_start = None
         
         # Bind canvas resize
         self.canvas.bind('<Configure>', self.on_canvas_resize)
@@ -288,7 +291,18 @@ class WiringConfigurator(tk.Toplevel):
 
     def draw_wiring_layout(self):
         """Draw block layout with wiring visualization"""
+        # Save current label positions before clearing
+        saved_labels = {}
+        if hasattr(self, 'current_labels'):
+            for label_id, label_info in self.current_labels.items():
+                if self.canvas.coords(label_info['text_id']):  # Check if label exists
+                    saved_labels[label_id] = label_info['current_pos']
+
         self.canvas.delete("all")
+
+        # Reset current labels tracking
+        self.current_labels = {}
+
         scale = self.get_canvas_scale()
         
         # Clear previous warnings
@@ -304,6 +318,19 @@ class WiringConfigurator(tk.Toplevel):
 
         # Draw routes based on current routing mode
         self.draw_current_routes()
+
+        # Restore any saved label positions
+        if hasattr(self, 'saved_labels') and saved_labels:
+            for label_id, saved_pos in saved_labels.items():
+                # Find the corresponding new label and move it
+                if label_id in self.current_labels:
+                    label_info = self.current_labels[label_id]
+                    text_id = label_info['text_id']
+                    self.canvas.coords(text_id, saved_pos[0], saved_pos[1])
+                    label_info['current_pos'] = saved_pos
+            
+            # Clear the saved positions
+            self.saved_labels = {}
                         
     def draw_collection_points(self, pos: TrackerPosition, x: float, y: float, scale: float):
         """Draw collection points for a tracker position"""
@@ -707,10 +734,8 @@ class WiringConfigurator(tk.Toplevel):
         return thickness_map.get(wire_gauge, 2.0)  # Default to 2.0 if gauge not found
 
     def calculate_current_for_segment(self, segment_type: str, num_strings: int = 1) -> float:
-        """
-        Calculate current flowing through a wire segment based on configuration
-        segment_type can be 'string', 'harness', 'whip', or 'extender'
-        """
+        """Calculate current flowing through a wire segment based on configuration"""
+        
         # Direct access to module spec from block's tracker template
         if (self.block and 
             hasattr(self.block, 'tracker_template') and 
@@ -719,15 +744,11 @@ class WiringConfigurator(tk.Toplevel):
             self.block.tracker_template.module_spec):
             
             module_spec = self.block.tracker_template.module_spec
-            
-            # Use the Imp value
             string_current = module_spec.imp
-        else:
-            # Fallback if we can't get the actual current
-            string_current = 10.0
         
-        # Calculate current based on how many strings are combined
-        return string_current * num_strings
+        result = string_current * num_strings
+        
+        return result
 
     def add_current_label(self, points, current, is_positive, segment_type='string'):
         """Add current label to a wire segment if enabled"""
@@ -958,8 +979,8 @@ class WiringConfigurator(tk.Toplevel):
             # Update drag start for continuous dragging
             self.drag_start_x = event.x
             self.drag_start_y = event.y
-            
-            # Redraw
+
+            # Force route recalculation with new whip positions
             self.draw_wiring_layout()
         elif self.dragging:
             # Update selection box
@@ -1039,9 +1060,10 @@ class WiringConfigurator(tk.Toplevel):
     def reset_all_whips(self, event=None):
         """Reset all whip points to their default positions"""
         if hasattr(self.block, 'wiring_config') and self.block.wiring_config:
-            if hasattr(self.block.wiring_config, 'custom_whip_points'):
-                self.block.wiring_config.custom_whip_points = {}
-                
+            self.block.wiring_config.custom_whip_points = {}
+            if hasattr(self.block.wiring_config, 'custom_harness_whip_points'):
+                self.block.wiring_config.custom_harness_whip_points = {}
+                    
         self.selected_whips.clear()
         self.draw_wiring_layout()
         
@@ -2031,7 +2053,8 @@ class WiringConfigurator(tk.Toplevel):
                         True, len(pos_routes)
                     )
                     current = self.calculate_current_for_segment('string')
-                    self.draw_wire_route(route1, self.string_cable_size_var.get(), current, True, "string")
+                    context_info = f"T{tracker_idx+1}-S{len(pos_routes)+1} String"
+                    self.draw_wire_route(route1, self.string_cable_size_var.get(), current, True, "string", context_info)
                     
                 if neg_whip:
                     route1 = self.calculate_cable_route(
@@ -2041,7 +2064,8 @@ class WiringConfigurator(tk.Toplevel):
                         False, len(neg_routes)
                     )
                     current = self.calculate_current_for_segment('string')
-                    self.draw_wire_route(route1, self.string_cable_size_var.get(), current, False, "string")
+                    context_info = f"T{tracker_idx+1}-S{len(neg_routes)+1} String"
+                    self.draw_wire_route(route1, self.string_cable_size_var.get(), current, False, "string", context_info)
                                             
                 pos_routes.append({
                     'source_x': pos_whip[0] if pos_whip else (pos.x + string.positive_source_x),
@@ -2077,8 +2101,9 @@ class WiringConfigurator(tk.Toplevel):
                 True,  # is_positive
                 i  # route_index
             )
-            current = self.calculate_current_for_segment('whip', num_strings=1) # For homerun, it's 1 string per route
-            self.draw_wire_route(route, self.whip_cable_size_var.get(), current, True, "whip")
+            current = self.calculate_current_for_segment('whip', num_strings=1)
+            context_info = f"T{i+1} Whip"
+            self.draw_wire_route(route, self.whip_cable_size_var.get(), current, True, "whip", context_info)
         
         for i, route_info in enumerate(neg_routes_north + neg_routes_south):
             route = self.calculate_cable_route(
@@ -2089,8 +2114,9 @@ class WiringConfigurator(tk.Toplevel):
                 False,  # is_positive
                 i  # route_index
             )
-            current = self.calculate_current_for_segment('whip', num_strings=1) # For homerun, it's 1 string per route
-            self.draw_wire_route(route, self.whip_cable_size_var.get(), current, False, "whip")
+            current = self.calculate_current_for_segment('whip', num_strings=1)
+            context_info = f"T{i+1} Whip"
+            self.draw_wire_route(route, self.whip_cable_size_var.get(), current, True, "whip", context_info)
 
     def draw_wire_harness_wiring(self):
         """Draw wire harness wiring configuration"""
@@ -2188,7 +2214,9 @@ class WiringConfigurator(tk.Toplevel):
                 True, 0
             )
             current = self.calculate_current_for_segment('whip', len(pos.strings))
-            self.draw_wire_route(route, self.whip_cable_size_var.get(), current, True, "whip")
+            tracker_idx = self.block.tracker_positions.index(pos)
+            context_info = f"T{tracker_idx+1}-H1 Whip"
+            self.draw_wire_route(route, self.whip_cable_size_var.get(), current, True, "whip", context_info)
         
         if neg_whip_point and neg_dest:
             route = self.calculate_cable_route(
@@ -2197,7 +2225,9 @@ class WiringConfigurator(tk.Toplevel):
                 False, 0
             )
             current = self.calculate_current_for_segment('whip', len(pos.strings))
-            self.draw_wire_route(route, self.whip_cable_size_var.get(), current, False, "whip")
+            tracker_idx = self.block.tracker_positions.index(pos)
+            context_info = f"T{tracker_idx+1}-H1 Whip"
+            self.draw_wire_route(route, self.whip_cable_size_var.get(), current, False, "whip", context_info)
 
     def draw_custom_harnesses(self, pos, pos_whip, neg_whip, string_count):
         """Draw custom harness configurations - each harness is completely independent"""
@@ -2250,26 +2280,33 @@ class WiringConfigurator(tk.Toplevel):
             
             # Step 4: Draw harness connections from collection points to THIS harness's extender point
             if pos_nodes and pos_extender_point:
-                self.draw_harness_to_extender_connection(pos_nodes, pos_extender_point, len(string_indices), True, harness)
+                self.draw_harness_to_extender_connection(pos_nodes, pos_extender_point, len(string_indices), True, harness, tracker_idx, harness_idx)
             
             if neg_nodes and neg_extender_point:
-                self.draw_harness_to_extender_connection(neg_nodes, neg_extender_point, len(string_indices), False, harness)
+                self.draw_harness_to_extender_connection(neg_nodes, neg_extender_point, len(string_indices), False, harness, tracker_idx, harness_idx)
             
             # Step 5: Draw THIS harness's extender from extender point to whip point
-            if pos_extender_point and pos_whip_point:
-                self.draw_extender_route(pos_extender_point, pos_whip_point, len(string_indices), True, tracker_idx, harness_idx)
+            current_pos_whip = self.get_whip_position(str(tracker_idx), 'positive', harness_idx)
+            current_neg_whip = self.get_whip_position(str(tracker_idx), 'negative', harness_idx)
+
+            if pos_extender_point and current_pos_whip:
+                self.draw_extender_route(pos_extender_point, current_pos_whip, len(string_indices), True, tracker_idx, harness_idx)
+
+            if neg_extender_point and current_neg_whip:
+                self.draw_extender_route(neg_extender_point, current_neg_whip, len(string_indices), False, tracker_idx, harness_idx)
             
-            if neg_extender_point and neg_whip_point:
-                self.draw_extender_route(neg_extender_point, neg_whip_point, len(string_indices), False, tracker_idx, harness_idx)
-            
-            # Step 6: Draw THIS harness's whip from whip point to device
+            # Step 6: Draw THIS harness's whip from whip point to device  
             pos_dest, neg_dest = self.get_device_destination_points()
-            
-            if pos_whip_point and pos_dest:
-                self.draw_whip_to_device_connection(pos_whip_point, pos_dest, len(string_indices), True, harness_idx)
-            
-            if neg_whip_point and neg_dest:
-                self.draw_whip_to_device_connection(neg_whip_point, neg_dest, len(string_indices), False, harness_idx)
+
+            # Get the current whip position (custom or default)
+            current_pos_whip = self.get_whip_position(str(tracker_idx), 'positive', harness_idx)
+            current_neg_whip = self.get_whip_position(str(tracker_idx), 'negative', harness_idx)
+
+            if current_pos_whip and pos_dest:
+                self.draw_whip_to_device_connection(current_pos_whip, pos_dest, len(string_indices), True, harness_idx, tracker_idx)
+
+            if current_neg_whip and neg_dest:
+                self.draw_whip_to_device_connection(current_neg_whip, neg_dest, len(string_indices), False, harness_idx, tracker_idx)
 
     def draw_auto_harnesses_for_unconfigured(self, pos, pos_whip, neg_whip, unconfigured_indices):
         """Automatically draw harnesses for unconfigured strings"""
@@ -2339,7 +2376,9 @@ class WiringConfigurator(tk.Toplevel):
                         True, i
                     )
                     current = self.calculate_current_for_segment('string')
-                    self.draw_wire_route(route, self.harness_cable_size_var.get(), current, True, "harness")
+                    tracker_idx = self.block.tracker_positions.index(pos)
+                    context_info = f"T{tracker_idx+1}-H{harness_idx+1} Auto-Harness"
+                    self.draw_wire_route(route, self.harness_cable_size_var.get(), current, True, "harness", context_info)
         
         if neg_nodes:
             # Same for negative
@@ -2351,7 +2390,9 @@ class WiringConfigurator(tk.Toplevel):
                         False, i
                     )
                     current = self.calculate_current_for_segment('string')
-                    self.draw_wire_route(route, self.harness_cable_size_var.get(), current, False, "harness")
+                    tracker_idx = self.block.tracker_positions.index(pos)
+                    context_info = f"T{tracker_idx+1}-H{harness_idx+1} Auto-Harness"
+                    self.draw_wire_route(route, self.harness_cable_size_var.get(), current, False, "harness", context_info)
         
         # Draw harness whip points
         if harness_pos_whip:
@@ -2381,16 +2422,16 @@ class WiringConfigurator(tk.Toplevel):
         if harness_pos_whip and pos_dest:
             self.draw_whip_to_device_connection(
                 harness_pos_whip, pos_dest, 
-                len(unconfigured_indices), True, harness_idx
+                len(unconfigured_indices), True, harness_idx, tracker_idx
             )
         
         if harness_neg_whip and neg_dest:
             self.draw_whip_to_device_connection(
                 harness_neg_whip, neg_dest, 
-                len(unconfigured_indices), False, harness_idx
+                len(unconfigured_indices), False, harness_idx, tracker_idx
             )
 
-    def draw_whip_to_device_connection(self, whip_point, device_point, num_strings, is_positive, harness_idx=0):
+    def draw_whip_to_device_connection(self, whip_point, device_point, num_strings, is_positive, harness_idx=0, tracker_idx=0):
         """Draw a connection from a whip point to the device"""
         route = self.calculate_cable_route(
             whip_point[0], whip_point[1],
@@ -2399,7 +2440,8 @@ class WiringConfigurator(tk.Toplevel):
         )
 
         current = self.calculate_current_for_segment('whip', num_strings)
-        self.draw_wire_route(route, self.whip_cable_size_var.get(), current, is_positive, "whip")
+        context_info = f"T{tracker_idx+1}-H{harness_idx+1} Whip"
+        self.draw_wire_route(route, self.whip_cable_size_var.get(), current, is_positive, "whip", context_info)
                 
     def apply_quick_pattern(self, pattern_type):
         """Apply a predefined harness pattern"""
@@ -2670,8 +2712,11 @@ class WiringConfigurator(tk.Toplevel):
         else:  # Wire Harness configuration
             self.draw_wire_harness_wiring()
 
-    def add_current_label_to_route(self, canvas_points, current, is_positive, segment_type):
-        """Add current label to a route at the midpoint"""
+    def add_current_label_to_route(self, canvas_points, current, is_positive, segment_type, context_info=None):
+        """Add current label to a route with smart positioning and drag capability"""
+        if not self.show_current_labels_var.get():
+            return
+            
         if len(canvas_points) < 4:  # Need at least 2 points (x,y pairs)
             return
             
@@ -2689,12 +2734,34 @@ class WiringConfigurator(tk.Toplevel):
                 mid_x = (points[mid_idx-1][0] + points[mid_idx][0]) / 2
                 mid_y = (points[mid_idx-1][1] + points[mid_idx][1]) / 2
         
-        # Position label above/below line based on polarity
-        offset = -10 if is_positive else 10
-        color = self.get_wire_color(segment_type, is_positive)
+        wire_midpoint = (mid_x, mid_y)
         
-        self.canvas.create_text(mid_x, mid_y + offset, text=f"{current:.1f}A", 
-                            fill=color, font=('Arial', 8))
+        # Smart positioning to avoid overlaps
+        label_pos = self.find_smart_label_position(wire_midpoint, is_positive)
+        
+        color = 'red' if is_positive else 'blue'
+        # Create descriptive label with context
+        if context_info:
+            label_text = f"{context_info}: {current:.1f}A"
+        else:
+            label_text = f"{segment_type}: {current:.1f}A"
+        
+        text_id = self.canvas.create_text(label_pos[0], label_pos[1], text=label_text, 
+                            fill=color, font=('Arial', 8), tags='current_label')
+        
+        # Store label info for dragging
+        label_id = f"label_{len(self.current_labels)}"
+        self.current_labels[label_id] = {
+            'text_id': text_id,
+            'wire_midpoint': wire_midpoint,
+            'current_pos': label_pos,
+            'leader_id': None
+        }
+        
+        # Bind drag events to the text
+        self.canvas.tag_bind(text_id, '<Button-1>', lambda e, lid=label_id: self.start_label_drag(e, lid))
+        self.canvas.tag_bind(text_id, '<B1-Motion>', lambda e, lid=label_id: self.drag_label(e, lid))
+        self.canvas.tag_bind(text_id, '<ButtonRelease-1>', lambda e, lid=label_id: self.end_label_drag(e, lid))
 
     def validate_and_show_current_warnings(self):
         """Validate current loads and show warnings for both routing modes"""
@@ -2777,7 +2844,7 @@ class WiringConfigurator(tk.Toplevel):
         
         return canvas_points
 
-    def draw_wire_route(self, route, wire_gauge, current, is_positive=True, segment_type="string"):
+    def draw_wire_route(self, route, wire_gauge, current, is_positive=True, segment_type="string", context_info=None):
         """Draw a complete wire route with current calculation and labeling"""
         
         if len(route) < 2:
@@ -2791,40 +2858,9 @@ class WiringConfigurator(tk.Toplevel):
         
         # Add current label if enabled
         if self.show_current_labels_var.get():
-            self.add_current_label_to_route(canvas_points, current, is_positive, segment_type)
+            self.add_current_label_to_route(canvas_points, current, is_positive, segment_type, context_info)
         
-        return line_id
-
-    def add_current_label_to_route(self, canvas_points, current, is_positive, segment_type):
-        """Add current label to a route at the midpoint"""
-        
-        if len(canvas_points) < 4:  # Need at least 2 points (x,y pairs)
-            return
-            
-        # Convert flat list to point pairs for midpoint calculation
-        points = [(canvas_points[i], canvas_points[i+1]) for i in range(0, len(canvas_points), 2)]
-        
-        # Find midpoint
-        if len(points) == 1:
-            mid_x, mid_y = points[0]
-        else:
-            mid_idx = len(points) // 2
-            if mid_idx == 0:
-                mid_x, mid_y = points[0]
-            else:
-                mid_x = (points[mid_idx-1][0] + points[mid_idx][0]) / 2
-                mid_y = (points[mid_idx-1][1] + points[mid_idx][1]) / 2
-        
-        
-        # Position label above/below line based on polarity
-        offset = -10 if is_positive else 10
-        color = 'red' if is_positive else 'blue'
-        
-        label_text = f"{current:.1f}A"
-        
-        text_id = self.canvas.create_text(mid_x, mid_y + offset, text=label_text, 
-                            fill=color, font=('Arial', 8))
-        
+        return line_id      
 
     def draw_string_to_harness_connection(self, pos, string, harness_node, string_idx, is_positive, routing_mode):
         """Draw connection from string source to harness collection point"""
@@ -2843,8 +2879,10 @@ class WiringConfigurator(tk.Toplevel):
         
         # Draw the route
         current = self.calculate_current_for_segment('string')
+        tracker_idx = self.block.tracker_positions.index(pos)
+        context_info = f"T{tracker_idx+1}-S{string_idx+1} String"
         return self.draw_wire_route(route, self.string_cable_size_var.get(), 
-                                current, is_positive, "string")
+                                current, is_positive, "string", context_info)
     
     def needs_extender(self, tracker_idx, harness_idx=None):
         """Determine if a tracker/harness combination needs an extender"""
@@ -2886,43 +2924,43 @@ class WiringConfigurator(tk.Toplevel):
         return False
 
     def get_extender_point(self, tracker_idx, polarity, harness_idx=None):
-        """Calculate extender point position (natural whip point for this harness)"""
-        if harness_idx is None:
-            # For stacked tracker scenario, use the default whip position
-            tracker_id = str(tracker_idx)
-            return self.get_whip_default_position(tracker_id, polarity, harness_idx=0)
-        
-        # For multi-harness scenario, calculate the natural whip point for this specific harness
+        """Calculate extender point position (the collection point closest to device)"""
         pos = self.block.tracker_positions[tracker_idx]
         string_count = len(pos.strings)
         
-        # Get the harness configuration
-        if (hasattr(self.block, 'wiring_config') and 
-            self.block.wiring_config and 
-            hasattr(self.block.wiring_config, 'harness_groupings') and
-            string_count in self.block.wiring_config.harness_groupings and
-            harness_idx < len(self.block.wiring_config.harness_groupings[string_count])):
-            
-            harness = self.block.wiring_config.harness_groupings[string_count][harness_idx]
-            string_indices = harness.string_indices
-            
-            if string_indices:
-                # Calculate the natural whip point based on this harness's string positions
-                # Use the center of this harness's strings as the reference
-                avg_string_y = sum(pos.strings[i].positive_source_y if polarity == 'positive' 
-                                else pos.strings[i].negative_source_y 
-                                for i in string_indices if i < len(pos.strings)) / len(string_indices)
+        if harness_idx is not None:
+            # For multi-harness scenario, find the collection point closest to device
+            if (hasattr(self.block, 'wiring_config') and 
+                self.block.wiring_config and 
+                hasattr(self.block.wiring_config, 'harness_groupings') and
+                string_count in self.block.wiring_config.harness_groupings and
+                harness_idx < len(self.block.wiring_config.harness_groupings[string_count])):
                 
-                # Calculate whip point relative to this harness's position
-                is_positive = (polarity == 'positive')
-                natural_whip = self.calculate_whip_points(pos, is_positive)
+                harness = self.block.wiring_config.harness_groupings[string_count][harness_idx]
+                string_indices = harness.string_indices
                 
-                if natural_whip:
-                    # Adjust the whip point to be relative to this harness's string positions
-                    # instead of the overall tracker position
-                    return (natural_whip[0], pos.y + avg_string_y)
+                if string_indices:
+                    # Get collection points for this harness
+                    routing_mode = self.routing_mode_var.get()
+                    collection_points = []
+                    
+                    for string_idx in string_indices:
+                        if string_idx < len(pos.strings):
+                            string = pos.strings[string_idx]
+                            collection_point = self.get_harness_collection_point(pos, string, harness_idx, polarity == 'positive', routing_mode)
+                            collection_points.append((collection_point, string_idx))
+                    
+                    if collection_points:
+                        # Find the collection point closest to device (smallest Y if device is north, largest Y if device is south)
+                        device_y = self.block.device_y
+                        if device_y < pos.y:  # Device is north of tracker
+                            closest_point = min(collection_points, key=lambda cp: cp[0][1])
+                        else:  # Device is south of tracker  
+                            closest_point = max(collection_points, key=lambda cp: cp[0][1])
+                        
+                        return closest_point[0]
         
-        # Fallback to default calculation
+        # Fallback to default whip position
         tracker_id = str(tracker_idx)
         return self.get_whip_default_position(tracker_id, polarity, harness_idx=0)
 
@@ -2939,12 +2977,10 @@ class WiringConfigurator(tk.Toplevel):
         
         # Draw the wire segment
         current = self.calculate_current_for_segment('extender', num_strings)
-        line_id = self.draw_wire_segment(canvas_points, self.extender_cable_size_var.get(), current, is_positive, "extender")
-        
-        # Add current label if enabled
-        if self.show_current_labels_var.get():
-            self.add_current_label_to_route(canvas_points, current, is_positive, "extender")
-        
+        harness_num = harness_idx + 1 if harness_idx is not None else 1
+        context_info = f"T{tracker_idx+1}-H{harness_num} Extender"
+        line_id = self.draw_wire_route(route, self.extender_cable_size_var.get(), current, is_positive, "extender", context_info)
+
         return line_id
     
     def add_custom_harness_routes(self, cable_routes, pos, tracker_idx):
@@ -3174,23 +3210,44 @@ class WiringConfigurator(tk.Toplevel):
         tracker_id = str(tracker_idx)
         return self.get_whip_default_position(tracker_id, polarity, harness_idx=0)
     
-    def draw_harness_to_extender_connection(self, collection_points, extender_point, num_strings, is_positive, harness):
+    def draw_harness_to_extender_connection(self, collection_points, extender_point, num_strings, is_positive, harness, tracker_idx, harness_idx):
         """Draw harness cables from collection points to extender point"""
         if not collection_points or not extender_point:
             return
         
-        # Simple horizontal connection from each collection point to extender point
-        for i, collection_point in enumerate(collection_points):
+        # Sort collection points by distance from device to create proper routing order
+        device_y = self.block.device_y
+        if device_y < collection_points[0][1]:  # Device is north
+            sorted_points = sorted(collection_points, key=lambda p: p[1], reverse=True)  # Furthest from device first
+        else:  # Device is south
+            sorted_points = sorted(collection_points, key=lambda p: p[1], reverse=False)  # Furthest from device first
+        
+        # Connect collection points in sequence, with last one being the extender point
+        for i in range(len(sorted_points)):
+            start_point = sorted_points[i]
+            
+            if i < len(sorted_points) - 1:
+                # Connect to next collection point
+                end_point = sorted_points[i + 1]
+            else:
+                # Last point - this should be the extender point
+                end_point = extender_point
+                # Verify they're the same (they should be)
+                if abs(end_point[0] - start_point[0]) < 0.1 and abs(end_point[1] - start_point[1]) < 0.1:
+                    continue  # Don't draw zero-length cable
+            
             route = self.calculate_cable_route(
-                collection_point[0], collection_point[1],
-                extender_point[0], extender_point[1],
+                start_point[0], start_point[1],
+                end_point[0], end_point[1],
                 is_positive, i
             )
             
-            # Use harness cable size and accumulated current
+            # Calculate accumulated current (more strings as we progress toward device)
+            accumulated_strings = len(sorted_points) - i
             current = self.calculate_current_for_segment('harness', num_strings)
             cable_size = harness.cable_size if hasattr(harness, 'cable_size') else self.harness_cable_size_var.get()
-            self.draw_wire_route(route, cable_size, current, is_positive, "harness")
+            context_info = f"T{tracker_idx+1}-H{harness_idx+1} Harness"
+            self.draw_wire_route(route, cable_size, current, is_positive, "harness", context_info)
 
     def draw_simple_harness_connection(self, collection_points, extender_point, num_strings, is_positive):
         """Draw simple harness connection for default single harness"""
@@ -3226,4 +3283,82 @@ class WiringConfigurator(tk.Toplevel):
             # Calculate accumulated current (more strings as we progress)
             accumulated_strings = i + 1
             current = self.calculate_current_for_segment('harness', accumulated_strings)
-            self.draw_wire_route(route, self.harness_cable_size_var.get(), current, is_positive, "harness")
+            tracker_idx = self.block.tracker_positions.index(pos) if hasattr(self, 'current_tracker_pos') else 0
+            context_info = f"T{tracker_idx+1}-H1 Harness"
+            self.draw_wire_route(route, self.harness_cable_size_var.get(), current, is_positive, "harness", context_info)
+
+    def find_smart_label_position(self, wire_midpoint, is_positive):
+        """Find a position for the label that avoids overlaps"""
+        base_offset = -15 if is_positive else 15
+        
+        # Try positions at increasing distances
+        for distance in [base_offset, base_offset * 1.5, base_offset * 2]:
+            candidate_pos = (wire_midpoint[0], wire_midpoint[1] + distance)
+            
+            # Check if this position overlaps with existing labels
+            overlap = False
+            for label_info in self.current_labels.values():
+                existing_pos = label_info['current_pos']
+                if abs(candidate_pos[0] - existing_pos[0]) < 30 and abs(candidate_pos[1] - existing_pos[1]) < 15:
+                    overlap = True
+                    break
+            
+            if not overlap:
+                return candidate_pos
+        
+        # If all positions overlap, use the farthest one
+        return (wire_midpoint[0], wire_midpoint[1] + base_offset * 2)
+    
+    def start_label_drag(self, event, label_id):
+        """Start dragging a current label"""
+        self.dragging_label = label_id
+        self.label_drag_start = (event.x, event.y)
+
+    def drag_label(self, event, label_id):
+        """Handle dragging of current label"""
+        if self.dragging_label != label_id:
+            return
+            
+        label_info = self.current_labels[label_id]
+        text_id = label_info['text_id']
+        
+        # Update label position
+        self.canvas.coords(text_id, event.x, event.y)
+        label_info['current_pos'] = (event.x, event.y)
+        
+        # Check if we need a leader line
+        wire_mid = label_info['wire_midpoint']
+        distance = ((event.x - wire_mid[0])**2 + (event.y - wire_mid[1])**2)**0.5
+        
+        if distance > 20:  # Show leader line
+            if label_info['leader_id'] is None:
+                # Create leader line
+                leader_id = self.canvas.create_line(
+                    wire_mid[0], wire_mid[1], event.x, event.y,
+                    fill='gray', width=1, dash=(2, 2), tags='label_leader'
+                )
+                label_info['leader_id'] = leader_id
+            else:
+                # Update existing leader line
+                self.canvas.coords(label_info['leader_id'], 
+                                wire_mid[0], wire_mid[1], event.x, event.y)
+        else:
+            # Remove leader line if too close
+            if label_info['leader_id'] is not None:
+                self.canvas.delete(label_info['leader_id'])
+                label_info['leader_id'] = None
+
+    def end_label_drag(self, event, label_id):
+        """End label dragging"""
+        self.dragging_label = None
+        self.label_drag_start = None
+
+    def toggle_current_labels(self):
+        """Toggle current labels and reset positions"""
+        # Clear existing labels and leaders
+        self.canvas.delete('current_label')
+        self.canvas.delete('label_leader')
+        self.current_labels = {}
+        
+        # Redraw with new state
+        self.draw_wiring_layout()
