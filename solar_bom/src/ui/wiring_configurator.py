@@ -291,6 +291,9 @@ class WiringConfigurator(tk.Toplevel):
 
     def draw_wiring_layout(self):
         """Draw block layout with wiring visualization"""
+        # Initialize route storage for Block Configurator
+        self.saved_routes_for_block = {}
+
         # Save current label positions before clearing
         saved_labels = {}
         if hasattr(self, 'current_labels'):
@@ -430,6 +433,14 @@ class WiringConfigurator(tk.Toplevel):
             
             # Get routes based on current routing mode
             cable_routes = self.get_current_routes()
+
+            # DEBUG: Print what routes we're saving
+            print("=== ROUTES BEING SAVED ===")
+            for route_id, route_points in cable_routes.items():
+                print(f"Route: {route_id}, Points: {len(route_points)}")
+                if route_points:
+                    print(f"  Start: {route_points[0]}, End: {route_points[-1]}")
+            print("=" * 30)
 
             # Process each tracker position to capture collection points
             for idx, pos in enumerate(self.block.tracker_positions):
@@ -2672,38 +2683,15 @@ class WiringConfigurator(tk.Toplevel):
         
         # If it's larger than our highest rating, return the highest
         return self.FUSE_RATINGS[-1]
-
+    
     def get_current_routes(self):
         """Get routes based on current routing mode (realistic or conceptual)"""
-        # Now both modes use the same logic, just with different positioning
-        cable_routes = {}
+        # Return routes that were saved during drawing (if available)
+        if hasattr(self, 'saved_routes_for_block') and self.saved_routes_for_block:
+            return self.saved_routes_for_block.copy()
         
-        for idx, pos in enumerate(self.block.tracker_positions):
-            if not pos.template:
-                continue
-                
-            tracker_idx = idx
-            pos_whip = self.get_whip_position(str(tracker_idx), 'positive')
-            neg_whip = self.get_whip_position(str(tracker_idx), 'negative')
-            
-            for string_idx, string in enumerate(pos.strings):
-                if self.wiring_type_var.get() == WiringType.HOMERUN.value:
-                    self.add_homerun_routes(cable_routes, pos, string, tracker_idx, string_idx, pos_whip, neg_whip)
-                else:
-                    # Check if we have custom harness groupings
-                    string_count = len(pos.strings)
-                    has_custom_groupings = (hasattr(self.block.wiring_config, 'harness_groupings') and 
-                                        string_count in self.block.wiring_config.harness_groupings and 
-                                        self.block.wiring_config.harness_groupings[string_count])
-                    
-                    if has_custom_groupings and string_idx == 0:
-                        # Only call once per tracker for custom harnesses
-                        self.add_custom_harness_routes(cable_routes, pos, tracker_idx)
-                    elif not has_custom_groupings:
-                        # Use default harness routing
-                        self.add_harness_routes(cable_routes, pos, string, tracker_idx, string_idx, pos_whip, neg_whip)
-        
-        return cable_routes
+        # Fallback to old logic if no saved routes
+        return self._get_fallback_routes()
         
     def draw_current_routes(self):
         """Draw routes based on current wiring type (always uses conceptual logic with positioning variants)"""
@@ -2846,6 +2834,12 @@ class WiringConfigurator(tk.Toplevel):
 
     def draw_wire_route(self, route, wire_gauge, current, is_positive=True, segment_type="string", context_info=None):
         """Draw a complete wire route with current calculation and labeling"""
+        
+        # Save route for Block Configurator (if we have context info)
+        if context_info and hasattr(self, 'saved_routes_for_block'):
+            polarity = 'pos' if is_positive else 'neg'
+            route_id = f"{polarity}_{segment_type}_{context_info.lower().replace(' ', '_')}"
+            self.saved_routes_for_block[route_id] = route.copy()
         
         if len(route) < 2:
             return None

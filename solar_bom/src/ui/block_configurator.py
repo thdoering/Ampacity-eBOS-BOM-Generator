@@ -640,7 +640,16 @@ class BlockConfigurator(ttk.Frame):
         
         # Skip if no wiring config
         if not block.wiring_config or not block.wiring_config.cable_routes:
+            print("DEBUG: No wiring config or no cable routes")
             return
+        
+        # DEBUG: Print what routes we're trying to draw
+        print("=== ROUTES BEING DRAWN ===")
+        for route_id, route_points in block.wiring_config.cable_routes.items():
+            print(f"Route: {route_id}, Points: {len(route_points)}")
+            if route_points:
+                print(f"  Start: {route_points[0]}, End: {route_points[-1]}")
+        print("=" * 30)
         
         scale = self.get_canvas_scale()
         
@@ -687,6 +696,31 @@ class BlockConfigurator(ttk.Frame):
             else:  # whip routes
                 color = '#FFA500' if is_positive else '#40E0D0'  # Orange/Turquoise (whip)
             self.canvas.create_line(canvas_points, fill=color, width=line_thickness, tags='wiring')
+
+            # Draw visual connection points
+            self.draw_wiring_points()
+
+    def draw_wiring_points(self):
+        """Draw collection points, whip points, and extender points like wiring configurator"""
+        if not self.current_block:
+            return
+            
+        block = self.blocks[self.current_block]
+        if not block.wiring_config:
+            return
+            
+        scale = self.get_canvas_scale()
+        
+        # Draw collection points (red/blue circles)
+        for point in block.wiring_config.positive_collection_points:
+            x = 10 + self.pan_x + point.x * scale
+            y = 10 + self.pan_y + point.y * scale
+            self.canvas.create_oval(x-3, y-3, x+3, y+3, fill='red', outline='darkred', tags='wiring')
+            
+        for point in block.wiring_config.negative_collection_points:
+            x = 10 + self.pan_x + point.x * scale
+            y = 10 + self.pan_y + point.y * scale
+            self.canvas.create_oval(x-3, y-3, x+3, y+3, fill='blue', outline='darkblue', tags='wiring')
 
     def get_line_thickness_for_wire_gauge(self, wire_gauge: str) -> float:
         """Convert wire gauge to line thickness for display"""
