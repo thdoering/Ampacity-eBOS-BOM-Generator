@@ -177,6 +177,29 @@ class BOMGenerator:
                         'unit': 'feet',
                         'category': 'eBOS'
                     }
+
+                # Split extender cable by polarity
+                extender_cable_size = getattr(block.wiring_config, 'extender_cable_size', '8 AWG')
+
+                if 'extender_cable_positive' in cable_lengths:
+                    extender_length_feet = round(cable_lengths['extender_cable_positive'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
+
+                    block_quantities[f'Positive Extender Cable ({extender_cable_size})'] = {
+                        'description': f'DC Positive Extender Cable {extender_cable_size}',
+                        'quantity': extender_length_feet,
+                        'unit': 'feet',
+                        'category': 'Extender Cables'
+                    }
+
+                if 'extender_cable_negative' in cable_lengths:
+                    extender_length_feet = round(cable_lengths['extender_cable_negative'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
+
+                    block_quantities[f'Negative Extender Cable ({extender_cable_size})'] = {
+                        'description': f'DC Negative Extender Cable {extender_cable_size}',
+                        'quantity': extender_length_feet,
+                        'unit': 'feet',
+                        'category': 'Extender Cables'
+                    }
             
             quantities[block_id] = block_quantities
         
@@ -673,6 +696,42 @@ class BOMGenerator:
             # Calculate and add total whip entries from segments
             self.calculate_totals_from_segments(block_quantities, whip_size, "Positive Whip Cable")
             self.calculate_totals_from_segments(block_quantities, whip_size, "Negative Whip Cable")
+
+            # Process extender segments
+            extender_segments_pos = []
+            extender_segments_neg = []
+
+            for route_id, route in cable_routes.items():
+                # Skip routes with less than 2 points
+                if len(route) < 2:
+                    continue
+                    
+                # Calculate segment length
+                segment_length = 0
+                for i in range(len(route) - 1):
+                    dx = route[i+1][0] - route[i][0]
+                    dy = route[i+1][1] - route[i][1]
+                    segment_length += (dx**2 + dy**2)**0.5
+                
+                # Convert to feet
+                segment_length_feet = segment_length * 3.28084
+                
+                # Categorize extender routes
+                if "pos_extender" in route_id:
+                    extender_segments_pos.append(segment_length_feet)
+                elif "neg_extender" in route_id:
+                    extender_segments_neg.append(segment_length_feet)
+
+            # Process extender segments
+            extender_size = getattr(block.wiring_config, 'extender_cable_size', "8 AWG")
+            self._add_segment_analysis(block_quantities, extender_segments_pos, 
+                                    extender_size, "Positive Extender Cable", 5)
+            self._add_segment_analysis(block_quantities, extender_segments_neg, 
+                                    extender_size, "Negative Extender Cable", 5)
+
+            # Calculate and add total extender entries from segments
+            self.calculate_totals_from_segments(block_quantities, extender_size, "Positive Extender Cable")
+            self.calculate_totals_from_segments(block_quantities, extender_size, "Negative Extender Cable")
                     
             # Update quantities
             quantities[block_id] = block_quantities
@@ -706,11 +765,18 @@ class BOMGenerator:
         # Add segment counts to quantities
         for length, count in segment_counts.items():
             segment_key = f"{prefix} Segment {int(length)}ft ({cable_size})"
+            
+            # Determine category based on cable type
+            if "Extender Cable" in prefix:
+                category = 'Extender Cable Segments'
+            else:
+                category = 'eBOS Segments'
+            
             block_quantities[segment_key] = {
                 'description': f"{int(length)}ft {prefix} Segment ({cable_size})",
                 'quantity': count,
                 'unit': 'segments',
-                'category': 'eBOS Segments'
+                'category': category
             }
 
     def calculate_totals_from_segments(self, block_quantities, cable_size, prefix):
@@ -739,11 +805,18 @@ class BOMGenerator:
                 total_length = int(total_length)
             
             total_key = f"{prefix} ({cable_size})"
+
+            # Determine category based on cable type
+            if "Extender Cable" in prefix:
+                category = 'Extender Cables'
+            else:
+                category = 'eBOS'
+
             block_quantities[total_key] = {
                 'description': f'DC {prefix} {cable_size}',
-                'quantity': total_length if "Whip Cable" in prefix else round(total_length, 1),
+                'quantity': total_length if "Whip Cable" in prefix or "Extender Cable" in prefix else round(total_length, 1),
                 'unit': 'feet',
-                'category': 'eBOS'
+                'category': category
             }
             
         return total_length > 0

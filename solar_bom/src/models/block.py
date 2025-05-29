@@ -50,6 +50,7 @@ class WiringConfig:
     string_cable_size: str = "10 AWG"  # Default value
     harness_cable_size: str = "8 AWG"  # Default value
     whip_cable_size: str = "8 AWG"  # Default value for whips
+    extender_cable_size: str = "8 AWG"  # Default value for extenders
     custom_whip_points: Dict[str, Dict[str, tuple[float, float]]] = field(default_factory=dict)   # Format: {'tracker_id': {'positive': (x, y), 'negative': (x, y)}}
     harness_groupings: Dict[int, List[HarnessGroup]] = field(default_factory=dict)
     custom_harness_whip_points: Dict[str, Dict[int, Dict[str, tuple[float, float]]]] = field(default_factory=dict)  # Format: {'tracker_id': {harness_idx: {'positive': (x, y), 'negative': (x, y)}}}
@@ -209,6 +210,27 @@ class BlockConfig:
             lengths["harness_cable_negative"] = neg_harness_cable_length
             lengths["whip_cable_positive"] = pos_whip_cable_length
             lengths["whip_cable_negative"] = neg_whip_cable_length
+
+            # Calculate extender cable lengths
+            pos_extender_cable_length = 0
+            neg_extender_cable_length = 0
+
+            for route_id, route in cable_routes.items():
+                points = route
+                route_length = 0
+                for i in range(len(points) - 1):
+                    dx = points[i+1][0] - points[i][0]
+                    dy = points[i+1][1] - points[i][1]
+                    route_length += (dx**2 + dy**2)**0.5
+                
+                # Determine if this is an extender route
+                if "pos_extender" in route_id:
+                    pos_extender_cable_length += route_length
+                elif "neg_extender" in route_id:
+                    neg_extender_cable_length += route_length
+
+            lengths["extender_cable_positive"] = pos_extender_cable_length
+            lengths["extender_cable_negative"] = neg_extender_cable_length
             
         return lengths
     
@@ -275,6 +297,7 @@ class BlockConfig:
                 'string_cable_size': self.wiring_config.string_cable_size,
                 'harness_cable_size': self.wiring_config.harness_cable_size,
                 'whip_cable_size': getattr(self.wiring_config, 'whip_cable_size', "8 AWG"),
+                'extender_cable_size': getattr(self.wiring_config, 'extender_cable_size', "8 AWG"),
                 'routing_mode': getattr(self.wiring_config, 'routing_mode', 'realistic'),
                 'positive_collection_points': [],
                 'negative_collection_points': [],
@@ -440,6 +463,7 @@ class BlockConfig:
                 string_cable_size=wiring_data.get('string_cable_size', "10 AWG"),
                 harness_cable_size=wiring_data.get('harness_cable_size', "8 AWG"),
                 whip_cable_size=wiring_data.get('whip_cable_size', "8 AWG"),
+                extender_cable_size=wiring_data.get('extender_cable_size', "8 AWG"),
                 custom_whip_points=wiring_data.get('custom_whip_points', {}),
                 harness_groupings=harness_groupings,
                 routing_mode=wiring_data.get('routing_mode', 'realistic')
