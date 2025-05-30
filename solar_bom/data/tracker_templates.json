@@ -375,5 +375,143 @@
       "isc": 2.68,
       "max_system_voltage": 1500
     }
+  },
+  "ATI-112-580W": {
+    "module_orientation": "Portrait",
+    "modules_per_string": 28,
+    "strings_per_tracker": 4,
+    "module_spacing_m": 0.01,
+    "motor_gap_m": 1.0,
+    "motor_position_after_string": 2,
+    "module_spec": {
+      "manufacturer": "NE Solar",
+      "model": "NESE 580-72THB-M10 - 580W",
+      "type": "Mono PERC",
+      "length_mm": 2278.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 580.0,
+      "vmp": 42.8,
+      "imp": 13.56,
+      "voc": 51.5,
+      "isc": 14.35,
+      "max_system_voltage": 1500
+    }
+  },
+  "ATI-84-580W-m1": {
+    "module_orientation": "Portrait",
+    "modules_per_string": 28,
+    "strings_per_tracker": 3,
+    "module_spacing_m": 0.01,
+    "motor_gap_m": 1.0,
+    "motor_position_after_string": 1,
+    "module_spec": {
+      "manufacturer": "NE Solar",
+      "model": "NESE 580-72THB-M10 - 580W",
+      "type": "Mono PERC",
+      "length_mm": 2278.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 580.0,
+      "vmp": 42.8,
+      "imp": 13.56,
+      "voc": 51.5,
+      "isc": 14.35,
+      "max_system_voltage": 1500
+    }
+  },
+  "ATI-84-580W-m2": {
+    "module_orientation": "Portrait",
+    "modules_per_string": 28,
+    "strings_per_tracker": 3,
+    "module_spacing_m": 0.01,
+    "motor_gap_m": 1.0,
+    "motor_position_after_string": 2,
+    "module_spec": {
+      "manufacturer": "NE Solar",
+      "model": "NESE 580-72THB-M10 - 580W",
+      "type": "Mono PERC",
+      "length_mm": 2278.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 580.0,
+      "vmp": 42.8,
+      "imp": 13.56,
+      "voc": 51.5,
+      "isc": 14.35,
+      "max_system_voltage": 1500
+    }
+  },
+  "ATI-56-580W-m2": {
+    "module_orientation": "Portrait",
+    "modules_per_string": 28,
+    "strings_per_tracker": 2,
+    "module_spacing_m": 0.01,
+    "motor_gap_m": 1.0,
+    "motor_position_after_string": 2,
+    "module_spec": {
+      "manufacturer": "NE Solar",
+      "model": "NESE 580-72THB-M10 - 580W",
+      "type": "Mono PERC",
+      "length_mm": 2278.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 580.0,
+      "vmp": 42.8,
+      "imp": 13.56,
+      "voc": 51.5,
+      "isc": 14.35,
+      "max_system_voltage": 1500
+    }
+  },
+  "ATI-56-580W-m0": {
+    "module_orientation": "Portrait",
+    "modules_per_string": 28,
+    "strings_per_tracker": 2,
+    "module_spacing_m": 0.01,
+    "motor_gap_m": 1.0,
+    "motor_position_after_string": 0,
+    "module_spec": {
+      "manufacturer": "NE Solar",
+      "model": "NESE 580-72THB-M10 - 580W",
+      "type": "Mono PERC",
+      "length_mm": 2278.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 580.0,
+      "vmp": 42.8,
+      "imp": 13.56,
+      "voc": 51.5,
+      "isc": 14.35,
+      "max_system_voltage": 1500
+    }
+  },
+  "ATI-28-580W": {
+    "module_orientation": "Portrait",
+    "modules_per_string": 28,
+    "strings_per_tracker": 1,
+    "module_spacing_m": 0.01,
+    "motor_gap_m": 1.0,
+    "motor_position_after_string": 0,
+    "module_spec": {
+      "manufacturer": "NE Solar",
+      "model": "NESE 580-72THB-M10 - 580W",
+      "type": "Mono PERC",
+      "length_mm": 2278.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 580.0,
+      "vmp": 42.8,
+      "imp": 13.56,
+      "voc": 51.5,
+      "isc": 14.35,
+      "max_system_voltage": 1500
+    }
   }
 }

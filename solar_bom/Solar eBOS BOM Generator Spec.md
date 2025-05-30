@@ -76,6 +76,7 @@ class ModuleSpec:
   - Motor/drive gaps (default 1.0m)
   - String size (modules per string)
   - Strings per tracker
+  - Motor position configuration
 - Save templates for reuse within project
 - Real-time preview updates as parameters change
 - Support for both portrait and landscape module orientations
@@ -107,6 +108,7 @@ class TrackerTemplate:
     description: Optional[str] = None
     module_spacing_m: float = 0.01  # Default gap between modules
     motor_gap_m: float = 1.0  # Default gap for motor/drive
+    motor_position_after_string: int = 0  # Motor position (0 means calculate default)
 ```
 
 ### 2.3 Block Configuration Tool
@@ -124,6 +126,7 @@ class TrackerTemplate:
   - Place inverters/combiner boxes anywhere within block
   - Visual safety zones around devices with configurable clearance
   - Device dimensions and clearances in feet/meters
+  - Configurable placement modes (row center vs tracker aligned)
 - Navigation and visualization controls:
   - Advanced pan and zoom functionality for large layouts
   - Dynamic scaling based on block size
@@ -169,15 +172,6 @@ class TrackerTemplate:
   - Keyboard shortcuts for selection manipulation (Ctrl+A, Delete, Esc)
 - Dual-unit display (feet/meters) for measurements
 
-#### Block Configurator Realistic Wiring Features
-
-- Dedicated realistic cable routing calculations for accurate BOM generation
-- Routes follow torque tubes and module layouts physically instead of abstract connections
-- Stored independently of wiring configurator visualization routes
-- Direct visualization of realistic routes with color-coding and appropriate wire thicknesses
-- Automatic routing to device center with small offsets for visual clarity
-- North-South tracker orientation markers for reference
-
 #### Block Configuration Data Model
 ```python
 class BlockConfig:
@@ -201,6 +195,7 @@ class BlockConfig:
     # Layout and wiring 
     tracker_positions: List[TrackerPosition] = field(default_factory=list)
     wiring_config: Optional[WiringConfig] = None
+    block_realistic_routes: Dict[str, List[tuple[float, float]]] = field(default_factory=dict)
 ```
 
 ### 2.4 Inverter Management
@@ -259,20 +254,41 @@ class InverterSpec:
 
 ### 2.5 String-to-Inverter Wiring Configuration
 
+#### Routing Modes
+
+The system supports two distinct routing calculation modes:
+
+1. **Realistic Routing Mode**:
+   - Cable routes follow actual installation patterns
+   - Routes along tracker centerlines and torque tubes
+   - Accounts for physical tracker structure
+   - Provides accurate cable length calculations for BOM
+   - Whip points align with harness cables for optimal installation
+   - More accurate representation of field installation practices
+
+2. **Conceptual Routing Mode**:
+   - Simplified routing for visualization purposes
+   - Direct point-to-point connections with minimal waypoints
+   - Faster calculation and rendering
+   - Suitable for preliminary design and understanding system topology
+   - May not reflect actual installation cable lengths
+
 #### Wire Routing Rules
 
-- All cable routes follow a vertical-then-horizontal pattern
+- All cable routes follow a vertical-then-horizontal pattern in conceptual mode
+- Realistic mode routes follow tracker structure and centerlines
 - Maintain visual separation between parallel cable runs
-- Route cables along tracker edges with small offsets
+- Route cables along tracker edges with appropriate offsets
 - Positive cables route along left side of tracker, negative along right
 - Routes determined by source point location relative to destination
 
 #### Wire Harness Collection Points
 
-- Node points placed near string source points with small offset
-- Node points follow same left/right positioning as source points
-- Each tracker maintains independent harness system
-- No combining of harnesses between trackers
+- Node points placed near string source points with calculated offsets
+- Node points follow positioning rules based on routing mode
+- Each tracker maintains independent harness system with optional grouping
+- Support for combining harnesses between trackers via extender system
+- Collection points have current ratings and capacity validation
 
 #### Visualization Standards
 
@@ -283,69 +299,129 @@ class InverterSpec:
 - Source points, node points, and destination points visually distinct
 - Current labels for visualizing electrical loads on wire segments
 - Different line thicknesses based on wire gauge
+- Color coding by cable importance (darker = higher current/importance)
 
-#### Features
+#### Wiring Configuration Types
 
-Support two wiring approaches, both with automatic cable routing:
+Support two primary wiring approaches with advanced configuration options:
 
-1. String Homeruns:
+1. **String Homeruns**:
    - Individual positive/negative cables per string
    - Direct connection to downstream device
    - Cable paths automatically generated from each string to device
    - Cable sizing based on single string current
    - More inputs used on downstream device
    - Longer total cable length
+   - Simpler installation but higher material cost
 
-2. Wire Harness Solution:
-   - Collection point at each tracker
+2. **Wire Harness Solution**:
+   - Collection point at each tracker with advanced grouping options
    - Separate positive and negative wire harnesses
    - Combined strings at collection points
-   - Two main cable runs to downstream device (pos/neg)
-   - Cable sizing based on combined current
-   - Fewer inputs on downstream device
-   - Less total cable length but higher gauge wire
    - Advanced string grouping capabilities for creating custom harnesses
    - Custom harness configuration with individual string selection
-   - Multiple harness support per tracker with different cable sizes
+   - Multiple independent harnesses per tracker with different cable sizes
    - Support for individual whip point positioning for routing optimization
    - Realistic cable routing calculation options for accurate BOM generation
 
-#### Harness Configuration Options
-- Flexible string grouping within trackers
-- Multiple independent harnesses per tracker
-- Separate cable sizing for string, harness and whip cables
-- Customizable whip points with visual interactive positioning
-- Quick pattern templates for common harness configurations:
+#### Advanced Harness Configuration Options
+
+- **Flexible String Grouping**: Group any combination of strings within trackers
+- **Multiple Independent Harnesses**: Create multiple harnesses per tracker, each with its own cable sizing and routing
+- **Custom Cable Sizing**: Separate cable sizing for string, harness, whip, and extender cables
+- **Interactive Whip Point Management**: 
+  - Drag-and-drop whip point positioning
+  - Visual feedback for selected points
+  - Single and multi-point selection
+  - Reset to default positions
+  - Persistence of custom positions between sessions
+- **Quick Pattern Templates**: Pre-configured harness patterns for common scenarios:
   - Split evenly in two harnesses
   - Separate furthest string from others
   - Default single harness configuration
+- **Fuse Configuration**: 
+  - Configurable fuse ratings per harness
+  - Automatic NEC-compliant fuse sizing recommendations
+  - Option to disable fuses for single-string harnesses
+  - Fuse count calculations for BOM generation
+
+#### Extender Cable System
+
+Advanced extender cable management for complex installations:
+
+- **Multi-Harness Extenders**: When trackers have multiple harnesses, secondary harnesses use extender cables to reach shared whip points
+- **Stacked Tracker Extenders**: Trackers positioned further from devices automatically use extenders
+- **Intelligent Extender Routing**: System determines optimal extender placement based on:
+  - Tracker position relative to device
+  - Harness configuration
+  - Cable length optimization
+- **Extender Point Visualization**: Dedicated visual indicators for extender connection points
+- **Automatic Extender Calculation**: System automatically determines when extenders are needed
 
 #### Cable Specifications
-- Support for different cable sizes:
+
+Support for comprehensive cable sizing with industry-standard gauges:
+- **Available Sizes**:
   - 4 AWG (21.15 mm²)
   - 6 AWG (13.30 mm²)
   - 8 AWG (8.37 mm²)
   - 10 AWG (5.26 mm²)
-- Independent configuration of string and harness cable sizes
-- Visual representation of different cable sizes with line thickness
-- Current calculations based on module specifications and number of combined strings
-- Current labeling toggle for detailed electrical analysis
+- **Independent Configuration**: Separate sizing for string, harness, whip, and extender cables
+- **Visual Representation**: Different cable sizes shown with appropriate line thickness
+- **Current Calculations**: Based on module specifications and number of combined strings
+- **Interactive Current Labeling**: Toggle for detailed electrical analysis with draggable labels
+
+#### Interactive Whip Point Management
+
+- **Drag-and-Drop Interface**: 
+  - Click and drag individual or multiple whip points
+  - Visual selection feedback with color changes
+  - Rectangle selection for multiple points
+  - Keyboard shortcuts (Ctrl+A, Delete, Esc)
+- **Position Memory**: 
+  - Custom positions persist between sessions
+  - Optional use of custom positions for BOM calculations
+  - Quick reset options for individual or all whip points
+- **Visual Differentiation**: 
+  - Color-coding by polarity and selection state
+  - Size changes for selected points
+  - Distinct visualization for harness-specific points
+- **Context Menus**: Right-click access to common operations
+
+#### Electrical Validation and Warning System
+
+- **Real-Time Current Calculation**: Automatic calculation of current loads through all wire segments
+- **NEC Compliance Checking**: Validation against National Electrical Code requirements
+- **Ampacity Verification**: Check wire gauge capacity against calculated loads
+- **Visual Warning System**: 
+  - Color-coded warnings for different severity levels
+  - Interactive warning panel with clickable items
+  - Wire highlighting when warnings are selected
+  - Overload indicators with percentage calculations
+- **MPPT Capacity Validation**: Verify total string current against inverter MPPT capacity
+- **Warning Categories**:
+  - Caution (60-80% capacity)
+  - Warning (80-100% capacity)
+  - Overload (>100% capacity)
 
 #### Automatic Routing Algorithm
 
-- Routes calculated based on:
-  - String collection point locations
-  - Device location
-  - Other tracker locations (for obstacle avoidance)
-  - Row spacing
-  - N/S spacing
-- No manual waypoint placement or route editing
-- Routes optimized for:
-  - Minimum cable length
-  - Following tracker rows where possible
-  - Maintaining clearances from other equipment
-- Detailed cable routing algorithms for both homerun and harness configurations
-- Node-to-node connections for wire harness configurations
+Enhanced routing calculations based on selected mode:
+
+- **Realistic Mode Routes**:
+  - Follow tracker centerlines and torque tube structures
+  - Account for module layout and physical constraints
+  - Optimize for actual installation practices
+  - Provide accurate cable length calculations
+- **Conceptual Mode Routes**:
+  - Simplified point-to-point connections
+  - Maintain visual clarity and understanding
+  - Faster calculation for large systems
+- **Route Optimization**: 
+  - Minimum cable length where possible
+  - Clearance maintenance from other equipment
+  - Obstacle avoidance algorithms
+- **Node-to-Node Connections**: Sophisticated multi-point routing for wire harness configurations
 
 #### Wiring Configuration Data Model
 ```python
@@ -355,24 +431,30 @@ class WiringConfig:
     negative_collection_points: List[CollectionPoint]
     strings_per_collection: Dict[int, int]  # Collection point ID -> number of strings
     cable_routes: Dict[str, List[tuple[float, float]]]  # Route ID -> list of coordinates
-    realistic_cable_routes: Dict[str, List[tuple[float, float]]]  # Realistic routes for BOM
+    realistic_cable_routes: Dict[str, List[tuple[float, float]]] = field(default_factory=dict)  # Realistic routes for BOM
     string_cable_size: str = "10 AWG"  # Default string cable size
     harness_cable_size: str = "8 AWG"  # Default harness cable size
     whip_cable_size: str = "8 AWG"  # Default whip cable size
-    custom_whip_points: Dict[str, Dict[str, tuple[float, float]]]  # Custom whip positions
-    harness_groupings: Dict[int, List[HarnessGroup]]  # Custom harness configurations
+    extender_cable_size: str = "8 AWG"  # Default extender cable size
+    custom_whip_points: Dict[str, Dict[str, tuple[float, float]]] = field(default_factory=dict)   # Format: {'tracker_id': {'positive': (x, y), 'negative': (x, y)}}
+    harness_groupings: Dict[int, List[HarnessGroup]] = field(default_factory=dict)
+    custom_harness_whip_points: Dict[str, Dict[int, Dict[str, tuple[float, float]]]] = field(default_factory=dict)  # Format: {'tracker_id': {harness_idx: {'positive': (x, y), 'negative': (x, y)}}}
     use_custom_positions_for_bom: bool = False  # Use custom positions for BOM calculations
+    routing_mode: str = "realistic"  # "realistic" or "conceptual"
 ```
 
 #### Validation Rules
 
-- Maximum MPPT current limits
-- Available input connections
-- NEC current limits:
+- Maximum MPPT current limits with real-time feedback
+- Available input connections validation
+- NEC current limits with visual indicators:
   - Individual string cables
   - Combined current in wire harnesses
+  - Extender cable capacity
 - Maximum inputs per downstream device
 - Collection point current ratings
+- Wire gauge ampacity verification
+- Interactive warning system for electrical issues
 
 ### 2.6 Project Management System
 
@@ -383,15 +465,16 @@ class WiringConfig:
   - Client information
   - Creation and modification dates
   - Notes and additional documentation
+  - Default row spacing configuration
 - Project dashboard:
   - Recent projects with card-based presentation
   - Full project list with sorting and filtering
   - Search functionality across project metadata
   - One-click project access
 - Project operations:
-  - Create new projects
+  - Create new projects with configurable defaults
   - Open existing projects
-  - Save project updates
+  - Save project updates with automatic modification date tracking
   - Delete projects with confirmation
   - Rename projects
 - Multi-project workflow:
@@ -422,140 +505,184 @@ class ProjectMetadata:
 
 #### Features
 
-- Component calculation:
+- **Advanced Component Calculation**:
   - Automatic quantity calculation based on block configurations
-  - Cable length calculations for different wiring types
-  - Harness count based on number of strings
-  - Support for multiple component categories
+  - Intelligent cable length calculations using routing mode data
+  - Harness count based on number of strings and custom groupings
+  - Support for multiple component categories with polarity separation
   - Segment-based cable length calculations for higher accuracy
   - Wire size-specific component categorization
   - Support for mixed cable sizes in complex harness configurations
-  - Optional use of custom routing positions for BOM calculations
-  - Automatic segment length rounding to standard increments
-- BOM preview:
-  - Real-time BOM generation
-  - Component categorization and grouping
+  - Configurable use of realistic vs conceptual routing for calculations
+  - Automatic segment length rounding to standard increments with waste factors
+
+- **Routing Mode Impact on BOM**:
+  - **Realistic Mode**: Uses actual installation routing for accurate cable lengths
+  - **Conceptual Mode**: Uses simplified routing (may not reflect actual installation)
+  - **Warning System**: Alerts users when BOM uses conceptual routing
+  - **Route Priority**: BOM calculations prioritize block configurator's realistic routes
+
+- **Advanced Cable Segment Analysis**:
+  - Breakdown of cable runs into practical installation segments
+  - Length-specific segment counts for installation planning
+  - Standardized length increments with appropriate waste factors
+  - Separation of string, harness, whip, and extender cable segments
+  - Support for mixed cable gauge systems within the same installation
+  - Individual segment tracking with counts and lengths
+
+- **BOM Preview and Validation**:
+  - Real-time BOM generation with instant updates
+  - Component categorization and grouping by type and polarity
   - Block-specific and project-wide views
-- Excel export:
-  - Formatted Excel output with project information
-  - Multiple sheets for summary and detailed views
-  - Automatic column sizing and formatting
-  - Project statistics summary
-- Component categorization:
-  - eBOS components
-  - Structural elements
-  - Interconnection equipment
+  - Electrical validation warnings integrated into BOM
+  - Missing configuration detection and warnings
+
+- **Excel Export with Enhanced Features**:
+  - Formatted Excel output with comprehensive project information
+  - Multiple sheets for summary, detailed views, and project data
+  - Automatic column sizing and professional formatting
+  - Project statistics summary with electrical configuration details
+  - Warning indicators for sections with electrical concerns
+  - Enhanced project statistics and electrical configuration summary
+
+#### Component Categorization
+
+- **eBOS Components**:
+  - String cables (by polarity and size)
+  - Wire harnesses (by string count and size)
+  - Whip cables (by polarity and size)
+  - Extender cables (by polarity and size)
+  - Above ground wire management
+- **Electrical Components**:
+  - DC fuses (by rating and quantity)
+  - Connection hardware
+  - Wire management accessories
+- **Structural Elements**: 
+  - Tracker assemblies (by string count)
+  - Mounting hardware
 
 #### BOM Export Format
 
-- Project information sheet:
+- **Project Information Sheet**:
   - Project name, client, and location
   - System size and module specifications
   - Inverter and DC collection types
   - Project notes and description
-- BOM summary sheet:
+  - Electrical configuration summary
+  - Warning count and status indicators
+
+- **BOM Summary Sheet**:
   - Component types and descriptions
   - Total quantities with appropriate units
   - Category grouping with visual separation
-- Block details sheet:
+  - Polarity-specific component listings
+  - Wire gauge and current rating information
+
+- **Block Details Sheet**:
   - Per-block component breakdown
   - Component types and quantities by block
   - Detailed component specifications
-- Segment-based wire listings with specific lengths
-- Detailed harness breakdown by string count and cable size
-- Polarity-specific component listings (positive/negative separate)
-- Warning indicators for sections with electrical concerns
-- Enhanced project statistics and electrical configuration summary
+  - Block-specific electrical loads
 
-#### Cable Segment Analysis
-- Breakdown of cable runs into practical installation segments
-- Length-specific segment counts for installation planning
-- Standardized length increments with appropriate waste factors
-- Separation of string, harness, and whip cable segments
-- Support for mixed cable gauge systems within the same installation
+- **Segment Analysis Sheet**:
+  - Segment-based wire listings with specific lengths
+  - Detailed harness breakdown by string count and cable size
+  - Installation-ready cable cut lists
+  - Waste factor calculations
 
 #### Cable Route Calculation Priority
 
-- BOM calculations exclusively use block configurator's realistic routes when available
-- Cable length calculation is handled directly by the block configurator
-- Realistic routing better estimates true installation patterns:
+- **Primary Source**: Block configurator's realistic routes (when available)
+- **Fallback**: Wiring configurator routes for visualization
+- **BOM Accuracy**: Realistic routing provides better estimates for:
   - String cables routed along torque tubes to whip points
   - Whip cables routed from whip points to device center
-  - Routes consider tracker structure and physical installation constraints
-- No fallback to wiring configurator routes for BOM calculations
+  - Routes considering tracker structure and physical installation constraints
+- **Warning System**: Alerts when conceptual routing is used for BOM calculations
+
+#### Advanced BOM Features
+
+- **Electrical Load Analysis**: Integration of current calculations and NEC compliance
+- **Multi-Configuration Support**: Handle projects with mixed wiring types
+- **Segment Optimization**: Intelligent cable segment analysis for procurement optimization
+- **Installation Planning**: Cable cut lists organized by installation sequence
+- **Quality Assurance**: Validation checks for missing configurations and electrical issues
 
 ### 2.8 Whip Point Management
 
 #### Features
-- Interactive positioning of connection points
+- **Interactive Positioning**:
   - Drag-and-drop interface for whip point placement
-  - Visual feedback for selected points
-  - Single and multi-point selection
-  - Reset to default positions
-- Harness-specific whip points
-  - Vertical offset for multiple harnesses
-  - Independent positioning for each harness group
+  - Visual feedback for selected points with size and color changes
+  - Single and multi-point selection with rectangle selection
+  - Reset to default positions (individual or bulk)
+- **Harness-Specific Management**:
+  - Independent whip points for each harness group
+  - Vertical offset handling for multiple harnesses
   - Custom routing from collection nodes to whip points
-- Position memory
-  - Persistence of custom point positions between sessions
+- **Position Persistence**:
+  - Memory of custom point positions between sessions
   - Optional use of custom positions for BOM calculations
-  - Quick reset options for individual or all whip points
-- Visual differentiation
+  - Quick reset options with confirmation
+  - Context menus for common operations
+- **Visual System**:
   - Color-coding by polarity and selection state
-  - Size changes for selected points
+  - Size changes indicating selection status
   - Distinct visualization for harness-specific points
+  - Leader lines for distant label positioning
 
 ## 3. Technical Requirements
 
 ### 3.1 Data Validation
 
-- Inverter compatibility checks
-- NEC compliance validation for current limits
-- MPPT input validation
-- String cable sizing validation
-- Harness cable sizing validation
-- No validation of string sizing required
-- Real-time current calculation and visualization
+- Inverter compatibility checks with real-time feedback
+- NEC compliance validation for current limits with visual warnings
+- MPPT input validation against total system current
+- String cable sizing validation with ampacity checking
+- Harness cable sizing validation with accumulated current analysis
 - Wire gauge selection validation against current loads
 - Visual warning system for approaching/exceeding ampacity limits
 - Highlighting of problematic wire segments with overload indicators
 - MPPT channel capacity validation against total string current
 - Interactive warning panel with problem descriptions and locations
+- Real-time electrical calculations with temperature effects
 
 ### 3.2 Calculations
 
-- Cable length calculations based on layout
-- Voltage drop calculations
-- Power loss calculations
-- Current calculations for wire harness solutions
-- Conductor ampacity calculations
-- String electrical characteristics with temperature effects
-- Wire harness compatibility checking
-- Ground Coverage Ratio (GCR) calculations
-- Load percentage calculations relative to NEC requirements
-- Ampacity verification for different wire gauges (4, 6, 8, 10 AWG)
-- Harness compatibility checking with current load visualization
-- Real-time calculation of accumulated current in wire harnesses
-- Dynamic current labeling with visual indicators
+- **Cable Length Calculations**: Based on realistic or conceptual routing modes
+- **Voltage Drop Calculations**: Industry-standard formulas with temperature correction
+- **Power Loss Calculations**: System efficiency analysis
+- **Current Calculations**: For wire harness solutions with accumulated loads
+- **Conductor Ampacity Calculations**: Per NEC guidelines with safety factors
+- **String Electrical Characteristics**: With temperature effects and validation
+- **Wire Harness Compatibility**: Checking with current load visualization
+- **Ground Coverage Ratio (GCR)**: Real-time calculations
+- **Load Percentage Calculations**: Relative to NEC requirements
+- **Ampacity Verification**: For different wire gauges (4, 6, 8, 10 AWG)
+- **Harness Compatibility**: Checking with current load visualization
+- **Dynamic Current Labeling**: With visual indicators and drag capability
 
 ### 3.3 File Handling
 
 - Import .ond files for inverter specifications
 - Import .pan files for module specifications
-- Export BOM to Excel format
-- Save/load complete project configurations
+- Export BOM to Excel format with multiple sheets
+- Save/load complete project configurations with version tracking
 - Directory structure verification and creation
 - Filename validation and cleanup
-- Error handling for file operations
+- Error handling for file operations with user feedback
 - Support for multiple file types and validation
+- Backup and recovery mechanisms
 
 ### 3.4 State Management
 
-- Undo/redo system for block configurations
+- Undo/redo system for block configurations with descriptive actions
 - State preservation for project loading/saving
 - Deep state copying to prevent reference issues
 - Error recovery for file operations
 - Consistent state validation
+- Configuration persistence across sessions
+- Real-time state synchronization between UI components
 
 ## 4. User Interface Requirements
 
@@ -563,12 +690,12 @@ class ProjectMetadata:
 - Tab-based interface for different functions
 - Block-based navigation system
 - Drag-and-drop functionality for tracker placement with grid snapping
-- Form-based input for specifications
-- Real-time validation feedback
-- 2D layout visualization
+- Form-based input for specifications with real-time validation
+- Real-time validation feedback with visual indicators
+- 2D layout visualization with professional rendering
 - Error messaging for invalid configurations
 - Undo/redo functionality with descriptive actions
-- Advanced pan and zoom controls in layout visualizations
+- Advanced pan and zoom controls in layout visualizations:
   - Mouse wheel zoom with smooth scaling
   - Middle/right mouse button panning
   - Dynamic redrawing with scale preservation
@@ -579,17 +706,16 @@ class ProjectMetadata:
   - Context menus for quick actions
 - Status and warning visualization:
   - Current load indicators with color coding
-  - Warning panel for electrical issues
+  - Warning panel for electrical issues with clickable items
   - Visual highlights for overloaded segments
   - Interactive wire highlighting on warning selection
-- Tracker selection with visual highlighting
-- Real-time calculation updates
+- Real-time calculation updates with instant feedback
 - Dual-unit display (feet/meters) for all dimensions
 - Selection highlighting for interactive elements
 - Multi-select capability with shift/ctrl modifiers
 - Visual feedback for selected elements with color changes
-- Drag to select multiple elements with selection box
 - Keyboard shortcuts for selection manipulation (Ctrl+A, Delete, Esc)
+- Professional color schemes and visual hierarchy
 
 ## 5. Data Structures
 
@@ -705,6 +831,8 @@ class UndoManager:
 class HarnessGroup:
     string_indices: List[int]  # Indices of strings in this harness
     cable_size: str  # Cable size for this harness
+    fuse_rating_amps: int = 15  # Fuse rating in amps
+    use_fuse: bool = True  # Whether to use fuses for this harness
 ```
 
 ## 6. Implementation Phases
@@ -750,34 +878,45 @@ class HarnessGroup:
 2. Add interactive whip point positioning
 3. Develop electrical warning system
 4. Create realistic routing calculations for BOM
+5. Add routing mode selection
+6. Implement extender cable system
+
+### Phase 8: Enhanced BOM and Validation (Complete)
+1. Advanced segment analysis
+2. Routing mode impact on calculations
+3. Electrical validation and warning systems
+4. Enhanced Excel export with warnings
 
 ## 7. Output Requirements
 
 ### 7.1 BOM Excel Format
-- Project information sheet
-- Component summary sheet:
-  - Part numbers
-  - Quantities
-  - Lengths
-  - Ratings
-- Block detail sheet with per-block breakdown
-- Components to include:
+- **Project Information Sheet**: Comprehensive project data and electrical summary
+- **Component Summary Sheet**:
+  - Part numbers and descriptions
+  - Quantities by polarity and cable type
+  - Lengths with waste factors
+  - Current ratings and wire gauge specifications
+- **Block Detail Sheet**: Per-block breakdown with electrical loads
+- **Segment Analysis Sheet**: Installation-ready cable cut lists
+- **Components Include**:
   - String cables (by polarity and size)
   - Wire harnesses (by string count and size)
-  - Wire management
-  - Whips (by polarity and size)
-  - Above ground wire management
+  - Whip cables (by polarity and size)
+  - Extender cables (by polarity and size)
+  - DC fuses (by rating and quantity)
+  - Wire management accessories
   - Standard segment lengths with counts
 
 ### 7.2 Configuration Saves
-- JSON format for all configurations
+- JSON format for all configurations with version tracking
 - Separate files for templates and blocks
-- Complete project state preservation
-- Module specs include additional fields like efficiency and bifaciality
-- Tracker templates store full module specifications
-- Inverter configurations maintain detailed MPPT channel information
-- Wiring configurations with cable sizes and current ratings
-- Custom whip point positions and harness groupings
+- Complete project state preservation including:
+  - Module specs with efficiency and bifaciality data
+  - Tracker templates with full module specifications
+  - Inverter configurations with detailed MPPT channel information
+  - Wiring configurations with cable sizes, current ratings, and routing modes
+  - Custom whip point positions and harness groupings
+  - Realistic route data for accurate BOM calculations
 
 ## 8. Testing Requirements
 - Unit tests for core functionality
@@ -786,6 +925,7 @@ class HarnessGroup:
 - User acceptance testing for workflow
 - Performance testing for large layouts
 - Electrical limit testing with various wire configurations
+- BOM accuracy validation against field installations
 
 ## 9. Directory Structure
 ```
@@ -798,7 +938,7 @@ solar_bom/
 │   │   ├── module.py      # ModuleSpec, ModuleType, ModuleOrientation
 │   │   ├── inverter.py    # InverterSpec, MPPTChannel, MPPTConfig
 │   │   ├── tracker.py     # TrackerTemplate, TrackerPosition
-│   │   ├── block.py       # BlockConfig, WiringType, DeviceType
+│   │   ├── block.py       # BlockConfig, WiringType, DeviceType, HarnessGroup
 │   │   └── project.py     # Project, ProjectMetadata
 │   │
 │   ├── ui/
@@ -874,21 +1014,31 @@ solar_bom/
 - Show device type indicator
 
 ### 10.5 Wiring Visualization
-- Use red for positive cables and blue for negative cables
-- Line thickness corresponds to wire gauge
-- Show collection points with distinct colors
-- Display whip points for cable connections
-- Provide optional current labels on wire segments
-- Implement real-time updating as configuration changes
-- Highlight overloaded segments with warning indicators
-- Show accumulated current at harness junction points
+- **Color Scheme**:
+  - Red for positive cables and blue for negative cables
+  - Color intensity indicates cable importance (darker = higher current)
+  - Line thickness corresponds to wire gauge
+- **Interactive Elements**:
+  - Show collection points with distinct colors
+  - Display whip points for cable connections
+  - Provide optional current labels on wire segments with drag capability
+  - Implement real-time updating as configuration changes
+  - Highlight overloaded segments with warning indicators
+  - Show accumulated current at harness junction points
+- **Routing Mode Visualization**:
+  - Realistic mode: Routes follow tracker centerlines and structure
+  - Conceptual mode: Simplified direct routing
+  - Visual indicators for current routing mode
 
-### 10.6 Separation of Configurator Roles
-- Wiring Configurator: Used for DC collection visualization and configuration (source grouping, string routing)
-- Block Configurator: Used for physical layout visualization and cable route length calculations
-- Clear separation between wiring visualization and BOM calculation
-- Realistic wiring routes calculated in block configurator follow physical paths along tracker structures
-- Whip connections route to device center for more accurate installation representation
+### 10.6 Electrical Warning System
+- **Warning Panel**: 
+  - Floating panel with clickable warning items
+  - Color-coded severity levels (caution, warning, overload)
+  - Interactive highlighting of problematic wires
+- **Visual Indicators**: 
+  - Wire segment highlighting with pulsing effects
+  - Color-coded current load indicators
+  - Percentage loading displays
 
 ### 10.7 Project Dashboard
 - Card-based layout for recent projects
@@ -932,6 +1082,7 @@ solar_bom/
 - Cache calculated values where appropriate
 - Clear unused canvas elements
 - Optimize large layout rendering
+- Implement progressive loading for complex projects
 
 ### 11.4 File Operations
 - Validate file paths before operations
@@ -940,6 +1091,7 @@ solar_bom/
 - Clean up filenames to ensure validity
 - Check file extensions before processing
 - Use proper JSON formatting for configuration files
+- Implement backup and recovery mechanisms
 
 ### 11.5 Electrical Calculations
 - Implement voltage drop calculations based on industry standards
@@ -949,40 +1101,44 @@ solar_bom/
 - Validate string configurations against inverter specifications
 - Apply proper safety factors to current calculations
 - Separate calculations for different wire gauges
+- Real-time validation with visual feedback
 
 ## 12. Advanced Features
 
-### 12.1 Electrical Calculations
-- Voltage drop calculations for DC circuits
-- Power loss calculations
-- Conductor ampacity based on NEC guidelines
-- String electrical characteristics with temperature effects
-- Wire harness compatibility checking
-- Segment-specific load calculations
+### 12.1 Electrical Calculations and Validation
+- **Real-Time Analysis**: Continuous electrical validation during design
+- **NEC Compliance**: Automatic checking against National Electrical Code
+- **Temperature Effects**: Calculations include temperature coefficients
+- **Safety Factors**: Proper application of electrical safety margins
+- **Load Analysis**: Comprehensive current flow analysis through all segments
 
 ### 12.2 Block Management Enhancements
-- Copy existing blocks with incremental naming
-- Rename blocks with validation
-- Enhanced selection and manipulation of trackers
-- Device positioning with real-time validation of clearances
+- **Advanced Copying**: Copy blocks with incremental naming
+- **Renaming Validation**: Ensure unique block identifiers
+- **Enhanced Selection**: Multi-tracker selection and manipulation
+- **Device Positioning**: Real-time validation of clearances and placement modes
 
 ### 12.3 Wiring Configuration Enhancements
-- Support for different cable sizes with visual representation
-- Current calculations and visualization
-- Collection point current ratings
-- Whip point identification and routing
-- Node-to-node harness routing optimization
-- Custom harness grouping with string-level control
-- Interactive whip point repositioning
-- Multiple independent harnesses per tracker
+- **Multi-Size Support**: Different cable sizes with visual representation
+- **Current Visualization**: Real-time current calculations and display
+- **Collection Point Management**: Current ratings and capacity validation
+- **Advanced Routing**: Both realistic and conceptual routing modes
+- **Interactive Elements**: Drag-and-drop whip point repositioning
+- **Multiple Harness Support**: Independent harnesses per tracker with custom configurations
 
 ### 12.4 User Interface Improvements
-- Real-time GCR calculations and display
-- Dual-unit display for dimensions (feet/meters)
-- Enhanced pan and zoom functionality
-- Tracker selection with visual highlighting
-- Device zone visualization with semi-transparency
-- Tab-based application interface
-- Status bar with project information
-- Electrical warning panel with interactive highlighting
-- Context menus for common operations
+- **Real-Time GCR**: Calculations and display
+- **Dual-Unit Display**: Dimensions in both feet and meters
+- **Enhanced Navigation**: Pan and zoom functionality
+- **Visual Selection**: Tracker selection with highlighting
+- **Interactive Zones**: Device zone visualization with semi-transparency
+- **Professional Interface**: Tab-based application with status bar
+- **Warning Integration**: Electrical warning panel with interactive highlighting
+- **Context Menus**: Right-click access to common operations
+
+### 12.5 BOM Generation Advances
+- **Routing Mode Integration**: Use of realistic routing for accurate calculations
+- **Segment Analysis**: Detailed cable segment breakdown
+- **Installation Planning**: Cable cut lists and installation sequences
+- **Quality Assurance**: Comprehensive validation and warning systems
+- **Export Enhancement**: Professional Excel output with multiple sheets and formatting
