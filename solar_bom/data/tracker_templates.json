@@ -329,5 +329,51 @@
       "isc": 2.68,
       "max_system_voltage": 1500
     }
+  },
+  "ATI-96-Upper-465W": {
+    "module_orientation": "Portrait",
+    "modules_per_string": 6,
+    "strings_per_tracker": 8,
+    "module_spacing_m": 0.01,
+    "motor_gap_m": 1.0,
+    "motor_position_after_string": 8,
+    "module_spec": {
+      "manufacturer": "First Solar",
+      "model": "S6+ V2 - 465W",
+      "type": "Mono PERC",
+      "length_mm": 2024.0,
+      "width_mm": 1245.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 465.0,
+      "vmp": 185.7,
+      "imp": 2.5,
+      "voc": 231.27,
+      "isc": 2.68,
+      "max_system_voltage": 1500
+    }
+  },
+  "ATI-96-Lower-465W": {
+    "module_orientation": "Portrait",
+    "modules_per_string": 6,
+    "strings_per_tracker": 8,
+    "module_spacing_m": 0.01,
+    "motor_gap_m": 1.0,
+    "motor_position_after_string": 0,
+    "module_spec": {
+      "manufacturer": "First Solar",
+      "model": "S6+ V2 - 465W",
+      "type": "Mono PERC",
+      "length_mm": 2024.0,
+      "width_mm": 1245.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 465.0,
+      "vmp": 185.7,
+      "imp": 2.5,
+      "voc": 231.27,
+      "isc": 2.68,
+      "max_system_voltage": 1500
+    }
   }
 }

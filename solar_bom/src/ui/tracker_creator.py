@@ -102,7 +102,7 @@ class TrackerTemplateCreator(ttk.Frame):
 
         # Motor Position
         ttk.Label(editor_frame, text="Motor After String:").grid(row=7, column=0, padx=5, pady=2, sticky=tk.W)
-        self.motor_position_var = tk.StringVar(value="0")  # 0 means auto-calculate
+        self.motor_position_var = tk.StringVar(value="2")  # Default to middle-ish
         self.motor_position_spinbox = ttk.Spinbox(editor_frame, from_=0, to=1, textvariable=self.motor_position_var,
             increment=1, validate='all', validatecommand=(self.register(lambda val: val.isdigit() or val == ""), '%P'))
         self.motor_position_spinbox.grid(row=7, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
@@ -160,13 +160,17 @@ class TrackerTemplateCreator(ttk.Frame):
         """Update the motor position spinbox range based on strings per tracker"""
         try:
             strings_count = int(self.strings_tracker_var.get())
-            # Update the spinbox range: 0 (auto) + 1 to strings_count-1
-            self.motor_position_spinbox.config(to=max(1, strings_count-1))
+            # Update the spinbox range: 0 to strings_count (inclusive)
+            self.motor_position_spinbox.config(to=strings_count)
             
-            # If current value is too high, reset to auto (0)
+            # Set sensible default: middle for even, middle rounded up for odd
             current_val = int(self.motor_position_var.get())
-            if current_val >= strings_count:
-                self.motor_position_var.set("0")
+            if current_val > strings_count:
+                if strings_count % 2 == 0:
+                    default_pos = strings_count // 2
+                else:
+                    default_pos = (strings_count + 1) // 2
+                self.motor_position_var.set(str(default_pos))
         except ValueError:
             pass
 
@@ -315,7 +319,7 @@ class TrackerTemplateCreator(ttk.Frame):
         self.strings_tracker_var.set(str(template_data["strings_per_tracker"]))
         self.spacing_var.set(str(template_data["module_spacing_m"]))
         self.motor_gap_var.set(str(template_data["motor_gap_m"]))
-        self.motor_position_var.set(str(template_data.get("motor_position_after_string", 0)))
+        self.motor_position_var.set(str(template_data.get("motor_position_after_string", 2)))
         
         # If we have module spec data, use it
         if "module_spec" in template_data:

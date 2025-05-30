@@ -124,21 +124,13 @@ class TrackerTemplate:
         if self.motor_gap_m < 0:
             raise ValueError("Motor gap cannot be negative")
         
-        if self.motor_position_after_string < 0 or self.motor_position_after_string >= self.strings_per_tracker:
-            raise ValueError("Motor position must be between 0 and strings_per_tracker-1")
+        if self.motor_position_after_string < 0 or self.motor_position_after_string > self.strings_per_tracker:
+            raise ValueError("Motor position must be between 0 and strings_per_tracker")
             
         return True
     
     def get_motor_position(self) -> int:
-        """Get the motor position, calculating default if not explicitly set"""
-        if self.motor_position_after_string == 0:
-            # Calculate default position
-            if self.strings_per_tracker % 2 == 0:
-                # Even number: motor after middle string
-                return self.strings_per_tracker // 2
-            else:
-                # Odd number: motor after (N-1)/2 string  
-                return (self.strings_per_tracker - 1) // 2
+        """Get the motor position"""
         return self.motor_position_after_string
     
     def get_total_modules(self) -> int:
