@@ -40,7 +40,7 @@ class WiringConfigurator(tk.Toplevel):
         
         # Set up window properties
         self.title("Wiring Configuration")
-        self.geometry("1400x900")
+        self.geometry("1400x1000")
         self.minsize(1000, 600)
         
         # Initialize UI
@@ -699,14 +699,41 @@ class WiringConfigurator(tk.Toplevel):
         tracker_height = tracker_dims[0]
         tracker_width = tracker_dims[1]
         
-        # Determine if device is north or south of tracker
-        device_is_north = self.block.device_y < pos.y
-        
-        # Calculate Y position
-        if device_is_north:
-            y = pos.y - whip_offset
+        # Get tracker Y boundaries
+        tracker_north_y = pos.y
+        tracker_south_y = pos.y + tracker_height
+        device_y = self.block.device_y
+
+        # Check if this tracker has multiple harnesses
+        tracker_idx = self.block.tracker_positions.index(pos)
+        string_count = len(pos.strings)
+        has_multiple_harnesses = (hasattr(self.block, 'wiring_config') and 
+                                self.block.wiring_config and 
+                                hasattr(self.block.wiring_config, 'harness_groupings') and
+                                string_count in self.block.wiring_config.harness_groupings and
+                                len(self.block.wiring_config.harness_groupings[string_count]) > 1)
+
+        # Calculate Y position based on device location and harness configuration
+        if device_y < tracker_north_y:
+            # Device north of tracker - place whip at north end
+            y = tracker_north_y - whip_offset
+        elif device_y > tracker_south_y:
+            # Device south of tracker - place whip at south end  
+            y = tracker_south_y + whip_offset
         else:
-            y = pos.y + tracker_height + whip_offset
+            # Device in middle of tracker
+            if has_multiple_harnesses:
+                # Multiple harnesses - whip can be at device level
+                y = device_y
+            else:
+                # Single harness - whip must be at tracker end (choose closer end)
+                distance_to_north = abs(device_y - tracker_north_y)
+                distance_to_south = abs(device_y - tracker_south_y)
+                
+                if distance_to_north <= distance_to_south:
+                    y = tracker_north_y - whip_offset
+                else:
+                    y = tracker_south_y + whip_offset
         
         # Calculate X position - match node points pattern
         if is_positive:
@@ -1137,24 +1164,43 @@ class WiringConfigurator(tk.Toplevel):
         else:
             whip_x = tracker_center_x + neg_offset  # Align with negative harness
         
-        # Determine which end of the tracker is closer to the device
-        device_y = self.block.device_y
+        # Get tracker Y boundaries
         tracker_north_y = pos.y
         tracker_south_y = pos.y + tracker_length
-        
-        # Calculate distances to both ends
-        distance_to_north = abs(device_y - tracker_north_y)
-        distance_to_south = abs(device_y - tracker_south_y)
-        
-        # Place whip at the appropriate end
+        device_y = self.block.device_y
+
+        # Check if this tracker has multiple harnesses
+        tracker_idx = int(tracker_id)
+        string_count = len(pos.strings)
+        has_multiple_harnesses = (hasattr(self.block, 'wiring_config') and 
+                                self.block.wiring_config and 
+                                hasattr(self.block.wiring_config, 'harness_groupings') and
+                                string_count in self.block.wiring_config.harness_groupings and
+                                len(self.block.wiring_config.harness_groupings[string_count]) > 1)
+
+        # Place whip point based on device location and harness configuration
         whip_offset = 0.5  # Offset from tracker end in meters
-        
-        if distance_to_north < distance_to_south:
-            # Place on north side (top of tracker)
+
+        if device_y < tracker_north_y:
+            # Device north of tracker - place whip at north end
             y_position = tracker_north_y - whip_offset
-        else:
-            # Place on south side (bottom of tracker)
+        elif device_y > tracker_south_y:
+            # Device south of tracker - place whip at south end
             y_position = tracker_south_y + whip_offset
+        else:
+            # Device in middle of tracker
+            if has_multiple_harnesses:
+                # Multiple harnesses - whip can be at device level
+                y_position = device_y
+            else:
+                # Single harness - whip must be at tracker end (choose closer end)
+                distance_to_north = abs(device_y - tracker_north_y)
+                distance_to_south = abs(device_y - tracker_south_y)
+                
+                if distance_to_north <= distance_to_south:
+                    y_position = tracker_north_y - whip_offset
+                else:
+                    y_position = tracker_south_y + whip_offset
         
         result = (whip_x, y_position)
         return result
@@ -2941,14 +2987,10 @@ class WiringConfigurator(tk.Toplevel):
                             collection_points.append((collection_point, string_idx))
                     
                     if collection_points:
-                        # Find the collection point closest to device (smallest Y if device is north, largest Y if device is south)
-                        device_y = self.block.device_y
-                        if device_y < pos.y:  # Device is north of tracker
-                            closest_point = min(collection_points, key=lambda cp: cp[0][1])
-                        else:  # Device is south of tracker  
-                            closest_point = max(collection_points, key=lambda cp: cp[0][1])
-                        
-                        return closest_point[0]
+                        # Get just the collection point coordinates
+                        coord_points = [cp[0] for cp in collection_points]
+                        # Find the end closest to device for extender point
+                        return self.get_harness_extender_end(tracker_idx, harness_idx, polarity, coord_points)
         
         # Fallback to default whip position
         tracker_id = str(tracker_idx)
@@ -3029,16 +3071,34 @@ class WiringConfigurator(tk.Toplevel):
                         neg_node
                     ]
             
-            # Add harness routes to target point (extender or whip)
+            # Add harness routes using new routing direction
             if pos_nodes:
                 target_point = pos_extender_point if harness_needs_extender else harness_pos_whip
                 if target_point:
-                    cable_routes[f"pos_harness_{tracker_idx}_{harness_idx}"] = pos_nodes + [target_point]
-            
+                    # Sort nodes to route from far end toward extender point
+                    extender_end = self.get_harness_extender_end(tracker_idx, harness_idx, 'positive', pos_nodes)
+                    if extender_end:
+                        extender_y = extender_end[1]
+                        extender_is_north = extender_y == min(p[1] for p in pos_nodes)
+                        if extender_is_north:
+                            sorted_nodes = sorted(pos_nodes, key=lambda p: p[1], reverse=True)
+                        else:
+                            sorted_nodes = sorted(pos_nodes, key=lambda p: p[1], reverse=False)
+                        cable_routes[f"pos_harness_{tracker_idx}_{harness_idx}"] = sorted_nodes + [target_point]
+
             if neg_nodes:
                 target_point = neg_extender_point if harness_needs_extender else harness_neg_whip
                 if target_point:
-                    cable_routes[f"neg_harness_{tracker_idx}_{harness_idx}"] = neg_nodes + [target_point]
+                    # Sort nodes to route from far end toward extender point
+                    extender_end = self.get_harness_extender_end(tracker_idx, harness_idx, 'negative', neg_nodes)
+                    if extender_end:
+                        extender_y = extender_end[1]
+                        extender_is_north = extender_y == min(p[1] for p in neg_nodes)
+                        if extender_is_north:
+                            sorted_nodes = sorted(neg_nodes, key=lambda p: p[1], reverse=True)
+                        else:
+                            sorted_nodes = sorted(neg_nodes, key=lambda p: p[1], reverse=False)
+                        cable_routes[f"neg_harness_{tracker_idx}_{harness_idx}"] = sorted_nodes + [target_point]
             
             # Add extender routes if needed
             if harness_needs_extender:
@@ -3205,12 +3265,21 @@ class WiringConfigurator(tk.Toplevel):
         if not collection_points or not extender_point:
             return
         
-        # Sort collection points by distance from device to create proper routing order
-        device_y = self.block.device_y
-        if device_y < collection_points[0][1]:  # Device is north
-            sorted_points = sorted(collection_points, key=lambda p: p[1], reverse=True)  # Furthest from device first
-        else:  # Device is south
-            sorted_points = sorted(collection_points, key=lambda p: p[1], reverse=False)  # Furthest from device first
+        # Sort collection points to route from far end toward extender point
+        extender_point = self.get_harness_extender_end(tracker_idx, harness_idx, is_positive, collection_points)
+        if not extender_point:
+            return
+            
+        # Determine if extender is at north or south end
+        extender_y = extender_point[1]
+        extender_is_north = extender_y == min(p[1] for p in collection_points)
+
+        if extender_is_north:
+            # Extender at north, route from south to north  
+            sorted_points = sorted(collection_points, key=lambda p: p[1], reverse=True)
+        else:
+            # Extender at south, route from north to south
+            sorted_points = sorted(collection_points, key=lambda p: p[1], reverse=False)
         
         # Connect collection points in sequence, with last one being the extender point
         for i in range(len(sorted_points)):
@@ -3244,14 +3313,20 @@ class WiringConfigurator(tk.Toplevel):
         if not collection_points or not extender_point:
             return
         
-        # Determine device position for proper connection order
-        device_is_north = self.block.device_y < collection_points[0][1]  # Use first collection point as reference
-        
-        # Sort collection points by y-coordinate based on device position
-        if device_is_north:
-            sorted_points = sorted(collection_points, key=lambda p: p[1], reverse=True)
+        # Find which end should be the extender point (closest to device)
+        extender_point = self.get_harness_extender_end(0, 0, is_positive, collection_points)  # Use tracker 0, harness 0 for default
+        if not extender_point:
+            return
+
+        # Determine if extender is at north or south end
+        extender_y = extender_point[1]
+        extender_is_north = extender_y == min(p[1] for p in collection_points)
+
+        # Sort to route from far end toward extender point
+        if extender_is_north:
+            sorted_points = sorted(collection_points, key=lambda p: p[1], reverse=True)  # South to north
         else:
-            sorted_points = sorted(collection_points, key=lambda p: p[1], reverse=False)
+            sorted_points = sorted(collection_points, key=lambda p: p[1], reverse=False)  # North to south
         
         # Connect collection points in sequence, ending at extender point
         for i in range(len(sorted_points)):
@@ -3352,3 +3427,27 @@ class WiringConfigurator(tk.Toplevel):
         
         # Redraw with new state
         self.draw_wiring_layout()
+
+    def get_harness_extender_end(self, tracker_idx, harness_idx, polarity, collection_points):
+        """Determine which end of the harness should be the extender point (closest to device)"""
+        if not collection_points:
+            return None
+        
+        device_y = self.block.device_y
+        
+        # Find northernmost and southernmost collection points
+        north_point = min(collection_points, key=lambda p: p[1])  # Smallest Y
+        south_point = max(collection_points, key=lambda p: p[1])  # Largest Y
+        
+        # Calculate distances to device
+        north_distance = abs(north_point[1] - device_y)
+        south_distance = abs(south_point[1] - device_y)
+        
+        # Return the end closest to device (for extender point)
+        if north_distance < south_distance:
+            return north_point
+        elif south_distance < north_distance:
+            return south_point
+        else:
+            # Tie - default to north end
+            return north_point

@@ -636,7 +636,12 @@ class BlockConfigurator(ttk.Frame):
         if not self.current_block:
             return
             
-        block = self.blocks[self.current_block]        
+        block = self.blocks[self.current_block]
+        
+        # Check if block has wiring configuration
+        if not block.wiring_config:
+            return
+            
         scale = self.get_canvas_scale()
         
         # Draw all routes from the wiring configuration
