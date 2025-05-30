@@ -636,21 +636,7 @@ class BlockConfigurator(ttk.Frame):
         if not self.current_block:
             return
             
-        block = self.blocks[self.current_block]
-        
-        # Skip if no wiring config
-        if not block.wiring_config or not block.wiring_config.cable_routes:
-            print("DEBUG: No wiring config or no cable routes")
-            return
-        
-        # DEBUG: Print what routes we're trying to draw
-        print("=== ROUTES BEING DRAWN ===")
-        for route_id, route_points in block.wiring_config.cable_routes.items():
-            print(f"Route: {route_id}, Points: {len(route_points)}")
-            if route_points:
-                print(f"  Start: {route_points[0]}, End: {route_points[-1]}")
-        print("=" * 30)
-        
+        block = self.blocks[self.current_block]        
         scale = self.get_canvas_scale()
         
         # Draw all routes from the wiring configuration

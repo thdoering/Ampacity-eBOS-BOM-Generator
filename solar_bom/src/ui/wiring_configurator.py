@@ -434,14 +434,6 @@ class WiringConfigurator(tk.Toplevel):
             # Get routes based on current routing mode
             cable_routes = self.get_current_routes()
 
-            # DEBUG: Print what routes we're saving
-            print("=== ROUTES BEING SAVED ===")
-            for route_id, route_points in cable_routes.items():
-                print(f"Route: {route_id}, Points: {len(route_points)}")
-                if route_points:
-                    print(f"  Start: {route_points[0]}, End: {route_points[-1]}")
-            print("=" * 30)
-
             # Process each tracker position to capture collection points
             for idx, pos in enumerate(self.block.tracker_positions):
                 if not pos.template:
@@ -1702,13 +1694,17 @@ class WiringConfigurator(tk.Toplevel):
         for widget in self.string_check_frame.winfo_children():
             widget.destroy()
         
-        # Create string checkboxes
+        # Create string checkboxes in columns of 8
         self.string_vars = []
         for i in range(string_count):
             var = tk.BooleanVar(value=False)
             self.string_vars.append(var)
             check = ttk.Checkbutton(self.string_check_frame, text=f"String {i+1}", variable=var)
-            check.grid(row=i, column=0, sticky=tk.W, padx=5, pady=2)
+            
+            # Calculate column and row: new column every 8 strings
+            column = i // 8
+            row = i % 8
+            check.grid(row=row, column=column, sticky=tk.W, padx=5, pady=2)
         
         # Update harness display
         self.update_harness_display(string_count)
