@@ -669,9 +669,9 @@ class BOMGenerator:
                     string_segments_pos.append(segment_length_feet)
                 elif "neg_src" in route_id or "neg_node" in route_id:
                     string_segments_neg.append(segment_length_feet)
-                elif "pos_dev" in route_id or "pos_main" in route_id:
+                elif "pos_dev" in route_id or "pos_main" in route_id or "whip_pos" in route_id or "pos_whip" in route_id:
                     whip_segments_pos.append(segment_length_feet)
-                elif "neg_dev" in route_id or "neg_main" in route_id:
+                elif "neg_dev" in route_id or "neg_main" in route_id or "whip_neg" in route_id or "neg_whip" in route_id:
                     whip_segments_neg.append(segment_length_feet)
             
             # Process string segments only for HOMERUN wiring

@@ -199,9 +199,9 @@ class BlockConfig:
                 elif "neg_harness" in route_id:
                     neg_harness_cable_length += route_length
                 # More flexible whip route pattern matching
-                elif "pos_main" in route_id or "pos_dev" in route_id or ("whip_pos" in route_id):
+                elif "pos_main" in route_id or "pos_dev" in route_id or "whip_pos" in route_id or "pos_whip" in route_id:
                     pos_whip_cable_length += route_length
-                elif "neg_main" in route_id or "neg_dev" in route_id or ("whip_neg" in route_id):
+                elif "neg_main" in route_id or "neg_dev" in route_id or "whip_neg" in route_id or "neg_whip" in route_id:
                     neg_whip_cable_length += route_length
             
             lengths["string_cable_positive"] = pos_string_cable_length
