@@ -755,9 +755,11 @@ class BlockConfigurator(ttk.Frame):
         # Calculate number of modules
         total_modules = template.modules_per_string * template.strings_per_tracker
         modules_per_string = template.modules_per_string
-        strings_above_motor = template.strings_per_tracker - 1
+        motor_position = template.get_motor_position()
+        strings_above_motor = motor_position
+        strings_below_motor = template.strings_per_tracker - motor_position
         modules_above_motor = modules_per_string * strings_above_motor
-        modules_below_motor = modules_per_string
+        modules_below_motor = modules_per_string * strings_below_motor
 
         # Draw torque tube through center
         self.canvas.create_line(
@@ -780,14 +782,15 @@ class BlockConfigurator(ttk.Frame):
             modules_drawn += 1
             y_pos += (module_height + template.module_spacing_m) * scale
 
-        # Draw motor
-        motor_y = y_pos
-        self.canvas.create_oval(
-            x + module_width * scale/2 - 5, motor_y - 5,
-            x + module_width * scale/2 + 5, motor_y + 5,
-            fill='red', tags=group_tag
-        )
-        y_pos += template.motor_gap_m * scale
+        # Draw motor (only if there are strings below)
+        if strings_below_motor > 0:
+            motor_y = y_pos
+            self.canvas.create_oval(
+                x + module_width * scale/2 - 5, motor_y - 5,
+                x + module_width * scale/2 + 5, motor_y + 5,
+                fill='red', tags=group_tag
+            )
+            y_pos += template.motor_gap_m * scale
 
         # Draw modules below motor
         for i in range(modules_below_motor):
@@ -953,7 +956,8 @@ class BlockConfigurator(ttk.Frame):
                             modules_per_string=template.get('modules_per_string', 28),
                             strings_per_tracker=template.get('strings_per_tracker', 2),
                             module_spacing_m=template.get('module_spacing_m', 0.01),
-                            motor_gap_m=template.get('motor_gap_m', 1.0)
+                            motor_gap_m=template.get('motor_gap_m', 1.0),
+                            motor_position_after_string=template.get('motor_position_after_string', 0)
                         )
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to load templates: {str(e)}")

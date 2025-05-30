@@ -105,6 +105,7 @@ class TrackerTemplate:
     description: Optional[str] = None
     module_spacing_m: float = 0.01  # Default gap between modules
     motor_gap_m: float = 1.0  # Default gap for motor/drive
+    motor_position_after_string: int = 0  # Motor position (0 means calculate default)
     
     def validate(self) -> bool:
         """
@@ -122,8 +123,23 @@ class TrackerTemplate:
             
         if self.motor_gap_m < 0:
             raise ValueError("Motor gap cannot be negative")
+        
+        if self.motor_position_after_string < 0 or self.motor_position_after_string >= self.strings_per_tracker:
+            raise ValueError("Motor position must be between 0 and strings_per_tracker-1")
             
         return True
+    
+    def get_motor_position(self) -> int:
+        """Get the motor position, calculating default if not explicitly set"""
+        if self.motor_position_after_string == 0:
+            # Calculate default position
+            if self.strings_per_tracker % 2 == 0:
+                # Even number: motor after middle string
+                return self.strings_per_tracker // 2
+            else:
+                # Odd number: motor after (N-1)/2 string  
+                return (self.strings_per_tracker - 1) // 2
+        return self.motor_position_after_string
     
     def get_total_modules(self) -> int:
         """Calculate total number of modules on the tracker"""
@@ -166,11 +182,18 @@ class TrackerTemplate:
             total_width = module_width
         
         # Calculate total length including all strings and motor gap
-        # Motor gap is added between the last string before motor and first string after
-        strings_above_motor = self.strings_per_tracker - 1  # All strings except last one
-        total_length = (single_string_length * strings_above_motor) + \
-                    self.motor_gap_m + \
-                    single_string_length  # Last string
+        motor_position = self.get_motor_position()
+        strings_above_motor = motor_position
+        strings_below_motor = self.strings_per_tracker - motor_position
+
+        if strings_below_motor > 0:
+            # Motor gap is only added when there are strings below motor
+            total_length = (single_string_length * strings_above_motor) + \
+                        self.motor_gap_m + \
+                        (single_string_length * strings_below_motor)
+        else:
+            # No strings below motor, no gap needed
+            total_length = single_string_length * strings_above_motor
                         
         return (total_length, total_width)
     

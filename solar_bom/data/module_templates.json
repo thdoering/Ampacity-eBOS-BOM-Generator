@@ -118,5 +118,25 @@
     "bifaciality_factor": null,
     "default_orientation": "Portrait",
     "cells_per_module": 72
+  },
+  "First Solar S6+ V2 - 465W": {
+    "manufacturer": "First Solar",
+    "model": "S6+ V2 - 465W",
+    "type": "Mono PERC",
+    "length_mm": 2024.0,
+    "width_mm": 1245.0,
+    "depth_mm": 40,
+    "weight_kg": 25,
+    "wattage": 465.0,
+    "vmp": 185.7,
+    "imp": 2.5,
+    "voc": 231.27,
+    "isc": 2.68,
+    "max_system_voltage": 1500,
+    "efficiency": null,
+    "temperature_coefficient": null,
+    "bifaciality_factor": null,
+    "default_orientation": "Portrait",
+    "cells_per_module": 72
   }
 }

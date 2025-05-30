@@ -86,7 +86,7 @@ class TrackerTemplateCreator(ttk.Frame):
         # Strings per Tracker
         ttk.Label(editor_frame, text="Strings per Tracker:").grid(row=4, column=0, padx=5, pady=2, sticky=tk.W)
         self.strings_tracker_var = tk.StringVar(value="2")
-        ttk.Spinbox(editor_frame, from_=1, to=10, textvariable=self.strings_tracker_var,
+        ttk.Spinbox(editor_frame, from_=1, to=20, textvariable=self.strings_tracker_var,
             increment=1, validate='all', validatecommand=(self.register(lambda val: val.isdigit() or val == ""), '%P')
             ).grid(row=4, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         
@@ -100,19 +100,26 @@ class TrackerTemplateCreator(ttk.Frame):
         self.motor_gap_var = tk.StringVar(value="1.0")
         ttk.Entry(editor_frame, textvariable=self.motor_gap_var).grid(row=6, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
 
+        # Motor Position
+        ttk.Label(editor_frame, text="Motor After String:").grid(row=7, column=0, padx=5, pady=2, sticky=tk.W)
+        self.motor_position_var = tk.StringVar(value="0")  # 0 means auto-calculate
+        self.motor_position_spinbox = ttk.Spinbox(editor_frame, from_=0, to=1, textvariable=self.motor_position_var,
+            increment=1, validate='all', validatecommand=(self.register(lambda val: val.isdigit() or val == ""), '%P'))
+        self.motor_position_spinbox.grid(row=7, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+
         # Total Modules Display
-        ttk.Label(editor_frame, text="Modules per Tracker:").grid(row=7, column=0, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(editor_frame, text="Modules per Tracker:").grid(row=8, column=0, padx=5, pady=2, sticky=tk.W)
         self.total_modules_label = ttk.Label(editor_frame, text="--")
         try:
             modules = int(self.modules_string_var.get()) * int(self.strings_tracker_var.get())
             self.total_modules_label.config(text=str(modules))
         except ValueError:
             self.total_modules_label.config(text="--")
-        self.total_modules_label.grid(row=7, column=1, padx=5, pady=2, sticky=tk.W)
+        self.total_modules_label.grid(row=8, column=1, padx=5, pady=2, sticky=tk.W)
         
         # Calculated Dimensions Display
         dims_frame = ttk.LabelFrame(editor_frame, text="Tracker Dimensions", padding="5")
-        dims_frame.grid(row=8, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
+        dims_frame.grid(row=9, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
         
         self.length_label = ttk.Label(dims_frame, text="Length: --")
         self.length_label.grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
@@ -132,7 +139,7 @@ class TrackerTemplateCreator(ttk.Frame):
         self.strings_tracker_var.trace('w', update_total_modules)
         
         # Save Button
-        ttk.Button(editor_frame, text="Save Template", command=self.save_template).grid(row=9, column=0, columnspan=2, pady=10)
+        ttk.Button(editor_frame, text="Save Template", command=self.save_template).grid(row=10, column=0, columnspan=2, pady=10)
         
         # Preview Canvas - Right column
         preview_frame = ttk.LabelFrame(main_container, text="Preview", padding="5")
@@ -143,8 +150,25 @@ class TrackerTemplateCreator(ttk.Frame):
         
         # Bind events for real-time preview updates
         for var in [self.modules_string_var, self.strings_tracker_var, 
-                self.spacing_var, self.motor_gap_var, self.orientation_var]:
+                self.spacing_var, self.motor_gap_var, self.orientation_var, self.motor_position_var]:
             var.trace('w', lambda *args: self.update_preview())
+
+        # Add special trace for strings_tracker_var to update motor position range
+        self.strings_tracker_var.trace('w', self.update_motor_position_range)
+
+    def update_motor_position_range(self, *args):
+        """Update the motor position spinbox range based on strings per tracker"""
+        try:
+            strings_count = int(self.strings_tracker_var.get())
+            # Update the spinbox range: 0 (auto) + 1 to strings_count-1
+            self.motor_position_spinbox.config(to=max(1, strings_count-1))
+            
+            # If current value is too high, reset to auto (0)
+            current_val = int(self.motor_position_var.get())
+            if current_val >= strings_count:
+                self.motor_position_var.set("0")
+        except ValueError:
+            pass
 
     def update_module_display(self):
         """Update the current module display and related calculations"""
@@ -221,7 +245,8 @@ class TrackerTemplateCreator(ttk.Frame):
                 modules_per_string=int(self.modules_string_var.get()),
                 strings_per_tracker=int(self.strings_tracker_var.get()),
                 module_spacing_m=float(self.spacing_var.get()),
-                motor_gap_m=float(self.motor_gap_var.get())
+                motor_gap_m=float(self.motor_gap_var.get()),
+                motor_position_after_string=int(self.motor_position_var.get())
             )
             template.validate()
             return template
@@ -249,6 +274,7 @@ class TrackerTemplateCreator(ttk.Frame):
                 "strings_per_tracker": template.strings_per_tracker,
                 "module_spacing_m": template.module_spacing_m,
                 "motor_gap_m": template.motor_gap_m,
+                "motor_position_after_string": template.motor_position_after_string,
                 "module_spec": {
                     "manufacturer": template.module_spec.manufacturer,
                     "model": template.module_spec.model,
@@ -289,6 +315,7 @@ class TrackerTemplateCreator(ttk.Frame):
         self.strings_tracker_var.set(str(template_data["strings_per_tracker"]))
         self.spacing_var.set(str(template_data["module_spacing_m"]))
         self.motor_gap_var.set(str(template_data["motor_gap_m"]))
+        self.motor_position_var.set(str(template_data.get("motor_position_after_string", 0)))
         
         # If we have module spec data, use it
         if "module_spec" in template_data:
@@ -344,10 +371,12 @@ class TrackerTemplateCreator(ttk.Frame):
             module_height = template.module_spec.length_mm / 1000
             module_width = template.module_spec.width_mm / 1000
 
-        # Rest of the code remains same as previous version
-        total_strings_above_motor = template.strings_per_tracker - 1
-        modules_above_motor = total_strings_above_motor * template.modules_per_string
-        modules_below_motor = template.modules_per_string
+        # Calculate motor position and modules above/below
+        motor_position = template.get_motor_position()
+        strings_above_motor = motor_position
+        strings_below_motor = template.strings_per_tracker - motor_position
+        modules_above_motor = strings_above_motor * template.modules_per_string
+        modules_below_motor = strings_below_motor * template.modules_per_string
         
         total_height = ((modules_above_motor + modules_below_motor) * module_height) + \
                         ((modules_above_motor + modules_below_motor - 1) * template.module_spacing_m) + \
@@ -373,14 +402,15 @@ class TrackerTemplateCreator(ttk.Frame):
             )
             y_pos += (module_height + template.module_spacing_m) * scale
 
-        # Draw motor
-        motor_y = y_pos
-        y_pos += template.motor_gap_m * scale
-        self.canvas.create_oval(
-            x_center + module_width * scale / 2 - 5, motor_y - 5,
-            x_center + module_width * scale / 2 + 5, motor_y + 5,
-            fill='red'
-        )
+        # Draw motor (only if there are strings above motor)
+        if modules_above_motor > 0:
+            motor_y = y_pos
+            y_pos += template.motor_gap_m * scale
+            self.canvas.create_oval(
+                x_center + module_width * scale / 2 - 5, motor_y - 5,
+                x_center + module_width * scale / 2 + 5, motor_y + 5,
+                fill='red'
+            )
 
         # Draw modules below motor
         for i in range(modules_below_motor):
