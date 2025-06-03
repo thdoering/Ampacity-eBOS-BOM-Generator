@@ -303,6 +303,7 @@ class BOMGenerator:
             summary_data.append({
                 'Category': category,
                 'Component Type': component_type,
+                'Part Number': '',
                 'Description': description,
                 'Quantity': round(quantity, 1) if unit == 'feet' else int(quantity),
                 'Unit': unit
@@ -340,6 +341,7 @@ class BOMGenerator:
                     'Block': block_id,
                     'Category': category,
                     'Component Type': component_type,
+                    'Part Number': '',
                     'Description': description,
                     'Quantity': round(quantity, 1) if unit == 'feet' else int(quantity),
                     'Unit': unit
@@ -512,6 +514,13 @@ class BOMGenerator:
             cell.fill = header_fill
             cell.alignment = centered_alignment
             cell.border = border
+
+        # Apply center alignment to Part Number column data
+        if 'Part Number' in data.columns:
+            part_number_col = list(data.columns).index('Part Number') + 1
+            for row_num in range(start_row + 1, start_row + len(data) + 1):
+                cell = worksheet.cell(row=row_num, column=part_number_col)
+                cell.alignment = centered_alignment
         
         # Format data cells and apply auto-width
         current_category = None
