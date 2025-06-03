@@ -12,12 +12,20 @@ class HarnessDrawingGenerator:
         self.harness_library_path = harness_library_path
         self.harness_library = self.load_harness_library()
         
-        # Drawing constants
+        # Drawing constants - make drawing bigger
         self.canvas_width = 1200
         self.canvas_height = 900
-        self.margin = 80
+        self.margin = 60
         self.drawing_area_width = self.canvas_width - (2 * self.margin)
-        self.drawing_area_height = 600
+        self.drawing_area_height = 700
+        
+        # Wire thickness mapping based on AWG size
+        self.wire_thickness = {
+            "4 AWG": 6,
+            "6 AWG": 5,
+            "8 AWG": 4,
+            "10 AWG": 3
+        }
         
         # Colors
         self.bg_color = (255, 255, 255)  # White
@@ -93,48 +101,139 @@ class HarnessDrawingGenerator:
         spacing_ft = harness_spec['string_spacing_ft']
         polarity = harness_spec['polarity']
         
-        # Calculate positions
-        diagram_start_y = 150
-        trunk_y = diagram_start_y + 100
+        # Calculate positions - make diagram bigger
+        diagram_start_y = 120
+        trunk_y = diagram_start_y + 120
         
-        # Calculate total width needed for the harness
-        total_harness_width = (num_strings - 1) * 60  # 60 pixels per string spacing
-        if total_harness_width > self.drawing_area_width - 200:
+        # Calculate total width needed for the harness - use more space
+        total_harness_width = (num_strings - 1) * 80  # 80 pixels per string spacing
+        if total_harness_width > self.drawing_area_width - 300:
             # Scale down if too wide
-            string_spacing_px = (self.drawing_area_width - 200) // (num_strings - 1)
+            string_spacing_px = (self.drawing_area_width - 300) // (num_strings - 1)
             total_harness_width = (num_strings - 1) * string_spacing_px
         else:
-            string_spacing_px = 60
+            string_spacing_px = 80
         
         # Center the harness horizontally
         harness_start_x = self.margin + (self.drawing_area_width - total_harness_width) // 2
-        harness_end_x = harness_start_x + total_harness_width
+        # Trunk stops at second-to-last string (no T-connector on last string)
+        harness_end_x = harness_start_x + ((num_strings - 2) * string_spacing_px) if num_strings > 1 else harness_start_x
         
-        # Draw main trunk line
+        # Get wire thicknesses
         trunk_color = self.pos_color if polarity == 'positive' else self.neg_color
-        trunk_thickness = 4
+        trunk_thickness = self.wire_thickness.get(harness_spec['trunk_wire_gauge'], 4)
+        drop_thickness = self.wire_thickness.get(harness_spec['drop_wire_gauge'], 3)
         
-        draw.line([harness_start_x, trunk_y, harness_end_x, trunk_y], 
+        # Draw main trunk line - stops at second-to-last string
+        if num_strings > 1:
+            draw.line([harness_start_x, trunk_y, harness_end_x, trunk_y], 
+                     fill=trunk_color, width=trunk_thickness)
+        
+        # Draw left side connector with "to extender/device" label and arrow
+        connector_length = 40
+        arrow_start_x = harness_start_x - connector_length
+        
+        # Draw connector line
+        draw.line([arrow_start_x, trunk_y, harness_start_x, trunk_y], 
                  fill=trunk_color, width=trunk_thickness)
         
-        # Draw string drops
-        drop_length = 80
-        drop_thickness = 2
+        # Draw arrow head pointing left
+        arrow_size = 8
+        draw.polygon([
+            (arrow_start_x, trunk_y),
+            (arrow_start_x + arrow_size, trunk_y - arrow_size//2),
+            (arrow_start_x + arrow_size, trunk_y + arrow_size//2)
+        ], fill=trunk_color)
+        
+        # Add "to extender/device" label
+        label_text = "to extender/device"
+        bbox = draw.textbbox((0, 0), label_text, font=self.label_font)
+        label_width = bbox[2] - bbox[0]
+        label_x = arrow_start_x - label_width - 10
+        draw.text((label_x, trunk_y - 15), label_text, 
+                 fill=self.line_color, font=self.label_font)
+        
+        # Draw string drops with T-connectors and in-line fuses
+        drop_length = 100
         
         for i in range(num_strings):
             drop_x = harness_start_x + (i * string_spacing_px)
             drop_start_y = trunk_y
             drop_end_y = trunk_y + drop_length
             
-            # Draw vertical drop line
-            draw.line([drop_x, drop_start_y, drop_x, drop_end_y], 
-                     fill=trunk_color, width=drop_thickness)
+            # Draw T-connector at intersection (all strings except the last one)
+            if i < num_strings - 1:
+                t_size = 12
+                draw.rectangle([drop_x - t_size//2, trunk_y - t_size//2,
+                              drop_x + t_size//2, trunk_y + t_size//2],
+                             fill=trunk_color, outline=self.line_color, width=1)
+            
+            # For the last string, route it back to the previous T-connector
+            if i == num_strings - 1 and num_strings > 1:
+                # Last string connects to previous T-connector
+                prev_t_x = harness_start_x + ((i - 1) * string_spacing_px)
+                
+                # Draw horizontal line from last string position to previous T-connector
+                draw.line([prev_t_x, trunk_y, drop_x, trunk_y], 
+                         fill=trunk_color, width=drop_thickness)
+                
+                # Calculate fuse position for last string
+                fuse_y = drop_start_y + drop_length // 3
+                
+                # Draw the drop line from the horizontal connection
+                draw.line([drop_x, trunk_y, drop_x, fuse_y - 10], 
+                         fill=trunk_color, width=drop_thickness)
+                
+                # Draw in-line fuse if this harness is fused
+                if harness_spec.get('fused', False):
+                    fuse_size = 16
+                    draw.rectangle([drop_x - fuse_size//2, fuse_y - fuse_size//2,
+                                  drop_x + fuse_size//2, fuse_y + fuse_size//2],
+                                 outline=self.line_color, width=2, fill='white')
+                    
+                    # Draw lower part of drop (fuse to connector)
+                    draw.line([drop_x, fuse_y + 10, drop_x, drop_end_y], 
+                             fill=trunk_color, width=drop_thickness)
+                else:
+                    # No fuse - draw complete drop line
+                    draw.line([drop_x, trunk_y, drop_x, drop_end_y], 
+                             fill=trunk_color, width=drop_thickness)
+            else:
+                # Regular strings (not the last one)
+                # Calculate fuse position (middle of drop line for in-line fuses)
+                fuse_y = drop_start_y + drop_length // 3
+                
+                # Draw upper part of drop (trunk to fuse)
+                draw.line([drop_x, drop_start_y, drop_x, fuse_y - 10], 
+                         fill=trunk_color, width=drop_thickness)
+                
+                # Draw in-line fuse if this harness is fused
+                if harness_spec.get('fused', False):
+                    fuse_size = 16
+                    draw.rectangle([drop_x - fuse_size//2, fuse_y - fuse_size//2,
+                                  drop_x + fuse_size//2, fuse_y + fuse_size//2],
+                                 outline=self.line_color, width=2, fill='white')
+                    
+                    # Add fuse rating label on first fuse only - position to the right
+                    if i == 0:
+                        fuse_rating = harness_spec.get('fuse_rating', '')
+                        if fuse_rating:
+                            draw.text((drop_x + fuse_size//2 + 10, fuse_y - 8), 
+                                     fuse_rating, fill=self.line_color, font=self.dim_font)
+                    
+                    # Draw lower part of drop (fuse to connector)
+                    draw.line([drop_x, fuse_y + 10, drop_x, drop_end_y], 
+                             fill=trunk_color, width=drop_thickness)
+                else:
+                    # No fuse - draw complete drop line
+                    draw.line([drop_x, drop_start_y, drop_x, drop_end_y], 
+                             fill=trunk_color, width=drop_thickness)
             
             # Draw connector symbol at end of drop
-            connector_size = 8
+            connector_size = 10
             draw.rectangle([drop_x - connector_size//2, drop_end_y - connector_size//2,
                           drop_x + connector_size//2, drop_end_y + connector_size//2],
-                         outline=trunk_color, width=2)
+                         outline=trunk_color, width=2, fill='white')
             
             # Label each string
             string_label = f"S{i+1}"
@@ -143,29 +242,12 @@ class HarnessDrawingGenerator:
             draw.text((drop_x - text_width//2, drop_end_y + 15), string_label, 
                      fill=self.line_color, font=self.label_font)
         
-        # Draw trunk connectors at ends
-        connector_length = 30
-        connector_thickness = 4
-        
-        # Left trunk connector
-        draw.line([harness_start_x - connector_length, trunk_y, harness_start_x, trunk_y], 
-                 fill=trunk_color, width=connector_thickness)
-        
-        # Right trunk connector  
-        draw.line([harness_end_x, trunk_y, harness_end_x + connector_length, trunk_y], 
-                 fill=trunk_color, width=connector_thickness)
-        
         # Draw spacing dimensions
         self.draw_spacing_dimensions(draw, harness_start_x, trunk_y, string_spacing_px, 
                                    num_strings, spacing_ft)
         
         # Draw wire gauge labels
         self.draw_wire_gauge_labels(draw, harness_spec, harness_start_x, harness_end_x, trunk_y)
-        
-        # Draw fuse indicators if fused
-        if harness_spec.get('fused', False):
-            self.draw_fuse_indicators(draw, harness_start_x, trunk_y, string_spacing_px, 
-                                    num_strings, harness_spec.get('fuse_rating', ''))
     
     def draw_spacing_dimensions(self, draw: ImageDraw, start_x: int, trunk_y: int, 
                               spacing_px: int, num_strings: int, spacing_ft: float):
@@ -207,18 +289,18 @@ class HarnessDrawingGenerator:
         drop_gauge = harness_spec['drop_wire_gauge']
         trunk_gauge = harness_spec['trunk_wire_gauge']
         
-        # Label trunk wire gauge
+        # Label trunk wire gauge ABOVE the trunk line
         trunk_center_x = (start_x + end_x) // 2
         bbox = draw.textbbox((0, 0), trunk_gauge, font=self.label_font)
         text_width = bbox[2] - bbox[0]
-        draw.text((trunk_center_x - text_width//2, trunk_y + 15), trunk_gauge, 
+        draw.text((trunk_center_x - text_width//2, trunk_y - 35), trunk_gauge, 
                  fill=self.line_color, font=self.label_font)
         
         # Label drop wire gauge (on first drop)
         drop_x = start_x
         bbox = draw.textbbox((0, 0), drop_gauge, font=self.label_font)
         text_width = bbox[2] - bbox[0]
-        draw.text((drop_x - text_width - 10, trunk_y + 40), drop_gauge, 
+        draw.text((drop_x - text_width - 15, trunk_y + 50), drop_gauge, 
                  fill=self.line_color, font=self.label_font)
     
     def draw_fuse_indicators(self, draw: ImageDraw, start_x: int, trunk_y: int, 

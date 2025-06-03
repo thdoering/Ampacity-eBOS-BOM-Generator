@@ -166,14 +166,14 @@ class HarnessDesigner(tk.Toplevel):
         ttk.Label(wire_frame, text="Drop Wire Gauge:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
         self.drop_wire_gauge_var = tk.StringVar(value="10 AWG")
         drop_combo = ttk.Combobox(wire_frame, textvariable=self.drop_wire_gauge_var, state='readonly', width=15)
-        drop_combo['values'] = ('4 AWG', '6 AWG', '8 AWG', '10 AWG', '12 AWG')
+        drop_combo['values'] = ('4 AWG', '6 AWG', '8 AWG', '10 AWG')
         drop_combo.grid(row=0, column=1, padx=5, pady=2)
         
         # Trunk Wire Gauge
         ttk.Label(wire_frame, text="Trunk Wire Gauge:").grid(row=0, column=2, padx=5, pady=2, sticky=tk.W)
         self.trunk_wire_gauge_var = tk.StringVar(value="8 AWG")
         trunk_combo = ttk.Combobox(wire_frame, textvariable=self.trunk_wire_gauge_var, state='readonly', width=15)
-        trunk_combo['values'] = ('4 AWG', '6 AWG', '8 AWG', '10 AWG', '12 AWG')
+        trunk_combo['values'] = ('4 AWG', '6 AWG', '8 AWG', '10 AWG')
         trunk_combo.grid(row=0, column=3, padx=5, pady=2)
         
         # Connector Type
