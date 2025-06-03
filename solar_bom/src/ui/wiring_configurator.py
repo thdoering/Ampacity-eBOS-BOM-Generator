@@ -54,6 +54,32 @@ class WiringConfigurator(tk.Toplevel):
         x = parent.winfo_rootx() + 50
         y = parent.winfo_rooty() + 50
         self.geometry(f"+{x}+{y}")
+
+    def world_to_canvas(self, world_x, world_y):
+        """Convert world coordinates to canvas coordinates"""
+        scale = self.get_canvas_scale()
+        canvas_x = 20 + self.pan_x + world_x * scale
+        canvas_y = 20 + self.pan_y + world_y * scale
+        return canvas_x, canvas_y
+
+    def canvas_to_world(self, canvas_x, canvas_y):
+        """Convert canvas coordinates to world coordinates"""
+        scale = self.get_canvas_scale()
+        world_x = (canvas_x - 20 - self.pan_x) / scale
+        world_y = (canvas_y - 20 - self.pan_y) / scale
+        return world_x, world_y
+
+    def world_point_to_canvas(self, point):
+        """Convert a single world coordinate point (x, y) to canvas coordinates"""
+        return self.world_to_canvas(point[0], point[1])
+
+    def world_route_to_canvas_points(self, route):
+        """Convert a route (list of world coordinate points) to flat canvas coordinates list"""
+        canvas_points = []
+        for x, y in route:
+            canvas_x, canvas_y = self.world_to_canvas(x, y)
+            canvas_points.extend([canvas_x, canvas_y])
+        return canvas_points
         
     def setup_ui(self):
         """Create and arrange UI components"""
@@ -67,56 +93,60 @@ class WiringConfigurator(tk.Toplevel):
         main_container.grid_columnconfigure(1, weight=1)
         main_container.grid_rowconfigure(0, weight=1)
         
-        # Left side - Controls
+        # Create main sections
+        self.setup_controls_frame(main_container)
+        self.setup_canvas_frame(main_container)
+        self.setup_bottom_buttons(main_container)
+        
+        # Update UI based on initial wiring type
+        self.update_ui_for_wiring_type()
+        
+        # Initialize with existing configuration if available
+        self.load_existing_configuration()
+
+    def setup_controls_frame(self, main_container):
+        """Set up the left side controls frame"""
         controls_frame = ttk.LabelFrame(main_container, text="Wiring Configuration", padding="5")
         controls_frame.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
         
-        # Wiring Type Selection
+        self.setup_wiring_type_selection(controls_frame)
+        self.setup_cable_specifications(controls_frame)
+        self.setup_harness_configuration(controls_frame)
+        self.setup_routing_controls(controls_frame)
+
+    def setup_canvas_frame(self, main_container):
+        """Set up the right side canvas frame"""
+        canvas_frame = ttk.LabelFrame(main_container, text="Wiring Layout", padding="5")
+        canvas_frame.grid(row=0, column=1, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        self.canvas = tk.Canvas(canvas_frame, width=800, height=600, bg='white')
+        self.canvas.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        self.setup_legend(canvas_frame)
+        self.setup_warning_panel()
+        self.setup_canvas_bindings()
+
+    def setup_bottom_buttons(self, main_container):
+        """Set up bottom buttons"""
+        button_frame = ttk.Frame(main_container)
+        button_frame.grid(row=1, column=0, columnspan=2, pady=10)
+        
+        ttk.Button(button_frame, text="Apply", command=self.apply_configuration).grid(row=0, column=0, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=self.cancel).grid(row=0, column=1, padx=5)
+
+    def setup_wiring_type_selection(self, controls_frame):
+        """Set up wiring type selection dropdown"""
         ttk.Label(controls_frame, text="Wiring Type:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
         self.wiring_type_var = tk.StringVar(value=WiringType.HARNESS.value)
         wiring_type_combo = ttk.Combobox(controls_frame, textvariable=self.wiring_type_var, state='readonly')
         wiring_type_combo['values'] = [t.value for t in WiringType]
         wiring_type_combo.grid(row=0, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         wiring_type_combo.bind('<<ComboboxSelected>>', self.on_wiring_type_change)
-        
-        # Cable Specifications
+
+    def setup_cable_specifications(self, controls_frame):
+        """Set up cable specifications section"""
         cable_frame = ttk.LabelFrame(controls_frame, text="Cable Specifications", padding="5")
         cable_frame.grid(row=1, column=0, columnspan=2, padx=5, pady=10, sticky=(tk.W, tk.E))
-
-        # Add Tracker Harness Configuration section - only visible in Wire Harness mode
-        self.harness_config_frame = ttk.LabelFrame(controls_frame, text="Tracker Harness Configuration", padding="5")
-        self.harness_config_frame.grid(row=2, column=0, columnspan=2, padx=5, pady=10, sticky=(tk.W, tk.E))
-
-        # String count selector instead of tracker selector
-        ttk.Label(self.harness_config_frame, text="Configure trackers with:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
-        self.string_count_var = tk.StringVar()
-        self.string_count_combobox = ttk.Combobox(self.harness_config_frame, textvariable=self.string_count_var, state='readonly')
-        self.string_count_combobox.grid(row=0, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
-        self.string_count_combobox.bind('<<ComboboxSelected>>', self.on_string_count_selected)
-
-        # Add tracker count label
-        self.tracker_count_label = ttk.Label(self.harness_config_frame, text="")
-        self.tracker_count_label.grid(row=0, column=2, padx=5, pady=2, sticky=tk.W)
-
-        # String grouping frame
-        self.string_grouping_frame = ttk.Frame(self.harness_config_frame)
-        self.string_grouping_frame.grid(row=1, column=0, columnspan=3, padx=5, pady=5, sticky=(tk.W, tk.E))
-
-        # Add a subframe for string checkboxes
-        self.string_check_frame = ttk.Frame(self.string_grouping_frame)
-        self.string_check_frame.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
-
-        # Add Create Harness button
-        ttk.Button(self.string_grouping_frame, text="Create Harness from Selected", 
-                command=self.create_harness_from_selected).grid(row=1, column=0, padx=5, pady=5)
-
-        # Harness display frame
-        self.harness_display_frame = ttk.LabelFrame(self.harness_config_frame, text="Current Harnesses")
-        self.harness_display_frame.grid(row=2, column=0, columnspan=3, padx=5, pady=5, sticky=(tk.W, tk.E))
-
-        # Initially hide harness configuration if not in harness mode
-        if self.wiring_type_var.get() != WiringType.HARNESS.value:
-            self.harness_config_frame.grid_remove()
 
         # String Cable Size
         ttk.Label(cable_frame, text="String Cable Size:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
@@ -162,15 +192,62 @@ class WiringConfigurator(tk.Toplevel):
                         variable=self.show_current_labels_var,
                         command=self.toggle_current_labels).grid(
                         row=4, column=0, columnspan=2, padx=5, pady=5, sticky=tk.W)
-        
-        # Right side - Visualization
-        canvas_frame = ttk.LabelFrame(main_container, text="Wiring Layout", padding="5")
-        canvas_frame.grid(row=0, column=1, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
 
-        self.canvas = tk.Canvas(canvas_frame, width=800, height=600, bg='white')
-        self.canvas.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
+    def setup_harness_configuration(self, controls_frame):
+        """Set up harness configuration section"""
+        self.harness_config_frame = ttk.LabelFrame(controls_frame, text="Tracker Harness Configuration", padding="5")
+        self.harness_config_frame.grid(row=2, column=0, columnspan=2, padx=5, pady=10, sticky=(tk.W, tk.E))
 
-        # Add color legend below canvas
+        # String count selector
+        ttk.Label(self.harness_config_frame, text="Configure trackers with:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
+        self.string_count_var = tk.StringVar()
+        self.string_count_combobox = ttk.Combobox(self.harness_config_frame, textvariable=self.string_count_var, state='readonly')
+        self.string_count_combobox.grid(row=0, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        self.string_count_combobox.bind('<<ComboboxSelected>>', self.on_string_count_selected)
+
+        # Add tracker count label
+        self.tracker_count_label = ttk.Label(self.harness_config_frame, text="")
+        self.tracker_count_label.grid(row=0, column=2, padx=5, pady=2, sticky=tk.W)
+
+        # String grouping frame
+        self.string_grouping_frame = ttk.Frame(self.harness_config_frame)
+        self.string_grouping_frame.grid(row=1, column=0, columnspan=3, padx=5, pady=5, sticky=(tk.W, tk.E))
+
+        # Add a subframe for string checkboxes
+        self.string_check_frame = ttk.Frame(self.string_grouping_frame)
+        self.string_check_frame.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        # Add Create Harness button
+        ttk.Button(self.string_grouping_frame, text="Create Harness from Selected", 
+                command=self.create_harness_from_selected).grid(row=1, column=0, padx=5, pady=5)
+
+        # Harness display frame
+        self.harness_display_frame = ttk.LabelFrame(self.harness_config_frame, text="Current Harnesses")
+        self.harness_display_frame.grid(row=2, column=0, columnspan=3, padx=5, pady=5, sticky=(tk.W, tk.E))
+
+        # Initially hide harness configuration if not in harness mode
+        if self.wiring_type_var.get() != WiringType.HARNESS.value:
+            self.harness_config_frame.grid_remove()
+
+    def setup_routing_controls(self, controls_frame):
+        """Set up routing controls section"""
+        routing_frame = ttk.Frame(controls_frame)
+        routing_frame.grid(row=4, column=0, columnspan=2, padx=5, pady=5)
+
+        ttk.Button(routing_frame, text="Reset All Whip Points", 
+                command=self.reset_all_whips).grid(row=0, column=0, padx=5)
+
+        # Add realistic/conceptual toggle
+        self.routing_mode_var = tk.StringVar(value="realistic")
+        ttk.Radiobutton(routing_frame, text="Realistic Routing", 
+                    variable=self.routing_mode_var, value="realistic",
+                    command=self.draw_wiring_layout).grid(row=0, column=1, padx=5)
+        ttk.Radiobutton(routing_frame, text="Conceptual Routing", 
+                    variable=self.routing_mode_var, value="conceptual",
+                    command=self.draw_wiring_layout).grid(row=0, column=2, padx=5)
+
+    def setup_legend(self, canvas_frame):
+        """Set up color legend"""
         legend_frame = ttk.LabelFrame(canvas_frame, text="Wire Color Legend", padding="5")
         legend_frame.grid(row=1, column=0, padx=5, pady=5, sticky=(tk.W, tk.E))
 
@@ -181,7 +258,8 @@ class WiringConfigurator(tk.Toplevel):
         # Draw the legend
         self.draw_legend()
 
-         # Add warning panel frame
+    def setup_warning_panel(self):
+        """Set up warning panel"""
         self.warning_panel = tk.Frame(self.canvas, bg='white', bd=1, relief=tk.RAISED)
         self.warning_panel.place(relx=1.0, rely=1.0, x=-5, y=-5, anchor='se')
         
@@ -196,11 +274,13 @@ class WiringConfigurator(tk.Toplevel):
         self.warning_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         
         # Store warnings with their associated wire IDs
-        self.wire_warnings = {}  # Maps warning IDs to wire IDs
-        self.current_labels = {}  # Maps label_id to {'text_id': canvas_id, 'wire_midpoint': (x,y), 'current_pos': (x,y), 'leader_id': None}
+        self.wire_warnings = {}
+        self.current_labels = {}
         self.dragging_label = None
         self.label_drag_start = None
-        
+
+    def setup_canvas_bindings(self):
+        """Set up canvas event bindings"""
         # Bind canvas resize
         self.canvas.bind('<Configure>', self.on_canvas_resize)
 
@@ -232,34 +312,9 @@ class WiringConfigurator(tk.Toplevel):
         self.whip_menu = tk.Menu(self.canvas, tearoff=0)
         self.whip_menu.add_command(label="Reset to Default", command=self.reset_selected_whips)
         self.canvas.bind('<Button-3>', self.show_context_menu)
-        
-        # Add routing controls
-        routing_frame = ttk.Frame(controls_frame)
-        routing_frame.grid(row=4, column=0, columnspan=2, padx=5, pady=5)
 
-        ttk.Button(routing_frame, text="Reset All Whip Points", 
-                command=self.reset_all_whips).grid(row=0, column=0, padx=5)
-
-        # Add realistic/conceptual toggle
-        self.routing_mode_var = tk.StringVar(value="realistic")
-        ttk.Radiobutton(routing_frame, text="Realistic Routing", 
-                    variable=self.routing_mode_var, value="realistic",
-                    command=self.draw_wiring_layout).grid(row=0, column=1, padx=5)
-        ttk.Radiobutton(routing_frame, text="Conceptual Routing", 
-                    variable=self.routing_mode_var, value="conceptual",
-                    command=self.draw_wiring_layout).grid(row=0, column=2, padx=5)
-        
-        # Bottom buttons
-        button_frame = ttk.Frame(main_container)
-        button_frame.grid(row=1, column=0, columnspan=2, pady=10)
-        
-        ttk.Button(button_frame, text="Apply", command=self.apply_configuration).grid(row=0, column=0, padx=5)
-        ttk.Button(button_frame, text="Cancel", command=self.cancel).grid(row=0, column=1, padx=5)
-
-        # Update UI based on initial wiring type
-        self.update_ui_for_wiring_type()
-
-        # Initialize with existing configuration if available
+    def load_existing_configuration(self):
+        """Load existing configuration if available"""
         if self.block.wiring_config:
             # Set wiring type
             self.wiring_type_var.set(self.block.wiring_config.wiring_type.value)
@@ -305,8 +360,6 @@ class WiringConfigurator(tk.Toplevel):
 
         # Reset current labels tracking
         self.current_labels = {}
-
-        scale = self.get_canvas_scale()
         
         # Clear previous warnings
         self.clear_warnings()
@@ -338,27 +391,14 @@ class WiringConfigurator(tk.Toplevel):
     def draw_collection_points(self, pos: TrackerPosition, x: float, y: float, scale: float):
         """Draw collection points for a tracker position"""
         for string in pos.strings:
-            # Draw positive source point (red circle)
-            px = x + string.positive_source_x * scale
-            py = y + string.positive_source_y * scale
-            self.canvas.create_oval(
-                px - 3, py - 3,
-                px + 3, py + 3,
-                fill='red',
-                outline='darkred',
-                tags='collection_point'
-            )
+            # Draw positive and negative source points
+            pos_world_x = pos.x + string.positive_source_x
+            pos_world_y = pos.y + string.positive_source_y
+            neg_world_x = pos.x + string.negative_source_x
+            neg_world_y = pos.y + string.negative_source_y
 
-            # Draw negative source point (blue circle)
-            nx = x + string.negative_source_x * scale
-            ny = y + string.negative_source_y * scale
-            self.canvas.create_oval(
-                nx - 3, ny - 3,
-                nx + 3, ny + 3,
-                fill='blue',
-                outline='darkblue',
-                tags='collection_point'
-            )
+            self.draw_collection_point(pos_world_x, pos_world_y, True, 'collection')
+            self.draw_collection_point(neg_world_x, neg_world_y, False, 'collection')
         
         # Draw whip points
         tracker_idx = self.block.tracker_positions.index(pos)
@@ -370,8 +410,7 @@ class WiringConfigurator(tk.Toplevel):
         
         # Draw positive whip point
         if pos_whip:
-            wx = 20 + self.pan_x + pos_whip[0] * scale
-            wy = 20 + self.pan_y + pos_whip[1] * scale
+            wx, wy = self.world_to_canvas(pos_whip[0], pos_whip[1])
             
             # Highlight if selected
             is_selected = (tracker_id, 'positive') in self.selected_whips
@@ -388,8 +427,7 @@ class WiringConfigurator(tk.Toplevel):
             
         # Draw negative whip point
         if neg_whip:
-            wx = 20 + self.pan_x + neg_whip[0] * scale
-            wy = 20 + self.pan_y + neg_whip[1] * scale
+            wx, wy = self.world_to_canvas(neg_whip[0], neg_whip[1])
             
             # Highlight if selected
             is_selected = (tracker_id, 'negative') in self.selected_whips
@@ -421,109 +459,129 @@ class WiringConfigurator(tk.Toplevel):
             return
             
         try:
-            # Get the selected wiring type
-            wiring_type_str = self.wiring_type_var.get()
-            wiring_type = WiringType(wiring_type_str)
+            # Create wiring configuration
+            wiring_config = self.create_wiring_configuration()
             
-            # Create collection points
-            positive_collection_points = []
-            negative_collection_points = []
-            strings_per_collection = {}
-            cable_routes = {}
+            # Validate configuration
+            if not self.validate_configuration():
+                return
             
-            # Get routes based on current routing mode
-            cable_routes = self.get_current_routes()
-
-            # Process each tracker position to capture collection points
-            for idx, pos in enumerate(self.block.tracker_positions):
-                if not pos.template:
-                    continue
-                    
-                # Get whip points for this tracker
-                tracker_idx = idx
-                pos_whip = self.get_whip_position(str(tracker_idx), 'positive')
-                neg_whip = self.get_whip_position(str(tracker_idx), 'negative')
-                
-                # Add collection points
-                if pos_whip:
-                    point_id = idx  # Use tracker index as point ID
-                    collection_point = CollectionPoint(
-                        x=pos_whip[0],
-                        y=pos_whip[1],
-                        connected_strings=[s.index for s in pos.strings],
-                        current_rating=self.calculate_current_for_segment('whip', num_strings=len(pos.strings))
-                    )
-                    positive_collection_points.append(collection_point)
-                    strings_per_collection[point_id] = len(pos.strings)
-                
-                if neg_whip:
-                    point_id = idx  # Use tracker index as point ID
-                    collection_point = CollectionPoint(
-                        x=neg_whip[0],
-                        y=neg_whip[1],
-                        connected_strings=[s.index for s in pos.strings],
-                        current_rating=self.calculate_current_for_segment('whip', num_strings=len(pos.strings))
-                    )
-                    negative_collection_points.append(collection_point)
-                        
-            custom_whip_points = {}
-            if (hasattr(self.block, 'wiring_config') and 
-                self.block.wiring_config and 
-                hasattr(self.block.wiring_config, 'custom_whip_points')):
-                custom_whip_points = self.block.wiring_config.custom_whip_points
-
-            # Get harness groupings from the existing configuration
-            harness_groupings = {}
-            if (hasattr(self.block, 'wiring_config') and 
-                self.block.wiring_config and 
-                hasattr(self.block.wiring_config, 'harness_groupings')):
-                harness_groupings = self.block.wiring_config.harness_groupings
-
-            # Create the WiringConfig instance
-            wiring_config = WiringConfig(
-                wiring_type=wiring_type,
-                positive_collection_points=positive_collection_points,
-                negative_collection_points=negative_collection_points,
-                strings_per_collection=strings_per_collection,
-                cable_routes=cable_routes,
-                string_cable_size=self.string_cable_size_var.get(),
-                harness_cable_size=self.harness_cable_size_var.get(),
-                whip_cable_size=self.whip_cable_size_var.get(),
-                extender_cable_size=self.extender_cable_size_var.get(),
-                custom_whip_points=custom_whip_points,
-                harness_groupings=harness_groupings
-                )
-            
-            # Store the routing mode for BOM warnings
-            wiring_config.routing_mode = self.routing_mode_var.get()
-            
-            # Store the configuration in the block
+            # Store configuration and notify success
             self.block.wiring_config = wiring_config
-            
             tk.messagebox.showinfo("Success", "Wiring configuration applied successfully")
-
-            # Check MPPT capacity
-            if not self.validate_mppt_capacity():
-                mppt_warning = messagebox.askyesno(
-                    "MPPT Current Warning",
-                    "The selected inverter MPPT capacity may be insufficient for the total string current.\n\n"
-                    "Total string current exceeds the inverter MPPT capacity.\n"
-                    "This may require reconfiguring the wiring or choosing a different inverter.\n\n"
-                    "Do you want to apply this configuration anyway?",
-                    icon='warning'
-                )
-                
-                if not mppt_warning:
-                    return
-                
-            if self.parent_notify_blocks_changed:
-                self.parent_notify_blocks_changed()
-            self.destroy()
+            
+            # Check MPPT capacity and notify parent
+            self.perform_final_checks()
             
         except Exception as e:
             import traceback
             traceback.print_exc()
             tk.messagebox.showerror("Error", f"Failed to apply wiring configuration: {str(e)}")
+
+    def create_wiring_configuration(self):
+        """Create the WiringConfig instance from current settings"""
+        wiring_type = WiringType(self.wiring_type_var.get())
+        
+        # Create collection points
+        positive_collection_points, negative_collection_points, strings_per_collection = self.build_collection_points()
+        
+        # Get routes based on current routing mode
+        cable_routes = self.get_current_routes()
+        
+        # Get existing custom settings
+        custom_whip_points, harness_groupings = self.get_existing_custom_settings()
+        
+        # Create the WiringConfig instance
+        return WiringConfig(
+            wiring_type=wiring_type,
+            positive_collection_points=positive_collection_points,
+            negative_collection_points=negative_collection_points,
+            strings_per_collection=strings_per_collection,
+            cable_routes=cable_routes,
+            string_cable_size=self.string_cable_size_var.get(),
+            harness_cable_size=self.harness_cable_size_var.get(),
+            whip_cable_size=self.whip_cable_size_var.get(),
+            extender_cable_size=self.extender_cable_size_var.get(),
+            custom_whip_points=custom_whip_points,
+            harness_groupings=harness_groupings,
+            routing_mode=self.routing_mode_var.get()
+        )
+
+    def build_collection_points(self):
+        """Build collection points from tracker positions"""
+        positive_collection_points = []
+        negative_collection_points = []
+        strings_per_collection = {}
+        
+        # Process each tracker position to capture collection points
+        for idx, pos in enumerate(self.block.tracker_positions):
+            if not pos.template:
+                continue
+                
+            # Get whip points for this tracker
+            pos_whip = self.get_whip_position(str(idx), 'positive')
+            neg_whip = self.get_whip_position(str(idx), 'negative')
+            
+            # Add collection points
+            if pos_whip:
+                collection_point = CollectionPoint(
+                    x=pos_whip[0],
+                    y=pos_whip[1],
+                    connected_strings=[s.index for s in pos.strings],
+                    current_rating=self.calculate_current_for_segment('whip', num_strings=len(pos.strings))
+                )
+                positive_collection_points.append(collection_point)
+                strings_per_collection[idx] = len(pos.strings)
+            
+            if neg_whip:
+                collection_point = CollectionPoint(
+                    x=neg_whip[0],
+                    y=neg_whip[1],
+                    connected_strings=[s.index for s in pos.strings],
+                    current_rating=self.calculate_current_for_segment('whip', num_strings=len(pos.strings))
+                )
+                negative_collection_points.append(collection_point)
+                
+        return positive_collection_points, negative_collection_points, strings_per_collection
+
+    def get_existing_custom_settings(self):
+        """Get existing custom whip points and harness groupings"""
+        custom_whip_points = {}
+        if (hasattr(self.block, 'wiring_config') and 
+            self.block.wiring_config and 
+            hasattr(self.block.wiring_config, 'custom_whip_points')):
+            custom_whip_points = self.block.wiring_config.custom_whip_points
+
+        harness_groupings = {}
+        if (hasattr(self.block, 'wiring_config') and 
+            self.block.wiring_config and 
+            hasattr(self.block.wiring_config, 'harness_groupings')):
+            harness_groupings = self.block.wiring_config.harness_groupings
+            
+        return custom_whip_points, harness_groupings
+
+    def validate_configuration(self):
+        """Validate the wiring configuration"""
+        return True  # Add specific validation logic if needed
+
+    def perform_final_checks(self):
+        """Perform final validation checks and notify parent"""
+        if not self.validate_mppt_capacity():
+            mppt_warning = messagebox.askyesno(
+                "MPPT Current Warning",
+                "The selected inverter MPPT capacity may be insufficient for the total string current.\n\n"
+                "Total string current exceeds the inverter MPPT capacity.\n"
+                "This may require reconfiguring the wiring or choosing a different inverter.\n\n"
+                "Do you want to apply this configuration anyway?",
+                icon='warning'
+            )
+            
+            if not mppt_warning:
+                return
+                
+        if self.parent_notify_blocks_changed:
+            self.parent_notify_blocks_changed()
+        self.destroy()
         
     def cancel(self):
         """Cancel wiring configuration"""
@@ -603,12 +661,9 @@ class WiringConfigurator(tk.Toplevel):
         pos_point, neg_point = self.get_device_destination_points()
         if not pos_point or not neg_point:
             return
-            
-        scale = self.get_canvas_scale()
         
         # Draw positive destination point (red)
-        px = 20 + self.pan_x + pos_point[0] * scale
-        py = 20 + self.pan_y + pos_point[1] * scale
+        px, py = self.world_to_canvas(pos_point[0], pos_point[1])
         self.canvas.create_oval(
             px - 4, py - 4,
             px + 4, py + 4,
@@ -618,8 +673,7 @@ class WiringConfigurator(tk.Toplevel):
         )
         
         # Draw negative destination point (blue)
-        nx = 20 + self.pan_x + neg_point[0] * scale
-        ny = 20 + self.pan_y + neg_point[1] * scale
+        nx, ny = self.world_to_canvas(neg_point[0], neg_point[1])
         self.canvas.create_oval(
             nx - 4, ny - 4,
             nx + 4, ny + 4,
@@ -896,8 +950,8 @@ class WiringConfigurator(tk.Toplevel):
             
         # Convert canvas coordinates to world coordinates
         scale = self.get_canvas_scale()
-        world_x = (event.x - 20 - self.pan_x) / scale
-        world_y = (event.y - 20 - self.pan_y) / scale
+        world_x = (x - 20 - self.pan_x) / scale
+        world_y = (y - 20 - self.pan_y) / scale
         
         # Check if we clicked on a whip point
         hit_whip = self.get_whip_at_position(world_x, world_y)
@@ -934,77 +988,15 @@ class WiringConfigurator(tk.Toplevel):
             return
             
         if self.drag_whips and self.selected_whips:
-            # Calculate movement in world coordinates
-            scale = self.get_canvas_scale()
-            dx = (event.x - self.drag_start_x) / scale
-            dy = (event.y - self.drag_start_y) / scale
+            # Convert both points to world coordinates and calculate difference
+            start_world_x, start_world_y = self.canvas_to_world(self.drag_start_x, self.drag_start_y)
+            current_world_x, current_world_y = self.canvas_to_world(event.x, event.y)
+            dx = current_world_x - start_world_x
+            dy = current_world_y - start_world_y
             
             # Update custom whip point positions
             for whip_info in self.selected_whips:
-                if len(whip_info) == 3:
-                    tracker_id, harness_idx, polarity = whip_info
-                    
-                    # Handle harness-specific whip points
-                    if harness_idx is not None:
-                        # Ensure custom_harness_whip_points exists
-                        if not hasattr(self.block, 'wiring_config'):
-                            continue
-                        if not self.block.wiring_config:
-                            continue
-                        if not hasattr(self.block.wiring_config, 'custom_harness_whip_points'):
-                            self.block.wiring_config.custom_harness_whip_points = {}
-                        
-                        # Ensure tracker_id entry exists
-                        if tracker_id not in self.block.wiring_config.custom_harness_whip_points:
-                            self.block.wiring_config.custom_harness_whip_points[tracker_id] = {}
-                        
-                        # Ensure harness_idx entry exists
-                        if harness_idx not in self.block.wiring_config.custom_harness_whip_points[tracker_id]:
-                            self.block.wiring_config.custom_harness_whip_points[tracker_id][harness_idx] = {}
-                        
-                        # Get current position or default position
-                        if polarity not in self.block.wiring_config.custom_harness_whip_points[tracker_id][harness_idx]:
-                            current_pos = self.get_whip_default_position(tracker_id, polarity, harness_idx)
-                            if current_pos:
-                                self.block.wiring_config.custom_harness_whip_points[tracker_id][harness_idx][polarity] = current_pos
-                        
-                        # Update position
-                        if polarity in self.block.wiring_config.custom_harness_whip_points[tracker_id][harness_idx]:
-                            old_x, old_y = self.block.wiring_config.custom_harness_whip_points[tracker_id][harness_idx][polarity]
-                            self.block.wiring_config.custom_harness_whip_points[tracker_id][harness_idx][polarity] = (old_x + dx, old_y + dy)
-                    
-                else:
-                    # Handle legacy format (tracker_id, polarity)
-                    tracker_id, polarity = whip_info
-                    harness_idx = None
-                    
-                    # Update regular whip point
-                    if not hasattr(self.block, 'wiring_config') or not self.block.wiring_config:
-                        self.block.wiring_config = WiringConfig(
-                            wiring_type=WiringType(self.wiring_type_var.get()),
-                            positive_collection_points=[],
-                            negative_collection_points=[],
-                            strings_per_collection={},
-                            cable_routes={},
-                            custom_whip_points={}
-                        )
-                        
-                    if 'custom_whip_points' not in self.block.wiring_config.__dict__:
-                        self.block.wiring_config.custom_whip_points = {}
-                        
-                    if tracker_id not in self.block.wiring_config.custom_whip_points:
-                        self.block.wiring_config.custom_whip_points[tracker_id] = {}
-                        
-                    # If this is the first time moving this whip, initialize with current position
-                    if polarity not in self.block.wiring_config.custom_whip_points[tracker_id]:
-                        current_pos = self.get_whip_default_position(tracker_id, polarity)
-                        if current_pos:
-                            self.block.wiring_config.custom_whip_points[tracker_id][polarity] = current_pos
-                            
-                    # Update position
-                    if polarity in self.block.wiring_config.custom_whip_points[tracker_id]:
-                        old_x, old_y = self.block.wiring_config.custom_whip_points[tracker_id][polarity]
-                        self.block.wiring_config.custom_whip_points[tracker_id][polarity] = (old_x + dx, old_y + dy)
+                self.update_whip_point_position(whip_info, dx, dy)
             
             # Update drag start for continuous dragging
             self.drag_start_x = event.x
@@ -1031,17 +1023,14 @@ class WiringConfigurator(tk.Toplevel):
             self.drag_whips = False
         elif self.dragging and self.selection_box:
             # Convert selection box to world coordinates and select whips within it
-            scale = self.get_canvas_scale()
             x1 = min(self.drag_start_x, event.x)
             y1 = min(self.drag_start_y, event.y)
             x2 = max(self.drag_start_x, event.x)
             y2 = max(self.drag_start_y, event.y)
             
             # Convert to world coordinates
-            wx1 = (x1 - 20 - self.pan_x) / scale
-            wy1 = (y1 - 20 - self.pan_y) / scale
-            wx2 = (x2 - 20 - self.pan_x) / scale
-            wy2 = (y2 - 20 - self.pan_y) / scale
+            wx1, wy1 = self.canvas_to_world(x1, y1)
+            wx2, wy2 = self.canvas_to_world(x2, y2)
             
             # Select all whip points within this box
             for tracker_idx, pos in enumerate(self.block.tracker_positions):
@@ -1359,9 +1348,7 @@ class WiringConfigurator(tk.Toplevel):
     def show_context_menu(self, event):
         """Show context menu for whip points"""
         # First, check if we clicked on a whip point
-        scale = self.get_canvas_scale()
-        world_x = (event.x - 20 - self.pan_x) / scale
-        world_y = (event.y - 20 - self.pan_y) / scale
+        world_x, world_y = self.canvas_to_world(event.x, event.y)
         
         hit_whip = self.get_whip_at_position(world_x, world_y)
         
@@ -1506,41 +1493,60 @@ class WiringConfigurator(tk.Toplevel):
 
     def highlight_wire(self, wire_id):
         """Highlight a wire when its warning is clicked"""
-        # Remove any existing highlights
         self.canvas.delete("wire_highlight")
         
-        # Get the wire's coordinates
         wire_coords = self.canvas.coords(wire_id)
         if not wire_coords:
             return
         
-        # Get the current width and convert to int before adding
-        try:
-            current_width = int(float(self.canvas.itemcget(wire_id, 'width')))
-        except (ValueError, TypeError):
-            current_width = 2  # Default width if conversion fails
+        # Create highlight with pulsing effect
+        highlight_width = self.get_wire_highlight_width(wire_id)
+        highlight_color = '#FF00FF'  # Bright magenta
         
-        # Get wire color to determine a contrasting highlight color
-        wire_color = self.canvas.itemcget(wire_id, 'fill')
-        highlight_color = '#FF00FF'  # Bright magenta works well for both red and blue wires
-        
-        # Create dashed outline effect with double the thickness
         self.canvas.create_line(
             wire_coords,
-            width=current_width * 2 + 4,
+            width=highlight_width,
             fill=highlight_color,
-            dash=(8, 4),  # Dashed line pattern
+            dash=(8, 4),
             tags="wire_highlight"
         )
         
-        # Animate the highlight line (expand and contract)
-        self.pulse_highlight(6, current_width * 2 + 4)
+        # Start pulsing animation
+        self.start_wire_pulse_animation(highlight_width)
         
-        # Also scroll to make this wire visible if it's outside view
+        # Scroll to wire if needed
+        self.scroll_to_wire_if_needed(wire_coords)
+
+    def get_wire_highlight_width(self, wire_id):
+        """Get appropriate highlight width for a wire"""
+        try:
+            current_width = int(float(self.canvas.itemcget(wire_id, 'width')))
+        except (ValueError, TypeError):
+            current_width = 2
+        return current_width * 2 + 4
+
+    def start_wire_pulse_animation(self, base_width):
+        """Start the pulsing animation for highlighted wire"""
+        self.pulse_highlight(6, base_width)
+
+    def scroll_to_wire_if_needed(self, wire_coords):
+        """Scroll canvas to show the wire if it's outside visible area"""
         if len(wire_coords) >= 2:
             mid_x = (wire_coords[0] + wire_coords[2]) / 2
             mid_y = (wire_coords[1] + wire_coords[3]) / 2
-            self.scroll_to_position(mid_x, mid_y)
+            
+            # Get canvas dimensions
+            canvas_width = self.canvas.winfo_width()
+            canvas_height = self.canvas.winfo_height()
+            
+            # Check if the point is outside the visible area
+            if mid_x < 0 or mid_x > canvas_width or mid_y < 0 or mid_y > canvas_height:
+                # Adjust pan to center on the point
+                self.pan_x = canvas_width/2 - mid_x + 20
+                self.pan_y = canvas_height/2 - mid_y + 20
+                
+                # Redraw with new pan values
+                self.draw_wiring_layout()
 
     def pulse_highlight(self, count, base_width):
         """Create a pulsing effect for the highlight"""
@@ -1558,34 +1564,6 @@ class WiringConfigurator(tk.Toplevel):
         
         # Schedule next pulse
         self.after(150, lambda: self.pulse_highlight(count - 1, base_width))
-
-    def scroll_to_position(self, x, y):
-        """Scroll the canvas to make a position visible"""
-        # Get canvas dimensions
-        canvas_width = self.canvas.winfo_width()
-        canvas_height = self.canvas.winfo_height()
-        
-        # Check if the point is outside the visible area
-        if x < 0 or x > canvas_width or y < 0 or y > canvas_height:
-            # Adjust pan to center on the point
-            self.pan_x = canvas_width/2 - x + 20
-            self.pan_y = canvas_height/2 - y + 20
-            
-            # Redraw with new pan values
-            self.draw_wiring_layout()
-
-    def flash_highlight(self, count):
-        """Flash the highlight by toggling visibility"""
-        if count <= 0:
-            return
-            
-        # Toggle visibility
-        current_state = self.canvas.itemcget("wire_highlight", 'state')
-        new_state = 'hidden' if current_state == 'normal' else 'normal'
-        self.canvas.itemconfigure("wire_highlight", state=new_state)
-        
-        # Schedule next toggle
-        self.after(300, lambda: self.flash_highlight(count - 1))
 
     def clear_warnings(self):
         """Clear all warnings from the panel"""
@@ -1901,8 +1879,7 @@ class WiringConfigurator(tk.Toplevel):
         """Draw inverter/combiner box"""
         if self.block.device_x is not None and self.block.device_y is not None:
             scale = self.get_canvas_scale()
-            device_x = 20 + self.pan_x + self.block.device_x * scale
-            device_y = 20 + self.pan_y + self.block.device_y * scale
+            device_x, device_y = self.world_to_canvas(self.block.device_x, self.block.device_y)
             device_size = 0.91 * scale  # 3ft = 0.91m
             self.canvas.create_rectangle(
                 device_x, device_y,
@@ -1911,6 +1888,7 @@ class WiringConfigurator(tk.Toplevel):
                 fill='red', outline='darkred',
                 tags='device'
             )
+            
     def draw_trackers(self):
         """Draw all trackers with modules and source points"""
         scale = self.get_canvas_scale()
@@ -1922,8 +1900,7 @@ class WiringConfigurator(tk.Toplevel):
             template = pos.template
             
             # Get base coordinates with pan offset
-            x_base = 20 + self.pan_x + pos.x * scale
-            y_base = 20 + self.pan_y + pos.y * scale
+            x_base, y_base = self.world_to_canvas(pos.x, pos.y)
             
             # Get module dimensions based on orientation
             if template.module_orientation == ModuleOrientation.PORTRAIT:
@@ -1993,7 +1970,6 @@ class WiringConfigurator(tk.Toplevel):
 
     def draw_whip_points(self, pos):
         """Draw whip points for a tracker"""
-        scale = self.get_canvas_scale()
         tracker_idx = self.block.tracker_positions.index(pos)
         tracker_id = str(tracker_idx)
         string_count = len(pos.strings)
@@ -2003,86 +1979,34 @@ class WiringConfigurator(tk.Toplevel):
         neg_whip = self.get_whip_position(tracker_id, 'negative')
         
         if pos_whip:
-            wx = 20 + self.pan_x + pos_whip[0] * scale
-            wy = 20 + self.pan_y + pos_whip[1] * scale
-            
-            # Check if selected
-            is_selected = (tracker_id, 'positive') in self.selected_whips
-            fill_color = 'orange' if is_selected else 'pink'
-            outline_color = 'red' if is_selected else 'deeppink'
-            size = 5 if is_selected else 3
-            
-            self.canvas.create_oval(
-                wx - size, wy - size,
-                wx + size, wy + size,
-                fill=fill_color, outline=outline_color,
-                tags='whip_point'
-            )
+            self.draw_whip_point(pos_whip[0], pos_whip[1], tracker_id, 'positive')
         
         if neg_whip:
-            wx = 20 + self.pan_x + neg_whip[0] * scale
-            wy = 20 + self.pan_y + neg_whip[1] * scale
-            
-            # Check if selected
-            is_selected = (tracker_id, 'negative') in self.selected_whips
-            fill_color = 'cyan' if is_selected else 'teal'
-            outline_color = 'blue' if is_selected else 'darkcyan'
-            size = 5 if is_selected else 3
-            
-            self.canvas.create_oval(
-                wx - size, wy - size,
-                wx + size, wy + size,
-                fill=fill_color, outline=outline_color,
-                tags='whip_point'
-            )
+            self.draw_whip_point(neg_whip[0], neg_whip[1], tracker_id, 'negative')
         
         # Draw harness-specific whip points
-        if (hasattr(self.block, 'wiring_config') and 
-            self.block.wiring_config and 
-            hasattr(self.block.wiring_config, 'harness_groupings') and
-            string_count in self.block.wiring_config.harness_groupings):
+        self.draw_harness_specific_whip_points(tracker_id, string_count)
+
+    def draw_harness_specific_whip_points(self, tracker_id, string_count):
+        """Draw harness-specific whip points if they exist"""
+        if not (hasattr(self.block, 'wiring_config') and 
+                self.block.wiring_config and 
+                hasattr(self.block.wiring_config, 'harness_groupings') and
+                string_count in self.block.wiring_config.harness_groupings):
+            return
+        
+        for harness_idx, _ in enumerate(self.block.wiring_config.harness_groupings[string_count]):
+            harness_pos_whip = self.get_whip_position(tracker_id, 'positive', harness_idx)
+            harness_neg_whip = self.get_whip_position(tracker_id, 'negative', harness_idx)
             
-            for harness_idx, _ in enumerate(self.block.wiring_config.harness_groupings[string_count]):
-                harness_pos_whip = self.get_whip_position(tracker_id, 'positive', harness_idx)
-                harness_neg_whip = self.get_whip_position(tracker_id, 'negative', harness_idx)
-                
-                if harness_pos_whip:
-                    wx = 20 + self.pan_x + harness_pos_whip[0] * scale
-                    wy = 20 + self.pan_y + harness_pos_whip[1] * scale
-                    
-                    # Check if selected
-                    is_selected = (tracker_id, harness_idx, 'positive') in self.selected_whips
-                    fill_color = 'orange' if is_selected else 'pink'
-                    outline_color = 'red' if is_selected else 'deeppink'
-                    size = 5 if is_selected else 3
-                    
-                    self.canvas.create_oval(
-                        wx - size, wy - size,
-                        wx + size, wy + size,
-                        fill=fill_color, outline=outline_color,
-                        tags=f'harness_whip_point_{harness_idx}_positive'
-                    )
-                
-                if harness_neg_whip:
-                    wx = 20 + self.pan_x + harness_neg_whip[0] * scale
-                    wy = 20 + self.pan_y + harness_neg_whip[1] * scale
-                    
-                    # Check if selected
-                    is_selected = (tracker_id, harness_idx, 'negative') in self.selected_whips
-                    fill_color = 'cyan' if is_selected else 'teal'
-                    outline_color = 'blue' if is_selected else 'darkcyan'
-                    size = 5 if is_selected else 3
-                    
-                    self.canvas.create_oval(
-                        wx - size, wy - size,
-                        wx + size, wy + size,
-                        fill=fill_color, outline=outline_color,
-                        tags=f'harness_whip_point_{harness_idx}_negative'
-                    )
+            if harness_pos_whip:
+                self.draw_whip_point(harness_pos_whip[0], harness_pos_whip[1], tracker_id, 'positive', harness_idx)
+            
+            if harness_neg_whip:
+                self.draw_whip_point(harness_neg_whip[0], harness_neg_whip[1], tracker_id, 'negative', harness_idx)
 
     def draw_string_homerun_wiring(self):
         """Draw string homerun wiring configuration"""
-        scale = self.get_canvas_scale()
         
         # Sort strings by Y position to determine route indices
         pos_routes = []  # List to store positive route info
@@ -2206,160 +2130,103 @@ class WiringConfigurator(tk.Toplevel):
 
     def draw_default_harness(self, pos, pos_whip, neg_whip):
         """Draw default harness configuration - single independent harness"""
-        scale = self.get_canvas_scale()
-        tracker_idx = self.block.tracker_positions.index(pos)
-        
-        # For default harness, there's only one harness (harness_idx = 0)
-        # Calculate this harness's own extender and whip points
-        pos_extender_point = self.get_extender_point(tracker_idx, 'positive', 0)
-        neg_extender_point = self.get_extender_point(tracker_idx, 'negative', 0)
-        
-        pos_whip_point = self.get_shared_whip_point(tracker_idx, 'positive')
-        neg_whip_point = self.get_shared_whip_point(tracker_idx, 'negative')
-        
-        # Step 1: Calculate collection points for all strings
+        # Use the unified harness drawing logic
+        string_indices = list(range(len(pos.strings)))
         routing_mode = self.routing_mode_var.get()
-        pos_nodes = []
-        neg_nodes = []
-
-        for i, string in enumerate(pos.strings):
-            pos_node = self.get_harness_collection_point(pos, string, 0, True, routing_mode)
-            neg_node = self.get_harness_collection_point(pos, string, 0, False, routing_mode)
-            pos_nodes.append(pos_node)
-            neg_nodes.append(neg_node)
-
-            # Draw string cables to collection points
-            self.draw_string_to_harness_connection(pos, string, pos_node, i, True, routing_mode)
-            self.draw_string_to_harness_connection(pos, string, neg_node, i, False, routing_mode)
         
-        # Step 2: Draw collection points
-        for nx, ny in pos_nodes:
-            x = 20 + self.pan_x + nx * scale
-            y = 20 + self.pan_y + ny * scale
-            self.canvas.create_oval(x-3, y-3, x+3, y+3, fill='red', outline='darkred')
-        
-        for nx, ny in neg_nodes:
-            x = 20 + self.pan_x + nx * scale
-            y = 20 + self.pan_y + ny * scale
-            self.canvas.create_oval(x-3, y-3, x+3, y+3, fill='blue', outline='darkblue')
-        
-        # Step 3: Draw harness connections from collection points to extender point
-        if pos_nodes and pos_extender_point:
-            self.draw_simple_harness_connection(pos_nodes, pos_extender_point, len(pos.strings), True)
-        
-        if neg_nodes and neg_extender_point:
-            self.draw_simple_harness_connection(neg_nodes, neg_extender_point, len(pos.strings), False)
-        
-        # Step 4: Draw this harness's extender from extender point to whip point (0 length)
-        if pos_extender_point and pos_whip_point:
-            self.draw_extender_route(pos_extender_point, pos_whip_point, len(pos.strings), True, tracker_idx, 0)
-        
-        if neg_extender_point and neg_whip_point:
-            self.draw_extender_route(neg_extender_point, neg_whip_point, len(pos.strings), False, tracker_idx, 0)
-        
-        # Step 5: Draw this harness's whip from whip point to device
-        pos_dest, neg_dest = self.get_device_destination_points()
-        
-        if pos_whip_point and pos_dest:
-            route = self.calculate_cable_route(
-                pos_whip_point[0], pos_whip_point[1],
-                pos_dest[0], pos_dest[1],
-                True, 0
-            )
-            current = self.calculate_current_for_segment('whip', len(pos.strings))
-            tracker_idx = self.block.tracker_positions.index(pos)
-            context_info = f"T{tracker_idx+1}-H1 Whip"
-            self.draw_wire_route(route, self.whip_cable_size_var.get(), current, True, "whip", context_info)
-        
-        if neg_whip_point and neg_dest:
-            route = self.calculate_cable_route(
-                neg_whip_point[0], neg_whip_point[1],
-                neg_dest[0], neg_dest[1],
-                False, 0
-            )
-            current = self.calculate_current_for_segment('whip', len(pos.strings))
-            tracker_idx = self.block.tracker_positions.index(pos)
-            context_info = f"T{tracker_idx+1}-H1 Whip"
-            self.draw_wire_route(route, self.whip_cable_size_var.get(), current, False, "whip", context_info)
+        self.draw_harness_for_tracker(pos, 0, string_indices, routing_mode, is_default=True)
 
     def draw_custom_harnesses(self, pos, pos_whip, neg_whip, string_count):
         """Draw custom harness configurations - each harness is completely independent"""
-        scale = self.get_canvas_scale()
         tracker_idx = self.block.tracker_positions.index(pos)
         
         # Process each harness group independently
         for harness_idx, harness in enumerate(self.block.wiring_config.harness_groupings[string_count]):
-            string_indices = harness.string_indices
-            if not string_indices:
+            if not harness.string_indices:
                 continue
             
-            # Step 1: Calculate this harness's own extender and whip points
-            pos_extender_point = self.get_extender_point(tracker_idx, 'positive', harness_idx)
-            neg_extender_point = self.get_extender_point(tracker_idx, 'negative', harness_idx)
-            
-            # Each harness has its own whip point (co-located but separate)
-            pos_whip_point = self.get_shared_whip_point(tracker_idx, 'positive')
-            neg_whip_point = self.get_shared_whip_point(tracker_idx, 'negative')
-            
-            # Step 2: Calculate collection points for this harness
-            routing_mode = self.routing_mode_var.get()
-            pos_nodes = []
-            neg_nodes = []
-            
-            for string_idx in string_indices:
-                if string_idx < len(pos.strings):
-                    string = pos.strings[string_idx]
-                    
-                    pos_node = self.get_harness_collection_point(pos, string, harness_idx, True, routing_mode)
-                    neg_node = self.get_harness_collection_point(pos, string, harness_idx, False, routing_mode)
-                    
-                    pos_nodes.append(pos_node)
-                    neg_nodes.append(neg_node)
-                    
-                    # Draw string to collection point
-                    self.draw_string_to_harness_connection(pos, string, pos_node, string_idx, True, routing_mode)
-                    self.draw_string_to_harness_connection(pos, string, neg_node, string_idx, False, routing_mode)
-            
-            # Step 3: Draw collection points
-            for nx, ny in pos_nodes:
-                x = 20 + self.pan_x + nx * scale
-                y = 20 + self.pan_y + ny * scale
-                self.canvas.create_oval(x-3, y-3, x+3, y+3, fill='red', outline='darkred')
-            
-            for nx, ny in neg_nodes:
-                x = 20 + self.pan_x + nx * scale
-                y = 20 + self.pan_y + ny * scale
-                self.canvas.create_oval(x-3, y-3, x+3, y+3, fill='blue', outline='darkblue')
-            
-            # Step 4: Draw harness connections from collection points to THIS harness's extender point
-            if pos_nodes and pos_extender_point:
-                self.draw_harness_to_extender_connection(pos_nodes, pos_extender_point, len(string_indices), True, harness, tracker_idx, harness_idx)
-            
-            if neg_nodes and neg_extender_point:
-                self.draw_harness_to_extender_connection(neg_nodes, neg_extender_point, len(string_indices), False, harness, tracker_idx, harness_idx)
-            
-            # Step 5: Draw THIS harness's extender from extender point to whip point
-            current_pos_whip = self.get_whip_position(str(tracker_idx), 'positive', harness_idx)
-            current_neg_whip = self.get_whip_position(str(tracker_idx), 'negative', harness_idx)
+            self.draw_single_custom_harness(pos, harness_idx, harness, tracker_idx)
 
-            if pos_extender_point and current_pos_whip:
-                self.draw_extender_route(pos_extender_point, current_pos_whip, len(string_indices), True, tracker_idx, harness_idx)
+    def draw_single_custom_harness(self, pos, harness_idx, harness, tracker_idx):
+        """Draw a single custom harness configuration"""
+        string_indices = harness.string_indices
+        
+        # Step 1: Calculate this harness's own extender and whip points
+        pos_extender_point = self.get_extender_point(tracker_idx, 'positive', harness_idx)
+        neg_extender_point = self.get_extender_point(tracker_idx, 'negative', harness_idx)
+        
+        # Each harness has its own whip point (co-located but separate)
+        pos_whip_point = self.get_shared_whip_point(tracker_idx, 'positive')
+        neg_whip_point = self.get_shared_whip_point(tracker_idx, 'negative')
+        
+        # Step 2: Calculate and draw collection points for this harness
+        routing_mode = self.routing_mode_var.get()
+        pos_nodes, neg_nodes = self.calculate_and_draw_harness_nodes(pos, string_indices, harness_idx, routing_mode)
+        
+        # Step 3: Draw harness connections from collection points to extender point
+        if pos_nodes and pos_extender_point:
+            self.draw_harness_to_extender_connection(pos_nodes, pos_extender_point, len(string_indices), True, harness, tracker_idx, harness_idx)
+        
+        if neg_nodes and neg_extender_point:
+            self.draw_harness_to_extender_connection(neg_nodes, neg_extender_point, len(string_indices), False, harness, tracker_idx, harness_idx)
+        
+        # Step 4: Draw extender cables
+        self.draw_harness_extender_cables(pos_extender_point, neg_extender_point, pos_whip_point, neg_whip_point, len(string_indices), tracker_idx, harness_idx)
+        
+        # Step 5: Draw whip to device connections
+        self.draw_harness_whip_to_device(tracker_idx, harness_idx, len(string_indices))
 
-            if neg_extender_point and current_neg_whip:
-                self.draw_extender_route(neg_extender_point, current_neg_whip, len(string_indices), False, tracker_idx, harness_idx)
-            
-            # Step 6: Draw THIS harness's whip from whip point to device  
-            pos_dest, neg_dest = self.get_device_destination_points()
+    def calculate_and_draw_harness_nodes(self, pos, string_indices, harness_idx, routing_mode):
+        """Calculate and draw collection nodes for a harness"""
+        pos_nodes = []
+        neg_nodes = []
+        
+        for string_idx in string_indices:
+            if string_idx < len(pos.strings):
+                string = pos.strings[string_idx]
+                
+                pos_node = self.get_harness_collection_point(pos, string, harness_idx, True, routing_mode)
+                neg_node = self.get_harness_collection_point(pos, string, harness_idx, False, routing_mode)
+                
+                pos_nodes.append(pos_node)
+                neg_nodes.append(neg_node)
+                
+                # Draw string to collection point
+                self.draw_string_to_harness_connection(pos, string, pos_node, string_idx, True, routing_mode)
+                self.draw_string_to_harness_connection(pos, string, neg_node, string_idx, False, routing_mode)
+        
+        # Draw collection points
+        for nx, ny in pos_nodes:
+            self.draw_collection_point(nx, ny, True, 'collection')
+        
+        for nx, ny in neg_nodes:
+            self.draw_collection_point(nx, ny, False, 'collection')
+        
+        return pos_nodes, neg_nodes
 
-            # Get the current whip position (custom or default)
-            current_pos_whip = self.get_whip_position(str(tracker_idx), 'positive', harness_idx)
-            current_neg_whip = self.get_whip_position(str(tracker_idx), 'negative', harness_idx)
+    def draw_harness_extender_cables(self, pos_extender_point, neg_extender_point, pos_whip_point, neg_whip_point, num_strings, tracker_idx, harness_idx):
+        """Draw extender cables for a harness"""
+        current_pos_whip = self.get_whip_position(str(tracker_idx), 'positive', harness_idx)
+        current_neg_whip = self.get_whip_position(str(tracker_idx), 'negative', harness_idx)
 
-            if current_pos_whip and pos_dest:
-                self.draw_whip_to_device_connection(current_pos_whip, pos_dest, len(string_indices), True, harness_idx, tracker_idx)
+        if pos_extender_point and current_pos_whip:
+            self.draw_extender_route(pos_extender_point, current_pos_whip, num_strings, True, tracker_idx, harness_idx)
 
-            if current_neg_whip and neg_dest:
-                self.draw_whip_to_device_connection(current_neg_whip, neg_dest, len(string_indices), False, harness_idx, tracker_idx)
+        if neg_extender_point and current_neg_whip:
+            self.draw_extender_route(neg_extender_point, current_neg_whip, num_strings, False, tracker_idx, harness_idx)
+
+    def draw_harness_whip_to_device(self, tracker_idx, harness_idx, num_strings):
+        """Draw whip to device connections for a harness"""
+        pos_dest, neg_dest = self.get_device_destination_points()
+        
+        current_pos_whip = self.get_whip_position(str(tracker_idx), 'positive', harness_idx)
+        current_neg_whip = self.get_whip_position(str(tracker_idx), 'negative', harness_idx)
+
+        if current_pos_whip and pos_dest:
+            self.draw_whip_to_device_connection(current_pos_whip, pos_dest, num_strings, True, harness_idx, tracker_idx)
+
+        if current_neg_whip and neg_dest:
+            self.draw_whip_to_device_connection(current_neg_whip, neg_dest, num_strings, False, harness_idx, tracker_idx)
 
     def draw_auto_harnesses_for_unconfigured(self, pos, pos_whip, neg_whip, unconfigured_indices):
         """Automatically draw harnesses for unconfigured strings"""
@@ -2498,17 +2365,41 @@ class WiringConfigurator(tk.Toplevel):
                 
     def apply_quick_pattern(self, pattern_type):
         """Apply a predefined harness pattern"""
-        if not self.string_count_var.get() or not hasattr(self, 'string_count_mapping'):
+        string_count = self.get_selected_string_count()
+        if not string_count:
             return
         
-        # Get selected string count
+        # Initialize wiring config if needed
+        self.ensure_wiring_config_exists()
+        
+        # Reset existing harness configuration for this string count
+        self.block.wiring_config.harness_groupings[string_count] = []
+        
+        # Apply the specific pattern
+        if pattern_type == "split_even_2":
+            self.create_split_even_pattern(string_count)
+        elif pattern_type == "furthest_separate":
+            self.create_furthest_separate_pattern(string_count)
+        elif pattern_type == "default":
+            self.remove_custom_harness_config(string_count)
+        
+        # Update display and redraw
+        self.update_harness_display(string_count)
+        self.draw_wiring_layout()
+
+    def get_selected_string_count(self):
+        """Get the currently selected string count"""
+        if not self.string_count_var.get() or not hasattr(self, 'string_count_mapping'):
+            return None
+        
         selected_item = self.string_count_var.get()
         if selected_item not in self.string_count_mapping:
-            return
-        
-        string_count = self.string_count_mapping[selected_item]
-        
-        # Initialize wiring_config if it doesn't exist
+            return None
+            
+        return self.string_count_mapping[selected_item]
+
+    def ensure_wiring_config_exists(self):
+        """Ensure wiring config and harness groupings are initialized"""
         if not hasattr(self.block, 'wiring_config') or not self.block.wiring_config:
             from ..models.block import WiringConfig, WiringType
             self.block.wiring_config = WiringConfig(
@@ -2520,83 +2411,72 @@ class WiringConfigurator(tk.Toplevel):
                 harness_groupings={}
             )
 
-        # Initialize harness_groupings if needed
         if not hasattr(self.block.wiring_config, 'harness_groupings'):
             self.block.wiring_config.harness_groupings = {}
 
-        # Reset existing harness configuration for this string count
-        self.block.wiring_config.harness_groupings[string_count] = []
+    def create_split_even_pattern(self, string_count):
+        """Create split evenly in 2 pattern"""
+        half_point = string_count // 2
         
-        # Create harnesses based on selected pattern
-        if pattern_type == "split_even_2":
-            # Split strings evenly into 2 harnesses
-            half_point = string_count // 2
-            
-            # First half
-            harness1 = HarnessGroup(
-                string_indices=list(range(0, half_point)),
-                cable_size=self.harness_cable_size_var.get()
-            )
-            self.block.wiring_config.harness_groupings[string_count].append(harness1)
-            
-            # Second half
+        harness1 = HarnessGroup(
+            string_indices=list(range(0, half_point)),
+            cable_size=self.harness_cable_size_var.get()
+        )
+        harness2 = HarnessGroup(
+            string_indices=list(range(half_point, string_count)),
+            cable_size=self.harness_cable_size_var.get()
+        )
+        
+        self.block.wiring_config.harness_groupings[string_count] = [harness1, harness2]
+
+    def create_furthest_separate_pattern(self, string_count):
+        """Create furthest string separate pattern"""
+        furthest_string_idx = self.find_furthest_string_from_device(string_count)
+        
+        harness1 = HarnessGroup(
+            string_indices=[furthest_string_idx],
+            cable_size=self.harness_cable_size_var.get()
+        )
+        
+        other_indices = [i for i in range(string_count) if i != furthest_string_idx]
+        if other_indices:
             harness2 = HarnessGroup(
-                string_indices=list(range(half_point, string_count)),
+                string_indices=other_indices,
                 cable_size=self.harness_cable_size_var.get()
             )
-            self.block.wiring_config.harness_groupings[string_count].append(harness2)
+            self.block.wiring_config.harness_groupings[string_count] = [harness1, harness2]
+        else:
+            self.block.wiring_config.harness_groupings[string_count] = [harness1]
+
+    def remove_custom_harness_config(self, string_count):
+        """Remove custom harness configuration"""
+        if string_count in self.block.wiring_config.harness_groupings:
+            del self.block.wiring_config.harness_groupings[string_count]
+
+    def find_furthest_string_from_device(self, string_count):
+        """Find the string furthest from the device"""
+        pos_dest, neg_dest = self.get_device_destination_points()
+        if not pos_dest or not self.block.tracker_positions:
+            return 0
+            
+        furthest_string_idx = 0
+        max_distance = 0
         
-        elif pattern_type == "furthest_separate":
-            # Determine which string is furthest from the device
-            pos_dest, neg_dest = self.get_device_destination_points()
-            if not pos_dest or not self.block.tracker_positions:
-                return
+        for pos_idx, pos in enumerate(self.block.tracker_positions):
+            if len(pos.strings) != string_count:
+                continue
                 
-            # For each string in the selected tracker, calculate its distance from the device
-            furthest_string_idx = 0
-            max_distance = 0
-            
-            # Get the tracker position for this string count
-            for pos_idx, pos in enumerate(self.block.tracker_positions):
-                if len(pos.strings) != string_count:
-                    continue
-                    
-                # For each string in this tracker
-                for i, string in enumerate(pos.strings):
-                    # Calculate distance from string source to device
-                    source_x = pos.x + string.positive_source_x
-                    source_y = pos.y + string.positive_source_y
-                    
-                    # Pythagorean distance
-                    distance = ((source_x - pos_dest[0])**2 + (source_y - pos_dest[1])**2)**0.5
-                    
-                    if distance > max_distance:
-                        max_distance = distance
-                        furthest_string_idx = i
-            
-            # Create two harnesses: one for the furthest string, one for all others
-            harness1 = HarnessGroup(
-                string_indices=[furthest_string_idx],
-                cable_size=self.harness_cable_size_var.get()
-            )
-            self.block.wiring_config.harness_groupings[string_count].append(harness1)
-            
-            other_indices = [i for i in range(string_count) if i != furthest_string_idx]
-            if other_indices:
-                harness2 = HarnessGroup(
-                    string_indices=other_indices,
-                    cable_size=self.harness_cable_size_var.get()
-                )
-                self.block.wiring_config.harness_groupings[string_count].append(harness2)
+            for i, string in enumerate(pos.strings):
+                source_x = pos.x + string.positive_source_x
+                source_y = pos.y + string.positive_source_y
+                
+                distance = ((source_x - pos_dest[0])**2 + (source_y - pos_dest[1])**2)**0.5
+                
+                if distance > max_distance:
+                    max_distance = distance
+                    furthest_string_idx = i
         
-        elif pattern_type == "default":
-            # Remove all custom harness definitions - will revert to default
-            if string_count in self.block.wiring_config.harness_groupings:
-                del self.block.wiring_config.harness_groupings[string_count]
-        
-        # Update the display and redraw
-        self.update_harness_display(string_count)
-        self.draw_wiring_layout()
+        return furthest_string_idx
 
     def edit_harness(self, string_count, harness_idx):
         """Edit harness properties including fuse configuration"""
@@ -2732,8 +2612,8 @@ class WiringConfigurator(tk.Toplevel):
         if hasattr(self, 'saved_routes_for_block') and self.saved_routes_for_block:
             return self.saved_routes_for_block.copy()
         
-        # Fallback to old logic if no saved routes
-        return self._get_fallback_routes()
+        # If no saved routes, return empty dictionary
+        return {}
         
     def draw_current_routes(self):
         """Draw routes based on current wiring type (always uses conceptual logic with positioning variants)"""
@@ -2793,52 +2673,8 @@ class WiringConfigurator(tk.Toplevel):
         self.canvas.tag_bind(text_id, '<B1-Motion>', lambda e, lid=label_id: self.drag_label(e, lid))
         self.canvas.tag_bind(text_id, '<ButtonRelease-1>', lambda e, lid=label_id: self.end_label_drag(e, lid))
 
-    def validate_and_show_current_warnings(self):
-        """Validate current loads and show warnings for both routing modes"""
-        # Clear previous warnings
-        self.clear_warnings()
-        
-        # Get routes for validation
-        routes = self.get_current_routes()
-        
-        # Validate each route for overloads
-        for route_id, route_points in routes.items():
-            if len(route_points) < 2:
-                continue
-                
-            # Determine wire properties and current
-            is_positive = 'pos_' in route_id
-            if 'src_' in route_id:
-                wire_gauge = self.string_cable_size_var.get()
-                current = self.calculate_current_for_segment('string')
-            elif 'harness_' in route_id or 'main_' in route_id:
-                wire_gauge = self.harness_cable_size_var.get()
-                num_strings = self.get_harness_string_count(route_id)
-                current = self.calculate_current_for_segment('string') * num_strings
-            else:  # whip routes
-                wire_gauge = self.whip_cable_size_var.get()
-                num_strings = self.get_whip_string_count(route_id)
-                current = self.calculate_current_for_segment('whip', num_strings)
-            
-            # Check for overloads
-            from ..utils.calculations import get_ampacity_for_wire_gauge, calculate_nec_current
-            ampacity = get_ampacity_for_wire_gauge(wire_gauge)
-            if ampacity > 0:
-                nec_current = calculate_nec_current(current)
-                load_percent = (nec_current / ampacity) * 100
-                
-                if load_percent > 100:
-                    polarity = "positive" if is_positive else "negative"
-                    segment_type = "string" if 'src_' in route_id else ("harness" if 'harness_' in route_id or 'main_' in route_id else "whip")
-                    
-                    self.add_wire_warning(
-                        route_id,
-                        f"{polarity.capitalize()} {segment_type} {wire_gauge}: {load_percent:.0f}% (OVERLOAD)",
-                        'overload'
-                    )
-
-    def get_harness_string_count(self, route_id):
-        """Get number of strings in a harness based on route ID"""
+    def get_string_count_for_route(self, route_id):
+        """Get number of strings for any route based on route ID"""
         # Extract tracker index from route ID
         parts = route_id.split('_')
         if len(parts) >= 3:
@@ -2849,54 +2685,10 @@ class WiringConfigurator(tk.Toplevel):
             except (ValueError, IndexError):
                 pass
         return 1
-
-    def get_whip_string_count(self, route_id):
-        """Get number of strings for a whip route"""
-        # Extract tracker index from route ID
-        parts = route_id.split('_')
-        if len(parts) >= 3:
-            try:
-                tracker_idx = int(parts[2])
-                if tracker_idx < len(self.block.tracker_positions):
-                    return len(self.block.tracker_positions[tracker_idx].strings)
-            except (ValueError, IndexError):
-                pass
-        return 1
-    
-    def convert_route_to_canvas_points(self, route):
-        """Convert world coordinates route to canvas coordinates"""
-        scale = self.get_canvas_scale()
-        canvas_points = []
-        for x, y in route:
-            canvas_x = 20 + self.pan_x + x * scale
-            canvas_y = 20 + self.pan_y + y * scale
-            canvas_points.extend([canvas_x, canvas_y])
-        
-        return canvas_points
 
     def draw_wire_route(self, route, wire_gauge, current, is_positive=True, segment_type="string", context_info=None):
         """Draw a complete wire route with current calculation and labeling"""
-        
-        # Save route for Block Configurator (if we have context info)
-        if context_info and hasattr(self, 'saved_routes_for_block'):
-            polarity = 'pos' if is_positive else 'neg'
-            route_id = f"{polarity}_{segment_type}_{context_info.lower().replace(' ', '_')}"
-            self.saved_routes_for_block[route_id] = route.copy()
-        
-        if len(route) < 2:
-            return None
-            
-        # Convert to canvas points
-        canvas_points = self.convert_route_to_canvas_points(route)
-        
-        # Draw the wire segment
-        line_id = self.draw_wire_segment(canvas_points, wire_gauge, current, is_positive, segment_type)
-        
-        # Add current label if enabled
-        if self.show_current_labels_var.get():
-            self.add_current_label_to_route(canvas_points, current, is_positive, segment_type, context_info)
-        
-        return line_id      
+        return self.draw_route_with_properties(route, wire_gauge, current, is_positive, segment_type, context_info)
 
     def draw_string_to_harness_connection(self, pos, string, harness_node, string_idx, is_positive, routing_mode):
         """Draw connection from string source to harness collection point"""
@@ -3005,7 +2797,7 @@ class WiringConfigurator(tk.Toplevel):
         route = [extender_point, whip_point]
         
         # Convert to canvas points for drawing
-        canvas_points = self.convert_route_to_canvas_points(route)
+        canvas_points = self.world_route_to_canvas_points(route)
         
         # Draw the wire segment
         current = self.calculate_current_for_segment('extender', num_strings)
@@ -3139,7 +2931,6 @@ class WiringConfigurator(tk.Toplevel):
     
     def draw_extender_points(self, pos):
         """Draw extender points for a tracker"""
-        scale = self.get_canvas_scale()
         tracker_idx = self.block.tracker_positions.index(pos)
         string_count = len(pos.strings)
         
@@ -3148,56 +2939,42 @@ class WiringConfigurator(tk.Toplevel):
             return
         
         # Draw extender points for multi-harness scenario
-        if (hasattr(self.block, 'wiring_config') and 
-            self.block.wiring_config and 
-            hasattr(self.block.wiring_config, 'harness_groupings') and
-            string_count in self.block.wiring_config.harness_groupings):
-            
-            for harness_idx, _ in enumerate(self.block.wiring_config.harness_groupings[string_count]):
-                if harness_idx > 0:  # Only harness 2, 3, etc. get extenders
-                    pos_extender = self.get_extender_point(tracker_idx, 'positive', harness_idx)
-                    neg_extender = self.get_extender_point(tracker_idx, 'negative', harness_idx)
-                    
-                    if pos_extender:
-                        ex = 20 + self.pan_x + pos_extender[0] * scale
-                        ey = 20 + self.pan_y + pos_extender[1] * scale
-                        self.canvas.create_oval(
-                            ex - 4, ey - 4, ex + 4, ey + 4,
-                            fill='yellow', outline='orange',
-                            tags='extender_point'
-                        )
-                    
-                    if neg_extender:
-                        ex = 20 + self.pan_x + neg_extender[0] * scale
-                        ey = 20 + self.pan_y + neg_extender[1] * scale
-                        self.canvas.create_oval(
-                            ex - 4, ey - 4, ex + 4, ey + 4,
-                            fill='lightblue', outline='darkblue',
-                            tags='extender_point'
-                        )
-        
+        if self.has_custom_harness_groupings(string_count):
+            self.draw_multi_harness_extender_points(tracker_idx, string_count)
         # Draw extender points for stacked tracker scenario
         elif self.is_stacked_tracker_needing_extender(tracker_idx):
-            pos_extender = self.get_extender_point(tracker_idx, 'positive')
-            neg_extender = self.get_extender_point(tracker_idx, 'negative')
-            
-            if pos_extender:
-                ex = 20 + self.pan_x + pos_extender[0] * scale
-                ey = 20 + self.pan_y + pos_extender[1] * scale
-                self.canvas.create_oval(
-                    ex - 4, ey - 4, ex + 4, ey + 4,
-                    fill='yellow', outline='orange',
-                    tags='extender_point'
-                )
-            
-            if neg_extender:
-                ex = 20 + self.pan_x + neg_extender[0] * scale
-                ey = 20 + self.pan_y + neg_extender[1] * scale
-                self.canvas.create_oval(
-                    ex - 4, ey - 4, ex + 4, ey + 4,
-                    fill='lightblue', outline='darkblue',
-                    tags='extender_point'
-                )
+            self.draw_stacked_tracker_extender_points(tracker_idx)
+
+    def has_custom_harness_groupings(self, string_count):
+        """Check if there are custom harness groupings for the given string count"""
+        return (hasattr(self.block, 'wiring_config') and 
+                self.block.wiring_config and 
+                hasattr(self.block.wiring_config, 'harness_groupings') and
+                string_count in self.block.wiring_config.harness_groupings)
+
+    def draw_multi_harness_extender_points(self, tracker_idx, string_count):
+        """Draw extender points for multi-harness configuration"""
+        for harness_idx, _ in enumerate(self.block.wiring_config.harness_groupings[string_count]):
+            if harness_idx > 0:  # Only harness 2, 3, etc. get extenders
+                pos_extender = self.get_extender_point(tracker_idx, 'positive', harness_idx)
+                neg_extender = self.get_extender_point(tracker_idx, 'negative', harness_idx)
+                
+                if pos_extender:
+                    self.draw_collection_point(pos_extender[0], pos_extender[1], True, 'extender')
+                
+                if neg_extender:
+                    self.draw_collection_point(neg_extender[0], neg_extender[1], False, 'extender')
+
+    def draw_stacked_tracker_extender_points(self, tracker_idx):
+        """Draw extender points for stacked tracker configuration"""
+        pos_extender = self.get_extender_point(tracker_idx, 'positive')
+        neg_extender = self.get_extender_point(tracker_idx, 'negative')
+        
+        if pos_extender:
+            self.draw_collection_point(pos_extender[0], pos_extender[1], True, 'extender')
+        
+        if neg_extender:
+            self.draw_collection_point(neg_extender[0], neg_extender[1], False, 'extender')
 
     def draw_legend(self):
         """Draw the color legend showing wire types and colors"""
@@ -3374,16 +3151,21 @@ class WiringConfigurator(tk.Toplevel):
         # If all positions overlap, use the farthest one
         return (wire_midpoint[0], wire_midpoint[1] + base_offset * 2)
     
-    def start_label_drag(self, event, label_id):
-        """Start dragging a current label"""
-        self.dragging_label = label_id
-        self.label_drag_start = (event.x, event.y)
+    def handle_label_interaction(self, event, label_id, action):
+        """Handle all label interactions (start, drag, end)"""
+        if action == "start":
+            self.dragging_label = label_id
+            self.label_drag_start = (event.x, event.y)
+        
+        elif action == "drag" and self.dragging_label == label_id:
+            self.update_label_position(event, label_id)
+        
+        elif action == "end":
+            self.dragging_label = None
+            self.label_drag_start = None
 
-    def drag_label(self, event, label_id):
-        """Handle dragging of current label"""
-        if self.dragging_label != label_id:
-            return
-            
+    def update_label_position(self, event, label_id):
+        """Update label position and leader line during drag"""
         label_info = self.current_labels[label_id]
         text_id = label_info['text_id']
         
@@ -3391,20 +3173,18 @@ class WiringConfigurator(tk.Toplevel):
         self.canvas.coords(text_id, event.x, event.y)
         label_info['current_pos'] = (event.x, event.y)
         
-        # Check if we need a leader line
+        # Update or create leader line
         wire_mid = label_info['wire_midpoint']
         distance = ((event.x - wire_mid[0])**2 + (event.y - wire_mid[1])**2)**0.5
         
         if distance > 20:  # Show leader line
             if label_info['leader_id'] is None:
-                # Create leader line
                 leader_id = self.canvas.create_line(
                     wire_mid[0], wire_mid[1], event.x, event.y,
                     fill='gray', width=1, dash=(2, 2), tags='label_leader'
                 )
                 label_info['leader_id'] = leader_id
             else:
-                # Update existing leader line
                 self.canvas.coords(label_info['leader_id'], 
                                 wire_mid[0], wire_mid[1], event.x, event.y)
         else:
@@ -3413,10 +3193,11 @@ class WiringConfigurator(tk.Toplevel):
                 self.canvas.delete(label_info['leader_id'])
                 label_info['leader_id'] = None
 
-    def end_label_drag(self, event, label_id):
-        """End label dragging"""
-        self.dragging_label = None
-        self.label_drag_start = None
+        # Update the binding in add_current_label_to_route method:
+        # REPLACE the three bind statements with:
+        self.canvas.tag_bind(text_id, '<Button-1>', lambda e, lid=label_id: self.handle_label_interaction(e, lid, "start"))
+        self.canvas.tag_bind(text_id, '<B1-Motion>', lambda e, lid=label_id: self.handle_label_interaction(e, lid, "drag"))
+        self.canvas.tag_bind(text_id, '<ButtonRelease-1>', lambda e, lid=label_id: self.handle_label_interaction(e, lid, "end"))
 
     def toggle_current_labels(self):
         """Toggle current labels and reset positions"""
@@ -3451,3 +3232,272 @@ class WiringConfigurator(tk.Toplevel):
         else:
             # Tie - default to north end
             return north_point
+        
+    def draw_route_with_properties(self, route, wire_gauge, current, is_positive, segment_type, context_info=None):
+        """Draw a route with proper wire properties and current labeling"""
+        if len(route) < 2:
+            return None
+            
+        # Convert to canvas points
+        canvas_points = self.world_route_to_canvas_points(route)
+        
+        # Save route for Block Configurator if we have context info
+        if context_info and hasattr(self, 'saved_routes_for_block'):
+            polarity = 'pos' if is_positive else 'neg'
+            route_id = f"{polarity}_{segment_type}_{context_info.lower().replace(' ', '_')}"
+            self.saved_routes_for_block[route_id] = route.copy()
+        
+        # Draw the wire segment
+        line_id = self.draw_wire_segment(canvas_points, wire_gauge, current, is_positive, segment_type)
+        
+        # Add current label if enabled
+        if self.show_current_labels_var.get():
+            self.add_current_label_to_route(canvas_points, current, is_positive, segment_type, context_info)
+        
+        return line_id
+    
+    def draw_collection_point(self, x, y, is_positive, point_type='collection'):
+        """Draw a single collection point at the specified coordinates"""
+        canvas_x, canvas_y = self.world_to_canvas(x, y)
+        
+        if point_type == 'collection':
+            size = 3
+            fill_color = 'red' if is_positive else 'blue'
+            outline_color = 'darkred' if is_positive else 'darkblue'
+        elif point_type == 'whip':
+            size = 3
+            fill_color = 'pink' if is_positive else 'teal'
+            outline_color = 'deeppink' if is_positive else 'darkcyan'
+        else:  # extender
+            size = 4
+            fill_color = 'yellow' if is_positive else 'lightblue'
+            outline_color = 'orange' if is_positive else 'darkblue'
+        
+        return self.canvas.create_oval(
+            canvas_x - size, canvas_y - size,
+            canvas_x + size, canvas_y + size,
+            fill=fill_color, outline=outline_color,
+            tags=f'{point_type}_point'
+        )
+    
+    def draw_whip_point(self, world_x, world_y, tracker_id, polarity, harness_idx=None, selected_whips=None):
+        """Draw a single whip point with appropriate styling"""
+        canvas_x, canvas_y = self.world_to_canvas(world_x, world_y)
+        
+        # Determine if selected
+        if harness_idx is not None:
+            is_selected = (tracker_id, harness_idx, polarity) in (selected_whips or self.selected_whips)
+            tag_suffix = f'_{harness_idx}_{polarity}'
+        else:
+            is_selected = (tracker_id, polarity) in (selected_whips or self.selected_whips)
+            tag_suffix = f'_{polarity}'
+        
+        # Set colors and size based on polarity and selection
+        if polarity == 'positive':
+            fill_color = 'orange' if is_selected else 'pink'
+            outline_color = 'red' if is_selected else 'deeppink'
+        else:
+            fill_color = 'cyan' if is_selected else 'teal'
+            outline_color = 'blue' if is_selected else 'darkcyan'
+        
+        size = 5 if is_selected else 3
+        tag = f'harness_whip_point{tag_suffix}' if harness_idx is not None else 'whip_point'
+        
+        return self.canvas.create_oval(
+            canvas_x - size, canvas_y - size,
+            canvas_x + size, canvas_y + size,
+            fill=fill_color, outline=outline_color,
+            tags=tag
+        )
+    
+    def update_whip_point_position(self, whip_info, dx, dy):
+        """Update a whip point position by the given delta"""
+        if len(whip_info) == 3:
+            tracker_id, harness_idx, polarity = whip_info
+            self.update_harness_whip_position(tracker_id, harness_idx, polarity, dx, dy)
+        else:
+            tracker_id, polarity = whip_info
+            self.update_regular_whip_position(tracker_id, polarity, dx, dy)
+
+    def update_harness_whip_position(self, tracker_id, harness_idx, polarity, dx, dy):
+        """Update harness-specific whip point position"""
+        # Ensure custom_harness_whip_points exists
+        if not hasattr(self.block, 'wiring_config') or not self.block.wiring_config:
+            return
+        if not hasattr(self.block.wiring_config, 'custom_harness_whip_points'):
+            self.block.wiring_config.custom_harness_whip_points = {}
+        
+        # Ensure tracker_id and harness_idx entries exist
+        if tracker_id not in self.block.wiring_config.custom_harness_whip_points:
+            self.block.wiring_config.custom_harness_whip_points[tracker_id] = {}
+        if harness_idx not in self.block.wiring_config.custom_harness_whip_points[tracker_id]:
+            self.block.wiring_config.custom_harness_whip_points[tracker_id][harness_idx] = {}
+        
+        # Get current position or default position
+        if polarity not in self.block.wiring_config.custom_harness_whip_points[tracker_id][harness_idx]:
+            current_pos = self.get_whip_default_position(tracker_id, polarity, harness_idx)
+            if current_pos:
+                self.block.wiring_config.custom_harness_whip_points[tracker_id][harness_idx][polarity] = current_pos
+        
+        # Update position
+        if polarity in self.block.wiring_config.custom_harness_whip_points[tracker_id][harness_idx]:
+            old_x, old_y = self.block.wiring_config.custom_harness_whip_points[tracker_id][harness_idx][polarity]
+            self.block.wiring_config.custom_harness_whip_points[tracker_id][harness_idx][polarity] = (old_x + dx, old_y + dy)
+
+    def update_regular_whip_position(self, tracker_id, polarity, dx, dy):
+        """Update regular whip point position"""
+        if not hasattr(self.block, 'wiring_config') or not self.block.wiring_config:
+            self.block.wiring_config = WiringConfig(
+                wiring_type=WiringType(self.wiring_type_var.get()),
+                positive_collection_points=[],
+                negative_collection_points=[],
+                strings_per_collection={},
+                cable_routes={},
+                custom_whip_points={}
+            )
+            
+        if 'custom_whip_points' not in self.block.wiring_config.__dict__:
+            self.block.wiring_config.custom_whip_points = {}
+            
+        if tracker_id not in self.block.wiring_config.custom_whip_points:
+            self.block.wiring_config.custom_whip_points[tracker_id] = {}
+            
+        # If this is the first time moving this whip, initialize with current position
+        if polarity not in self.block.wiring_config.custom_whip_points[tracker_id]:
+            current_pos = self.get_whip_default_position(tracker_id, polarity)
+            if current_pos:
+                self.block.wiring_config.custom_whip_points[tracker_id][polarity] = current_pos
+                
+        # Update position
+        if polarity in self.block.wiring_config.custom_whip_points[tracker_id]:
+            old_x, old_y = self.block.wiring_config.custom_whip_points[tracker_id][polarity]
+            self.block.wiring_config.custom_whip_points[tracker_id][polarity] = (old_x + dx, old_y + dy)
+
+    def draw_harness_for_tracker(self, pos, harness_idx, string_indices, routing_mode, is_default=False):
+        """Draw a single harness (default or custom) for a tracker"""
+        tracker_idx = self.block.tracker_positions.index(pos)
+        
+        # Calculate collection points
+        pos_nodes, neg_nodes = self.calculate_harness_collection_points(pos, string_indices, harness_idx, routing_mode)
+        
+        # Draw string to collection connections
+        self.draw_string_to_collection_connections(pos, string_indices, pos_nodes, neg_nodes, routing_mode)
+        
+        # Draw collection points
+        self.draw_harness_collection_points(pos_nodes, neg_nodes)
+        
+        # Get target points (extender or whip)
+        pos_target, neg_target = self.get_harness_target_points(tracker_idx, harness_idx, is_default)
+        
+        # Draw harness connections
+        self.draw_harness_connections(pos_nodes, neg_nodes, pos_target, neg_target, len(string_indices), tracker_idx, harness_idx, is_default)
+        
+        # Draw extender and whip connections
+        self.draw_harness_final_connections(tracker_idx, harness_idx, len(string_indices), is_default)
+
+    def draw_harness_connections(self, pos_nodes, neg_nodes, pos_target, neg_target, num_strings, tracker_idx, harness_idx, is_default):
+        """Draw harness connections from collection points to target points"""
+        if is_default:
+            # For default harness, use the simple harness connection
+            if pos_nodes and pos_target:
+                self.draw_simple_harness_connection(pos_nodes, pos_target, num_strings, True)
+            
+            if neg_nodes and neg_target:
+                self.draw_simple_harness_connection(neg_nodes, neg_target, num_strings, False)
+        else:
+            # For custom harnesses, use the harness-to-extender connection
+            # Get the harness object for cable size
+            string_count = len(self.block.tracker_positions[tracker_idx].strings)
+            harness = None
+            if (hasattr(self.block.wiring_config, 'harness_groupings') and 
+                string_count in self.block.wiring_config.harness_groupings and
+                harness_idx < len(self.block.wiring_config.harness_groupings[string_count])):
+                harness = self.block.wiring_config.harness_groupings[string_count][harness_idx]
+            
+            if pos_nodes and pos_target and harness:
+                self.draw_harness_to_extender_connection(pos_nodes, pos_target, num_strings, True, harness, tracker_idx, harness_idx)
+            
+            if neg_nodes and neg_target and harness:
+                self.draw_harness_to_extender_connection(neg_nodes, neg_target, num_strings, False, harness, tracker_idx, harness_idx)
+
+    def draw_harness_final_connections(self, tracker_idx, harness_idx, num_strings, is_default):
+        """Draw final connections (extender and whip to device)"""
+        pos_dest, neg_dest = self.get_device_destination_points()
+        
+        if is_default:
+            # For default harness, draw whip to device directly
+            pos_whip_point = self.get_shared_whip_point(tracker_idx, 'positive')
+            neg_whip_point = self.get_shared_whip_point(tracker_idx, 'negative')
+            
+            if pos_whip_point and pos_dest:
+                route = self.calculate_cable_route(
+                    pos_whip_point[0], pos_whip_point[1],
+                    pos_dest[0], pos_dest[1],
+                    True, 0
+                )
+                current = self.calculate_current_for_segment('whip', num_strings)
+                context_info = f"T{tracker_idx+1}-H1 Whip"
+                self.draw_wire_route(route, self.whip_cable_size_var.get(), current, True, "whip", context_info)
+            
+            if neg_whip_point and neg_dest:
+                route = self.calculate_cable_route(
+                    neg_whip_point[0], neg_whip_point[1],
+                    neg_dest[0], neg_dest[1],
+                    False, 0
+                )
+                current = self.calculate_current_for_segment('whip', num_strings)
+                context_info = f"T{tracker_idx+1}-H1 Whip"
+                self.draw_wire_route(route, self.whip_cable_size_var.get(), current, False, "whip", context_info)
+        else:
+            # For custom harnesses, this is handled by the draw_harness_whip_to_device method
+            # which was already called in draw_harness_for_tracker
+            pass
+
+    def calculate_harness_collection_points(self, pos, string_indices, harness_idx, routing_mode):
+        """Calculate collection points for a harness"""
+        pos_nodes = []
+        neg_nodes = []
+        
+        for string_idx in string_indices:
+            if string_idx < len(pos.strings):
+                string = pos.strings[string_idx]
+                
+                pos_node = self.get_harness_collection_point(pos, string, harness_idx, True, routing_mode)
+                neg_node = self.get_harness_collection_point(pos, string, harness_idx, False, routing_mode)
+                
+                pos_nodes.append(pos_node)
+                neg_nodes.append(neg_node)
+        
+        return pos_nodes, neg_nodes
+
+    def draw_string_to_collection_connections(self, pos, string_indices, pos_nodes, neg_nodes, routing_mode):
+        """Draw connections from strings to collection points"""
+        for i, string_idx in enumerate(string_indices):
+            if string_idx < len(pos.strings):
+                string = pos.strings[string_idx]
+                
+                if i < len(pos_nodes):
+                    self.draw_string_to_harness_connection(pos, string, pos_nodes[i], string_idx, True, routing_mode)
+                if i < len(neg_nodes):
+                    self.draw_string_to_harness_connection(pos, string, neg_nodes[i], string_idx, False, routing_mode)
+
+    def draw_harness_collection_points(self, pos_nodes, neg_nodes):
+        """Draw collection point markers"""
+        for nx, ny in pos_nodes:
+            self.draw_collection_point(nx, ny, True, 'collection')
+        
+        for nx, ny in neg_nodes:
+            self.draw_collection_point(nx, ny, False, 'collection')
+
+    def get_harness_target_points(self, tracker_idx, harness_idx, is_default):
+        """Get target points for harness connections (extender or whip)"""
+        needs_extender = self.needs_extender(tracker_idx, harness_idx) if not is_default else False
+        
+        if needs_extender:
+            pos_target = self.get_extender_point(tracker_idx, 'positive', harness_idx)
+            neg_target = self.get_extender_point(tracker_idx, 'negative', harness_idx)
+        else:
+            pos_target = self.get_shared_whip_point(tracker_idx, 'positive')
+            neg_target = self.get_shared_whip_point(tracker_idx, 'negative')
+        
+        return pos_target, neg_target
