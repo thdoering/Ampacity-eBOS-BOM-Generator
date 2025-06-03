@@ -6,6 +6,8 @@ import os
 
 from ..models.block import BlockConfig
 from ..utils.bom_generator import BOMGenerator
+from .harness_catalog_dialog import HarnessCatalogDialog
+from .harness_designer import HarnessDesigner
 
 class BOMManager(ttk.Frame):
     """UI component for managing BOM generation"""
@@ -74,6 +76,20 @@ class BOMManager(ttk.Frame):
             text="Export BOM to Excel", 
             command=self.export_bom
         ).grid(row=0, column=0, padx=5, pady=5)
+        
+        # Harness designer button
+        ttk.Button(
+            bom_frame, 
+            text="Harness Designer", 
+            command=self.open_harness_designer
+        ).grid(row=1, column=0, padx=5, pady=5)
+        
+        # Harness drawings button
+        ttk.Button(
+            bom_frame, 
+            text="Generate Harness Drawings", 
+            command=self.generate_harness_drawings
+        ).grid(row=2, column=0, padx=5, pady=5)
         
         # Right side - BOM Preview
         right_column = ttk.Frame(main_container)
@@ -355,3 +371,19 @@ class BOMManager(ttk.Frame):
             )
         except Exception as e:
             messagebox.showerror("Error", f"Failed to export BOM: {str(e)}")
+
+    def open_harness_designer(self):
+        """Open harness designer tool"""
+        try:
+            designer = HarnessDesigner(self)
+            # Designer handles everything internally
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to open harness designer: {str(e)}")
+
+    def generate_harness_drawings(self):
+        """Open harness catalog dialog for generating drawings"""
+        try:
+            dialog = HarnessCatalogDialog(self)
+            # Dialog handles everything internally, no need to wait for result
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to open harness catalog: {str(e)}")
