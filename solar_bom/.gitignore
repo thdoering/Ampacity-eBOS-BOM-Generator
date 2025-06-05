@@ -30,6 +30,10 @@ projects/
 data/blocks/
 data/templates/
 
+# Generated harness drawings
+*.png
+harness_drawings/
+
 # Any other user data subdirectories
 data/**/
 

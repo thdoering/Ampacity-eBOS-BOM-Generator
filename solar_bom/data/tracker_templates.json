@@ -583,5 +583,120 @@
       "isc": 2.6,
       "max_system_voltage": 1500
     }
+  },
+  "FlexRack-87-675W": {
+    "module_orientation": "Portrait",
+    "modules_per_string": 29,
+    "strings_per_tracker": 3,
+    "module_spacing_m": 0.01,
+    "motor_gap_m": 1.0,
+    "motor_position_after_string": 2,
+    "module_spec": {
+      "manufacturer": "Hanwha Q.PEAK DUO ML-G12S.3/BFG",
+      "model": "675 W",
+      "type": "Mono PERC",
+      "length_mm": 2384.0,
+      "width_mm": 1303.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 675.0,
+      "vmp": 38.43,
+      "imp": 17.56,
+      "voc": 45.9,
+      "isc": 20.2,
+      "max_system_voltage": 1500
+    }
+  },
+  "FlexRack-58-675W": {
+    "module_orientation": "Portrait",
+    "modules_per_string": 29,
+    "strings_per_tracker": 2,
+    "module_spacing_m": 0.01,
+    "motor_gap_m": 1.0,
+    "motor_position_after_string": 1,
+    "module_spec": {
+      "manufacturer": "Hanwha Q.PEAK DUO ML-G12S.3/BFG",
+      "model": "675 W",
+      "type": "Mono PERC",
+      "length_mm": 2384.0,
+      "width_mm": 1303.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 675.0,
+      "vmp": 38.43,
+      "imp": 17.56,
+      "voc": 45.9,
+      "isc": 20.2,
+      "max_system_voltage": 1500
+    }
+  },
+  "ATI-81": {
+    "module_orientation": "Portrait",
+    "modules_per_string": 27,
+    "strings_per_tracker": 3,
+    "module_spacing_m": 0.01,
+    "motor_gap_m": 1.0,
+    "motor_position_after_string": 2,
+    "module_spec": {
+      "manufacturer": "Thornova",
+      "model": "TS-BW72 555 W",
+      "type": "Mono PERC",
+      "length_mm": 2278.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 555.0,
+      "vmp": 40.89,
+      "imp": 13.58,
+      "voc": 49.68,
+      "isc": 14.13,
+      "max_system_voltage": 1500
+    }
+  },
+  "ATI-54": {
+    "module_orientation": "Portrait",
+    "modules_per_string": 27,
+    "strings_per_tracker": 2,
+    "module_spacing_m": 0.01,
+    "motor_gap_m": 1.0,
+    "motor_position_after_string": 1,
+    "module_spec": {
+      "manufacturer": "Thornova",
+      "model": "TS-BW72 555 W",
+      "type": "Mono PERC",
+      "length_mm": 2278.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 555.0,
+      "vmp": 40.89,
+      "imp": 13.58,
+      "voc": 49.68,
+      "isc": 14.13,
+      "max_system_voltage": 1500
+    }
+  },
+  "ATI-27": {
+    "module_orientation": "Portrait",
+    "modules_per_string": 27,
+    "strings_per_tracker": 1,
+    "module_spacing_m": 0.01,
+    "motor_gap_m": 1.0,
+    "motor_position_after_string": 0,
+    "module_spec": {
+      "manufacturer": "Thornova",
+      "model": "TS-BW72 555 W",
+      "type": "Mono PERC",
+      "length_mm": 2278.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 555.0,
+      "vmp": 40.89,
+      "imp": 13.58,
+      "voc": 49.68,
+      "isc": 14.13,
+      "max_system_voltage": 1500
+    }
   }
 }
