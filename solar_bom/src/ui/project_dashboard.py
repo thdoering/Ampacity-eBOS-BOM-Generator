@@ -125,6 +125,8 @@ class ProjectDashboard(ttk.Frame):
             row=0, column=0, padx=2)
         ttk.Button(actions_frame, text="Delete", command=self.delete_selected_project).grid(
             row=0, column=1, padx=2)
+        ttk.Button(actions_frame, text="Copy", command=self.copy_selected_project).grid(
+            row=0, column=2, padx=2)
         
     def load_projects(self):
         """Load and display projects in the UI"""
@@ -202,6 +204,11 @@ class ProjectDashboard(ttk.Frame):
         del_btn = ttk.Button(card, text="Delete", 
                             command=lambda f=filepath: self.delete_project(f))
         del_btn.grid(row=3, column=1, pady=(5, 0), sticky=tk.E)
+
+        # Add copy button after delete button
+        copy_btn = ttk.Button(card, text="Copy", 
+                            command=lambda f=filepath: self.copy_project(f))
+        copy_btn.grid(row=3, column=2, pady=(5, 0), sticky=tk.E)
     
     def search_projects(self):
         """Search projects based on search query"""
@@ -323,25 +330,80 @@ class ProjectDashboard(ttk.Frame):
         else:
             messagebox.showinfo("No Selection", "Please select a project to delete")
 
+    def copy_selected_project(self):
+        """Copy the currently selected project in the treeview"""
+        selection = self.projects_tree.selection()
+        if selection:
+            item = selection[0]
+            filepath = self.projects_tree.item(item, 'tags')[0]
+            self.copy_project(filepath)
+        else:
+            messagebox.showinfo("No Selection", "Please select a project to copy")
+
+    def copy_project(self, filepath):
+        """Copy a project by filepath"""
+        # Load the original project for the dialog
+        original_project = self.project_manager.load_project(filepath)
+        if not original_project:
+            messagebox.showerror("Error", "Failed to load original project")
+            return
+        
+        # Create copy dialog
+        dialog = ProjectDialog(self.parent, title="Copy Project", 
+                            copy_mode=True, original_project=original_project)
+        
+        if dialog.result:
+            new_name = dialog.result[0]  # Get the name from dialog result
+            
+            # Validate name doesn't already exist
+            if self.project_manager.project_name_exists(new_name):
+                messagebox.showerror("Error", f"A project named '{new_name}' already exists. Please choose a different name.")
+                return
+            
+            # Perform the copy
+            if self.project_manager.copy_project(filepath, new_name):
+                self.load_projects()  # Refresh project list
+            else:
+                messagebox.showerror("Error", f"Failed to copy project")
+
 
 class ProjectDialog(tk.Toplevel):
     """Dialog for creating or editing projects"""
     
-    def __init__(self, parent, title="Project Details", project=None):
+    def __init__(self, parent, title="Project Details", project=None, copy_mode=False, original_project=None):
         super().__init__(parent)
         self.parent = parent
         self.title(title)
         self.result = None
         
+        # Store copy mode and original project
+        self.copy_mode = copy_mode
+        self.original_project = original_project
+        
         # Make dialog modal
         self.transient(parent)
         self.grab_set()
         
-        # Create and place widgets
+        # Create and place widgets - this creates all the variables
         self.setup_ui(project)
         
+        # NOW set the values if in copy mode (after setup_ui has created the variables)
+        if self.copy_mode and self.original_project:
+            self.name_var.set(f"Copy of {self.original_project.metadata.name}")
+            if self.original_project.metadata.description:
+                self.desc_var.set(self.original_project.metadata.description)
+            if self.original_project.metadata.client:
+                self.client_var.set(self.original_project.metadata.client)
+            if self.original_project.metadata.location:
+                self.location_var.set(self.original_project.metadata.location)
+            if self.original_project.metadata.notes:
+                self.notes_var.set(self.original_project.metadata.notes)
+            # Set row spacing in feet
+            row_spacing_ft = self.m_to_ft(self.original_project.default_row_spacing_m)
+            self.row_spacing_var.set(str(round(row_spacing_ft, 1)))
+        
         # Center dialog
-        self.geometry("400x400")  # Increase height to accommodate row spacing
+        self.geometry("400x400")
         self.resizable(False, False)
         
         # Wait for window to be closed

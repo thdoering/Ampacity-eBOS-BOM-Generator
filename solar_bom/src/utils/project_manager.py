@@ -99,6 +99,70 @@ class ProjectManager:
         except Exception as e:
             print(f"Error deleting project: {str(e)}")
             return False
+        
+    def copy_project(self, original_filepath: str, new_name: str) -> bool:
+        """
+        Copy an existing project with a new name
+        
+        Args:
+            original_filepath: Path to the original project file
+            new_name: Name for the new project
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Load the original project
+            original_project = self.load_project(original_filepath)
+            if not original_project:
+                return False
+            
+            # Create new project with copied data
+            from ..models.project import Project, ProjectMetadata
+            from datetime import datetime
+            
+            new_metadata = ProjectMetadata(
+                name=new_name,
+                description=original_project.metadata.description,
+                location=original_project.metadata.location,
+                client=original_project.metadata.client,
+                created_date=datetime.now(),  # New creation date
+                modified_date=datetime.now(),  # New modification date
+                notes=original_project.metadata.notes
+            )
+            
+            # Create new project with all the same data
+            new_project = Project(
+                metadata=new_metadata,
+                blocks=original_project.blocks.copy(),  # Deep copy the blocks dict
+                selected_modules=original_project.selected_modules.copy(),
+                selected_inverters=original_project.selected_inverters.copy(),
+                default_row_spacing_m=original_project.default_row_spacing_m
+            )
+            
+            # Save the new project
+            return self.save_project(new_project)
+            
+        except Exception as e:
+            print(f"Error copying project: {str(e)}")
+            return False
+
+    def project_name_exists(self, name: str) -> bool:
+        """
+        Check if a project with the given name already exists
+        
+        Args:
+            name: Project name to check
+            
+        Returns:
+            bool: True if name exists, False otherwise
+        """
+        # Generate the filepath that would be used for this name
+        filename = "".join(c for c in name if c.isalnum() or c in (' ', '_')).rstrip()
+        filename = filename.replace(' ', '_') + '.json'
+        filepath = os.path.join(self.projects_dir, filename)
+        
+        return os.path.exists(filepath)
     
     def list_projects(self, sort_by: str = 'modified', reverse: bool = True) -> List[Tuple[str, ProjectMetadata]]:
         """

@@ -950,8 +950,8 @@ class WiringConfigurator(tk.Toplevel):
             
         # Convert canvas coordinates to world coordinates
         scale = self.get_canvas_scale()
-        world_x = (x - 20 - self.pan_x) / scale
-        world_y = (y - 20 - self.pan_y) / scale
+        world_x = (event.x - 20 - self.pan_x) / scale
+        world_y = (event.y - 20 - self.pan_y) / scale
         
         # Check if we clicked on a whip point
         hit_whip = self.get_whip_at_position(world_x, world_y)
