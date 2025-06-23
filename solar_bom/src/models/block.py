@@ -158,13 +158,13 @@ class BlockConfig:
                     route_length += (dx**2 + dy**2)**0.5
                 
                 # Determine if this is a string or whip route and polarity
-                if "pos_src" in route_id:
+                if "pos_string" in route_id:
                     pos_string_cable_length += route_length
-                elif "neg_src" in route_id:
+                elif "neg_string" in route_id:
                     neg_string_cable_length += route_length
-                elif "pos_dev" in route_id or "pos_main" in route_id:
+                elif "pos_whip" in route_id:
                     pos_whip_cable_length += route_length
-                elif "neg_dev" in route_id or "neg_main" in route_id:
+                elif "neg_whip" in route_id:
                     neg_whip_cable_length += route_length
             
             lengths["string_cable_positive"] = pos_string_cable_length

@@ -110,11 +110,11 @@ class SolarBOMApplication:
             if len(serialized_blocks) != len(block_configurator.blocks):
                 print("WARNING: Some blocks were not properly serialized!")
             
-            # Update the BOM manager with the current blocks
+            # UPDATE THE BOM MANAGER WITH THE ACTUAL BLOCKCONFIG OBJECTS
             bom_manager.set_blocks(block_configurator.blocks)
             
-            # Update project with current blocks
-            if self.current_project:
+            # Store serialized blocks in project for saving
+            if hasattr(self, 'current_project') and self.current_project:
                 self.current_project.blocks = serialized_blocks
         
         # Define callback for tracker template creation

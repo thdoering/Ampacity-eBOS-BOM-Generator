@@ -2093,7 +2093,7 @@ class WiringConfigurator(tk.Toplevel):
             )
             current = self.calculate_current_for_segment('whip', num_strings=1)
             context_info = f"T{i+1} Whip"
-            self.draw_wire_route(route, self.whip_cable_size_var.get(), current, True, "whip", context_info)
+            self.draw_wire_route(route, self.whip_cable_size_var.get(), current, False, "whip", context_info)
 
     def draw_wire_harness_wiring(self):
         """Draw wire harness wiring configuration"""

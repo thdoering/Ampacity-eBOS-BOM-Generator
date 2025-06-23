@@ -674,9 +674,9 @@ class BOMGenerator:
                 segment_length_feet = segment_length * 3.28084
                 
                 # Categorize by route type and polarity
-                if "pos_src" in route_id or "pos_node" in route_id:
+                if "pos_src" in route_id or "pos_node" in route_id or "pos_string" in route_id:
                     string_segments_pos.append(segment_length_feet)
-                elif "neg_src" in route_id or "neg_node" in route_id:
+                elif "neg_src" in route_id or "neg_node" in route_id or "neg_string" in route_id:
                     string_segments_neg.append(segment_length_feet)
                 elif "pos_dev" in route_id or "pos_main" in route_id or "whip_pos" in route_id or "pos_whip" in route_id:
                     whip_segments_pos.append(segment_length_feet)
