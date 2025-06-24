@@ -1922,9 +1922,11 @@ class WiringConfigurator(tk.Toplevel):
             # Calculate number of modules
             total_modules = template.modules_per_string * template.strings_per_tracker
             modules_per_string = template.modules_per_string
-            strings_above_motor = template.strings_per_tracker - 1
+            motor_position = template.get_motor_position()
+            strings_above_motor = motor_position
+            strings_below_motor = template.strings_per_tracker - motor_position
             modules_above_motor = modules_per_string * strings_above_motor
-            modules_below_motor = modules_per_string
+            modules_below_motor = modules_per_string * strings_below_motor
             
             # Draw all modules
             y_pos = y_base
@@ -1941,14 +1943,15 @@ class WiringConfigurator(tk.Toplevel):
                 modules_drawn += 1
                 y_pos += (module_height + template.module_spacing_m) * scale
             
-            # Draw motor
-            motor_y = y_pos
-            self.canvas.create_oval(
-                x_base + module_width * scale/2 - 5, motor_y - 5,
-                x_base + module_width * scale/2 + 5, motor_y + 5,
-                fill='red'
-            )
-            y_pos += template.motor_gap_m * scale
+            # Draw motor (only if there are strings below)
+            if strings_below_motor > 0:
+                motor_y = y_pos
+                self.canvas.create_oval(
+                    x_base + module_width * scale/2 - 5, motor_y - 5,
+                    x_base + module_width * scale/2 + 5, motor_y + 5,
+                    fill='red'
+                )
+                y_pos += template.motor_gap_m * scale
             
             # Draw modules below motor
             for i in range(modules_below_motor):
