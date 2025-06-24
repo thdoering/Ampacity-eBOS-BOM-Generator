@@ -556,7 +556,7 @@ class BlockConfigurator(ttk.Frame):
             # Clear canvas and grid lines list
             self.canvas.delete("all")
             self.grid_lines = []
-            
+
             # Validate current block exists
             if self.current_block and self.current_block not in self.blocks:
                 print(f"Warning: Current block '{self.current_block}' not found")
@@ -1695,9 +1695,21 @@ class BlockConfigurator(ttk.Frame):
                     block.row_spacing_m = row_spacing_m
                     
                 # Update project default if possible
-                main_app = self.winfo_toplevel()
-                if hasattr(main_app, 'current_project') and main_app.current_project:
-                    main_app.current_project.default_row_spacing_m = row_spacing_m
+                if self.current_project:
+                    # Update this instance's project reference
+                    self.current_project.default_row_spacing_m = row_spacing_m
+                    self.current_project.update_modified_date()
+                    
+                    # Also update the main app's project reference to keep them in sync
+                    main_app = self.winfo_toplevel()
+                    if hasattr(main_app, 'current_project') and main_app.current_project:
+                        main_app.current_project.default_row_spacing_m = row_spacing_m
+                        main_app.current_project.update_modified_date()
+                        
+                        # Auto-save the project
+                        if hasattr(main_app, 'save_project'):
+                            main_app.save_project()
+
             else:  # No - apply only to current block
                 # Update current block only
                 self.blocks[self.current_block].row_spacing_m = row_spacing_m
