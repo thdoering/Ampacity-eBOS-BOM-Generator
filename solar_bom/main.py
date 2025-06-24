@@ -94,7 +94,7 @@ class SolarBOMApplication:
         bom_manager.pack(fill='both', expand=True, padx=5, pady=5)
         
         # Create block configurator tab first (so we can reference it later)
-        block_configurator = BlockConfigurator(block_frame, current_project=self.current_project)
+        block_configurator = BlockConfigurator(block_frame, current_project=self.current_project, on_autosave=self.autosave_project)
         block_configurator.pack(fill='both', expand=True, padx=5, pady=5)
 
         # Function to update BOM manager with current blocks
@@ -360,6 +360,24 @@ class SolarBOMApplication:
             messagebox.showinfo("Success", "Project saved successfully")
         else:
             messagebox.showerror("Error", "Failed to save project")
+
+
+    def autosave_project(self):
+        """Save the current project silently (for autosave functionality)"""
+        if not self.current_project:
+            return
+            
+        # Update project blocks from UI before saving
+        self.update_project_blocks()
+            
+        from src.utils.project_manager import ProjectManager
+        project_manager = ProjectManager()
+        
+        # Update project metadata
+        self.current_project.update_modified_date()
+        
+        # Save without showing any messages
+        project_manager.save_project(self.current_project)
 
     def update_project_blocks(self):
         """Update project with current blocks from UI before saving"""

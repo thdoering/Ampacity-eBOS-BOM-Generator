@@ -12,7 +12,7 @@ from ..utils.undo_manager import UndoManager
 from copy import deepcopy
 
 class BlockConfigurator(ttk.Frame):
-    def __init__(self, parent, current_project=None):
+    def __init__(self, parent, current_project=None, on_autosave=None):
         super().__init__(parent)
         self.parent = parent
         self.current_project = current_project
@@ -42,6 +42,7 @@ class BlockConfigurator(ttk.Frame):
         self.pan_start_y = 0
         self.inverters = {}  # Store inverter configurations
         self.on_blocks_changed = None  # Callback for when blocks change
+        self.on_autosave = on_autosave
         self.device_placement_mode = tk.StringVar(value="row_center")  # Default to row center
 
         # Initialize undo manager
@@ -1601,6 +1602,13 @@ class BlockConfigurator(ttk.Frame):
         """Notify listeners that blocks have changed"""
         if self.on_blocks_changed:
             self.on_blocks_changed()
+        
+        # Trigger autosave
+        if self.on_autosave:
+            try:
+                self.on_autosave()
+            except Exception as e:
+                print(f"Autosave failed: {str(e)}")
 
     def rename_block(self):
         """Rename the currently selected block"""
