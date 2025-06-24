@@ -52,7 +52,7 @@ class WiringConfigurator(tk.Toplevel):
         
         # Position window relative to parent
         x = parent.winfo_rootx() + 50
-        y = parent.winfo_rooty() + 50
+        y = parent.winfo_rooty() - 75
         self.geometry(f"+{x}+{y}")
 
     def world_to_canvas(self, world_x, world_y):
