@@ -364,8 +364,50 @@ class BlockConfigurator(ttk.Frame):
         
     def create_new_block(self):
         """Create a new block configuration"""
-        # Generate unique block ID
-        block_id = f"Block_{len(self.blocks) + 1:02d}"
+        # Determine the block ID based on existing blocks
+        if not self.blocks:
+            # No existing blocks, start with default
+            block_id = "Block_1"
+        else:
+            # Find the highest numbered block to follow its pattern
+            highest_number = 0
+            pattern_source = None
+            
+            # Check all existing blocks to find the one with highest number
+            import re
+            for existing_id in self.blocks.keys():
+                match = re.match(r'(.*?)(\d+)$', existing_id)
+                if match:
+                    number = int(match.group(2))
+                    if number >= highest_number:
+                        highest_number = number
+                        pattern_source = existing_id
+            
+            if pattern_source:
+                # Use the pattern from the highest numbered block
+                match = re.match(r'(.*?)(\d+)$', pattern_source)
+                base_name = match.group(1)
+                next_number = highest_number + 1
+                
+                # Format with leading zeros if the source had them
+                source_number_str = match.group(2)
+                if len(source_number_str) > 1 and source_number_str.startswith('0'):
+                    # Source had leading zeros, maintain the same format
+                    block_id = f"{base_name}{next_number:0{len(source_number_str)}d}"
+                else:
+                    # No leading zeros in source
+                    block_id = f"{base_name}{next_number}"
+                
+                # Ensure the ID is unique
+                while block_id in self.blocks:
+                    next_number += 1
+                    if len(source_number_str) > 1 and source_number_str.startswith('0'):
+                        block_id = f"{base_name}{next_number:0{len(source_number_str)}d}"
+                    else:
+                        block_id = f"{base_name}{next_number}"
+            else:
+                # Fallback to default if no numbered blocks found
+                block_id = f"Block_{len(self.blocks) + 1:02d}"
         
         try:
             # Get selected template if any
