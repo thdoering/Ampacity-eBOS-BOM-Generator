@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import Optional, Dict, List
-from ..models.block import BlockConfig, WiringType, TrackerPosition, DeviceType
+from ..models.block import BlockConfig, WiringType, TrackerPosition, DeviceType, CollectionPoint, WiringConfig, HarnessGroup
 from ..models.tracker import TrackerTemplate, TrackerPosition, ModuleOrientation
 from ..models.inverter import InverterSpec
 from .inverter_manager import InverterManager
@@ -542,6 +542,12 @@ class BlockConfigurator(ttk.Frame):
             return
                 
         try:
+            # Validate current block exists
+            if self.current_block and self.current_block not in self.blocks:
+                print(f"Warning: Current block '{self.current_block}' not found")
+                self.current_block = None
+                self.clear_config_display()
+                return
             if not self.validate_device_clearances():
                 return
 
@@ -550,7 +556,13 @@ class BlockConfigurator(ttk.Frame):
             # Clear canvas and grid lines list
             self.canvas.delete("all")
             self.grid_lines = []
-                        
+            
+            # Validate current block exists
+            if self.current_block and self.current_block not in self.blocks:
+                print(f"Warning: Current block '{self.current_block}' not found")
+                self.current_block = None
+                self.clear_config_display()
+                return            
             if not self.validate_device_clearances():
                 return
 
@@ -1193,15 +1205,41 @@ class BlockConfigurator(ttk.Frame):
 
     def undo(self, event=None):
         """Handle undo command"""
-        description = self.undo_manager.undo()
-        if description:
-            self.draw_block()
+        try:
+            description = self.undo_manager.undo()
+            if description:
+                # Validate that current_block still exists
+                if self.current_block and self.current_block not in self.blocks:
+                    print(f"Warning: Current block '{self.current_block}' not found after undo")
+                    self.current_block = None
+                    self.clear_config_display()
+                    return
+                self.draw_block()
+        except Exception as e:
+            print(f"Error during undo: {str(e)}")
+            messagebox.showerror("Undo Error", f"Failed to undo: {str(e)}")
+            # Try to recover by clearing current selection
+            self.current_block = None
+            self.clear_config_display()
 
     def redo(self, event=None):
         """Handle redo command"""
-        description = self.undo_manager.redo()
-        if description:
-            self.draw_block()
+        try:
+            description = self.undo_manager.redo()
+            if description:
+                # Validate that current_block still exists
+                if self.current_block and self.current_block not in self.blocks:
+                    print(f"Warning: Current block '{self.current_block}' not found after redo")
+                    self.current_block = None
+                    self.clear_config_display()
+                    return
+                self.draw_block()
+        except Exception as e:
+            print(f"Error during redo: {str(e)}")
+            messagebox.showerror("Redo Error", f"Failed to redo: {str(e)}")
+            # Try to recover by clearing current selection
+            self.current_block = None
+            self.clear_config_display()
 
     def _get_current_state(self):
         """Get a deep copy of current block state"""

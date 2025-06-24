@@ -1664,5 +1664,166 @@
       "isc": 14.35,
       "max_system_voltage": 1500
     }
+  },
+  "ATI-104-550W": {
+    "module_orientation": "Portrait",
+    "modules_per_string": 26,
+    "strings_per_tracker": 4,
+    "module_spacing_m": 0.01,
+    "motor_gap_m": 1.0,
+    "motor_position_after_string": 2,
+    "module_spec": {
+      "manufacturer": "Thornova",
+      "model": "TS-BW72 550 W",
+      "type": "Mono PERC",
+      "length_mm": 2278.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 550.0,
+      "vmp": 40.83,
+      "imp": 13.48,
+      "voc": 49.6,
+      "isc": 14.04,
+      "max_system_voltage": 1500
+    }
+  },
+  "ATI-78-550W-N": {
+    "module_orientation": "Portrait",
+    "modules_per_string": 26,
+    "strings_per_tracker": 3,
+    "module_spacing_m": 0.01,
+    "motor_gap_m": 1.0,
+    "motor_position_after_string": 1,
+    "module_spec": {
+      "manufacturer": "Thornova",
+      "model": "TS-BW72 550 W",
+      "type": "Mono PERC",
+      "length_mm": 2278.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 550.0,
+      "vmp": 40.83,
+      "imp": 13.48,
+      "voc": 49.6,
+      "isc": 14.04,
+      "max_system_voltage": 1500
+    }
+  },
+  "ATI-78-550W-S": {
+    "module_orientation": "Portrait",
+    "modules_per_string": 26,
+    "strings_per_tracker": 3,
+    "module_spacing_m": 0.01,
+    "motor_gap_m": 1.0,
+    "motor_position_after_string": 2,
+    "module_spec": {
+      "manufacturer": "Thornova",
+      "model": "TS-BW72 550 W",
+      "type": "Mono PERC",
+      "length_mm": 2278.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 550.0,
+      "vmp": 40.83,
+      "imp": 13.48,
+      "voc": 49.6,
+      "isc": 14.04,
+      "max_system_voltage": 1500
+    }
+  },
+  "ATI-26-550W": {
+    "module_orientation": "Portrait",
+    "modules_per_string": 26,
+    "strings_per_tracker": 1,
+    "module_spacing_m": 0.01,
+    "motor_gap_m": 1.0,
+    "motor_position_after_string": 1,
+    "module_spec": {
+      "manufacturer": "Thornova",
+      "model": "TS-BW72 550 W",
+      "type": "Mono PERC",
+      "length_mm": 2278.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 550.0,
+      "vmp": 40.83,
+      "imp": 13.48,
+      "voc": 49.6,
+      "isc": 14.04,
+      "max_system_voltage": 1500
+    }
+  },
+  "ATI-52-550W-M": {
+    "module_orientation": "Portrait",
+    "modules_per_string": 26,
+    "strings_per_tracker": 2,
+    "module_spacing_m": 0.01,
+    "motor_gap_m": 1.0,
+    "motor_position_after_string": 1,
+    "module_spec": {
+      "manufacturer": "Thornova",
+      "model": "TS-BW72 550 W",
+      "type": "Mono PERC",
+      "length_mm": 2278.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 550.0,
+      "vmp": 40.83,
+      "imp": 13.48,
+      "voc": 49.6,
+      "isc": 14.04,
+      "max_system_voltage": 1500
+    }
+  },
+  "ATI-52-550W-N": {
+    "module_orientation": "Portrait",
+    "modules_per_string": 26,
+    "strings_per_tracker": 2,
+    "module_spacing_m": 0.01,
+    "motor_gap_m": 1.0,
+    "motor_position_after_string": 0,
+    "module_spec": {
+      "manufacturer": "Thornova",
+      "model": "TS-BW72 550 W",
+      "type": "Mono PERC",
+      "length_mm": 2278.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 550.0,
+      "vmp": 40.83,
+      "imp": 13.48,
+      "voc": 49.6,
+      "isc": 14.04,
+      "max_system_voltage": 1500
+    }
+  },
+  "ATI-52-550W-S": {
+    "module_orientation": "Portrait",
+    "modules_per_string": 26,
+    "strings_per_tracker": 2,
+    "module_spacing_m": 0.01,
+    "motor_gap_m": 1.0,
+    "motor_position_after_string": 2,
+    "module_spec": {
+      "manufacturer": "Thornova",
+      "model": "TS-BW72 550 W",
+      "type": "Mono PERC",
+      "length_mm": 2278.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 550.0,
+      "vmp": 40.83,
+      "imp": 13.48,
+      "voc": 49.6,
+      "isc": 14.04,
+      "max_system_voltage": 1500
+    }
   }
 }
