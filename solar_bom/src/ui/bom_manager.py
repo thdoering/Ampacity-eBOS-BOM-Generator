@@ -30,7 +30,8 @@ class BOMManager(ttk.Frame):
         # Configure grid weights
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
-        main_container.grid_columnconfigure(1, weight=1)
+        main_container.grid_columnconfigure(0, weight=1)  # Left column gets some weight
+        main_container.grid_columnconfigure(1, weight=4)  # Right column gets much more weight (4:1 ratio)
         main_container.grid_rowconfigure(0, weight=1)
         
         # Left side - Block List and Controls
@@ -99,25 +100,37 @@ class BOMManager(ttk.Frame):
         preview_frame = ttk.LabelFrame(right_column, text="BOM Preview", padding="5")
         preview_frame.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
         
-        # Create treeview for BOM preview
+        # Create treeview for BOM preview with checkbox and part number columns
         self.preview_tree = ttk.Treeview(
             preview_frame, 
-            columns=('component', 'description', 'quantity', 'unit'),
-            show='headings'
+            columns=('include', 'component', 'part_number', 'description', 'quantity', 'unit'),
+            show='headings',
+            height=25  # Make it much taller
         )
         self.preview_tree.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
-        
+
         # Configure columns
-        self.preview_tree.column('component', width=150)
-        self.preview_tree.column('description', width=200)
-        self.preview_tree.column('quantity', width=100)
-        self.preview_tree.column('unit', width=80)
-        
+        self.preview_tree.column('include', width=60, anchor='center')
+        self.preview_tree.column('component', width=180)
+        self.preview_tree.column('part_number', width=150, anchor='center')
+        self.preview_tree.column('description', width=300)  # Wider for better readability
+        self.preview_tree.column('quantity', width=100, anchor='center')
+        self.preview_tree.column('unit', width=80, anchor='center')
+
         # Add headings
+        self.preview_tree.heading('include', text="Include")
         self.preview_tree.heading('component', text="Component Type")
+        self.preview_tree.heading('part_number', text="Part Number")
         self.preview_tree.heading('description', text="Description")
         self.preview_tree.heading('quantity', text="Quantity")
         self.preview_tree.heading('unit', text="Unit")
+
+        # Bind click events for checkbox functionality
+        self.preview_tree.bind('<Button-1>', self.on_tree_click)
+        self.preview_tree.bind('<Double-1>', self.toggle_item_selection)
+
+        # Track checked items
+        self.checked_items = set()
         
         # Add scrollbar to preview
         preview_scrollbar = ttk.Scrollbar(preview_frame, orient="vertical", command=self.preview_tree.yview)
@@ -134,6 +147,13 @@ class BOMManager(ttk.Frame):
             text="Refresh Preview", 
             command=self.update_preview
         ).grid(row=1, column=0, padx=5, pady=5)
+
+        # Toggle All button
+        ttk.Button(
+            preview_frame, 
+            text="Toggle All", 
+            command=self.toggle_all_items
+        ).grid(row=1, column=1, padx=5, pady=5)
     
     def set_blocks(self, blocks: Dict[str, BlockConfig]):
         """
@@ -211,15 +231,22 @@ class BOMManager(ttk.Frame):
             else:
                 quantity_str = f"{int(quantity)}"
                 
-            self.preview_tree.insert(
+            # Get part number for harnesses and fuses
+            part_number = self.get_part_number_for_component(row, selected_blocks)
+
+            item = self.preview_tree.insert(
                 '', 'end',
                 values=(
+                    '☑',  # Default to checked
                     row['Component Type'],
+                    part_number,
                     row['Description'],
                     quantity_str,
                     row['Unit']
-                )
+                ),
+                tags=('checked',)
             )
+            self.checked_items.add(item)
     
     def export_bom(self):
         """Export BOM to Excel file"""
@@ -371,6 +398,117 @@ class BOMManager(ttk.Frame):
             )
         except Exception as e:
             messagebox.showerror("Error", f"Failed to export BOM: {str(e)}")
+
+    def on_tree_click(self, event):
+        """Handle tree click events for checkbox functionality"""
+        item = self.preview_tree.identify_row(event.y)
+        column = self.preview_tree.identify_column(event.x)
+        
+        # If clicked on the include column, toggle selection
+        if item and column == '#1':  # First column is include
+            self.toggle_item_selection_by_item(item)
+
+    def toggle_item_selection(self, event):
+        """Toggle selection on double-click"""
+        item = self.preview_tree.focus()
+        if item:
+            self.toggle_item_selection_by_item(item)
+
+    def toggle_item_selection_by_item(self, item):
+        """Toggle the selection state of a tree item"""
+        current_values = list(self.preview_tree.item(item, 'values'))
+        
+        if current_values[0] == '☐':  # Currently unchecked
+            current_values[0] = '☑'  # Check it
+            self.preview_tree.item(item, values=current_values, tags=('checked',))
+            self.checked_items.add(item)
+        else:  # Currently checked
+            current_values[0] = '☐'  # Uncheck it
+            self.preview_tree.item(item, values=current_values, tags=('unchecked',))
+            self.checked_items.discard(item)
+
+    def toggle_all_items(self):
+        """Toggle all items checked/unchecked"""
+        all_checked = len(self.checked_items) == len(self.preview_tree.get_children())
+        
+        for item in self.preview_tree.get_children():
+            current_values = list(self.preview_tree.item(item, 'values'))
+            if all_checked:
+                current_values[0] = '☐'  # Uncheck all
+                self.preview_tree.item(item, values=current_values, tags=('unchecked',))
+                self.checked_items.discard(item)
+            else:
+                current_values[0] = '☑'  # Check all
+                self.preview_tree.item(item, values=current_values, tags=('checked',))
+                self.checked_items.add(item)
+
+    def get_part_number_for_component(self, row, selected_blocks):
+        """Get part number for component based on type"""
+        component_type = row['Component Type']
+        
+        # Handle harnesses
+        if 'Harness' in component_type:
+            return self.get_harness_part_number(row, selected_blocks)
+        
+        # Handle fuses
+        elif 'Fuse' in component_type:
+            return self.get_fuse_part_number(row)
+        
+        # Other components don't have part numbers yet
+        return "N/A"
+
+    def get_harness_part_number(self, row, selected_blocks):
+        """Get matching harness part number from library"""
+        try:
+            from ..utils.bom_generator import BOMGenerator
+            bom_generator = BOMGenerator(selected_blocks)
+            
+            # Extract harness info from description
+            description = row['Description']
+            
+            # Determine polarity and string count from description
+            polarity = 'positive' if 'Positive' in description else 'negative'
+            
+            # Extract string count (look for patterns like "2 String", "3 String", etc.)
+            import re
+            string_match = re.search(r'(\d+)\s+String', description)
+            if not string_match:
+                return "N/A"
+            
+            num_strings = int(string_match.group(1))
+            
+            # Get module specs from the first block to calculate spacing
+            first_block = next(iter(selected_blocks.values()))
+            if not first_block.tracker_template or not first_block.tracker_template.module_spec:
+                return "N/A"
+            
+            module_spec = first_block.tracker_template.module_spec
+            modules_per_string = first_block.tracker_template.modules_per_string
+            module_spacing_m = first_block.tracker_template.module_spacing_m
+            
+            # Calculate string spacing in feet
+            string_spacing_ft = bom_generator.calculate_string_spacing_ft(
+                modules_per_string, module_spec.width_mm, module_spacing_m
+            )
+            
+            # Find matching harness
+            return bom_generator.find_matching_harness_part_number(
+                num_strings, polarity, string_spacing_ft
+            )
+            
+        except Exception as e:
+            print(f"Error getting harness part number: {e}")
+            return "N/A"
+
+    def get_fuse_part_number(self, row):
+        """Get fuse part number - placeholder for now"""
+        # Extract fuse rating from description
+        import re
+        rating_match = re.search(r'(\d+)A', row['Description'])
+        if rating_match:
+            rating = rating_match.group(1)
+            return f"FUSE-{rating}A"  # Placeholder format
+        return "N/A"
 
     def open_harness_designer(self):
         """Open harness designer tool"""
