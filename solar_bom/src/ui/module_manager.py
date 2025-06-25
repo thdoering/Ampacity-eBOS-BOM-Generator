@@ -27,9 +27,21 @@ class ModuleManager(ttk.Frame):
         list_frame = ttk.LabelFrame(main_container, text="Module Library", padding="5")
         list_frame.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
         
-        self.module_listbox = tk.Listbox(list_frame, width=40, height=15)
-        self.module_listbox.grid(row=0, column=0, padx=5, pady=5)
-        self.module_listbox.bind('<<ListboxSelect>>', self.on_module_select)
+        # Create Treeview for hierarchical module display
+        self.module_tree = ttk.Treeview(list_frame, height=15)
+        self.module_tree.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        # Configure tree columns
+        self.module_tree.heading('#0', text='Modules')
+        self.module_tree.column('#0', width=350)
+
+        # Add scrollbar for tree
+        tree_scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.module_tree.yview)
+        tree_scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        self.module_tree.configure(yscrollcommand=tree_scrollbar.set)
+
+        # Bind selection event
+        self.module_tree.bind('<<TreeviewSelect>>', self.on_module_select)
         
         button_frame = ttk.Frame(list_frame)
         button_frame.grid(row=1, column=0, padx=5, pady=5)
@@ -126,40 +138,85 @@ class ModuleManager(ttk.Frame):
         try:
             with open(module_path, 'r') as f:
                 data = json.load(f)
-                self.modules = {
-                    name: ModuleSpec(
-                        **{k: v for k, v in specs.items() if k != 'type' and k != 'default_orientation'},
-                        type=ModuleType(specs['type']),
-                        default_orientation=ModuleOrientation(specs.get('default_orientation', ModuleOrientation.PORTRAIT.value))
-                    ) 
-                    for name, specs in data.items()
-                }
+                
+            # Handle both old flat structure and new hierarchical structure
+            self.modules = {}
+            
+            if data:
+                # Check if this is the new hierarchical format
+                first_value = next(iter(data.values()))
+                if isinstance(first_value, dict) and not any(key in first_value for key in ['manufacturer', 'model', 'type']):
+                    # New hierarchical format: Manufacturer -> Model -> module_data
+                    for manufacturer, models in data.items():
+                        for model, module_data in models.items():
+                            module_key = f"{manufacturer} {model}"
+                            self.modules[module_key] = ModuleSpec(
+                                **{k: v for k, v in module_data.items() if k != 'type' and k != 'default_orientation'},
+                                type=ModuleType(module_data['type']),
+                                default_orientation=ModuleOrientation(module_data.get('default_orientation', ModuleOrientation.PORTRAIT.value))
+                            )
+                else:
+                    # Old flat format: convert on the fly
+                    self.modules = {
+                        name: ModuleSpec(
+                            **{k: v for k, v in specs.items() if k != 'type' and k != 'default_orientation'},
+                            type=ModuleType(specs['type']),
+                            default_orientation=ModuleOrientation(specs.get('default_orientation', ModuleOrientation.PORTRAIT.value))
+                        ) 
+                        for name, specs in data.items()
+                    }
+                    
             self.update_module_list()
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load modules: {str(e)}")
-            
+                
     def save_modules(self):
-        """Save modules to JSON file"""
+        """Save modules to JSON file in hierarchical format"""
         module_path = Path('data/module_templates.json')
         module_path.parent.mkdir(exist_ok=True)
         
-        data = {
-            f"{module.manufacturer} {module.model}": {
+        # Organize modules by manufacturer
+        hierarchical_data = {}
+        
+        for module in self.modules.values():
+            manufacturer = module.manufacturer
+            model = module.model
+            
+            if manufacturer not in hierarchical_data:
+                hierarchical_data[manufacturer] = {}
+                
+            hierarchical_data[manufacturer][model] = {
                 **module.__dict__,
                 'type': module.type.value,  # Convert enum to string
                 'default_orientation': module.default_orientation.value
             }
-            for module in self.modules.values()
-        }
         
         with open(module_path, 'w') as f:
-            json.dump(data, f, indent=2)
+            json.dump(hierarchical_data, f, indent=2)
             
     def update_module_list(self):
-        """Update the module listbox"""
-        self.module_listbox.delete(0, tk.END)
-        for module in self.modules.values():
-            self.module_listbox.insert(tk.END, f"{module.manufacturer} {module.model}")
+        """Update the module tree view"""
+        # Clear existing items
+        for item in self.module_tree.get_children():
+            self.module_tree.delete(item)
+        
+        # Group modules by manufacturer
+        manufacturers = {}
+        for module_key, module in self.modules.items():
+            manufacturer = module.manufacturer
+            if manufacturer not in manufacturers:
+                manufacturers[manufacturer] = []
+            manufacturers[manufacturer].append((module.model, module_key, module))
+        
+        # Add manufacturers and their modules to tree
+        for manufacturer, modules_list in sorted(manufacturers.items()):
+            # Add manufacturer node
+            manufacturer_node = self.module_tree.insert('', 'end', text=manufacturer, open=False)
+            
+            # Add modules under manufacturer
+            for model, module_key, module in sorted(modules_list, key=lambda x: x[0]):
+                module_text = f"{model} ({module.wattage}W)"
+                self.module_tree.insert(manufacturer_node, 'end', text=module_text, values=(module_key,))
             
     def import_pan(self):
         """Import module from PAN file"""
@@ -210,37 +267,72 @@ class ModuleManager(ttk.Frame):
         
     def delete_module(self):
         """Delete selected module"""
-        selection = self.module_listbox.curselection()
+        selection = self.module_tree.selection()
         if not selection:
+            messagebox.showwarning("Warning", "Please select a module to delete")
             return
             
-        name = self.module_listbox.get(selection[0])
-        if messagebox.askyesno("Confirm", f"Delete module '{name}'?"):
-            del self.modules[name]
-            self.save_modules()
-            self.update_module_list()
+        item = selection[0]
+        
+        # Check if this is a module (has values) or manufacturer (no values)
+        values = self.module_tree.item(item, 'values')
+        if not values:
+            # This is a manufacturer node, ask if they want to delete all modules
+            manufacturer = self.module_tree.item(item, 'text')
+            modules_to_delete = [key for key, module in self.modules.items() 
+                            if module.manufacturer == manufacturer]
+            
+            if not modules_to_delete:
+                return
+                
+            if messagebox.askyesno("Confirm", 
+                                f"Delete all {len(modules_to_delete)} modules from {manufacturer}?"):
+                for module_key in modules_to_delete:
+                    del self.modules[module_key]
+                self.save_modules()
+                self.update_module_list()
+            return
+            
+        # Delete individual module
+        module_key = values[0]
+        module_text = self.module_tree.item(item, 'text')
+        
+        if messagebox.askyesno("Confirm", f"Delete module '{module_text}'?"):
+            if module_key in self.modules:
+                del self.modules[module_key]
+                self.save_modules()
+                self.update_module_list()
             
     def on_module_select(self, event=None):
-        """Handle module selection"""
-        selection = self.module_listbox.curselection()
+        """Handle module selection from tree"""
+        selection = self.module_tree.selection()
         if not selection:
             return
             
-        name = self.module_listbox.get(selection[0])
-        module = self.modules[name]
+        item = selection[0]
         
-        # Update UI with selected module
-        self.manufacturer_var.set(module.manufacturer)
-        self.model_var.set(module.model)
-        self.type_var.set(module.type.value)
-        self.length_var.set(str(module.length_mm))
-        self.width_var.set(str(module.width_mm))
-        self.wattage_var.set(str(module.wattage))
-        self.vmp_var.set(str(module.vmp))
-        self.imp_var.set(str(module.imp))
-        self.voc_var.set(str(module.voc))
-        self.isc_var.set(str(module.isc))
+        # Check if this is a module (has values) or manufacturer (no values)
+        values = self.module_tree.item(item, 'values')
+        if not values:
+            # This is a manufacturer node, not a module
+            return
+            
+        module_key = values[0]
+        if module_key in self.modules:
+            module = self.modules[module_key]
+            
+            # Update UI with selected module
+            self.manufacturer_var.set(module.manufacturer)
+            self.model_var.set(module.model)
+            self.type_var.set(module.type.value)
+            self.length_var.set(str(module.length_mm))
+            self.width_var.set(str(module.width_mm))
+            self.wattage_var.set(str(module.wattage))
+            self.vmp_var.set(str(module.vmp))
+            self.imp_var.set(str(module.imp))
+            self.voc_var.set(str(module.voc))
+            self.isc_var.set(str(module.isc))
 
-        # Call the callback if provided
-        if self.on_module_selected:
-            self.on_module_selected(module)
+            # Call the callback if provided
+            if self.on_module_selected:
+                self.on_module_selected(module)
