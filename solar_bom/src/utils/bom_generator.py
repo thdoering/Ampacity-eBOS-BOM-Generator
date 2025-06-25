@@ -1,4 +1,5 @@
 import pandas as pd
+import json
 import os
 from typing import Dict, List, Any, Optional
 from ..models.block import BlockConfig, WiringType
@@ -21,6 +22,10 @@ class BOMGenerator:
             blocks: Dictionary of block configurations (id -> BlockConfig)
         """
         self.blocks = blocks
+        # Load harness library
+        self.harness_library = self.load_harness_library()
+        # Load fuse library
+        self.fuse_library = self.load_fuse_library()
     
     def calculate_cable_quantities(self) -> Dict[str, Dict[str, Any]]:
         """
@@ -311,8 +316,65 @@ class BOMGenerator:
         
         # Sort by category then component type
         summary_data = sorted(summary_data, key=lambda x: (x['Category'], x['Component Type']))
+        # Add part numbers to summary data
+        for item in summary_data:
+            item['Part Number'] = self.get_component_part_number(item)
+
+        # Create DataFrame with specific column order
+        df = pd.DataFrame(summary_data)
+        if not df.empty:
+            # Reorder columns to put Part Number after Component Type
+            columns = list(df.columns)
+            if 'Part Number' in columns and 'Component Type' in columns:
+                # Remove Part Number from its current position
+                columns.remove('Part Number')
+                # Insert it after Component Type
+                ct_index = columns.index('Component Type')
+                columns.insert(ct_index + 1, 'Part Number')
+                df = df[columns]
+
+        return df
+    
+    def get_component_part_number(self, item):
+        """Get part number for a summary data item"""
+        component_type = item['Component Type']
+        description = item['Description']
         
-        return pd.DataFrame(summary_data)
+        if 'Harness' in component_type:
+            # Extract info from description to find harness part number
+            polarity = 'positive' if 'Positive' in description else 'negative'
+            
+            # Extract string count
+            import re
+            string_match = re.search(r'(\d+)-String', description)
+            if string_match:
+                num_strings = int(string_match.group(1))
+                
+                # Get module specs from first block
+                if self.blocks:
+                    first_block = next(iter(self.blocks.values()))
+                    if first_block.tracker_template and first_block.tracker_template.module_spec:
+                        module_spec = first_block.tracker_template.module_spec
+                        modules_per_string = first_block.tracker_template.modules_per_string
+                        module_spacing_m = first_block.tracker_template.module_spacing_m
+                        
+                        string_spacing_ft = self.calculate_string_spacing_ft(
+                            modules_per_string, module_spec.width_mm, module_spacing_m
+                        )
+                        
+                        return self.find_matching_harness_part_number(
+                            num_strings, polarity, string_spacing_ft
+                        )
+        
+        elif 'Fuse' in component_type:
+            # Extract fuse rating from description
+            import re
+            rating_match = re.search(r'(\d+)A', description)
+            if rating_match:
+                rating = int(rating_match.group(1))
+                return self.get_fuse_part_number_by_rating(rating)
+        
+        return "N/A"
     
     def generate_detailed_data(self, quantities: Dict[str, Dict[str, Any]]) -> pd.DataFrame:
         """
@@ -337,15 +399,19 @@ class BOMGenerator:
                 if category == 'Structural' and 'Tracker' in component_type:
                     continue
                     
-                detailed_data.append({
+                item_data = {
                     'Block': block_id,
                     'Category': category,
                     'Component Type': component_type,
-                    'Part Number': '',
                     'Description': description,
                     'Quantity': round(quantity, 1) if unit == 'feet' else int(quantity),
                     'Unit': unit
-                })
+                }
+
+                # Add part number
+                item_data['Part Number'] = self.get_component_part_number(item_data)
+
+                detailed_data.append(item_data)
         
         # Sort by block ID, category, and component type
         detailed_data = sorted(detailed_data, key=lambda x: (x['Block'], x['Category'], x['Component Type']))
@@ -353,7 +419,8 @@ class BOMGenerator:
         return pd.DataFrame(detailed_data)
 
     
-    def export_bom_to_excel(self, filepath: str, project_info: Optional[Dict[str, Any]] = None) -> bool:
+    def export_bom_to_excel(self, filepath: str, project_info: Optional[Dict[str, Any]] = None, 
+                       checked_components: Optional[List[Dict]] = None) -> bool:
         """
         Export BOM to Excel file
         
@@ -372,6 +439,11 @@ class BOMGenerator:
             # Generate summary and detailed data
             summary_data = self.generate_summary_data(quantities)
             detailed_data = self.generate_detailed_data(quantities)
+
+            # Filter data based on checked components if provided
+            if checked_components:
+                summary_data = self.filter_data_by_checked_components(summary_data, checked_components)
+                detailed_data = self.filter_data_by_checked_components(detailed_data, checked_components, is_detailed=True)
 
             # Check for missing blocks
             all_block_ids = set(self.blocks.keys())
@@ -404,8 +476,8 @@ class BOMGenerator:
             
             # Write summary data
             summary_data.to_excel(writer, sheet_name='BOM Summary', index=False, startrow=10)  # Start after project info
-            
-            # Write detailed data
+
+            # Write detailed data  
             detailed_data.to_excel(writer, sheet_name='Block Details', index=False)
             
             # Get workbook
@@ -480,6 +552,24 @@ class BOMGenerator:
                     pass
 
     
+    def filter_data_by_checked_components(self, data_df, checked_components, is_detailed=False):
+        """Filter DataFrame based on checked components"""
+        if not checked_components:
+            return data_df
+        
+        # Create set of checked component descriptions for fast lookup
+        checked_descriptions = {comp['description'] for comp in checked_components}
+        
+        # Filter DataFrame
+        if is_detailed:
+            # For detailed data, filter by Description column
+            filtered_df = data_df[data_df['Description'].isin(checked_descriptions)]
+        else:
+            # For summary data, filter by Description column
+            filtered_df = data_df[data_df['Description'].isin(checked_descriptions)]
+        
+        return filtered_df.reset_index(drop=True)                       
+
     def _format_excel_sheet(self, worksheet, data: pd.DataFrame, start_row: int = 1):
         """
         Format Excel worksheet
@@ -746,6 +836,104 @@ class BOMGenerator:
             quantities[block_id] = block_quantities
         
         return quantities
+    
+    def load_harness_library(self):
+        """Load harness library from JSON file"""
+        try:
+            # Get the path relative to this file (src/utils/bom_generator.py)
+            current_dir = os.path.dirname(os.path.abspath(__file__))  # src/utils/
+            project_root = os.path.dirname(os.path.dirname(current_dir))  # Go up two levels to get to project root
+            library_path = os.path.join(project_root, 'data', 'harness_library.json')
+            
+            with open(library_path, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error loading harness library: {e}")
+            return {}
+
+    def calculate_string_spacing_ft(self, modules_per_string, module_width_mm, module_spacing_m):
+        """Calculate string spacing in feet based on module specs"""
+        try:
+            # Calculate total string length: (modules * width) + ((modules-1) * spacing between modules)
+            total_length_mm = (modules_per_string * module_width_mm + 
+                            (modules_per_string - 1) * module_spacing_m * 1000)
+            
+            # Convert to feet
+            total_length_ft = total_length_mm / 1000 * 3.28084
+            
+            return round(total_length_ft, 1)
+        except Exception as e:
+            print(f"Error calculating string spacing: {e}")
+            return 0
+
+    def find_matching_harness_part_number(self, num_strings, polarity, calculated_spacing_ft):
+        """Find matching harness part number from library"""
+        try:
+            matches = []
+            
+            # Available harness spacing options based on your library
+            # First Solar uses 26', Standard uses 102, 113, 122, 133
+            available_spacings = [26.0, 102.0, 113.0, 122.0, 133.0]
+            
+            # Find the next largest available spacing
+            target_spacing = None
+            for spacing in sorted(available_spacings):
+                if spacing >= calculated_spacing_ft:
+                    target_spacing = spacing
+                    break
+            
+            if target_spacing is None:
+                target_spacing = max(available_spacings)  # Use largest if calculated is bigger than all
+            
+            # print(f"Calculated spacing: {calculated_spacing_ft}ft, Target spacing: {target_spacing}ft, Strings: {num_strings}, Polarity: {polarity}")
+            
+            # Search for matching harnesses
+            for part_number, spec in self.harness_library.items():
+                if (spec.get('num_strings') == num_strings and 
+                    spec.get('polarity') == polarity and
+                    abs(spec.get('string_spacing_ft', 0) - target_spacing) < 0.1):  # Allow small tolerance
+                    matches.append(part_number)
+                    # print(f"Found match: {part_number}")
+            
+            if matches:
+                if len(matches) == 1:
+                    return matches[0]
+                else:
+                    return " or ".join(sorted(matches))  # Sort for consistent output
+            else:
+                # print(f"No matches found for {num_strings} strings, {polarity}, {target_spacing}ft")
+                return "N/A"
+                
+        except Exception as e:
+            print(f"Error finding harness match: {e}")
+            return "N/A"
+        
+    def get_fuse_part_number_by_rating(self, fuse_rating_amps):
+        """Get fuse part number by rating from fuse library"""
+        try:
+            # Find exact match first
+            for part_number, spec in self.fuse_library.items():
+                if spec.get('fuse_rating_amps') == fuse_rating_amps:
+                    return part_number
+            
+            # If no exact match, find the next higher rating
+            available_ratings = []
+            for spec in self.fuse_library.values():
+                rating = spec.get('fuse_rating_amps')
+                if rating and rating >= fuse_rating_amps:
+                    available_ratings.append((rating, spec.get('part_number')))
+            
+            if available_ratings:
+                # Sort by rating and return the lowest that meets the requirement
+                available_ratings.sort(key=lambda x: x[0])
+                return available_ratings[0][1]
+            
+            # If no suitable fuse found, return placeholder
+            return f"FUSE-{fuse_rating_amps}A-NOT-FOUND"
+            
+        except Exception as e:
+            print(f"Error getting fuse part number: {e}")
+            return f"FUSE-{fuse_rating_amps}A-ERROR"
 
     def _add_segment_analysis(self, block_quantities, segments, cable_size, 
                    prefix, length_increment=5):
@@ -880,3 +1068,17 @@ class BOMGenerator:
                     fuse_counts[default_rating] = fuse_counts.get(default_rating, 0) + string_count
         
         return fuse_counts
+    
+    def load_fuse_library(self):
+        """Load fuse library from JSON file"""
+        try:
+            # Get the path relative to this file
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            project_root = os.path.dirname(os.path.dirname(current_dir))
+            library_path = os.path.join(project_root, 'data', 'fuse_library.json')
+            
+            with open(library_path, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error loading fuse library: {e}")
+            return {}

@@ -109,6 +109,10 @@ class BOMManager(ttk.Frame):
         )
         self.preview_tree.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
 
+        # Configure tags for styling
+        self.preview_tree.tag_configure('checked', foreground='black')
+        self.preview_tree.tag_configure('unchecked', foreground='gray60')
+
         # Configure columns
         self.preview_tree.column('include', width=60, anchor='center')
         self.preview_tree.column('component', width=180)
@@ -148,12 +152,30 @@ class BOMManager(ttk.Frame):
             command=self.update_preview
         ).grid(row=1, column=0, padx=5, pady=5)
 
-        # Toggle All button
+        # Button frame for BOM actions
+        button_frame = ttk.Frame(preview_frame)
+        button_frame.grid(row=1, column=0, columnspan=2, pady=5)
+
+        # Refresh button
         ttk.Button(
-            preview_frame, 
-            text="Toggle All", 
-            command=self.toggle_all_items
-        ).grid(row=1, column=1, padx=5, pady=5)
+            button_frame, 
+            text="Refresh Preview", 
+            command=self.update_preview
+        ).grid(row=0, column=0, padx=5)
+
+        # Select All button
+        ttk.Button(
+            button_frame, 
+            text="Select All", 
+            command=self.select_all_items
+        ).grid(row=0, column=1, padx=5)
+
+        # Select None button
+        ttk.Button(
+            button_frame, 
+            text="Select None", 
+            command=self.select_none_items
+        ).grid(row=0, column=2, padx=5)
     
     def set_blocks(self, blocks: Dict[str, BlockConfig]):
         """
@@ -206,10 +228,12 @@ class BOMManager(ttk.Frame):
         self.update_preview()
     
     def update_preview(self):
-        """Update the BOM preview"""
-        # Clear existing items
+        """Update BOM preview"""
+        # Clear existing preview and checked items
         for item in self.preview_tree.get_children():
             self.preview_tree.delete(item)
+        
+        self.checked_items.clear()
         
         # Get selected blocks
         selected_blocks = {block_id: self.blocks[block_id] for block_id in self.selected_blocks if block_id in self.blocks}
@@ -378,10 +402,13 @@ class BOMManager(ttk.Frame):
         except Exception as e:
             print(f"Error getting project info: {str(e)}")
         
+        # Get checked components for filtering
+        checked_components = self.get_checked_components()
+
         # Generate and export BOM
         try:
             bom_generator = BOMGenerator(selected_blocks)
-            success = bom_generator.export_bom_to_excel(filepath, project_info)
+            success = bom_generator.export_bom_to_excel(filepath, project_info, checked_components)
             
             if success:
                 messagebox.showinfo("Success", f"BOM exported successfully to {filepath}")
@@ -398,6 +425,24 @@ class BOMManager(ttk.Frame):
             )
         except Exception as e:
             messagebox.showerror("Error", f"Failed to export BOM: {str(e)}")
+
+    def get_checked_components(self):
+        """Get list of components that are checked for export"""
+        checked_components = []
+        
+        for item in self.checked_items:
+            values = self.preview_tree.item(item, 'values')
+            if len(values) >= 6:  # Make sure we have all columns
+                component_info = {
+                    'component_type': values[1],
+                    'part_number': values[2], 
+                    'description': values[3],
+                    'quantity': values[4],
+                    'unit': values[5]
+                }
+                checked_components.append(component_info)
+        
+        return checked_components
 
     def on_tree_click(self, event):
         """Handle tree click events for checkbox functionality"""
@@ -427,32 +472,41 @@ class BOMManager(ttk.Frame):
             self.preview_tree.item(item, values=current_values, tags=('unchecked',))
             self.checked_items.discard(item)
 
-    def toggle_all_items(self):
-        """Toggle all items checked/unchecked"""
-        all_checked = len(self.checked_items) == len(self.preview_tree.get_children())
-        
+    def select_all_items(self):
+        """Select all items"""
         for item in self.preview_tree.get_children():
             current_values = list(self.preview_tree.item(item, 'values'))
-            if all_checked:
-                current_values[0] = '☐'  # Uncheck all
-                self.preview_tree.item(item, values=current_values, tags=('unchecked',))
-                self.checked_items.discard(item)
-            else:
-                current_values[0] = '☑'  # Check all
-                self.preview_tree.item(item, values=current_values, tags=('checked',))
-                self.checked_items.add(item)
+            current_values[0] = '☑'  # Check it
+            self.preview_tree.item(item, values=current_values, tags=('checked',))
+            self.checked_items.add(item)
+
+    def select_none_items(self):
+        """Deselect all items"""
+        for item in self.preview_tree.get_children():
+            current_values = list(self.preview_tree.item(item, 'values'))
+            current_values[0] = '☐'  # Uncheck it
+            self.preview_tree.item(item, values=current_values, tags=('unchecked',))
+            self.checked_items.discard(item)
+        
+        self.checked_items.clear()
 
     def get_part_number_for_component(self, row, selected_blocks):
         """Get part number for component based on type"""
         component_type = row['Component Type']
         
+        # print(f"Getting part number for: {component_type}")  # Comment out for cleaner console
+        
         # Handle harnesses
         if 'Harness' in component_type:
-            return self.get_harness_part_number(row, selected_blocks)
+            part_num = self.get_harness_part_number(row, selected_blocks)
+            # print(f"Harness part number: {part_num}")  # Comment out for cleaner console
+            return part_num
         
         # Handle fuses
         elif 'Fuse' in component_type:
-            return self.get_fuse_part_number(row)
+            part_num = self.get_fuse_part_number(row)
+            # print(f"Fuse part number: {part_num}")  # Comment out for cleaner console
+            return part_num
         
         # Other components don't have part numbers yet
         return "N/A"
@@ -471,13 +525,16 @@ class BOMManager(ttk.Frame):
             
             # Extract string count (look for patterns like "2 String", "3 String", etc.)
             import re
-            string_match = re.search(r'(\d+)\s+String', description)
+            string_match = re.search(r'(\d+)-String', description)
             if not string_match:
                 return "N/A"
             
             num_strings = int(string_match.group(1))
             
             # Get module specs from the first block to calculate spacing
+            if not selected_blocks:
+                return "N/A"
+                
             first_block = next(iter(selected_blocks.values()))
             if not first_block.tracker_template or not first_block.tracker_template.module_spec:
                 return "N/A"
@@ -501,14 +558,58 @@ class BOMManager(ttk.Frame):
             return "N/A"
 
     def get_fuse_part_number(self, row):
-        """Get fuse part number - placeholder for now"""
-        # Extract fuse rating from description
-        import re
-        rating_match = re.search(r'(\d+)A', row['Description'])
-        if rating_match:
-            rating = rating_match.group(1)
-            return f"FUSE-{rating}A"  # Placeholder format
-        return "N/A"
+        """Get fuse part number from fuse library"""
+        try:
+            # Load fuse library directly
+            import json
+            import os
+            
+            # Get fuse library path
+            current_dir = os.path.dirname(os.path.abspath(__file__))  # src/ui/
+            project_root = os.path.dirname(os.path.dirname(current_dir))  # Go up two levels
+            library_path = os.path.join(project_root, 'data', 'fuse_library.json')
+            
+            with open(library_path, 'r') as f:
+                fuse_library = json.load(f)
+            
+            # Extract fuse rating from description
+            import re
+            rating_match = re.search(r'(\d+)A', row['Description'])
+            if not rating_match:
+                print(f"No fuse rating found in description: {row['Description']}")
+                return "N/A"
+            
+            fuse_rating_amps = int(rating_match.group(1))
+            print(f"Looking for fuse with {fuse_rating_amps}A rating")
+            
+            # Find exact match first
+            for part_number, spec in fuse_library.items():
+                if spec.get('fuse_rating_amps') == fuse_rating_amps:
+                    print(f"Found exact match: {part_number}")
+                    return part_number
+            
+            # If no exact match, find the next higher rating
+            available_ratings = []
+            for part_number, spec in fuse_library.items():
+                rating = spec.get('fuse_rating_amps')
+                if rating and rating >= fuse_rating_amps:
+                    available_ratings.append((rating, part_number))
+            
+            if available_ratings:
+                # Sort by rating and return the lowest that meets the requirement
+                available_ratings.sort(key=lambda x: x[0])
+                result = available_ratings[0][1]
+                print(f"Found next higher rating: {result} ({available_ratings[0][0]}A)")
+                return result
+            
+            print(f"No suitable fuse found for {fuse_rating_amps}A")
+            return "N/A"
+            
+        except Exception as e:
+            print(f"Error getting fuse part number: {e}")
+            import traceback
+            traceback.print_exc()
+            return "N/A"
 
     def open_harness_designer(self):
         """Open harness designer tool"""
