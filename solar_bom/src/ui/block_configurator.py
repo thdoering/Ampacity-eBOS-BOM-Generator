@@ -26,6 +26,7 @@ class BlockConfigurator(ttk.Frame):
         self.available_templates = {}
         self.blocks: Dict[str, BlockConfig] = {}  # Store block configurations
         self.current_block: Optional[str] = None  # Currently selected block ID
+        self.most_recent_block = None  # Track most recently created/copied block
         self.available_templates: Dict[str, TrackerTemplate] = {}  # Available tracker templates
         self.selected_inverter = None
         self.tracker_templates: Dict[str, TrackerTemplate] = {}
@@ -369,44 +370,37 @@ class BlockConfigurator(ttk.Frame):
             # No existing blocks, start with default
             block_id = "Block_1"
         else:
-            # Find the highest numbered block to follow its pattern
-            highest_number = 0
-            pattern_source = None
+            # Follow the pattern of the most recently created block
+            if self.most_recent_block and self.most_recent_block in self.blocks:
+                pattern_source = self.most_recent_block
+            else:
+                # No recent block, use any existing block as fallback
+                pattern_source = list(self.blocks.keys())[0]
             
-            # Check all existing blocks to find the one with highest number
             import re
-            for existing_id in self.blocks.keys():
-                match = re.match(r'(.*?)(\d+)$', existing_id)
-                if match:
-                    number = int(match.group(2))
-                    if number >= highest_number:
-                        highest_number = number
-                        pattern_source = existing_id
+            match = re.match(r'(.*?)(\d+)$', pattern_source)
             
-            if pattern_source:
-                # Use the pattern from the highest numbered block
-                match = re.match(r'(.*?)(\d+)$', pattern_source)
+            if match:
                 base_name = match.group(1)
-                next_number = highest_number + 1
+                
+                # Find the highest number with this prefix to avoid conflicts
+                highest_for_prefix = 0
+                for existing_id in self.blocks.keys():
+                    existing_match = re.match(r'(.*?)(\d+)$', existing_id)
+                    if existing_match and existing_match.group(1) == base_name:
+                        existing_number = int(existing_match.group(2))
+                        highest_for_prefix = max(highest_for_prefix, existing_number)
+                
+                next_number = highest_for_prefix + 1
                 
                 # Format with leading zeros if the source had them
                 source_number_str = match.group(2)
                 if len(source_number_str) > 1 and source_number_str.startswith('0'):
-                    # Source had leading zeros, maintain the same format
                     block_id = f"{base_name}{next_number:0{len(source_number_str)}d}"
                 else:
-                    # No leading zeros in source
                     block_id = f"{base_name}{next_number}"
-                
-                # Ensure the ID is unique
-                while block_id in self.blocks:
-                    next_number += 1
-                    if len(source_number_str) > 1 and source_number_str.startswith('0'):
-                        block_id = f"{base_name}{next_number:0{len(source_number_str)}d}"
-                    else:
-                        block_id = f"{base_name}{next_number}"
             else:
-                # Fallback to default if no numbered blocks found
+                # Fallback if recent block has no number
                 block_id = f"Block_{len(self.blocks) + 1:02d}"
         
         try:
@@ -466,6 +460,9 @@ class BlockConfigurator(ttk.Frame):
             
             # Save initial empty state
             self._push_state("Create block")
+
+            # Track this as the most recent block
+            self.most_recent_block = block_id
 
             # Notify blocks changed
             self._notify_blocks_changed()
@@ -1635,6 +1632,9 @@ class BlockConfigurator(ttk.Frame):
         self.block_listbox.see(tk.END)  # Ensure it's visible
         self.on_block_select()
 
+        # Track this as the most recent block
+        self.most_recent_block = new_id
+
         # Notify blocks changed
         self._notify_blocks_changed()
         
@@ -1840,14 +1840,19 @@ class BlockConfigurator(ttk.Frame):
         self.block_listbox.delete(0, tk.END)
         
         # Sort blocks by numerical value
-        def get_block_number(block_id):
+        def get_block_sort_key(block_id):
             import re
-            match = re.search(r'(\d+)$', block_id)
+            # Try to extract prefix and number for proper sorting
+            match = re.match(r'(.*?)(\d+)$', block_id)
             if match:
-                return int(match.group(1))
-            return 0  # Default to 0 if no number found
+                prefix = match.group(1)
+                number = int(match.group(2))
+                return (prefix, number)
+            else:
+                # No number found, sort alphabetically
+                return (block_id, 0)
         
-        sorted_block_ids = sorted(self.blocks.keys(), key=get_block_number)
+        sorted_block_ids = sorted(self.blocks.keys(), key=get_block_sort_key)
         
         for block_id in sorted_block_ids:
             self.block_listbox.insert(tk.END, block_id)
