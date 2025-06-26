@@ -45,9 +45,21 @@ class TrackerTemplateCreator(ttk.Frame):
         template_frame = ttk.LabelFrame(left_column, text="Saved Templates", padding="2")
         template_frame.grid(row=0, column=0, padx=2, pady=5, sticky=(tk.W, tk.E, tk.N))
         
-        self.template_listbox = tk.Listbox(template_frame, width=30, height=15)
-        self.template_listbox.grid(row=0, column=0, padx=2, pady=2)
-        self.template_listbox.bind('<<ListboxSelect>>', self.on_template_select)
+        # Create Treeview for hierarchical template display
+        self.template_tree = ttk.Treeview(template_frame, height=15)
+        self.template_tree.grid(row=0, column=0, padx=2, pady=2, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        # Configure tree columns
+        self.template_tree.heading('#0', text='Templates')
+        self.template_tree.column('#0', width=300)
+
+        # Add scrollbar for tree
+        tree_scrollbar = ttk.Scrollbar(template_frame, orient=tk.VERTICAL, command=self.template_tree.yview)
+        tree_scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        self.template_tree.configure(yscrollcommand=tree_scrollbar.set)
+
+        # Bind selection event
+        self.template_tree.bind('<<TreeviewSelect>>', self.on_template_select)
         
         template_buttons = ttk.Frame(template_frame)
         template_buttons.grid(row=1, column=0, padx=2, pady=2)
@@ -201,29 +213,110 @@ class TrackerTemplateCreator(ttk.Frame):
                 return {}
             with open(template_path, 'r') as f:
                 content = f.read().strip()
-                return json.loads(content) if content else {}
+                data = json.loads(content) if content else {}
+                
+            # Handle both old flat structure and new hierarchical structure
+            templates = {}
+            
+            if data:
+                # Check if this is the new hierarchical format
+                first_value = next(iter(data.values()))
+                if isinstance(first_value, dict) and not any(key in first_value for key in ['module_orientation', 'modules_per_string']):
+                    # New hierarchical format: Manufacturer -> Template Name -> template_data
+                    for manufacturer, template_group in data.items():
+                        for template_name, template_data in template_group.items():
+                            # Use manufacturer prefix to make template names unique
+                            unique_name = f"{manufacturer} - {template_name}"
+                            templates[unique_name] = template_data
+                else:
+                    # Old flat format
+                    templates = data
+                    
+            return templates
         except (json.JSONDecodeError, IOError) as e:
             messagebox.showerror("Error", f"Failed to load templates file: {str(e)}")
             return {}
             
     def save_templates(self):
-        """Save templates to JSON file"""
+        """Save templates to JSON file in hierarchical format"""
         template_path = Path('data/tracker_templates.json')
         template_path.parent.mkdir(exist_ok=True)
+        
+        # Organize templates by manufacturer
+        hierarchical_data = {}
+        
+        for template_key, template_data in self.templates.items():
+            # Extract manufacturer from module_spec
+            module_spec = template_data.get('module_spec', {})
+            manufacturer = module_spec.get('manufacturer', 'Unknown')
+            
+            # Extract template name (remove manufacturer prefix if present)
+            if ' - ' in template_key and template_key.startswith(manufacturer):
+                template_name = template_key.split(' - ', 1)[1]
+            else:
+                template_name = template_key
+            
+            if manufacturer not in hierarchical_data:
+                hierarchical_data[manufacturer] = {}
+                
+            hierarchical_data[manufacturer][template_name] = template_data
+        
         with open(template_path, 'w') as f:
-            json.dump(self.templates, f, indent=2)
+            json.dump(hierarchical_data, f, indent=2)
             
     def update_template_list(self):
-        """Update the template listbox"""
-        self.template_listbox.delete(0, tk.END)
-        for name in self.templates.keys():
-            self.template_listbox.insert(tk.END, name)
+        """Update the template tree view"""
+        # Clear existing items
+        for item in self.template_tree.get_children():
+            self.template_tree.delete(item)
+        
+        # Group templates by manufacturer
+        manufacturers = {}
+        for template_key, template_data in self.templates.items():
+            # Extract manufacturer from module_spec
+            module_spec = template_data.get('module_spec', {})
+            manufacturer = module_spec.get('manufacturer', 'Unknown')
+            
+            # Extract template name (remove manufacturer prefix if present)
+            if ' - ' in template_key and template_key.startswith(manufacturer):
+                template_name = template_key.split(' - ', 1)[1]
+            else:
+                template_name = template_key
+                
+            if manufacturer not in manufacturers:
+                manufacturers[manufacturer] = []
+            manufacturers[manufacturer].append((template_name, template_key, template_data))
+        
+        # Add manufacturers and their templates to tree
+        for manufacturer, templates_list in sorted(manufacturers.items()):
+            # Add manufacturer node
+            manufacturer_node = self.template_tree.insert('', 'end', text=manufacturer, open=False)
+            
+            # Add templates under manufacturer
+            for template_name, template_key, template_data in sorted(templates_list, key=lambda x: x[0]):
+                # Show module info in template display
+                module_spec = template_data.get('module_spec', {})
+                model = module_spec.get('model', 'Unknown')
+                wattage = module_spec.get('wattage', 0)
+                template_text = f"{template_name} ({model} - {wattage}W)"
+                self.template_tree.insert(manufacturer_node, 'end', text=template_text, values=(template_key,))
             
     def on_template_select(self, event=None):
         """Handle template selection event"""
-        selection = self.template_listbox.curselection()
-        if selection:
-            self.load_template()
+        selection = self.template_tree.selection()
+        if not selection:
+            return
+            
+        item = selection[0]
+        
+        # Check if this is a template (has values) or manufacturer (no values)
+        values = self.template_tree.item(item, 'values')
+        if not values:
+            # This is a manufacturer node, not a template
+            return
+            
+        # This is a template, load it
+        self.load_template()
             
     def create_template(self) -> Optional[TrackerTemplate]:
         """Create a TrackerTemplate from current UI values"""
@@ -306,14 +399,19 @@ class TrackerTemplateCreator(ttk.Frame):
             
     def load_template(self):
         """Load selected template"""
-        selection = self.template_listbox.curselection()
+        selection = self.template_tree.selection()
         if not selection:
             return
             
-        name = self.template_listbox.get(selection[0])
-        template_data = self.templates[name]
+        item = selection[0]
+        values = self.template_tree.item(item, 'values')
+        if not values:
+            return  # This is a manufacturer node
+            
+        template_key = values[0]
+        template_data = self.templates[template_key]
         
-        self.name_var.set(name)
+        self.name_var.set(template_key.split(' - ', 1)[-1] if ' - ' in template_key else template_key)
         self.orientation_var.set(template_data["module_orientation"])
         self.modules_string_var.set(str(template_data["modules_per_string"]))
         self.strings_tracker_var.set(str(template_data["strings_per_tracker"]))
@@ -345,19 +443,50 @@ class TrackerTemplateCreator(ttk.Frame):
         
     def delete_template(self):
         """Delete selected template"""
-        selection = self.template_listbox.curselection()
+        selection = self.template_tree.selection()
         if not selection:
+            messagebox.showwarning("Warning", "Please select a template to delete")
             return
             
-        name = self.template_listbox.get(selection[0])
-        if messagebox.askyesno("Confirm", f"Delete template '{name}'?"):
-            del self.templates[name]
-            self.save_templates()
-            self.update_template_list()
+        item = selection[0]
+        
+        # Check if this is a template (has values) or manufacturer (no values)
+        values = self.template_tree.item(item, 'values')
+        if not values:
+            # This is a manufacturer node, ask if they want to delete all templates
+            manufacturer = self.template_tree.item(item, 'text')
+            templates_to_delete = [key for key, template_data in self.templates.items() 
+                                if template_data.get('module_spec', {}).get('manufacturer') == manufacturer]
             
-            # Call the deletion callback if provided
-            if self.on_template_deleted:
-                self.on_template_deleted(name)
+            if not templates_to_delete:
+                return
+                
+            if messagebox.askyesno("Confirm", 
+                                f"Delete all {len(templates_to_delete)} templates from {manufacturer}?"):
+                for template_key in templates_to_delete:
+                    del self.templates[template_key]
+                self.save_templates()
+                self.update_template_list()
+                
+                # Call the deletion callback if provided
+                if self.on_template_deleted:
+                    for template_key in templates_to_delete:
+                        self.on_template_deleted(template_key)
+            return
+            
+        # Delete individual template
+        template_key = values[0]
+        template_text = self.template_tree.item(item, 'text')
+        
+        if messagebox.askyesno("Confirm", f"Delete template '{template_text}'?"):
+            if template_key in self.templates:
+                del self.templates[template_key]
+                self.save_templates()
+                self.update_template_list()
+                
+                # Call the deletion callback if provided
+                if self.on_template_deleted:
+                    self.on_template_deleted(template_key)
             
     def update_preview(self):
         """Update the preview canvas with current template layout"""

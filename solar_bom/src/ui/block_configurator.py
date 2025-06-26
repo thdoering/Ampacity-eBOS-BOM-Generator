@@ -225,9 +225,21 @@ class BlockConfigurator(ttk.Frame):
         templates_frame = ttk.LabelFrame(config_frame, text="Tracker Templates", padding="5")
         templates_frame.grid(row=3, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
 
-        self.template_listbox = tk.Listbox(templates_frame, height=5)
-        self.template_listbox.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E))
-        self.template_listbox.bind('<<ListboxSelect>>', self.on_template_select)
+        # Create Treeview for hierarchical template display
+        self.template_tree = ttk.Treeview(templates_frame, height=8)
+        self.template_tree.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        # Configure tree columns
+        self.template_tree.heading('#0', text='Templates')
+        self.template_tree.column('#0', width=250)
+
+        # Add scrollbar for tree
+        template_scrollbar = ttk.Scrollbar(templates_frame, orient=tk.VERTICAL, command=self.template_tree.yview)
+        template_scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        self.template_tree.configure(yscrollcommand=template_scrollbar.set)
+
+        # Bind selection event
+        self.template_tree.bind('<<TreeviewSelect>>', self.on_template_select)
 
         # Add current values display
         self.current_frame = ttk.Frame(templates_frame)
@@ -405,11 +417,16 @@ class BlockConfigurator(ttk.Frame):
         
         try:
             # Get selected template if any
-            selection = self.template_listbox.curselection()
+            selection = self.template_tree.selection()
             selected_template = None
             if selection:
-                template_name = self.template_listbox.get(selection[0])
-                selected_template = self.tracker_templates.get(template_name)
+                item = selection[0]
+                values = self.template_tree.item(item, 'values')
+                if not values:
+                    messagebox.showwarning("Warning", "Please select a template, not a manufacturer folder")
+                    return
+                template_key = values[0]
+                selected_template = self.tracker_templates.get(template_key)
             
             # Get row spacing from project if available
             row_spacing_m = 6.0  # Default fallback
@@ -528,6 +545,15 @@ class BlockConfigurator(ttk.Frame):
             return
             
         block = self.blocks[block_id]
+
+        # Add this debug section:
+        if block.tracker_template:
+            print(f"=== BLOCK DEBUG ===")
+            print(f"Block {block_id} looking for template: '{block.tracker_template.template_name}'")
+            print(f"Available templates: {list(self.tracker_templates.keys())}")
+            found = block.tracker_template.template_name in self.tracker_templates
+            print(f"Template found: {found}")
+            print("==================")
         
         # Update UI with block data (convert meters to feet)
         self.updating_ui = True
@@ -547,23 +573,35 @@ class BlockConfigurator(ttk.Frame):
         self.draw_block()
         
         # Auto-select a template if available
-        if self.template_listbox.size() > 0:
-            # If the block has a template, try to select it in the listbox
+        if self.template_tree.get_children():
+            # If the block has a template, try to select it in the tree
             if block.tracker_template and block.tracker_template.template_name:
-                # Look for the template name in the listbox
-                for i in range(self.template_listbox.size()):
-                    if self.template_listbox.get(i) == block.tracker_template.template_name:
-                        self.template_listbox.selection_clear(0, tk.END)
-                        self.template_listbox.selection_set(i)
-                        self.template_listbox.see(i)
-                        # Manually call the template selection handler
-                        self.on_template_select()
+                template_name = block.tracker_template.template_name
+                # Search through the tree to find and select the template
+                for manufacturer_item in self.template_tree.get_children():
+                    for template_item in self.template_tree.get_children(manufacturer_item):
+                        values = self.template_tree.item(template_item, 'values')
+                        if values and values[0] == template_name:
+                            # Expand the manufacturer and select the template
+                            self.template_tree.item(manufacturer_item, open=True)
+                            self.template_tree.selection_set(template_item)
+                            self.template_tree.see(template_item)
+                            # Set the drag template
+                            self.drag_template = self.tracker_templates.get(template_name)
+                            # Manually call the template selection handler
+                            self.on_template_select()
+                            break
+                
+            # If no template was matched but there are templates, select the first available template
+            if not self.drag_template and self.template_tree.get_children():
+                # Find the first actual template (not just a manufacturer)
+                for manufacturer_item in self.template_tree.get_children():
+                    templates = self.template_tree.get_children(manufacturer_item)
+                    if templates:
+                        self.template_tree.item(manufacturer_item, open=True)
+                        self.template_tree.selection_set(templates[0])
+                        self.template_tree.see(templates[0])
                         break
-            # If no template was matched but there are templates, select the first one
-            if not self.drag_template and self.template_listbox.size() > 0:
-                self.template_listbox.selection_clear(0, tk.END)
-                self.template_listbox.selection_set(0)
-                self.template_listbox.see(0)
                 # Manually call the template selection handler
                 self.on_template_select()
         
@@ -577,7 +615,18 @@ class BlockConfigurator(ttk.Frame):
         self.canvas.delete("all")
         
     def draw_block(self):
-        """Draw current block layout on canvas"""
+        """Draw the current block on the canvas"""
+        # Add this debug section at the start:
+        if self.current_block and self.current_block in self.blocks:
+            block = self.blocks[self.current_block]
+            print(f"=== DRAW_BLOCK DEBUG ===")
+            print(f"Block ID: {self.current_block}")
+            print(f"Block template: {block.tracker_template.template_name if block.tracker_template else 'None'}")
+            print(f"Number of tracker positions: {len(block.tracker_positions)}")
+            for i, pos in enumerate(block.tracker_positions):
+                print(f"  Position {i}: x={pos.x}, y={pos.y}, template={pos.template.template_name if pos.template else 'None'}")
+            print("========================")
+
         if not self.current_block:
             return
                 
@@ -968,82 +1017,165 @@ class BlockConfigurator(ttk.Frame):
             try:
                 with open(template_path, 'r') as f:
                     data = json.load(f)
-                    # Create ModuleSpec objects from the stored module_spec data in templates
-                    self.tracker_templates = {}
-                    for name, template in data.items():
-                        # Extract the module spec data
-                        module_data = template.get('module_spec', {})
-                        
-                        # Create proper ModuleSpec object with correct values
-                        module_spec = ModuleSpec(
-                            manufacturer=module_data.get('manufacturer', 'Default'),
-                            model=module_data.get('model', 'Default'),
-                            type=ModuleType.MONO_PERC,  # Default type
-                            length_mm=module_data.get('length_mm', 2000),
-                            width_mm=module_data.get('width_mm', 1000),
-                            depth_mm=module_data.get('depth_mm', 40),
-                            weight_kg=module_data.get('weight_kg', 25),
-                            wattage=module_data.get('wattage', 400),
-                            vmp=module_data.get('vmp', 40),
-                            imp=module_data.get('imp', 10),
-                            voc=module_data.get('voc', 48),
-                            isc=module_data.get('isc', 10.5),
-                            max_system_voltage=module_data.get('max_system_voltage', 1500)
-                        )
-                        
-                        # Create TrackerTemplate with the correct module_spec
-                        self.tracker_templates[name] = TrackerTemplate(
-                            template_name=name,
-                            module_spec=module_spec,
-                            module_orientation=ModuleOrientation(template.get('module_orientation', 'Portrait')),
-                            modules_per_string=template.get('modules_per_string', 28),
-                            strings_per_tracker=template.get('strings_per_tracker', 2),
-                            module_spacing_m=template.get('module_spacing_m', 0.01),
-                            motor_gap_m=template.get('motor_gap_m', 1.0),
-                            motor_position_after_string=template.get('motor_position_after_string', 0)
-                        )
+                    
+                # Create ModuleSpec objects from the stored module_spec data in templates
+                self.tracker_templates = {}
+                
+                if data:
+                    # Check if this is the new hierarchical format
+                    first_value = next(iter(data.values()))
+                    if isinstance(first_value, dict) and not any(key in first_value for key in ['module_orientation', 'modules_per_string']):
+                        # New hierarchical format: Manufacturer -> Template Name -> template_data
+                        for manufacturer, template_group in data.items():
+                            for template_name, template in template_group.items():
+                                # Use manufacturer prefix to make template names unique
+                                unique_name = f"{manufacturer} - {template_name}"
+                                
+                                # Extract the module spec data
+                                module_data = template.get('module_spec', {})
+                                
+                                # Create proper ModuleSpec object with correct values
+                                module_spec = ModuleSpec(
+                                    manufacturer=module_data.get('manufacturer', 'Default'),
+                                    model=module_data.get('model', 'Default'),
+                                    type=ModuleType.MONO_PERC,  # Default type
+                                    length_mm=module_data.get('length_mm', 2000),
+                                    width_mm=module_data.get('width_mm', 1000),
+                                    depth_mm=module_data.get('depth_mm', 40),
+                                    weight_kg=module_data.get('weight_kg', 25),
+                                    wattage=module_data.get('wattage', 400),
+                                    vmp=module_data.get('vmp', 40),
+                                    imp=module_data.get('imp', 10),
+                                    voc=module_data.get('voc', 48),
+                                    isc=module_data.get('isc', 10.5),
+                                    max_system_voltage=module_data.get('max_system_voltage', 1500)
+                                )
+                                
+                                # Create TrackerTemplate with the correct module_spec
+                                self.tracker_templates[unique_name] = TrackerTemplate(
+                                    template_name=unique_name,
+                                    module_spec=module_spec,
+                                    module_orientation=ModuleOrientation(template.get('module_orientation', 'Portrait')),
+                                    modules_per_string=template.get('modules_per_string', 28),
+                                    strings_per_tracker=template.get('strings_per_tracker', 2),
+                                    module_spacing_m=template.get('module_spacing_m', 0.01),
+                                    motor_gap_m=template.get('motor_gap_m', 1.0),
+                                    motor_position_after_string=template.get('motor_position_after_string', 0)
+                                )
+                                
+                                # Also store with the old name for backwards compatibility
+                                self.tracker_templates[template_name] = self.tracker_templates[unique_name]
+                    else:
+                        # Old flat format
+                        for name, template in data.items():
+                            # Extract the module spec data
+                            module_data = template.get('module_spec', {})
+                            
+                            # Create proper ModuleSpec object with correct values
+                            module_spec = ModuleSpec(
+                                manufacturer=module_data.get('manufacturer', 'Default'),
+                                model=module_data.get('model', 'Default'),
+                                type=ModuleType.MONO_PERC,  # Default type
+                                length_mm=module_data.get('length_mm', 2000),
+                                width_mm=module_data.get('width_mm', 1000),
+                                depth_mm=module_data.get('depth_mm', 40),
+                                weight_kg=module_data.get('weight_kg', 25),
+                                wattage=module_data.get('wattage', 400),
+                                vmp=module_data.get('vmp', 40),
+                                imp=module_data.get('imp', 10),
+                                voc=module_data.get('voc', 48),
+                                isc=module_data.get('isc', 10.5),
+                                max_system_voltage=module_data.get('max_system_voltage', 1500)
+                            )
+                            
+                            # Create TrackerTemplate with the correct module_spec
+                            self.tracker_templates[name] = TrackerTemplate(
+                                template_name=name,
+                                module_spec=module_spec,
+                                module_orientation=ModuleOrientation(template.get('module_orientation', 'Portrait')),
+                                modules_per_string=template.get('modules_per_string', 28),
+                                strings_per_tracker=template.get('strings_per_tracker', 2),
+                                module_spacing_m=template.get('module_spacing_m', 0.01),
+                                motor_gap_m=template.get('motor_gap_m', 1.0),
+                                motor_position_after_string=template.get('motor_position_after_string', 0)
+                            )
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to load templates: {str(e)}")
                 self.tracker_templates = {}
         else:
             self.tracker_templates = {}
+
+            # Add this debug section at the very end:
+            print("=== TEMPLATE LOADING DEBUG ===")
+            print(f"Total templates loaded: {len(self.tracker_templates)}")
+            for name, template in self.tracker_templates.items():
+                print(f"Template key: '{name}' -> Template name: '{template.template_name}'")
+            print("===============================")
                 
     def on_template_select(self, event=None):
         """Handle template selection"""
-        selection = self.template_listbox.curselection()
-        if selection:
-            template_name = self.template_listbox.get(selection[0])
-            self.drag_template = self.tracker_templates.get(template_name)
+        selection = self.template_tree.selection()
+        if not selection:
+            return
             
-            # Update current block's template if one is selected and there are no existing trackers
-            if self.current_block and self.drag_template:
-                block = self.blocks[self.current_block]
-                
-                # Only update the block's template if there are no existing trackers
-                # or if the block doesn't have a template yet
-                if not block.tracker_positions or not block.tracker_template:
-                    block.tracker_template = self.drag_template
-                
-                self.calculate_gcr()  # Recalculate GCR with new template
-                
-                # Update string current values
-                if self.drag_template.module_spec:
-                    module = self.drag_template.module_spec
-                    self.string_current = module.imp
-                    self.nec_current = module.isc * 1.25
-                    self.string_current_label.config(text=f"{self.string_current:.2f} A")
-                    self.nec_current_label.config(text=f"{self.nec_current:.2f} A")
-                else:
-                    self.string_current = 0.0
-                    self.nec_current = 0.0
-                    self.string_current_label.config(text="-- A")
-                    self.nec_current_label.config(text="-- A")
+        item = selection[0]
+        
+        # Check if this is a template (has values) or manufacturer (no values)
+        values = self.template_tree.item(item, 'values')
+        if not values:
+            # This is a manufacturer node, not a template
+            return
+            
+        template_key = values[0]
+        self.drag_template = self.tracker_templates.get(template_key)
+        
+        # Update current block's template if one is selected and there are no existing trackers
+        if self.current_block and self.blocks[self.current_block] and len(self.blocks[self.current_block].tracker_positions) == 0:
+            self.blocks[self.current_block].tracker_template = self.drag_template
+            self._notify_blocks_changed()
 
     def update_template_list(self):
-        """Update template listbox with available templates"""
-        self.template_listbox.delete(0, tk.END)
-        for name in self.tracker_templates.keys():
-            self.template_listbox.insert(tk.END, name)
+        """Update the template tree view"""
+        # Clear existing items
+        for item in self.template_tree.get_children():
+            self.template_tree.delete(item)
+        
+        # Group templates by manufacturer
+        manufacturers = {}
+        for template_key, template in self.tracker_templates.items():
+            # Extract manufacturer from module_spec
+            manufacturer = template.module_spec.manufacturer
+            
+            # Skip duplicate entries (we store both old and new names for compatibility)
+            if ' - ' in template_key and not template_key.startswith(manufacturer):
+                continue
+                
+            # Extract template name (remove manufacturer prefix if present)
+            if ' - ' in template_key and template_key.startswith(manufacturer):
+                template_name = template_key.split(' - ', 1)[1]
+            else:
+                template_name = template_key
+                
+            if manufacturer not in manufacturers:
+                manufacturers[manufacturer] = []
+            manufacturers[manufacturer].append((template_name, template_key, template))
+        
+        # Add manufacturers and their templates to tree
+        for manufacturer, templates_list in sorted(manufacturers.items()):
+            # Add manufacturer node
+            manufacturer_node = self.template_tree.insert('', 'end', text=manufacturer, open=False)
+            
+            # Add templates under manufacturer
+            for template_name, template_key, template in sorted(templates_list, key=lambda x: x[0]):
+                # Show module info in template display
+                model = template.module_spec.model
+                wattage = template.module_spec.wattage
+                strings = template.strings_per_tracker
+                modules_per_string = template.modules_per_string
+                total_modules = strings * modules_per_string
+                
+                template_text = f"{template_name} ({total_modules}x{model} - {wattage}W)"
+                self.template_tree.insert(manufacturer_node, 'end', text=template_text, values=(template_key,))
 
     def m_to_ft(self, meters):
         return meters * 3.28084
@@ -1781,12 +1913,19 @@ class BlockConfigurator(ttk.Frame):
         # If there's a current block, try to restore its template selection
         if self.current_block and self.blocks[self.current_block].tracker_template:
             template_name = self.blocks[self.current_block].tracker_template.template_name
-            for i in range(self.template_listbox.size()):
-                if self.template_listbox.get(i) == template_name:
-                    self.template_listbox.selection_clear(0, tk.END)
-                    self.template_listbox.selection_set(i)
-                    self.template_listbox.see(i)
-                    break
+            
+            # Search through the tree to find and select the template
+            for manufacturer_item in self.template_tree.get_children():
+                for template_item in self.template_tree.get_children(manufacturer_item):
+                    values = self.template_tree.item(template_item, 'values')
+                    if values and values[0] == template_name:
+                        # Expand the manufacturer and select the template
+                        self.template_tree.item(manufacturer_item, open=True)
+                        self.template_tree.selection_set(template_item)
+                        self.template_tree.see(template_item)
+                        # Set the drag template
+                        self.drag_template = self.tracker_templates.get(template_name)
+                        return
 
     def check_block_wiring_status(self):
         """Check if any blocks are missing wiring configuration and notify user"""

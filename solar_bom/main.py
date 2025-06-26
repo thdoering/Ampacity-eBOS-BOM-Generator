@@ -176,42 +176,90 @@ class SolarBOMApplication:
             tracker_templates = {}
             try:
                 templates_data = load_json_file('data/tracker_templates.json')
-                for name, template_data in templates_data.items():
-                    # Extract the module spec data
-                    module_data = template_data.get('module_spec', {})
-                    
-                    # Create proper ModuleSpec object with correct values
-                    module_spec = ModuleSpec(
-                        manufacturer=module_data.get('manufacturer', 'Default'),
-                        model=module_data.get('model', 'Default'),
-                        type=ModuleType.MONO_PERC,  # Default type
-                        length_mm=module_data.get('length_mm', 2000),
-                        width_mm=module_data.get('width_mm', 1000),
-                        depth_mm=module_data.get('depth_mm', 40),
-                        weight_kg=module_data.get('weight_kg', 25),
-                        wattage=module_data.get('wattage', 400),
-                        vmp=module_data.get('vmp', 40),
-                        imp=module_data.get('imp', 10),
-                        voc=module_data.get('voc', 48),
-                        isc=module_data.get('isc', 10.5),
-                        max_system_voltage=module_data.get('max_system_voltage', 1500)
-                    )
-                    
-                    # Create TrackerTemplate with the correct module_spec
-                    from src.models.tracker import TrackerTemplate, ModuleOrientation
-                    tracker_templates[name] = TrackerTemplate(
-                        template_name=name,
-                        module_spec=module_spec,
-                        module_orientation=ModuleOrientation(template_data.get('module_orientation', 'Portrait')),
-                        modules_per_string=template_data.get('modules_per_string', 28),
-                        strings_per_tracker=template_data.get('strings_per_tracker', 2),
-                        module_spacing_m=template_data.get('module_spacing_m', 0.01),
-                        motor_gap_m=template_data.get('motor_gap_m', 1.0),
-                        motor_position_after_string=template_data.get('motor_position_after_string', 0)
-                    )
+                
+                if templates_data:
+                    # Check if this is the new hierarchical format
+                    first_value = next(iter(templates_data.values()))
+                    if isinstance(first_value, dict) and not any(key in first_value for key in ['module_orientation', 'modules_per_string']):
+                        # New hierarchical format: Manufacturer -> Template Name -> template_data
+                        for manufacturer, template_group in templates_data.items():
+                            for template_name, template_data in template_group.items():
+                                # Use manufacturer prefix to make template names unique
+                                unique_name = f"{manufacturer} - {template_name}"
+                                
+                                # Extract the module spec data
+                                module_data = template_data.get('module_spec', {})
+                                
+                                # Create proper ModuleSpec object with correct values
+                                module_spec = ModuleSpec(
+                                    manufacturer=module_data.get('manufacturer', 'Default'),
+                                    model=module_data.get('model', 'Default'),
+                                    type=ModuleType.MONO_PERC,  # Default type
+                                    length_mm=module_data.get('length_mm', 2000),
+                                    width_mm=module_data.get('width_mm', 1000),
+                                    depth_mm=module_data.get('depth_mm', 40),
+                                    weight_kg=module_data.get('weight_kg', 25),
+                                    wattage=module_data.get('wattage', 400),
+                                    vmp=module_data.get('vmp', 40),
+                                    imp=module_data.get('imp', 10),
+                                    voc=module_data.get('voc', 48),
+                                    isc=module_data.get('isc', 10.5),
+                                    max_system_voltage=module_data.get('max_system_voltage', 1500)
+                                )
+                                
+                                # Create TrackerTemplate with the correct module_spec
+                                from src.models.tracker import TrackerTemplate, ModuleOrientation
+                                tracker_templates[unique_name] = TrackerTemplate(
+                                    template_name=unique_name,
+                                    module_spec=module_spec,
+                                    module_orientation=ModuleOrientation(template_data.get('module_orientation', 'Portrait')),
+                                    modules_per_string=template_data.get('modules_per_string', 28),
+                                    strings_per_tracker=template_data.get('strings_per_tracker', 2),
+                                    module_spacing_m=template_data.get('module_spacing_m', 0.01),
+                                    motor_gap_m=template_data.get('motor_gap_m', 1.0),
+                                    motor_position_after_string=template_data.get('motor_position_after_string', 0)
+                                )
+                                
+                                # Also store with the old name for backwards compatibility
+                                tracker_templates[template_name] = tracker_templates[unique_name]
+                    else:
+                        # Old flat format
+                        for name, template_data in templates_data.items():
+                            # Extract the module spec data
+                            module_data = template_data.get('module_spec', {})
+                            
+                            # Create proper ModuleSpec object with correct values
+                            module_spec = ModuleSpec(
+                                manufacturer=module_data.get('manufacturer', 'Default'),
+                                model=module_data.get('model', 'Default'),
+                                type=ModuleType.MONO_PERC,  # Default type
+                                length_mm=module_data.get('length_mm', 2000),
+                                width_mm=module_data.get('width_mm', 1000),
+                                depth_mm=module_data.get('depth_mm', 40),
+                                weight_kg=module_data.get('weight_kg', 25),
+                                wattage=module_data.get('wattage', 400),
+                                vmp=module_data.get('vmp', 40),
+                                imp=module_data.get('imp', 10),
+                                voc=module_data.get('voc', 48),
+                                isc=module_data.get('isc', 10.5),
+                                max_system_voltage=module_data.get('max_system_voltage', 1500)
+                            )
+                            
+                            # Create TrackerTemplate with the correct module_spec
+                            from src.models.tracker import TrackerTemplate, ModuleOrientation
+                            tracker_templates[name] = TrackerTemplate(
+                                template_name=name,
+                                module_spec=module_spec,
+                                module_orientation=ModuleOrientation(template_data.get('module_orientation', 'Portrait')),
+                                modules_per_string=template_data.get('modules_per_string', 28),
+                                strings_per_tracker=template_data.get('strings_per_tracker', 2),
+                                module_spacing_m=template_data.get('module_spacing_m', 0.01),
+                                motor_gap_m=template_data.get('motor_gap_m', 1.0),
+                                motor_position_after_string=template_data.get('motor_position_after_string', 0)
+                            )
             except Exception as e:
                 print(f"Error loading templates: {str(e)}")
-            
+                        
             # Load stored inverters
             inverters = {}
             try:
@@ -254,12 +302,22 @@ class SolarBOMApplication:
             
             # Reconstruct blocks
             from src.models.block import BlockConfig
-            
+
             reconstructed_blocks = {}
             for block_id, block_data in self.current_project.blocks.items():
                 try:
                     block = BlockConfig.from_dict(block_data, tracker_templates, inverters)
                     reconstructed_blocks[block_id] = block
+                    
+                    # ADD THIS DEBUG CODE HERE:
+                    print(f"=== MAIN.PY BLOCK RESTORATION DEBUG ===")
+                    print(f"Restored block: {block.block_id}")
+                    print(f"Block template: {block.tracker_template.template_name if block.tracker_template else 'None'}")
+                    print(f"Number of tracker positions: {len(block.tracker_positions)}")
+                    for i, pos in enumerate(block.tracker_positions):
+                        print(f"  Position {i}: x={pos.x}, y={pos.y}, template={pos.template.template_name if pos.template else 'None'}")
+                    print("=========================================")
+                    
                 except Exception as e:
                     print(f"Error reconstructing block {block_id}: {str(e)}")
             
