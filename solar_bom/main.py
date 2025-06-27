@@ -67,6 +67,12 @@ class SolarBOMApplication:
             on_project_selected=self.load_project
         )
         dashboard.pack(fill='both', expand=True)
+
+    def refresh_all_template_views(self):
+        """Refresh template views in all components when project changes"""
+        # This method can be called when enabled_templates list changes
+        # Update any UI components that show templates
+        pass
     
     def load_project(self, project):
         """Load a project and show the main application interface"""
@@ -120,23 +126,36 @@ class SolarBOMApplication:
         # Define callback for tracker template creation
         def on_template_saved(template):
             print(f"Template saved: {template}")
-            # Refresh templates in block configurator
+            # Refresh templates in block configurator (this will reload filtered templates)
             if hasattr(block_configurator, 'reload_templates'):
                 block_configurator.reload_templates()
 
         # Define callback for tracker template deletion
         def on_template_deleted(template_name):
             print(f"Template deleted: {template_name}")
+            # Remove from enabled templates if present
+            if self.current_project and template_name in self.current_project.enabled_templates:
+                self.current_project.enabled_templates.remove(template_name)
             # Refresh templates in block configurator
             if hasattr(block_configurator, 'reload_templates'):
                 block_configurator.reload_templates()
+
+        def on_template_enabled_changed():
+            """Called when template enabled status changes in tracker creator"""
+            # Refresh templates in block configurator to show only enabled ones
+            if hasattr(block_configurator, 'reload_templates'):
+                block_configurator.reload_templates()
+            # Mark project as modified
+            if self.current_project:
+                self.current_project.update_modified_date()
         
         # Create tracker template creator with callback to block configurator
         tracker_creator = TrackerTemplateCreator(
             tracker_frame,
             module_spec=None,
             on_template_saved=on_template_saved,
-            on_template_deleted=on_template_deleted
+            on_template_deleted=on_template_deleted,
+            current_project=self.current_project
         )
         tracker_creator.pack(fill='both', expand=True, padx=5, pady=5)
         

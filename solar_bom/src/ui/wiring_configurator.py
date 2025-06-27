@@ -820,6 +820,9 @@ class WiringConfigurator(tk.Toplevel):
     def calculate_current_for_segment(self, segment_type: str, num_strings: int = 1) -> float:
         """Calculate current flowing through a wire segment based on configuration"""
         
+        # Initialize default string current
+        string_current = 10.0  # Default fallback value in amps
+        
         # Direct access to module spec from block's tracker template
         if (self.block and 
             hasattr(self.block, 'tracker_template') and 
@@ -829,6 +832,9 @@ class WiringConfigurator(tk.Toplevel):
             
             module_spec = self.block.tracker_template.module_spec
             string_current = module_spec.imp
+        else:
+            # Log warning for debugging
+            print(f"Warning: No module spec available for current calculation, using default {string_current}A")
         
         result = string_current * num_strings
         

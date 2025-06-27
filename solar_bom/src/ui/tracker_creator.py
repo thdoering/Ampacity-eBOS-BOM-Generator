@@ -8,9 +8,11 @@ from ..models.module import ModuleSpec, ModuleType
 
 class TrackerTemplateCreator(ttk.Frame):
     def __init__(self, parent, module_spec: Optional[ModuleSpec] = None, 
-             on_template_saved: Optional[Callable[[TrackerTemplate], None]] = None,
-             on_template_deleted: Optional[Callable[[str], None]] = None):
+         on_template_saved: Optional[Callable[[TrackerTemplate], None]] = None,
+         on_template_deleted: Optional[Callable[[str], None]] = None,
+         current_project=None):
         super().__init__(parent)
+        self.current_project = current_project
         self.parent = parent
         self.on_template_saved = on_template_saved
         self.on_template_deleted = on_template_deleted
@@ -45,18 +47,28 @@ class TrackerTemplateCreator(ttk.Frame):
         template_frame = ttk.LabelFrame(left_column, text="Saved Templates", padding="2")
         template_frame.grid(row=0, column=0, padx=2, pady=5, sticky=(tk.W, tk.E, tk.N))
         
-        # Create Treeview for hierarchical template display
-        self.template_tree = ttk.Treeview(template_frame, height=15)
+        # Create Treeview for hierarchical template display with checkbox column
+        self.template_tree = ttk.Treeview(template_frame, columns=('enabled',), height=15)
         self.template_tree.grid(row=0, column=0, padx=2, pady=2, sticky=(tk.W, tk.E, tk.N, tk.S))
 
         # Configure tree columns
         self.template_tree.heading('#0', text='Templates')
-        self.template_tree.column('#0', width=300)
+        self.template_tree.heading('enabled', text='Enabled')
+        self.template_tree.column('#0', width=250)
+        self.template_tree.column('enabled', width=60, anchor='center')
+
+        # Configure tags for visual feedback
+        self.template_tree.tag_configure('checked', foreground='black')
+        self.template_tree.tag_configure('unchecked', foreground='gray60')
 
         # Add scrollbar for tree
         tree_scrollbar = ttk.Scrollbar(template_frame, orient=tk.VERTICAL, command=self.template_tree.yview)
         tree_scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
         self.template_tree.configure(yscrollcommand=tree_scrollbar.set)
+
+        # Bind click events for checkbox functionality
+        self.template_tree.bind('<Button-1>', self.on_tree_click)
+        self.template_tree.bind('<Double-1>', self.toggle_template_enabled)
 
         # Bind selection event
         self.template_tree.bind('<<TreeviewSelect>>', self.on_template_select)
@@ -265,7 +277,7 @@ class TrackerTemplateCreator(ttk.Frame):
             json.dump(hierarchical_data, f, indent=2)
             
     def update_template_list(self):
-        """Update the template tree view"""
+        """Update the template tree view with checkbox functionality"""
         # Clear existing items
         for item in self.template_tree.get_children():
             self.template_tree.delete(item)
@@ -287,10 +299,13 @@ class TrackerTemplateCreator(ttk.Frame):
                 manufacturers[manufacturer] = []
             manufacturers[manufacturer].append((template_name, template_key, template_data))
         
+        # Store template_key mapping for quick lookup
+        self.tree_item_to_template = {}
+        
         # Add manufacturers and their templates to tree
         for manufacturer, templates_list in sorted(manufacturers.items()):
-            # Add manufacturer node
-            manufacturer_node = self.template_tree.insert('', 'end', text=manufacturer, open=False)
+            # Add manufacturer node (no checkbox for manufacturer)
+            manufacturer_node = self.template_tree.insert('', 'end', text=manufacturer, values=('',), open=False)
             
             # Add templates under manufacturer
             for template_name, template_key, template_data in sorted(templates_list, key=lambda x: x[0]):
@@ -299,7 +314,20 @@ class TrackerTemplateCreator(ttk.Frame):
                 model = module_spec.get('model', 'Unknown')
                 wattage = module_spec.get('wattage', 0)
                 template_text = f"{template_name} ({model} - {wattage}W)"
-                self.template_tree.insert(manufacturer_node, 'end', text=template_text, values=(template_key,))
+                
+                # Check if template is enabled
+                is_enabled = self._is_template_enabled(template_key)
+                checkbox = '☑' if is_enabled else '☐'
+                tag = 'checked' if is_enabled else 'unchecked'
+                
+                # Insert template with checkbox
+                template_item = self.template_tree.insert(manufacturer_node, 'end', 
+                                        text=template_text,
+                                        values=(checkbox,), 
+                                        tags=(tag,))
+                
+                # Store mapping for later retrieval
+                self.tree_item_to_template[template_item] = template_key
             
     def on_template_select(self, event=None):
         """Handle template selection event"""
@@ -391,6 +419,10 @@ class TrackerTemplateCreator(ttk.Frame):
             
             self.save_templates()
             self.update_template_list()
+
+            # Auto-enable newly created template
+            if self.current_project:
+                self._add_enabled_template(name)
             
             if self.on_template_saved:
                 self.on_template_saved(template)
@@ -557,3 +589,58 @@ class TrackerTemplateCreator(ttk.Frame):
         # Update dimension labels
         self.length_label.config(text=f"Length: {module_width:.2f}m")
         self.width_label.config(text=f"Height: {total_height:.2f}m")
+
+    def on_tree_click(self, event):
+        """Handle tree click events for checkbox functionality"""
+        item = self.template_tree.identify_row(event.y)
+        column = self.template_tree.identify_column(event.x)
+        
+        # If clicked on the enabled column, toggle selection
+        if item and column == '#1':  # Second column is enabled
+            self.toggle_item_enabled(item)
+
+    def toggle_template_enabled(self, event):
+        """Toggle enabled state on double-click"""
+        item = self.template_tree.focus()
+        if item:
+            self.toggle_item_enabled(item)
+
+    def toggle_item_enabled(self, item):
+        """Toggle the enabled state of a template"""
+        # Check if this is a template (has values) or manufacturer (no values)
+        values = list(self.template_tree.item(item, 'values'))
+        if not values or len(values) == 0:
+            # This is a manufacturer node, not a template
+            return
+        
+        # Get template key from mapping
+        if item not in self.tree_item_to_template:
+            return
+        template_key = self.tree_item_to_template[item]
+        
+        # Toggle enabled state
+        current_checkbox = values[0] if values else '☐'
+        if current_checkbox == '☐':  # Currently unchecked
+            values[0] = '☑'  # Check it
+            self.template_tree.item(item, values=values, tags=('checked',))
+            self._add_enabled_template(template_key)
+        else:  # Currently checked
+            values[0] = '☐'  # Uncheck it
+            self.template_tree.item(item, values=values, tags=('unchecked',))
+            self._remove_enabled_template(template_key)
+
+    def _add_enabled_template(self, template_key):
+        """Add template to enabled list"""
+        if self.current_project and template_key not in self.current_project.enabled_templates:
+            self.current_project.enabled_templates.append(template_key)
+
+    def _remove_enabled_template(self, template_key):
+        """Remove template from enabled list"""
+        if self.current_project and template_key in self.current_project.enabled_templates:
+            self.current_project.enabled_templates.remove(template_key)
+
+    def _is_template_enabled(self, template_key):
+        """Check if template is enabled for current project"""
+        if not self.current_project:
+            return True  # Default to enabled if no project
+        return template_key in self.current_project.enabled_templates

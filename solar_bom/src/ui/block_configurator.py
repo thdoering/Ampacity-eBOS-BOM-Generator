@@ -1011,34 +1011,42 @@ class BlockConfigurator(ttk.Frame):
 
 
     def load_templates(self):
-        """Load tracker templates from file"""
+        """Load tracker templates from file, filtered by enabled templates"""
         template_path = Path('data/tracker_templates.json')
         if template_path.exists():
             try:
                 with open(template_path, 'r') as f:
                     data = json.load(f)
-                    
-                # Create ModuleSpec objects from the stored module_spec data in templates
-                self.tracker_templates = {}
                 
+                # Load all templates first
+                all_templates = {}
+                
+                # Handle both flat and hierarchical formats
                 if data:
-                    # Check if this is the new hierarchical format
                     first_value = next(iter(data.values()))
                     if isinstance(first_value, dict) and not any(key in first_value for key in ['module_orientation', 'modules_per_string']):
-                        # New hierarchical format: Manufacturer -> Template Name -> template_data
+                        # New hierarchical format
                         for manufacturer, template_group in data.items():
-                            for template_name, template in template_group.items():
-                                # Use manufacturer prefix to make template names unique
+                            for template_name, template_data in template_group.items():
                                 unique_name = f"{manufacturer} - {template_name}"
-                                
-                                # Extract the module spec data
-                                module_data = template.get('module_spec', {})
-                                
-                                # Create proper ModuleSpec object with correct values
+                                all_templates[unique_name] = template_data
+                    else:
+                        # Old flat format
+                        all_templates = data
+                
+                # Filter templates based on enabled status in current project
+                self.tracker_templates = {}
+                if self.current_project and hasattr(self.current_project, 'enabled_templates'):
+                    # Only include enabled templates
+                    for template_key, template_data in all_templates.items():
+                        if template_key in self.current_project.enabled_templates:
+                            try:
+                                # Create TrackerTemplate object from data
+                                module_data = template_data.get('module_spec', {})
                                 module_spec = ModuleSpec(
-                                    manufacturer=module_data.get('manufacturer', 'Default'),
-                                    model=module_data.get('model', 'Default'),
-                                    type=ModuleType.MONO_PERC,  # Default type
+                                    manufacturer=module_data.get('manufacturer', 'Unknown'),
+                                    model=module_data.get('model', 'Unknown'),
+                                    type=ModuleType(module_data.get('type', ModuleType.MONO_PERC.value)),
                                     length_mm=module_data.get('length_mm', 2000),
                                     width_mm=module_data.get('width_mm', 1000),
                                     depth_mm=module_data.get('depth_mm', 40),
@@ -1051,31 +1059,30 @@ class BlockConfigurator(ttk.Frame):
                                     max_system_voltage=module_data.get('max_system_voltage', 1500)
                                 )
                                 
-                                # Create TrackerTemplate with the correct module_spec
-                                self.tracker_templates[unique_name] = TrackerTemplate(
-                                    template_name=unique_name,
+                                template = TrackerTemplate(
+                                    template_name=template_key,
                                     module_spec=module_spec,
-                                    module_orientation=ModuleOrientation(template.get('module_orientation', 'Portrait')),
-                                    modules_per_string=template.get('modules_per_string', 28),
-                                    strings_per_tracker=template.get('strings_per_tracker', 2),
-                                    module_spacing_m=template.get('module_spacing_m', 0.01),
-                                    motor_gap_m=template.get('motor_gap_m', 1.0),
-                                    motor_position_after_string=template.get('motor_position_after_string', 0)
+                                    module_orientation=ModuleOrientation(template_data.get('module_orientation', ModuleOrientation.PORTRAIT.value)),
+                                    modules_per_string=template_data.get('modules_per_string', 28),
+                                    strings_per_tracker=template_data.get('strings_per_tracker', 2),
+                                    module_spacing_m=template_data.get('module_spacing_m', 0.01),
+                                    motor_gap_m=template_data.get('motor_gap_m', 1.0),
+                                    motor_position_after_string=template_data.get('motor_position_after_string', 0)
                                 )
                                 
-                                # Also store with the old name for backwards compatibility
-                                self.tracker_templates[template_name] = self.tracker_templates[unique_name]
-                    else:
-                        # Old flat format
-                        for name, template in data.items():
-                            # Extract the module spec data
-                            module_data = template.get('module_spec', {})
-                            
-                            # Create proper ModuleSpec object with correct values
+                                self.tracker_templates[template_key] = template
+                            except Exception as e:
+                                print(f"Error loading template {template_key}: {str(e)}")
+                else:
+                    # No project or no enabled_templates list - show all templates (fallback)
+                    for template_key, template_data in all_templates.items():
+                        try:
+                            # Create TrackerTemplate object from data (same as above)
+                            module_data = template_data.get('module_spec', {})
                             module_spec = ModuleSpec(
-                                manufacturer=module_data.get('manufacturer', 'Default'),
-                                model=module_data.get('model', 'Default'),
-                                type=ModuleType.MONO_PERC,  # Default type
+                                manufacturer=module_data.get('manufacturer', 'Unknown'),
+                                model=module_data.get('model', 'Unknown'),
+                                type=ModuleType(module_data.get('type', ModuleType.MONO_PERC.value)),
                                 length_mm=module_data.get('length_mm', 2000),
                                 width_mm=module_data.get('width_mm', 1000),
                                 depth_mm=module_data.get('depth_mm', 40),
@@ -1088,29 +1095,35 @@ class BlockConfigurator(ttk.Frame):
                                 max_system_voltage=module_data.get('max_system_voltage', 1500)
                             )
                             
-                            # Create TrackerTemplate with the correct module_spec
-                            self.tracker_templates[name] = TrackerTemplate(
-                                template_name=name,
+                            template = TrackerTemplate(
+                                template_name=template_key,
                                 module_spec=module_spec,
-                                module_orientation=ModuleOrientation(template.get('module_orientation', 'Portrait')),
-                                modules_per_string=template.get('modules_per_string', 28),
-                                strings_per_tracker=template.get('strings_per_tracker', 2),
-                                module_spacing_m=template.get('module_spacing_m', 0.01),
-                                motor_gap_m=template.get('motor_gap_m', 1.0),
-                                motor_position_after_string=template.get('motor_position_after_string', 0)
+                                module_orientation=ModuleOrientation(template_data.get('module_orientation', ModuleOrientation.PORTRAIT.value)),
+                                modules_per_string=template_data.get('modules_per_string', 28),
+                                strings_per_tracker=template_data.get('strings_per_tracker', 2),
+                                module_spacing_m=template_data.get('module_spacing_m', 0.01),
+                                motor_gap_m=template_data.get('motor_gap_m', 1.0),
+                                motor_position_after_string=template_data.get('motor_position_after_string', 0)
                             )
+                            
+                            self.tracker_templates[template_key] = template
+                        except Exception as e:
+                            print(f"Error loading template {template_key}: {str(e)}")
+                            
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to load templates: {str(e)}")
                 self.tracker_templates = {}
         else:
             self.tracker_templates = {}
 
-            # Add this debug section at the very end:
-            print("=== TEMPLATE LOADING DEBUG ===")
-            print(f"Total templates loaded: {len(self.tracker_templates)}")
-            for name, template in self.tracker_templates.items():
-                print(f"Template key: '{name}' -> Template name: '{template.template_name}'")
-            print("===============================")
+        # Debug output
+        print("=== TEMPLATE LOADING DEBUG ===")
+        print(f"Total templates loaded: {len(self.tracker_templates)}")
+        if self.current_project and hasattr(self.current_project, 'enabled_templates'):
+            print(f"Enabled templates in project: {self.current_project.enabled_templates}")
+        for name, template in self.tracker_templates.items():
+            print(f"Template key: '{name}' -> Template name: '{template.template_name}'")
+        print("===============================")
                 
     def on_template_select(self, event=None):
         """Handle template selection"""
@@ -1135,10 +1148,19 @@ class BlockConfigurator(ttk.Frame):
             self._notify_blocks_changed()
 
     def update_template_list(self):
-        """Update the template tree view"""
+        """Update the template tree view with enabled templates only"""
         # Clear existing items
         for item in self.template_tree.get_children():
             self.template_tree.delete(item)
+        
+        # Check if we have any enabled templates
+        if not self.tracker_templates:
+            # Show message when no templates are enabled
+            message = "No templates enabled for this project.\nGo to Tracker Creator to enable templates."
+            self.template_tree.insert('', 'end', text=message, values=(), tags=('message',))
+            # Configure message style
+            self.template_tree.tag_configure('message', foreground='gray', font=('TkDefaultFont', 9, 'italic'))
+            return
         
         # Group templates by manufacturer
         manufacturers = {}
@@ -1161,20 +1183,16 @@ class BlockConfigurator(ttk.Frame):
             manufacturers[manufacturer].append((template_name, template_key, template))
         
         # Add manufacturers and their templates to tree
-        for manufacturer, templates_list in sorted(manufacturers.items()):
+        for manufacturer, template_list in sorted(manufacturers.items()):
             # Add manufacturer node
-            manufacturer_node = self.template_tree.insert('', 'end', text=manufacturer, open=False)
+            manufacturer_node = self.template_tree.insert('', 'end', text=manufacturer, open=True)
             
             # Add templates under manufacturer
-            for template_name, template_key, template in sorted(templates_list, key=lambda x: x[0]):
+            for template_name, template_key, template in sorted(template_list, key=lambda x: x[0]):
                 # Show module info in template display
                 model = template.module_spec.model
                 wattage = template.module_spec.wattage
-                strings = template.strings_per_tracker
-                modules_per_string = template.modules_per_string
-                total_modules = strings * modules_per_string
-                
-                template_text = f"{template_name} ({total_modules}x{model} - {wattage}W)"
+                template_text = f"{template_name} ({model} - {wattage}W)"
                 self.template_tree.insert(manufacturer_node, 'end', text=template_text, values=(template_key,))
 
     def m_to_ft(self, meters):
