@@ -4,6 +4,52 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [2.0.0] - 2025-06-27
+
+### BREAKING CHANGES
+- **Template Organization**: Module and tracker templates are now organized hierarchically by manufacturer
+- **Project Compatibility**: Projects created with previous versions will load but tracker placements will need to be recreated due to template structure changes
+
+### Added
+- **Part Number Column**: Added part number column to BOM export for better procurement tracking
+- **Harness Drawings**: Created ability to provide harness drawings to customers
+- **Copy Project Functionality**: Added ability to copy entire projects with all configurations
+- **Hierarchical Template Browser**: Tree view interface for module and tracker templates organized by manufacturer
+- **Project-Specific Template Filtering**: Added tracker template filtering with checkboxes for better project organization
+- **Automatic Part Number Integration**: BOM generator now automatically pulls fuse and harness standard part numbers
+- **Enhanced BOM Functionality**: Expanded BOM generation capabilities with more detailed component tracking
+
+### Changed
+- **Template File Format**: Module and tracker template files converted to hierarchical structure organized by manufacturer
+- **Block Naming Convention**: Improved naming convention for new blocks with better sequential numbering
+- **Template Selection Interface**: Replaced flat template lists with expandable tree views for better organization
+
+### Fixed
+- **Whip Calculation Bug**: Corrected whip cable length calculations for accurate BOM output
+- **Undo/Redo System**: Fixed undo/redo functionality to properly maintain state history
+- **Row Spacing Persistence**: Fixed issue where row spacing settings weren't properly saved/restored
+- **Motor Placement Bug**: Corrected tracker motor positioning calculations
+- **Wiring Current Calculation**: Fixed current calculation bug in wiring configurations
+- **Template Loading**: Fixed template loading issues when switching between projects
+
+### Enhanced
+- **Autosave**: Automatic project saving whenever new blocks are created or copied
+- **Template Backwards Compatibility**: Maintains compatibility with existing template references during migration
+- **User Experience**: Improved template browsing with manufacturer-based organization
+
+### Migration Notes
+- Open existing projects and re-place trackers in blocks using the new hierarchical template browser
+- Module and tracker template libraries will be automatically migrated to new format on first use
+- Template references in saved projects maintain backwards compatibility
+- All other project data (wiring configurations, BOM settings, etc.) will be preserved
+
+### Technical Improvements
+- Enhanced template loading with support for both legacy and new formats
+- Improved error handling for template migration
+- Better state management for block configurations
+- Optimized template lookup performance with hierarchical structure
+
 ## [1.1.0] - 2025-05-30
 
 ### Added
