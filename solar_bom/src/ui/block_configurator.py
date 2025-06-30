@@ -545,15 +545,6 @@ class BlockConfigurator(ttk.Frame):
             return
             
         block = self.blocks[block_id]
-
-        # Add this debug section:
-        if block.tracker_template:
-            print(f"=== BLOCK DEBUG ===")
-            print(f"Block {block_id} looking for template: '{block.tracker_template.template_name}'")
-            print(f"Available templates: {list(self.tracker_templates.keys())}")
-            found = block.tracker_template.template_name in self.tracker_templates
-            print(f"Template found: {found}")
-            print("==================")
         
         # Update UI with block data (convert meters to feet)
         self.updating_ui = True
@@ -616,17 +607,6 @@ class BlockConfigurator(ttk.Frame):
         
     def draw_block(self):
         """Draw the current block on the canvas"""
-        # Add this debug section at the start:
-        if self.current_block and self.current_block in self.blocks:
-            block = self.blocks[self.current_block]
-            print(f"=== DRAW_BLOCK DEBUG ===")
-            print(f"Block ID: {self.current_block}")
-            print(f"Block template: {block.tracker_template.template_name if block.tracker_template else 'None'}")
-            print(f"Number of tracker positions: {len(block.tracker_positions)}")
-            for i, pos in enumerate(block.tracker_positions):
-                print(f"  Position {i}: x={pos.x}, y={pos.y}, template={pos.template.template_name if pos.template else 'None'}")
-            print("========================")
-
         if not self.current_block:
             return
                 
@@ -1115,15 +1095,6 @@ class BlockConfigurator(ttk.Frame):
                 self.tracker_templates = {}
         else:
             self.tracker_templates = {}
-
-        # Debug output
-        print("=== TEMPLATE LOADING DEBUG ===")
-        print(f"Total templates loaded: {len(self.tracker_templates)}")
-        if self.current_project and hasattr(self.current_project, 'enabled_templates'):
-            print(f"Enabled templates in project: {self.current_project.enabled_templates}")
-        for name, template in self.tracker_templates.items():
-            print(f"Template key: '{name}' -> Template name: '{template.template_name}'")
-        print("===============================")
                 
     def on_template_select(self, event=None):
         """Handle template selection"""

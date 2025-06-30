@@ -468,14 +468,5 @@ class BlockConfig:
                 harness_groupings=harness_groupings,
                 routing_mode=wiring_data.get('routing_mode', 'realistic')
             )
-        
-        # ADD THIS DEBUG CODE RIGHT BEFORE THE RETURN STATEMENT:
-        print(f"=== BLOCK.PY from_dict DEBUG ===")
-        print(f"Block {data['block_id']} - Original data had {len(data.get('tracker_positions', []))} positions")
-        print(f"Block {data['block_id']} - Loaded {len(block.tracker_positions)} tracker positions")
-        if 'tracker_template_name' in data:
-            print(f"Block {data['block_id']} - Looking for template: '{data['tracker_template_name']}'")
-            print(f"Block {data['block_id']} - Template found: {data['tracker_template_name'] in tracker_templates}")
-        print("================================")
 
         return block

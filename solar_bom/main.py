@@ -328,15 +328,6 @@ class SolarBOMApplication:
                     block = BlockConfig.from_dict(block_data, tracker_templates, inverters)
                     reconstructed_blocks[block_id] = block
                     
-                    # ADD THIS DEBUG CODE HERE:
-                    print(f"=== MAIN.PY BLOCK RESTORATION DEBUG ===")
-                    print(f"Restored block: {block.block_id}")
-                    print(f"Block template: {block.tracker_template.template_name if block.tracker_template else 'None'}")
-                    print(f"Number of tracker positions: {len(block.tracker_positions)}")
-                    for i, pos in enumerate(block.tracker_positions):
-                        print(f"  Position {i}: x={pos.x}, y={pos.y}, template={pos.template.template_name if pos.template else 'None'}")
-                    print("=========================================")
-                    
                 except Exception as e:
                     print(f"Error reconstructing block {block_id}: {str(e)}")
             

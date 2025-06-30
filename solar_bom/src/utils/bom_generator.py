@@ -22,10 +22,11 @@ class BOMGenerator:
             blocks: Dictionary of block configurations (id -> BlockConfig)
         """
         self.blocks = blocks
-        # Load harness library
+        # Load library json files
         self.harness_library = self.load_harness_library()
-        # Load fuse library
         self.fuse_library = self.load_fuse_library()
+        self.extender_library = self.load_extender_library()
+        self.whip_library = self.load_whip_library()
     
     def calculate_cable_quantities(self) -> Dict[str, Dict[str, Any]]:
         """
@@ -850,6 +851,32 @@ class BOMGenerator:
         except Exception as e:
             print(f"Error loading harness library: {e}")
             return {}
+        
+    def load_extender_library(self):
+        """Load the extender library from JSON file"""
+        try:
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            project_root = os.path.dirname(os.path.dirname(current_dir))
+            library_path = os.path.join(project_root, 'data', 'extender_library.json')
+            
+            with open(library_path, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error loading extender library: {e}")
+            return {}
+
+    def load_whip_library(self):
+        """Load the whip library from JSON file"""
+        try:
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            project_root = os.path.dirname(os.path.dirname(current_dir))
+            library_path = os.path.join(project_root, 'data', 'whip_library.json')
+            
+            with open(library_path, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error loading whip library: {e}")
+            return {}
 
     def calculate_string_spacing_ft(self, modules_per_string, module_width_mm, module_spacing_m):
         """Calculate string spacing in feet based on module specs"""
@@ -889,11 +916,14 @@ class BOMGenerator:
             
             # Search for matching harnesses
             for part_number, spec in self.harness_library.items():
+                # Skip comment entries
+                if part_number.startswith('_comment_'):
+                    continue
+                    
                 if (spec.get('num_strings') == num_strings and 
                     spec.get('polarity') == polarity and
                     abs(spec.get('string_spacing_ft', 0) - target_spacing) < 0.1):  # Allow small tolerance
                     matches.append(part_number)
-                    # print(f"Found match: {part_number}")
             
             if matches:
                 if len(matches) == 1:
@@ -906,6 +936,54 @@ class BOMGenerator:
                 
         except Exception as e:
             print(f"Error finding harness match: {e}")
+            return "N/A"
+        
+    def find_matching_extender_part_number(self, wire_gauge, polarity, required_length_ft):
+        """Find matching extender part number from library"""
+        try:
+            # Round up to next 5ft increment for extender lengths
+            target_length = ((required_length_ft - 1) // 5 + 1) * 5
+            target_length = max(10, min(300, target_length))  # Clamp to available range
+            
+            # Search for matching extender
+            for part_number, spec in self.extender_library.items():
+                # Skip comment entries
+                if part_number.startswith('_comment_'):
+                    continue
+                if (spec.get('wire_gauge') == wire_gauge and 
+                    spec.get('polarity') == polarity and
+                    spec.get('length_ft') == target_length):
+                    return part_number
+            
+            print(f"No extender found for {wire_gauge}, {polarity}, {target_length}ft")
+            return "N/A"
+            
+        except Exception as e:
+            print(f"Error finding extender part number: {e}")
+            return "N/A"
+
+    def find_matching_whip_part_number(self, wire_gauge, polarity, required_length_ft):
+        """Find matching whip part number from library"""
+        try:
+            # Round up to next 5ft increment for whip lengths
+            target_length = ((required_length_ft - 1) // 5 + 1) * 5
+            target_length = max(10, min(300, target_length))  # Clamp to available range
+            
+            # Search for matching whip
+            for part_number, spec in self.whip_library.items():
+                # Skip comment entries
+                if part_number.startswith('_comment_'):
+                    continue
+                if (spec.get('wire_gauge') == wire_gauge and 
+                    spec.get('polarity') == polarity and
+                    spec.get('length_ft') == target_length):
+                    return part_number
+            
+            print(f"No whip found for {wire_gauge}, {polarity}, {target_length}ft")
+            return "N/A"
+            
+        except Exception as e:
+            print(f"Error finding whip part number: {e}")
             return "N/A"
         
     def get_fuse_part_number_by_rating(self, fuse_rating_amps):
