@@ -893,7 +893,7 @@ class BOMGenerator:
             print(f"Error calculating string spacing: {e}")
             return 0
 
-    def find_matching_harness_part_number(self, num_strings, polarity, calculated_spacing_ft):
+    def find_matching_harness_part_number(self, num_strings, polarity, calculated_spacing_ft, trunk_cable_size=None):
         """Find matching harness part number from library"""
         try:
             matches = []
@@ -920,9 +920,17 @@ class BOMGenerator:
                 if part_number.startswith('_comment_'):
                     continue
                     
+                # Check basic criteria
                 if (spec.get('num_strings') == num_strings and 
                     spec.get('polarity') == polarity and
                     abs(spec.get('string_spacing_ft', 0) - target_spacing) < 0.1):  # Allow small tolerance
+                    
+                    # If trunk cable size is specified, filter by it
+                    if trunk_cable_size:
+                        spec_trunk_size = spec.get('trunk_cable_size', spec.get('trunk_wire_gauge'))
+                        if spec_trunk_size != trunk_cable_size:
+                            continue
+                            
                     matches.append(part_number)
             
             if matches:
@@ -943,7 +951,11 @@ class BOMGenerator:
         try:
             # Round up to next 5ft increment for extender lengths
             target_length = ((required_length_ft - 1) // 5 + 1) * 5
-            target_length = max(10, min(300, target_length))  # Clamp to available range
+            target_length = max(10, target_length)  # Remove the max 300 clamp
+
+            # If over 300ft, return custom part number
+            if target_length > 300:
+                return f"EXT-CUSTOM-{target_length}"
             
             # Search for matching extender
             for part_number, spec in self.extender_library.items():
@@ -967,7 +979,11 @@ class BOMGenerator:
         try:
             # Round up to next 5ft increment for whip lengths
             target_length = ((required_length_ft - 1) // 5 + 1) * 5
-            target_length = max(10, min(300, target_length))  # Clamp to available range
+            target_length = max(10, target_length)  # Remove the max 300 clamp
+
+            # If over 300ft, return custom part number
+            if target_length > 300:
+                return f"WHI-CUSTOM-{target_length}"
             
             # Search for matching whip
             for part_number, spec in self.whip_library.items():

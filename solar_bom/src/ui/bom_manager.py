@@ -507,7 +507,17 @@ class BOMManager(ttk.Frame):
             part_num = self.get_fuse_part_number(row)
             # print(f"Fuse part number: {part_num}")  # Comment out for cleaner console
             return part_num
-        
+
+        # Handle whip cable segments
+        elif 'Whip Cable Segment' in component_type:
+            part_num = self.get_whip_segment_part_number(row, selected_blocks)
+            return part_num
+
+        # Handle extender cable segments  
+        elif 'Extender Cable Segment' in component_type:
+            part_num = self.get_extender_segment_part_number(row, selected_blocks)
+            return part_num
+
         # Other components don't have part numbers yet
         return "N/A"
 
@@ -548,9 +558,12 @@ class BOMManager(ttk.Frame):
                 modules_per_string, module_spec.width_mm, module_spacing_m
             )
             
+            # Get trunk cable size from wiring config
+            trunk_cable_size = getattr(first_block.wiring_config, 'harness_cable_size', '8 AWG')
+
             # Find matching harness
             return bom_generator.find_matching_harness_part_number(
-                num_strings, polarity, string_spacing_ft
+                num_strings, polarity, string_spacing_ft, trunk_cable_size
             )
             
         except Exception as e:
@@ -609,6 +622,68 @@ class BOMManager(ttk.Frame):
             print(f"Error getting fuse part number: {e}")
             import traceback
             traceback.print_exc()
+            return "N/A"
+        
+    def get_whip_segment_part_number(self, row, selected_blocks):
+        """Get whip cable segment part number from library"""
+        try:
+            from ..utils.bom_generator import BOMGenerator
+            bom_generator = BOMGenerator(selected_blocks)
+            
+            component_type = row['Component Type']
+            
+            # Extract polarity from component type
+            polarity = 'positive' if 'Positive' in component_type else 'negative'
+            
+            # Extract length from component type (e.g., "Positive Whip Cable Segment 25ft (8 AWG)")
+            import re
+            length_match = re.search(r'(\d+)ft', component_type)
+            if not length_match:
+                return "N/A"
+            length_ft = int(length_match.group(1))
+            
+            # Extract wire gauge from component type
+            gauge_match = re.search(r'\(([^)]+)\)', component_type)
+            if not gauge_match:
+                return "N/A"
+            wire_gauge = gauge_match.group(1)
+            
+            # Find matching whip part number
+            return bom_generator.find_matching_whip_part_number(wire_gauge, polarity, length_ft)
+            
+        except Exception as e:
+            print(f"Error getting whip segment part number: {e}")
+            return "N/A"
+
+    def get_extender_segment_part_number(self, row, selected_blocks):
+        """Get extender cable segment part number from library"""
+        try:
+            from ..utils.bom_generator import BOMGenerator
+            bom_generator = BOMGenerator(selected_blocks)
+            
+            component_type = row['Component Type']
+            
+            # Extract polarity from component type
+            polarity = 'positive' if 'Positive' in component_type else 'negative'
+            
+            # Extract length from component type (e.g., "Positive Extender Cable Segment 30ft (8 AWG)")
+            import re
+            length_match = re.search(r'(\d+)ft', component_type)
+            if not length_match:
+                return "N/A"
+            length_ft = int(length_match.group(1))
+            
+            # Extract wire gauge from component type
+            gauge_match = re.search(r'\(([^)]+)\)', component_type)
+            if not gauge_match:
+                return "N/A"
+            wire_gauge = gauge_match.group(1)
+            
+            # Find matching extender part number
+            return bom_generator.find_matching_extender_part_number(wire_gauge, polarity, length_ft)
+            
+        except Exception as e:
+            print(f"Error getting extender segment part number: {e}")
             return "N/A"
 
     def open_harness_designer(self):
