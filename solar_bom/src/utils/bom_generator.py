@@ -382,8 +382,11 @@ class BOMGenerator:
                             modules_per_string, module_spec.width_mm, module_spacing_m
                         )
                         
+                        # Get trunk cable size from wiring config
+                        trunk_cable_size = getattr(first_block.wiring_config, 'harness_cable_size', '8 AWG')
+                        
                         return self.find_matching_harness_part_number(
-                            num_strings, polarity, string_spacing_ft
+                            num_strings, polarity, string_spacing_ft, trunk_cable_size
                         )
         
         elif 'Fuse' in component_type:
@@ -394,7 +397,75 @@ class BOMGenerator:
                 rating = int(rating_match.group(1))
                 return self.get_fuse_part_number_by_rating(rating)
         
+        # Handle whip cable segments
+        elif 'Whip Cable Segment' in component_type:
+            return self.get_whip_segment_part_number_from_item(item)
+        
+        # Handle extender cable segments  
+        elif 'Extender Cable Segment' in component_type:
+            return self.get_extender_segment_part_number_from_item(item)
+        
+        # Handle string cable segments (use extender part numbers)
+        elif 'String Cable Segment' in component_type:
+            return self.get_extender_segment_part_number_from_item(item)
+        
         return "N/A"
+    
+    def get_whip_segment_part_number_from_item(self, item):
+        """Get whip cable segment part number from item data"""
+        try:
+            component_type = item['Component Type']
+            
+            # Extract polarity from component type
+            polarity = 'positive' if 'Positive' in component_type else 'negative'
+            
+            # Extract length from component type (e.g., "Positive Whip Cable Segment 25ft (8 AWG)")
+            import re
+            length_match = re.search(r'(\d+)ft', component_type)
+            if not length_match:
+                return "N/A"
+            length_ft = int(length_match.group(1))
+            
+            # Extract wire gauge from component type
+            gauge_match = re.search(r'\(([^)]+)\)', component_type)
+            if not gauge_match:
+                return "N/A"
+            wire_gauge = gauge_match.group(1)
+            
+            # Find matching whip part number
+            return self.find_matching_whip_part_number(wire_gauge, polarity, length_ft)
+            
+        except Exception as e:
+            print(f"Error getting whip segment part number: {e}")
+            return "N/A"
+
+    def get_extender_segment_part_number_from_item(self, item):
+        """Get extender cable segment part number from item data"""
+        try:
+            component_type = item['Component Type']
+            
+            # Extract polarity from component type
+            polarity = 'positive' if 'Positive' in component_type else 'negative'
+            
+            # Extract length from component type (e.g., "Positive Extender Cable Segment 30ft (8 AWG)")
+            import re
+            length_match = re.search(r'(\d+)ft', component_type)
+            if not length_match:
+                return "N/A"
+            length_ft = int(length_match.group(1))
+            
+            # Extract wire gauge from component type
+            gauge_match = re.search(r'\(([^)]+)\)', component_type)
+            if not gauge_match:
+                return "N/A"
+            wire_gauge = gauge_match.group(1)
+            
+            # Find matching extender part number
+            return self.find_matching_extender_part_number(wire_gauge, polarity, length_ft)
+            
+        except Exception as e:
+            print(f"Error getting extender segment part number: {e}")
+            return "N/A"
     
     def generate_detailed_data(self, quantities: Dict[str, Dict[str, Any]]) -> pd.DataFrame:
         """

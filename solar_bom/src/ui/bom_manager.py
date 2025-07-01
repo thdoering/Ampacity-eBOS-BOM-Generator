@@ -528,18 +528,14 @@ class BOMManager(ttk.Frame):
         """Get part number for component based on type"""
         component_type = row['Component Type']
         
-        # print(f"Getting part number for: {component_type}")  # Comment out for cleaner console
-        
         # Handle harnesses
         if 'Harness' in component_type:
             part_num = self.get_harness_part_number(row, selected_blocks)
-            # print(f"Harness part number: {part_num}")  # Comment out for cleaner console
             return part_num
         
         # Handle fuses
         elif 'Fuse' in component_type:
             part_num = self.get_fuse_part_number(row)
-            # print(f"Fuse part number: {part_num}")  # Comment out for cleaner console
             return part_num
 
         # Handle whip cable segments
@@ -549,6 +545,11 @@ class BOMManager(ttk.Frame):
 
         # Handle extender cable segments  
         elif 'Extender Cable Segment' in component_type:
+            part_num = self.get_extender_segment_part_number(row, selected_blocks)
+            return part_num
+
+        # Handle string cable segments (use extender part numbers)
+        elif 'String Cable Segment' in component_type:
             part_num = self.get_extender_segment_part_number(row, selected_blocks)
             return part_num
 
