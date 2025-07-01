@@ -405,15 +405,19 @@ class BOMManager(ttk.Frame):
         # Get checked components for filtering
         checked_components = self.get_checked_components()
 
-        # Generate and export BOM
+        # Generate and export BOM using preview data (which has correct part numbers)
         try:
+            # Get the data that's currently displayed in the preview
+            preview_data = self.get_preview_data_for_export()
+            
             bom_generator = BOMGenerator(selected_blocks)
-            success = bom_generator.export_bom_to_excel(filepath, project_info, checked_components)
+            success = bom_generator.export_bom_to_excel_with_preview_data(filepath, project_info, preview_data)
             
             if success:
                 messagebox.showinfo("Success", f"BOM exported successfully to {filepath}")
             else:
                 messagebox.showerror("Error", "Failed to export BOM")
+
         except PermissionError:
             messagebox.showerror(
                 "Permission Error", 
@@ -443,6 +447,36 @@ class BOMManager(ttk.Frame):
                 checked_components.append(component_info)
         
         return checked_components
+    
+    def get_preview_data_for_export(self):
+        """Get the data currently displayed in the preview for export"""
+        preview_data = []
+        
+        # Get all items from the preview tree
+        for item_id in self.preview_tree.get_children():
+            values = self.preview_tree.item(item_id)['values']
+            
+            # Only include checked items
+            if item_id in self.checked_items and values[0] == '☑':
+                # Convert quantity to appropriate numeric type
+                try:
+                    quantity_str = str(values[4])
+                    if '.' in quantity_str:
+                        quantity = float(quantity_str)
+                    else:
+                        quantity = int(float(quantity_str))
+                except (ValueError, IndexError):
+                    quantity = 0
+                
+                preview_data.append({
+                    'Component Type': values[1],
+                    'Part Number': values[2], 
+                    'Description': values[3],
+                    'Quantity': quantity,
+                    'Unit': values[5]
+                })
+        
+        return preview_data
 
     def on_tree_click(self, event):
         """Handle tree click events for checkbox functionality"""

@@ -315,8 +315,27 @@ class BOMGenerator:
                 'Unit': unit
             })
         
-        # Sort by category then component type
-        summary_data = sorted(summary_data, key=lambda x: (x['Category'], x['Component Type']))
+        # Sort by category then component type, with numerical sorting for segments
+        def sort_key(item):
+            category = item['Category']
+            component_type = item['Component Type']
+            
+            # For segment entries, extract the numeric part for proper numerical sorting
+            if 'Segment' in component_type and 'ft' in component_type:
+                import re
+                # Extract the numeric part from patterns like "Positive Whip Cable Segment 115ft (8 AWG)"
+                match = re.search(r'Segment (\d+)ft', component_type)
+                if match:
+                    length = int(match.group(1))
+                    # Create a sort key that groups by cable type and sorts numerically by length
+                    cable_type = component_type.split(' Segment')[0]  # e.g., "Positive Whip Cable"
+                    return (category, cable_type, length)
+            
+            # For non-segment entries, sort normally
+            return (category, component_type, 0)
+
+        summary_data = sorted(summary_data, key=sort_key)
+
         # Add part numbers to summary data
         for item in summary_data:
             item['Part Number'] = self.get_component_part_number(item)
@@ -552,7 +571,120 @@ class BOMGenerator:
                 except:
                     pass
 
-    
+    def export_bom_to_excel_with_preview_data(self, filepath: str, project_info: Optional[Dict[str, Any]] = None, 
+                                          preview_data: List[Dict] = None) -> bool:
+        """
+        Export BOM to Excel using preview data from UI
+        
+        Args:
+            filepath: Path to save the Excel file
+            project_info: Optional dictionary with project information
+            preview_data: Data from the UI preview with correct part numbers
+            
+        Returns:
+            True if export successful, False otherwise
+        """
+        writer = None
+        try:
+            # Use preview data if provided
+            if preview_data:
+                # Convert preview data to DataFrame
+                summary_data = pd.DataFrame(preview_data)
+                
+                # Add Category column (infer from component type)
+                def get_category(component_type):
+                    if 'Whip Cable Segment' in component_type:
+                        return 'eBOS Segments'
+                    elif 'Extender Cable Segment' in component_type:
+                        return 'Extender Cable Segments'
+                    elif 'String Cable' in component_type:
+                        return 'eBOS'
+                    elif 'Harness' in component_type:
+                        return 'eBOS'
+                    elif 'Fuse' in component_type:
+                        return 'Electrical'
+                    else:
+                        return 'Other'
+                
+                summary_data['Category'] = summary_data['Component Type'].apply(get_category)
+                
+                # Reorder columns to match expected format
+                column_order = ['Category', 'Component Type', 'Part Number', 'Description', 'Quantity', 'Unit']
+                summary_data = summary_data[column_order]
+            else:
+                # Fall back to original method
+                quantities = self.calculate_cable_quantities()
+                summary_data = self.generate_summary_data(quantities)
+            
+            # Generate detailed data (this can still use the original method)
+            quantities = self.calculate_cable_quantities() 
+            detailed_data = self.generate_detailed_data(quantities)
+            
+            # Generate project info if not provided
+            if project_info is None:
+                project_info = self.generate_project_info()
+            
+            # Create Excel writer
+            writer = pd.ExcelWriter(filepath, engine='openpyxl')
+            
+            # Write summary data
+            summary_data.to_excel(writer, sheet_name='BOM Summary', index=False, startrow=10)
+            
+            # Write detailed data  
+            detailed_data.to_excel(writer, sheet_name='Block Details', index=False)
+            
+            # Format the sheets (same as original method)
+            workbook = writer.book
+            summary_sheet = writer.sheets['BOM Summary']
+            
+            # Add project info to summary sheet
+            row = 1
+            summary_sheet.merge_cells(f'A{row}:F{row}')
+            summary_sheet.cell(row=row, column=1, value="Project Information").font = Font(bold=True, size=14)
+            
+            if project_info:
+                for i, (key, value) in enumerate(project_info.items()):
+                    if key == 'System Size (kW DC)' and isinstance(value, (int, float)):
+                        value = round(value, 2)
+                    row = i + 2
+                    summary_sheet.cell(row=row, column=1, value=key).font = Font(bold=True)
+                    summary_sheet.cell(row=row, column=2, value=value)
+            
+            # Add section header for BOM
+            row = 9
+            summary_sheet.merge_cells(f'A{row}:F{row}')
+            summary_sheet.cell(row=row, column=1, value="Bill of Materials").font = Font(bold=True, size=14)
+            
+            # Format sheets
+            self._format_excel_sheet(workbook['BOM Summary'], summary_data, start_row=10)
+            self._format_excel_sheet(workbook['Block Details'], detailed_data)
+            
+            # Add filter
+            summary_sheet.auto_filter.ref = f"A10:F{10 + len(summary_data)}"
+            
+            # Save and open
+            writer.close()
+            writer = None
+            
+            try:
+                os.startfile(filepath)
+            except Exception as e:
+                print(f"File was saved but could not be opened automatically: {str(e)}")
+
+            return True
+            
+        except Exception as e:
+            print(f"Error exporting BOM: {str(e)}")
+            if isinstance(e, PermissionError):
+                raise
+            return False
+        finally:
+            if writer is not None:
+                try:
+                    writer.close()
+                except:
+                    pass
+
     def filter_data_by_checked_components(self, data_df, checked_components, is_detailed=False):
         """Filter DataFrame based on checked components"""
         if not checked_components:
@@ -1042,9 +1174,13 @@ class BOMGenerator:
         # Always use 5ft increment for whip cables, otherwise use the passed-in increment
         actual_increment = 5 if "Whip Cable" in prefix else length_increment
         
-        # Round up to nearest increment
-        rounded_segments = [actual_increment * ((s + actual_increment - 0.1) // actual_increment + 1) 
-                        for s in segments]
+        # Round up to nearest increment, with minimum of 10ft
+        rounded_segments = []
+        for s in segments:
+            rounded_length = actual_increment * ((s + actual_increment - 0.1) // actual_increment + 1)
+            # Ensure minimum length of 10ft
+            rounded_length = max(10, rounded_length)
+            rounded_segments.append(rounded_length)
         
         # Count segments by length
         segment_counts = {}
