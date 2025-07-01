@@ -227,6 +227,33 @@
         "isc": 13.85,
         "max_system_voltage": 1500
       }
+    },
+    "NXT-81-705W": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 27,
+      "strings_per_tracker": 3,
+      "module_spacing_m": 0.01,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 2,
+      "motor_placement_type": "middle_of_string",
+      "motor_string_index": 3,
+      "motor_split_north": 14,
+      "motor_split_south": 13,
+      "module_spec": {
+        "manufacturer": "CSI Solar",
+        "model": "CS7N-705TB-AG",
+        "type": "Bifacial",
+        "length_mm": 2384.0,
+        "width_mm": 1303.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 705.0,
+        "vmp": 40.2,
+        "imp": 17.55,
+        "voc": 48.1,
+        "isc": 18.54,
+        "max_system_voltage": 1500
+      }
     }
   },
   "ZnShine": {

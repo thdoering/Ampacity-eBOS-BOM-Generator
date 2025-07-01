@@ -70,26 +70,66 @@ class TrackerPosition:
         single_string_height = (modules_per_string * module_height + 
                             (modules_per_string - 1) * self.template.module_spacing_m)
 
-        # Create string positions
-        for i in range(self.template.strings_per_tracker):
-            # For strings above motor (all except last string)
-            if i < self.template.strings_per_tracker - 1:
-                y_start = i * single_string_height
-                y_end = y_start + single_string_height
-            else:
-                # Last string goes below motor gap
-                y_start = (i * single_string_height) + self.template.motor_gap_m
-                y_end = y_start + single_string_height
-                
-            string = StringPosition(
-                index=i,
-                positive_source_x=0,  # Left side of torque tube
-                positive_source_y=y_start,  # Top of string
-                negative_source_x=module_width,  # Right side of torque tube
-                negative_source_y=y_end,  # Bottom of string
-                num_modules=modules_per_string
-            )
-            self.strings.append(string)
+        # Handle different motor placement types
+        if self.template.motor_placement_type == "middle_of_string":
+            # Motor is in the middle of a specific string
+            current_y = 0
+            
+            for i in range(self.template.strings_per_tracker):
+                if i + 1 == self.template.motor_string_index:  # This string has the motor (1-based index)
+                    # Calculate split string dimensions
+                    north_modules = self.template.motor_split_north
+                    south_modules = self.template.motor_split_south
+                    
+                    north_height = (north_modules * module_height + 
+                                (north_modules - 1) * self.template.module_spacing_m)
+                    south_height = (south_modules * module_height + 
+                                (south_modules - 1) * self.template.module_spacing_m)
+                    
+                    # This string spans from current_y to current_y + north_height + gap + south_height
+                    string = StringPosition(
+                        index=i,
+                        positive_source_x=0,  # Left side of torque tube
+                        positive_source_y=current_y,  # Top of string
+                        negative_source_x=module_width,  # Right side of torque tube
+                        negative_source_y=current_y + north_height + self.template.motor_gap_m + south_height,  # Bottom of string
+                        num_modules=modules_per_string
+                    )
+                    self.strings.append(string)
+                    current_y += north_height + self.template.motor_gap_m + south_height
+                else:
+                    # Normal string without motor
+                    string = StringPosition(
+                        index=i,
+                        positive_source_x=0,  # Left side of torque tube
+                        positive_source_y=current_y,  # Top of string
+                        negative_source_x=module_width,  # Right side of torque tube
+                        negative_source_y=current_y + single_string_height,  # Bottom of string
+                        num_modules=modules_per_string
+                    )
+                    self.strings.append(string)
+                    current_y += single_string_height
+        else:
+            # Original between_strings logic
+            for i in range(self.template.strings_per_tracker):
+                # For strings above motor (all except last string)
+                if i < self.template.strings_per_tracker - 1:
+                    y_start = i * single_string_height
+                    y_end = y_start + single_string_height
+                else:
+                    # Last string goes below motor gap
+                    y_start = (i * single_string_height) + self.template.motor_gap_m
+                    y_end = y_start + single_string_height
+                    
+                string = StringPosition(
+                    index=i,
+                    positive_source_x=0,  # Left side of torque tube
+                    positive_source_y=y_start,  # Top of string
+                    negative_source_x=module_width,  # Right side of torque tube
+                    negative_source_y=y_end,  # Bottom of string
+                    num_modules=modules_per_string
+                )
+                self.strings.append(string)
 
 @dataclass
 class TrackerTemplate:
@@ -106,6 +146,12 @@ class TrackerTemplate:
     module_spacing_m: float = 0.01  # Default gap between modules
     motor_gap_m: float = 1.0  # Default gap for motor/drive
     motor_position_after_string: int = 0  # Motor position (0 means calculate default)
+    
+    # New motor placement options
+    motor_placement_type: str = "between_strings"  # "between_strings" or "middle_of_string"
+    motor_string_index: int = 1  # Which string (1-based) when middle_of_string
+    motor_split_north: int = 0  # Modules north of motor when middle_of_string  
+    motor_split_south: int = 0  # Modules south of motor when middle_of_string
     
     def validate(self) -> bool:
         """
@@ -126,6 +172,18 @@ class TrackerTemplate:
         
         if self.motor_position_after_string < 0 or self.motor_position_after_string > self.strings_per_tracker:
             raise ValueError("Motor position must be between 0 and strings_per_tracker")
+            
+        # Validate new motor placement fields
+        if self.motor_placement_type not in ["between_strings", "middle_of_string"]:
+            raise ValueError("Motor placement type must be 'between_strings' or 'middle_of_string'")
+            
+        if self.motor_placement_type == "middle_of_string":
+            if self.motor_string_index < 1 or self.motor_string_index > self.strings_per_tracker:
+                raise ValueError("Motor string index must be between 1 and strings_per_tracker")
+            if self.motor_split_north < 0 or self.motor_split_south < 0:
+                raise ValueError("Motor split values cannot be negative")
+            if self.motor_split_north + self.motor_split_south != self.modules_per_string:
+                raise ValueError("Motor split north + south must equal modules_per_string")
             
         return True
     
@@ -173,19 +231,25 @@ class TrackerTemplate:
             # Tracker width is module width
             total_width = module_width
         
-        # Calculate total length including all strings and motor gap
-        motor_position = self.get_motor_position()
-        strings_above_motor = motor_position
-        strings_below_motor = self.strings_per_tracker - motor_position
-
-        if strings_below_motor > 0:
-            # Motor gap is only added when there are strings below motor
-            total_length = (single_string_length * strings_above_motor) + \
-                        self.motor_gap_m + \
-                        (single_string_length * strings_below_motor)
+        # Calculate total length based on motor placement type
+        if self.motor_placement_type == "middle_of_string":
+            # Motor is in the middle of a specific string
+            # All strings have same length, but one string has a motor gap in it
+            total_length = single_string_length * self.strings_per_tracker + self.motor_gap_m
         else:
-            # No strings below motor, no gap needed
-            total_length = single_string_length * strings_above_motor
+            # Original between_strings logic
+            motor_position = self.get_motor_position()
+            strings_above_motor = motor_position
+            strings_below_motor = self.strings_per_tracker - motor_position
+
+            if strings_below_motor > 0:
+                # Motor gap is only added when there are strings below motor
+                total_length = (single_string_length * strings_above_motor) + \
+                            self.motor_gap_m + \
+                            (single_string_length * strings_below_motor)
+            else:
+                # No strings below motor, no gap needed
+                total_length = single_string_length * strings_above_motor
                         
         return (total_length, total_width)
     
