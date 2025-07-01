@@ -123,13 +123,16 @@ class BlockConfigurator(ttk.Frame):
         self.row_spacing_var = tk.StringVar(value="19.7")  # 6m in feet
         row_spacing_entry = ttk.Entry(spacing_frame, textvariable=self.row_spacing_var)
         row_spacing_entry.grid(row=0, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
-        row_spacing_entry.bind('<FocusOut>', self.update_block_row_spacing)
-        row_spacing_entry.bind('<Return>', self.update_block_row_spacing)
+        row_spacing_entry.bind('<FocusOut>', self.update_gcr_from_row_spacing)
+        row_spacing_entry.bind('<Return>', self.update_gcr_from_row_spacing)
 
-        # GCR (Ground Coverage Ratio) - calculated
+        # GCR (Ground Coverage Ratio) - input field
         ttk.Label(spacing_frame, text="GCR:").grid(row=0, column=2, padx=5, pady=2, sticky=tk.W)
-        self.gcr_label = ttk.Label(spacing_frame, text="--")
-        self.gcr_label.grid(row=0, column=3, padx=5, pady=2, sticky=tk.W)
+        self.gcr_var = tk.StringVar(value="--")
+        gcr_entry = ttk.Entry(spacing_frame, textvariable=self.gcr_var, width=10)
+        gcr_entry.grid(row=0, column=3, padx=5, pady=2, sticky=(tk.W, tk.E))
+        gcr_entry.bind('<FocusOut>', self.update_row_spacing_from_gcr)
+        gcr_entry.bind('<Return>', self.update_row_spacing_from_gcr)
 
         # N/S Tracker Spacing
         ttk.Label(spacing_frame, text="N/S Tracker Spacing (m):").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
@@ -966,7 +969,13 @@ class BlockConfigurator(ttk.Frame):
             messagebox.showwarning("Invalid Position", 
                 "Cannot place tracker here due to device placement restrictions")
             return
-        
+
+        # Check module consistency before placement
+        can_place, error_msg = self.check_module_consistency_before_placement(self.drag_template)
+        if not can_place:
+            messagebox.showwarning("Module Inconsistency", error_msg)
+            return
+
         # Save state before adding tracker
         self._push_state("Before place tracker")
         
@@ -1173,25 +1182,40 @@ class BlockConfigurator(ttk.Frame):
         return feet / 3.28084
     
     def calculate_gcr(self):
-        """Calculate Ground Coverage Ratio"""
-        if not self.current_block:
-            return
-            
-        if not self.blocks[self.current_block].tracker_template:
-            return
-            
-        if not self.blocks[self.current_block].tracker_template.module_spec:
-            return
-            
+        """Calculate and display GCR based on current row spacing and module length"""
         try:
-            template = self.blocks[self.current_block].tracker_template
-            module_length = template.module_spec.length_mm / 1000  # convert to meters
-            row_spacing = float(self.row_spacing_var.get())
-            row_spacing_m = self.ft_to_m(row_spacing)
-            gcr = module_length / row_spacing_m
-            self.gcr_label.config(text=f"{gcr:.3f}")
-        except (ValueError, ZeroDivisionError, AttributeError) as e:
-            self.gcr_label.config(text="--")
+            if not self.current_block or self.current_block not in self.blocks:
+                self.updating_ui = True
+                self.gcr_var.set("--")
+                self.updating_ui = False
+                return
+                
+            # Get module length from templates
+            module_length_m, error = self.get_module_length_from_templates()
+            if error:
+                self.updating_ui = True
+                self.gcr_var.set("--")
+                self.updating_ui = False
+                return
+                
+            # Get current row spacing
+            row_spacing_m = self.blocks[self.current_block].row_spacing_m
+            
+            # Calculate GCR
+            gcr = module_length_m / row_spacing_m
+            
+            # Update GCR display
+            self.updating_ui = True
+            self.gcr_var.set(f"{gcr:.3f}")
+            self.updating_ui = False
+            
+            # Update block's GCR value
+            self.blocks[self.current_block].gcr = gcr
+            
+        except (ValueError, ZeroDivisionError, AttributeError):
+            self.updating_ui = True
+            self.gcr_var.set("--")
+            self.updating_ui = False
 
     def delete_selected_tracker(self, event=None):
         """Delete the currently selected tracker"""
@@ -1886,7 +1910,7 @@ class BlockConfigurator(ttk.Frame):
                 self.blocks[self.current_block].row_spacing_m = row_spacing_m
                 
             # Update GCR after changing row spacing
-            self.calculate_gcr()
+            self.update_gcr_from_row_spacing()
             
             # Redraw the block
             self.draw_block()
@@ -1984,3 +2008,164 @@ class BlockConfigurator(ttk.Frame):
         
         for block_id in sorted_block_ids:
             self.block_listbox.insert(tk.END, block_id)
+
+    def get_module_length_from_templates(self):
+        """Get module length from available templates and check for consistency"""
+        if not self.tracker_templates:
+            return None, "No tracker templates available"
+        
+        # Get all unique module lengths from available templates
+        module_lengths = set()
+        for template in self.tracker_templates.values():
+            if template.module_spec and template.module_spec.length_mm:
+                module_lengths.add(template.module_spec.length_mm)
+        
+        if not module_lengths:
+            return None, "No module specifications found in templates"
+        
+        if len(module_lengths) > 1:
+            # Multiple different module lengths - warn user
+            lengths_ft = [f"{length/304.8:.2f}ft" for length in module_lengths]
+            warning_msg = f"Warning: Templates have different module lengths: {', '.join(lengths_ft)}"
+            messagebox.showwarning("Module Length Inconsistency", warning_msg)
+            return None, "Inconsistent module lengths in templates"
+        
+        # All templates have the same module length
+        module_length_mm = list(module_lengths)[0]
+        return module_length_mm / 1000, None  # Convert to meters
+    
+    def update_gcr_from_row_spacing(self, event=None, *args):
+        """Update GCR field when row spacing changes"""
+        # Return early if we're programmatically updating the UI
+        if hasattr(self, 'updating_ui') and self.updating_ui:
+            return
+        
+        try:
+            # Get row spacing value and convert feet to meters
+            row_spacing_ft = float(self.row_spacing_var.get())
+            if row_spacing_ft <= 0:
+                messagebox.showerror("Error", "Row spacing must be a positive number")
+                return
+                
+            row_spacing_m = self.ft_to_m(row_spacing_ft)
+            
+            # Get module length from templates
+            module_length_m, error = self.get_module_length_from_templates()
+            if error:
+                # Clear GCR field if we can't calculate
+                self.updating_ui = True
+                self.gcr_var.set("--")
+                self.updating_ui = False
+                return
+                
+            # Calculate GCR
+            gcr = module_length_m / row_spacing_m
+            
+            # Update GCR field
+            self.updating_ui = True
+            self.gcr_var.set(f"{gcr:.3f}")
+            self.updating_ui = False
+            
+            # Update current block if selected
+            if self.current_block:
+                self.blocks[self.current_block].row_spacing_m = row_spacing_m
+                self.blocks[self.current_block].gcr = gcr
+                
+                # Check if this is the first block and set project default
+                if len(self.blocks) == 1:
+                    self.set_project_default_row_spacing(row_spacing_m)
+                
+                # Redraw the block
+                self.draw_block()
+                
+        except ValueError:
+            messagebox.showerror("Error", "Row spacing must be a valid number")
+
+    def update_row_spacing_from_gcr(self, event=None, *args):
+        """Update row spacing field when GCR changes"""
+        # Return early if we're programmatically updating the UI
+        if hasattr(self, 'updating_ui') and self.updating_ui:
+            return
+        
+        try:
+            # Get GCR value
+            gcr_str = self.gcr_var.get().strip()
+            if gcr_str == "--":
+                return
+                
+            gcr = float(gcr_str)
+            if gcr <= 0 or gcr > 1.0:
+                messagebox.showerror("Error", "GCR must be between 0 and 1.0")
+                return
+                
+            # Get module length from templates
+            module_length_m, error = self.get_module_length_from_templates()
+            if error:
+                messagebox.showerror("Error", f"Cannot calculate row spacing: {error}")
+                return
+                
+            # Calculate row spacing
+            row_spacing_m = module_length_m / gcr
+            row_spacing_ft = self.m_to_ft(row_spacing_m)
+            
+            # Update row spacing field
+            self.updating_ui = True
+            self.row_spacing_var.set(f"{row_spacing_ft:.1f}")
+            self.updating_ui = False
+            
+            # Update current block if selected
+            if self.current_block:
+                self.blocks[self.current_block].row_spacing_m = row_spacing_m
+                self.blocks[self.current_block].gcr = gcr
+                
+                # Check if this is the first block and set project default
+                if len(self.blocks) == 1:
+                    self.set_project_default_row_spacing(row_spacing_m)
+                
+                # Redraw the block
+                self.draw_block()
+                
+        except ValueError:
+            messagebox.showerror("Error", "GCR must be a valid number")
+
+    def set_project_default_row_spacing(self, row_spacing_m):
+        """Set the project default row spacing and auto-save"""
+        if self.current_project:
+            # Update this instance's project reference
+            self.current_project.default_row_spacing_m = row_spacing_m
+            self.current_project.update_modified_date()
+            
+            # Also update the main app's project reference to keep them in sync
+            main_app = self.winfo_toplevel()
+            if hasattr(main_app, 'current_project') and main_app.current_project:
+                main_app.current_project.default_row_spacing_m = row_spacing_m
+                main_app.current_project.update_modified_date()
+                
+                # Auto-save the project
+                if hasattr(main_app, 'save_project'):
+                    main_app.save_project()
+
+    def check_module_consistency_before_placement(self, template):
+        """Check if placing this template would create module inconsistency"""
+        if not template or not template.module_spec:
+            return False, "Template has no module specification"
+        
+        # Get current module length from existing templates
+        current_module_length_m, error = self.get_module_length_from_templates()
+        
+        # If no existing templates, this is fine
+        if error:
+            return True, None
+        
+        # Check if new template matches existing ones
+        new_module_length_m = template.module_spec.length_mm / 1000
+        
+        if abs(current_module_length_m - new_module_length_m) > 0.001:  # Small tolerance for floating point
+            current_ft = current_module_length_m * 3.28084
+            new_ft = new_module_length_m * 3.28084
+            warning_msg = (f"This template has a different module length ({new_ft:.2f}ft) "
+                        f"than existing templates ({current_ft:.2f}ft). "
+                        f"This will cause inconsistent GCR calculations.")
+            return False, warning_msg
+        
+        return True, None

@@ -244,13 +244,7 @@ class ProjectDashboard(ttk.Frame):
         dialog = ProjectDialog(self.parent, title="Create New Project")
         
         if dialog.result:
-            # Unpack the result tuple with row spacing
-            if len(dialog.result) == 6:  # Check if row spacing was included
-                name, description, client, location, notes, row_spacing_m = dialog.result
-            else:
-                # Fallback for backward compatibility
-                name, description, client, location, notes = dialog.result
-                row_spacing_m = 6.0  # Default to 6m
+            name, description, client, location, notes, row_spacing_m = dialog.result
             
             # Create and save the project
             project = self.project_manager.create_project(
@@ -398,9 +392,6 @@ class ProjectDialog(tk.Toplevel):
                 self.location_var.set(self.original_project.metadata.location)
             if self.original_project.metadata.notes:
                 self.notes_var.set(self.original_project.metadata.notes)
-            # Set row spacing in feet
-            row_spacing_ft = self.m_to_ft(self.original_project.default_row_spacing_m)
-            self.row_spacing_var.set(str(round(row_spacing_ft, 1)))
         
         # Center dialog
         self.geometry("400x400")
@@ -445,22 +436,11 @@ class ProjectDialog(tk.Toplevel):
         ttk.Entry(main_frame, textvariable=self.location_var, width=40).grid(
             row=3, column=1, padx=5, pady=5, sticky=(tk.W, tk.E))
         
-        # Row Spacing (add this section)
-        ttk.Label(main_frame, text="Row Spacing (ft):").grid(row=4, column=0, padx=5, pady=5, sticky=tk.W)
-        # Default to 19.7 feet (6 meters) or the project's current value if editing
-        default_value = "19.7"
-        if project and hasattr(project, 'default_row_spacing_m'):
-            default_value = str(self.m_to_ft(project.default_row_spacing_m))
-            
-        self.row_spacing_var = tk.StringVar(value=default_value)
-        ttk.Entry(main_frame, textvariable=self.row_spacing_var, width=40).grid(
-            row=4, column=1, padx=5, pady=5, sticky=(tk.W, tk.E))
-        
         # Notes
-        ttk.Label(main_frame, text="Notes:").grid(row=5, column=0, padx=5, pady=5, sticky=tk.NW)
+        ttk.Label(main_frame, text="Notes:").grid(row=4, column=0, padx=5, pady=5, sticky=tk.NW)
         self.notes_var = tk.StringVar(value=project.metadata.notes if project else "")
         notes_entry = tk.Text(main_frame, width=40, height=5)
-        notes_entry.grid(row=5, column=1, padx=5, pady=5, sticky=(tk.W, tk.E))
+        notes_entry.grid(row=4, column=1, padx=5, pady=5, sticky=(tk.W, tk.E))
         if project and project.metadata.notes:
             notes_entry.insert('1.0', project.metadata.notes)
         
@@ -484,25 +464,13 @@ class ProjectDialog(tk.Toplevel):
             messagebox.showerror("Error", "Project name is required")
             return
             
-        # Validate row spacing
-        try:
-            row_spacing_ft = float(self.row_spacing_var.get().strip())
-            if row_spacing_ft <= 0:
-                messagebox.showerror("Error", "Row spacing must be a positive number")
-                return
-            row_spacing_m = self.ft_to_m(row_spacing_ft)
-        except ValueError:
-            messagebox.showerror("Error", "Row spacing must be a valid number")
-            return
-            
         # Get values and store result
         self.result = (
             name,
             self.desc_var.get().strip(),
             self.client_var.get().strip(),
             self.location_var.get().strip(),
-            notes_entry.get('1.0', 'end-1c').strip(),
-            row_spacing_m  # Add row spacing to result
+            notes_entry.get('1.0', 'end-1c').strip()
         )
         
         self.destroy()

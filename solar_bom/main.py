@@ -372,13 +372,8 @@ class SolarBOMApplication:
             from src.utils.project_manager import ProjectManager
             project_manager = ProjectManager()
             
-            # Unpack the result tuple with the new row spacing
-            if len(dialog.result) >= 6:  # Check if row spacing was included
-                name, description, client, location, notes, row_spacing_m = dialog.result
-            else:
-                # Fallback for backward compatibility
-                name, description, client, location, notes = dialog.result
-                row_spacing_m = 6.0  # Default to 6m
+            # Unpack the result tuple (no row spacing)
+            name, description, client, location, notes = dialog.result
             
             # Create the project
             project = project_manager.create_project(
@@ -389,8 +384,7 @@ class SolarBOMApplication:
                 notes=notes
             )
             
-            # Set default row spacing
-            project.default_row_spacing_m = row_spacing_m
+            # Don't set default row spacing here - it will be set by the first block
             
             if project_manager.save_project(project):
                 messagebox.showinfo("Success", f"Project '{name}' created successfully")
