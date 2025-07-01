@@ -807,8 +807,8 @@ class BlockConfigurator(ttk.Frame):
         }
         return thickness_map.get(wire_gauge, 2.0)
 
-    def draw_tracker(self, x, y, template, tag=None):
-        """Draw a tracker on the canvas with detailed module layout.
+    def draw_tracker(self, x, y, template, tag=''):
+        """Draw a single tracker at given position
         x and y are in canvas coordinates (already scaled and with padding)"""
         if not template:
             return
@@ -827,15 +827,6 @@ class BlockConfigurator(ttk.Frame):
         # Create group tag for all elements
         group_tag = tag if tag else f'tracker_{x}_{y}'
         
-        # Calculate number of modules
-        total_modules = template.modules_per_string * template.strings_per_tracker
-        modules_per_string = template.modules_per_string
-        motor_position = template.get_motor_position()
-        strings_above_motor = motor_position
-        strings_below_motor = template.strings_per_tracker - motor_position
-        modules_above_motor = modules_per_string * strings_above_motor
-        modules_below_motor = modules_per_string * strings_below_motor
-
         # Draw torque tube through center
         self.canvas.create_line(
             x + module_width * scale/2, y,
@@ -843,38 +834,97 @@ class BlockConfigurator(ttk.Frame):
             width=3, fill='gray', tags=group_tag
         )
 
-        # Draw all modules
-        y_pos = y
-        modules_drawn = 0
-        
-        # Draw modules above motor
-        for i in range(modules_above_motor):
-            self.canvas.create_rectangle(
-                x, y_pos,
-                x + module_width * scale, y_pos + module_height * scale,
-                fill='lightblue', outline='blue', tags=group_tag
-            )
-            modules_drawn += 1
-            y_pos += (module_height + template.module_spacing_m) * scale
+        # Handle different motor placement types
+        if template.motor_placement_type == "middle_of_string":
+            # Motor is in the middle of a specific string
+            current_y = y
+            
+            for string_idx in range(template.strings_per_tracker):
+                if string_idx + 1 == template.motor_string_index:  # This string has the motor (1-based index)
+                    # Draw north modules
+                    for i in range(template.motor_split_north):
+                        self.canvas.create_rectangle(
+                            x, current_y,
+                            x + module_width * scale, current_y + module_height * scale,
+                            fill='lightblue', outline='blue', tags=group_tag
+                        )
+                        current_y += (module_height + template.module_spacing_m) * scale
+                    
+                    # Draw motor gap with red circle
+                    motor_y = current_y
+                    gap_height = template.motor_gap_m * scale
+                    circle_radius = min(gap_height / 3, module_width * scale / 4)
+                    circle_center_x = x + module_width * scale / 2
+                    circle_center_y = motor_y + gap_height / 2
+                    
+                    self.canvas.create_oval(
+                        circle_center_x - circle_radius, circle_center_y - circle_radius,
+                        circle_center_x + circle_radius, circle_center_y + circle_radius,
+                        fill='red', outline='darkred', width=2, tags=group_tag
+                    )
+                    current_y += gap_height
+                    
+                    # Draw south modules
+                    for i in range(template.motor_split_south):
+                        self.canvas.create_rectangle(
+                            x, current_y,
+                            x + module_width * scale, current_y + module_height * scale,
+                            fill='lightblue', outline='blue', tags=group_tag
+                        )
+                        current_y += (module_height + template.module_spacing_m) * scale
+                else:
+                    # Draw normal string without motor
+                    for i in range(template.modules_per_string):
+                        self.canvas.create_rectangle(
+                            x, current_y,
+                            x + module_width * scale, current_y + module_height * scale,
+                            fill='lightblue', outline='blue', tags=group_tag
+                        )
+                        current_y += (module_height + template.module_spacing_m) * scale
+        else:
+            # Original between_strings logic
+            modules_per_string = template.modules_per_string
+            motor_position = template.get_motor_position()
+            strings_above_motor = motor_position
+            strings_below_motor = template.strings_per_tracker - motor_position
+            modules_above_motor = modules_per_string * strings_above_motor
+            modules_below_motor = modules_per_string * strings_below_motor
 
-        # Draw motor (only if there are strings below)
-        if strings_below_motor > 0:
-            motor_y = y_pos
-            self.canvas.create_oval(
-                x + module_width * scale/2 - 5, motor_y - 5,
-                x + module_width * scale/2 + 5, motor_y + 5,
-                fill='red', tags=group_tag
-            )
-            y_pos += template.motor_gap_m * scale
+            # Draw all modules
+            y_pos = y
+            
+            # Draw modules above motor
+            for i in range(modules_above_motor):
+                self.canvas.create_rectangle(
+                    x, y_pos,
+                    x + module_width * scale, y_pos + module_height * scale,
+                    fill='lightblue', outline='blue', tags=group_tag
+                )
+                y_pos += (module_height + template.module_spacing_m) * scale
 
-        # Draw modules below motor
-        for i in range(modules_below_motor):
-            self.canvas.create_rectangle(
-                x, y_pos,
-                x + module_width * scale, y_pos + module_height * scale,
-                fill='lightblue', outline='blue', tags=group_tag
-            )
-            y_pos += (module_height + template.module_spacing_m) * scale
+            # Draw motor (only if there are strings below)
+            if strings_below_motor > 0:
+                motor_y = y_pos
+                gap_height = template.motor_gap_m * scale
+                circle_radius = min(gap_height / 3, module_width * scale / 4)
+                circle_center_x = x + module_width * scale / 2
+                circle_center_y = motor_y + gap_height / 2
+                
+                self.canvas.create_oval(
+                    circle_center_x - circle_radius, circle_center_y - circle_radius,
+                    circle_center_x + circle_radius, circle_center_y + circle_radius,
+                    fill='red', outline='darkred', width=2, tags=group_tag
+                )
+                y_pos += gap_height
+
+            # Draw modules below motor
+            for i in range(modules_below_motor):
+                self.canvas.create_rectangle(
+                    x, y_pos,
+                    x + module_width * scale, y_pos + module_height * scale,
+                    fill='lightblue', outline='blue', tags=group_tag
+                )
+                y_pos += (module_height + template.module_spacing_m) * scale
 
     def get_canvas_scale(self):
         """Return current scale factor (pixels per meter)"""
@@ -1049,15 +1099,20 @@ class BlockConfigurator(ttk.Frame):
                                 )
                                 
                                 template = TrackerTemplate(
-                                    template_name=template_key,
-                                    module_spec=module_spec,
-                                    module_orientation=ModuleOrientation(template_data.get('module_orientation', ModuleOrientation.PORTRAIT.value)),
-                                    modules_per_string=template_data.get('modules_per_string', 28),
-                                    strings_per_tracker=template_data.get('strings_per_tracker', 2),
-                                    module_spacing_m=template_data.get('module_spacing_m', 0.01),
-                                    motor_gap_m=template_data.get('motor_gap_m', 1.0),
-                                    motor_position_after_string=template_data.get('motor_position_after_string', 0)
-                                )
+                                template_name=template_key,
+                                module_spec=module_spec,
+                                module_orientation=ModuleOrientation(template_data.get('module_orientation', ModuleOrientation.PORTRAIT.value)),
+                                modules_per_string=template_data.get('modules_per_string', 28),
+                                strings_per_tracker=template_data.get('strings_per_tracker', 2),
+                                module_spacing_m=template_data.get('module_spacing_m', 0.01),
+                                motor_gap_m=template_data.get('motor_gap_m', 1.0),
+                                motor_position_after_string=template_data.get('motor_position_after_string', 0),
+                                # New motor placement fields with backward compatibility
+                                motor_placement_type=template_data.get('motor_placement_type', 'between_strings'),
+                                motor_string_index=template_data.get('motor_string_index', 1),
+                                motor_split_north=template_data.get('motor_split_north', 14),
+                                motor_split_south=template_data.get('motor_split_south', 14)
+                            )
                                 
                                 self.tracker_templates[template_key] = template
                             except Exception as e:
@@ -1092,7 +1147,12 @@ class BlockConfigurator(ttk.Frame):
                                 strings_per_tracker=template_data.get('strings_per_tracker', 2),
                                 module_spacing_m=template_data.get('module_spacing_m', 0.01),
                                 motor_gap_m=template_data.get('motor_gap_m', 1.0),
-                                motor_position_after_string=template_data.get('motor_position_after_string', 0)
+                                motor_position_after_string=template_data.get('motor_position_after_string', 0),
+                                # New motor placement fields with backward compatibility
+                                motor_placement_type=template_data.get('motor_placement_type', 'between_strings'),
+                                motor_string_index=template_data.get('motor_string_index', 1),
+                                motor_split_north=template_data.get('motor_split_north', 14),
+                                motor_split_south=template_data.get('motor_split_south', 14)
                             )
                             
                             self.tracker_templates[template_key] = template
