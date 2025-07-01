@@ -440,7 +440,10 @@ class TrackerTemplateCreator(ttk.Frame):
         if not values:
             return  # This is a manufacturer node
             
-        template_key = values[0]
+        # Get template key from mapping (similar to toggle_item_enabled)
+        if item not in self.tree_item_to_template:
+            return
+        template_key = self.tree_item_to_template[item]
         template_data = self.templates[template_key]
         
         self.name_var.set(template_key.split(' - ', 1)[-1] if ' - ' in template_key else template_key)
