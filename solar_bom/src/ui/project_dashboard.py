@@ -244,7 +244,7 @@ class ProjectDashboard(ttk.Frame):
         dialog = ProjectDialog(self.parent, title="Create New Project")
         
         if dialog.result:
-            name, description, client, location, notes, row_spacing_m = dialog.result
+            name, description, client, location, notes = dialog.result
             
             # Create and save the project
             project = self.project_manager.create_project(
@@ -254,9 +254,6 @@ class ProjectDashboard(ttk.Frame):
                 location=location,
                 notes=notes
             )
-            
-            # Set default row spacing
-            project.default_row_spacing_m = row_spacing_m
             
             if self.project_manager.save_project(project):
                 messagebox.showinfo("Success", f"Project '{name}' created successfully")
