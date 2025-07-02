@@ -234,8 +234,8 @@ class SolarBOMApplication:
                                 default_split_north = modules_per_string // 2
                                 default_split_south = modules_per_string - default_split_north
                                 
-                                tracker_templates[name] = TrackerTemplate(
-                                    template_name=name,
+                                tracker_templates[unique_name] = TrackerTemplate(
+                                    template_name=unique_name,
                                     module_spec=module_spec,
                                     module_orientation=ModuleOrientation(template_data.get('module_orientation', ModuleOrientation.PORTRAIT.value)),
                                     modules_per_string=modules_per_string,
@@ -306,39 +306,43 @@ class SolarBOMApplication:
             inverters = {}
             try:
                 inverters_data = load_json_file('data/inverters.json')
-                for name, inverter_data in inverters_data.items():
-                    # Create proper inverter object here (simplified)
-                    from src.models.inverter import InverterSpec, MPPTChannel, MPPTConfig
-                    
-                    # Create MPPT channels
-                    channels = []
-                    for ch_data in inverter_data.get('mppt_channels', []):
-                        channel = MPPTChannel(
-                            max_input_current=float(ch_data.get('max_input_current', 10)),
-                            min_voltage=float(ch_data.get('min_voltage', 200)),
-                            max_voltage=float(ch_data.get('max_voltage', 1000)),
-                            max_power=float(ch_data.get('max_power', 5000)),
-                            num_string_inputs=int(ch_data.get('num_string_inputs', 2))
+                # Add this check to make sure we actually got data
+                if inverters_data:
+                    for name, inverter_data in inverters_data.items():
+                        # Create proper inverter object here (simplified)
+                        from src.models.inverter import InverterSpec, MPPTChannel, MPPTConfig
+                        
+                        # Create MPPT channels
+                        channels = []
+                        for ch_data in inverter_data.get('mppt_channels', []):
+                            channel = MPPTChannel(
+                                max_input_current=float(ch_data.get('max_input_current', 10)),
+                                min_voltage=float(ch_data.get('min_voltage', 200)),
+                                max_voltage=float(ch_data.get('max_voltage', 1000)),
+                                max_power=float(ch_data.get('max_power', 5000)),
+                                num_string_inputs=int(ch_data.get('num_string_inputs', 2))
+                            )
+                            channels.append(channel)
+                        
+                        # Create inverter
+                        inverters[name] = InverterSpec(
+                            manufacturer=inverter_data.get('manufacturer', 'Unknown'),
+                            model=inverter_data.get('model', 'Unknown'),
+                            rated_power=float(inverter_data.get('rated_power', 10.0)),
+                            max_efficiency=float(inverter_data.get('max_efficiency', 98.0)),
+                            mppt_channels=channels,
+                            mppt_configuration=MPPTConfig(inverter_data.get('mppt_configuration', 'Independent')),
+                            max_dc_voltage=float(inverter_data.get('max_dc_voltage', 1000)),
+                            startup_voltage=float(inverter_data.get('startup_voltage', 200)),
+                            nominal_ac_voltage=float(inverter_data.get('nominal_ac_voltage', 400.0)),
+                            max_ac_current=float(inverter_data.get('max_ac_current', 40.0)),
+                            power_factor=float(inverter_data.get('power_factor', 0.99)),
+                            dimensions_mm=inverter_data.get('dimensions_mm', (1000, 600, 300)),
+                            weight_kg=float(inverter_data.get('weight_kg', 75.0)),
+                            ip_rating=inverter_data.get('ip_rating', "IP65")
                         )
-                        channels.append(channel)
-                    
-                    # Create inverter
-                    inverters[name] = InverterSpec(
-                        manufacturer=inverter_data.get('manufacturer', 'Unknown'),
-                        model=inverter_data.get('model', 'Unknown'),
-                        rated_power=float(inverter_data.get('rated_power', 10.0)),
-                        max_efficiency=float(inverter_data.get('max_efficiency', 98.0)),
-                        mppt_channels=channels,
-                        mppt_configuration=MPPTConfig(inverter_data.get('mppt_configuration', 'Independent')),
-                        max_dc_voltage=float(inverter_data.get('max_dc_voltage', 1000)),
-                        startup_voltage=float(inverter_data.get('startup_voltage', 200)),
-                        nominal_ac_voltage=float(inverter_data.get('nominal_ac_voltage', 400.0)),
-                        max_ac_current=float(inverter_data.get('max_ac_current', 40.0)),
-                        power_factor=float(inverter_data.get('power_factor', 0.99)),
-                        dimensions_mm=inverter_data.get('dimensions_mm', (1000, 600, 300)),
-                        weight_kg=float(inverter_data.get('weight_kg', 75.0)),
-                        ip_rating=inverter_data.get('ip_rating', "IP65")
-                    )
+                else:
+                    print("No inverters.json file found or empty - using empty inverter list")
             except Exception as e:
                 print(f"Error loading inverters: {str(e)}")
             
@@ -364,6 +368,10 @@ class SolarBOMApplication:
                     block_configurator.block_listbox.insert(tk.END, block_id)
 
             update_bom_blocks()
+        
+        # Set up the callback to keep blocks synchronized with project
+        # ADD THIS LINE HERE (outside and after the function definition):
+        block_configurator.on_blocks_changed = update_bom_blocks
         
         # Add status bar with project info
         status_frame = ttk.Frame(self.main_frame, relief=tk.SUNKEN, borderwidth=1)

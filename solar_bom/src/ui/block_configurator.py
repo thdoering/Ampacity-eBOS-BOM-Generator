@@ -1056,7 +1056,7 @@ class BlockConfigurator(ttk.Frame):
             try:
                 with open(template_path, 'r') as f:
                     data = json.load(f)
-                
+
                 # Load all templates first
                 all_templates = {}
                 
