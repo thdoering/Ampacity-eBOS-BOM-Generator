@@ -1916,58 +1916,109 @@ class WiringConfigurator(tk.Toplevel):
                 module_height = template.module_spec.length_mm / 1000
                 module_width = template.module_spec.width_mm / 1000
                 
+            # Get physical dimensions for torque tube
+            dims = template.get_physical_dimensions()
+            
             # Draw torque tube through center
             self.canvas.create_line(
                 x_base + module_width * scale/2, y_base,
-                x_base + module_width * scale/2, y_base + (module_height * template.modules_per_string + 
-                    template.module_spacing_m * (template.modules_per_string - 1) + 
-                    template.motor_gap_m) * scale,
+                x_base + module_width * scale/2, y_base + dims[1] * scale,
                 width=3, fill='gray'
             )
             
-            # Calculate number of modules
-            total_modules = template.modules_per_string * template.strings_per_tracker
-            modules_per_string = template.modules_per_string
-            motor_position = template.get_motor_position()
-            strings_above_motor = motor_position
-            strings_below_motor = template.strings_per_tracker - motor_position
-            modules_above_motor = modules_per_string * strings_above_motor
-            modules_below_motor = modules_per_string * strings_below_motor
-            
-            # Draw all modules
-            y_pos = y_base
-            modules_drawn = 0
-            
-            # Draw modules above motor
-            for i in range(modules_above_motor):
-                self.canvas.create_rectangle(
-                    x_base, y_pos,
-                    x_base + module_width * scale, 
-                    y_pos + module_height * scale,
-                    fill='lightblue', outline='blue'
-                )
-                modules_drawn += 1
-                y_pos += (module_height + template.module_spacing_m) * scale
-            
-            # Draw motor (only if there are strings below)
-            if strings_below_motor > 0:
-                motor_y = y_pos
-                self.canvas.create_oval(
-                    x_base + module_width * scale/2 - 5, motor_y - 5,
-                    x_base + module_width * scale/2 + 5, motor_y + 5,
-                    fill='red'
-                )
-                y_pos += template.motor_gap_m * scale
-            
-            # Draw modules below motor
-            for i in range(modules_below_motor):
-                self.canvas.create_rectangle(
-                    x_base, y_pos,
-                    x_base + module_width * scale,
-                    y_pos + module_height * scale,
-                    fill='lightblue', outline='blue'
-                )
-                y_pos += (module_height + template.module_spacing_m) * scale
+            # Handle different motor placement types
+            if template.motor_placement_type == "middle_of_string":
+                # Motor is in the middle of a specific string
+                current_y = y_base
+                
+                for string_idx in range(template.strings_per_tracker):
+                    if string_idx + 1 == template.motor_string_index:  # This string has the motor (1-based index)
+                        # Draw north modules
+                        for i in range(template.motor_split_north):
+                            self.canvas.create_rectangle(
+                                x_base, current_y,
+                                x_base + module_width * scale, current_y + module_height * scale,
+                                fill='lightblue', outline='blue'
+                            )
+                            current_y += (module_height + template.module_spacing_m) * scale
+                        
+                        # Draw motor gap with red circle
+                        motor_y = current_y
+                        gap_height = template.motor_gap_m * scale
+                        circle_radius = min(gap_height / 3, module_width * scale / 4)
+                        circle_center_x = x_base + module_width * scale / 2
+                        circle_center_y = motor_y + gap_height / 2
+                        
+                        self.canvas.create_oval(
+                            circle_center_x - circle_radius, circle_center_y - circle_radius,
+                            circle_center_x + circle_radius, circle_center_y + circle_radius,
+                            fill='red', outline='darkred', width=2
+                        )
+                        current_y += gap_height
+                        
+                        # Draw south modules
+                        for i in range(template.motor_split_south):
+                            self.canvas.create_rectangle(
+                                x_base, current_y,
+                                x_base + module_width * scale, current_y + module_height * scale,
+                                fill='lightblue', outline='blue'
+                            )
+                            current_y += (module_height + template.module_spacing_m) * scale
+                    else:
+                        # Draw normal string without motor
+                        for i in range(template.modules_per_string):
+                            self.canvas.create_rectangle(
+                                x_base, current_y,
+                                x_base + module_width * scale, current_y + module_height * scale,
+                                fill='lightblue', outline='blue'
+                            )
+                            current_y += (module_height + template.module_spacing_m) * scale
+            else:
+                # Original between_strings logic
+                modules_per_string = template.modules_per_string
+                motor_position = template.get_motor_position()
+                strings_above_motor = motor_position
+                strings_below_motor = template.strings_per_tracker - motor_position
+                modules_above_motor = modules_per_string * strings_above_motor
+                modules_below_motor = modules_per_string * strings_below_motor
+                
+                # Draw all modules
+                y_pos = y_base
+                
+                # Draw modules above motor
+                for i in range(modules_above_motor):
+                    self.canvas.create_rectangle(
+                        x_base, y_pos,
+                        x_base + module_width * scale, 
+                        y_pos + module_height * scale,
+                        fill='lightblue', outline='blue'
+                    )
+                    y_pos += (module_height + template.module_spacing_m) * scale
+                
+                # Draw motor (only if there are strings below)
+                if strings_below_motor > 0:
+                    motor_y = y_pos
+                    gap_height = template.motor_gap_m * scale
+                    circle_radius = min(gap_height / 3, module_width * scale / 4)
+                    circle_center_x = x_base + module_width * scale / 2
+                    circle_center_y = motor_y + gap_height / 2
+                    
+                    self.canvas.create_oval(
+                        circle_center_x - circle_radius, circle_center_y - circle_radius,
+                        circle_center_x + circle_radius, circle_center_y + circle_radius,
+                        fill='red', outline='darkred', width=2
+                    )
+                    y_pos += gap_height
+                
+                # Draw modules below motor
+                for i in range(modules_below_motor):
+                    self.canvas.create_rectangle(
+                        x_base, y_pos,
+                        x_base + module_width * scale,
+                        y_pos + module_height * scale,
+                        fill='lightblue', outline='blue'
+                    )
+                    y_pos += (module_height + template.module_spacing_m) * scale
         
             # Draw source points for this tracker
             self.draw_collection_points(pos, x_base, y_base, scale)

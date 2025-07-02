@@ -228,15 +228,26 @@ class SolarBOMApplication:
                                 
                                 # Create TrackerTemplate with the correct module_spec
                                 from src.models.tracker import TrackerTemplate, ModuleOrientation
-                                tracker_templates[unique_name] = TrackerTemplate(
-                                    template_name=unique_name,
+                                
+                                # Calculate appropriate default split values
+                                modules_per_string = template_data.get('modules_per_string', 28)
+                                default_split_north = modules_per_string // 2
+                                default_split_south = modules_per_string - default_split_north
+                                
+                                tracker_templates[name] = TrackerTemplate(
+                                    template_name=name,
                                     module_spec=module_spec,
-                                    module_orientation=ModuleOrientation(template_data.get('module_orientation', 'Portrait')),
-                                    modules_per_string=template_data.get('modules_per_string', 28),
+                                    module_orientation=ModuleOrientation(template_data.get('module_orientation', ModuleOrientation.PORTRAIT.value)),
+                                    modules_per_string=modules_per_string,
                                     strings_per_tracker=template_data.get('strings_per_tracker', 2),
                                     module_spacing_m=template_data.get('module_spacing_m', 0.01),
                                     motor_gap_m=template_data.get('motor_gap_m', 1.0),
-                                    motor_position_after_string=template_data.get('motor_position_after_string', 0)
+                                    motor_position_after_string=template_data.get('motor_position_after_string', 0),
+                                    # New motor placement fields with calculated defaults
+                                    motor_placement_type=template_data.get('motor_placement_type', 'between_strings'),
+                                    motor_string_index=template_data.get('motor_string_index', 1),
+                                    motor_split_north=template_data.get('motor_split_north', default_split_north),
+                                    motor_split_south=template_data.get('motor_split_south', default_split_south)
                                 )
                                 
                                 # Also store with the old name for backwards compatibility
@@ -266,16 +277,28 @@ class SolarBOMApplication:
                             
                             # Create TrackerTemplate with the correct module_spec
                             from src.models.tracker import TrackerTemplate, ModuleOrientation
+                            
+                            # Calculate appropriate default split values
+                            modules_per_string = template_data.get('modules_per_string', 28)
+                            default_split_north = modules_per_string // 2
+                            default_split_south = modules_per_string - default_split_north
+                            
                             tracker_templates[name] = TrackerTemplate(
                                 template_name=name,
                                 module_spec=module_spec,
-                                module_orientation=ModuleOrientation(template_data.get('module_orientation', 'Portrait')),
-                                modules_per_string=template_data.get('modules_per_string', 28),
+                                module_orientation=ModuleOrientation(template_data.get('module_orientation', ModuleOrientation.PORTRAIT.value)),
+                                modules_per_string=modules_per_string,
                                 strings_per_tracker=template_data.get('strings_per_tracker', 2),
                                 module_spacing_m=template_data.get('module_spacing_m', 0.01),
                                 motor_gap_m=template_data.get('motor_gap_m', 1.0),
-                                motor_position_after_string=template_data.get('motor_position_after_string', 0)
+                                motor_position_after_string=template_data.get('motor_position_after_string', 0),
+                                # New motor placement fields with calculated defaults
+                                motor_placement_type=template_data.get('motor_placement_type', 'between_strings'),
+                                motor_string_index=template_data.get('motor_string_index', 1),
+                                motor_split_north=template_data.get('motor_split_north', default_split_north),
+                                motor_split_south=template_data.get('motor_split_south', default_split_south)
                             )
+
             except Exception as e:
                 print(f"Error loading templates: {str(e)}")
                         

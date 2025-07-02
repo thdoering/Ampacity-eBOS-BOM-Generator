@@ -394,17 +394,9 @@ class BlockConfig:
                 template=position_template
             )
             
-            # Load strings data if available
-            for string_data in pos_data.get('strings', []):
-                string = StringPosition(
-                    index=string_data['index'],
-                    positive_source_x=string_data['positive_source_x'],
-                    positive_source_y=string_data['positive_source_y'],
-                    negative_source_x=string_data['negative_source_x'],
-                    negative_source_y=string_data['negative_source_y'],
-                    num_modules=string_data['num_modules']
-                )
-                pos.strings.append(string)
+            # Always recalculate string positions to ensure they match current template
+            # This is important for motor placement changes and template updates
+            pos.calculate_string_positions()
                 
             block.tracker_positions.append(pos)
         
