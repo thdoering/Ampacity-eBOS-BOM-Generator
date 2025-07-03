@@ -230,26 +230,23 @@ class WiringConfigurator(tk.Toplevel):
             self.harness_config_frame.grid_remove()
 
     def setup_routing_controls(self, controls_frame):
-        """Set up routing controls section"""
-        routing_frame = ttk.Frame(controls_frame)
-        routing_frame.grid(row=4, column=0, columnspan=2, padx=5, pady=5)
-
-        ttk.Button(routing_frame, text="Reset All Whip Points", 
-                command=self.reset_all_whips).grid(row=0, column=0, padx=5)
-
-        # Add realistic/conceptual toggle
-        self.routing_mode_var = tk.StringVar(value="realistic")
-        ttk.Radiobutton(routing_frame, text="Realistic Routing", 
-                    variable=self.routing_mode_var, value="realistic",
-                    command=self.draw_wiring_layout).grid(row=0, column=1, padx=5)
-        ttk.Radiobutton(routing_frame, text="Conceptual Routing", 
-                    variable=self.routing_mode_var, value="conceptual",
-                    command=self.draw_wiring_layout).grid(row=0, column=2, padx=5)
+        """Set up remaining routing controls section (whip controls moved to bottom)"""
+        # This method now intentionally left minimal since whip controls moved to canvas area
+        pass
 
     def setup_legend(self, canvas_frame):
-        """Set up color legend"""
-        legend_frame = ttk.LabelFrame(canvas_frame, text="Wire Color Legend", padding="5")
-        legend_frame.grid(row=1, column=0, padx=5, pady=5, sticky=(tk.W, tk.E))
+        """Set up color legend and whip point controls"""
+        # Container for both legend and controls
+        bottom_controls_frame = ttk.Frame(canvas_frame)
+        bottom_controls_frame.grid(row=1, column=0, padx=5, pady=5, sticky=(tk.W, tk.E))
+        
+        # Configure grid weights so controls expand properly
+        bottom_controls_frame.columnconfigure(0, weight=1)
+        bottom_controls_frame.columnconfigure(1, weight=1)
+        
+        # Color legend on the left
+        legend_frame = ttk.LabelFrame(bottom_controls_frame, text="Wire Color Legend", padding="5")
+        legend_frame.grid(row=0, column=0, padx=(0, 5), pady=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
         # Create legend canvas
         self.legend_canvas = tk.Canvas(legend_frame, width=280, height=120, bg='white')
@@ -257,6 +254,43 @@ class WiringConfigurator(tk.Toplevel):
 
         # Draw the legend
         self.draw_legend()
+        
+        # Whip point controls on the right
+        whip_controls_frame = ttk.LabelFrame(bottom_controls_frame, text="Whip Point Controls", padding="5")
+        whip_controls_frame.grid(row=0, column=1, padx=(5, 0), pady=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # Routing mode controls
+        routing_frame = ttk.Frame(whip_controls_frame)
+        routing_frame.grid(row=0, column=0, columnspan=2, padx=0, pady=2, sticky=(tk.W, tk.E))
+        
+        self.routing_mode_var = tk.StringVar(value="realistic")
+        ttk.Radiobutton(routing_frame, text="Realistic Routing", 
+                    variable=self.routing_mode_var, value="realistic",
+                    command=self.draw_wiring_layout).grid(row=0, column=0, padx=5, sticky=tk.W)
+        ttk.Radiobutton(routing_frame, text="Conceptual Routing", 
+                    variable=self.routing_mode_var, value="conceptual",
+                    command=self.draw_wiring_layout).grid(row=0, column=1, padx=5, sticky=tk.W)
+        
+        # Movement constraint controls
+        constraint_frame = ttk.Frame(whip_controls_frame)
+        constraint_frame.grid(row=1, column=0, columnspan=2, padx=0, pady=2, sticky=(tk.W, tk.E))
+        
+        self.snap_5ft_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(constraint_frame, text="Snap to 5ft increments", 
+                    variable=self.snap_5ft_var).grid(row=0, column=0, padx=5, sticky=tk.W)
+        
+        self.right_angle_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(constraint_frame, text="Constrain to N/S movement", 
+               variable=self.right_angle_var).grid(row=0, column=1, padx=5, sticky=tk.W)
+        
+        # Reset buttons
+        button_frame = ttk.Frame(whip_controls_frame)
+        button_frame.grid(row=2, column=0, columnspan=2, padx=0, pady=5, sticky=(tk.W, tk.E))
+        
+        ttk.Button(button_frame, text="Reset Selected", 
+                command=self.reset_selected_whips).grid(row=0, column=0, padx=5, sticky=tk.W)
+        ttk.Button(button_frame, text="Reset All Whips", 
+                command=self.reset_all_whips).grid(row=0, column=1, padx=5, sticky=tk.W)
 
     def setup_warning_panel(self):
         """Set up warning panel"""
@@ -994,20 +1028,13 @@ class WiringConfigurator(tk.Toplevel):
             return
             
         if self.drag_whips and self.selected_whips:
-            # Convert both points to world coordinates and calculate difference
-            start_world_x, start_world_y = self.canvas_to_world(self.drag_start_x, self.drag_start_y)
+            # Convert current mouse position to world coordinates
             current_world_x, current_world_y = self.canvas_to_world(event.x, event.y)
-            dx = current_world_x - start_world_x
-            dy = current_world_y - start_world_y
             
-            # Update custom whip point positions
+            # For each selected whip, calculate target position with constraints and snapping
             for whip_info in self.selected_whips:
-                self.update_whip_point_position(whip_info, dx, dy)
+                self.update_whip_to_target_position(whip_info, current_world_x, current_world_y)
             
-            # Update drag start for continuous dragging
-            self.drag_start_x = event.x
-            self.drag_start_y = event.y
-
             # Force route recalculation with new whip positions
             self.draw_wiring_layout()
         elif self.dragging:
@@ -1019,6 +1046,236 @@ class WiringConfigurator(tk.Toplevel):
                 self.drag_start_x, self.drag_start_y, event.x, event.y,
                 outline='blue', dash=(4, 4)
             )
+
+    def update_whip_to_target_position(self, whip_info, target_world_x, target_world_y):
+        """Update whip point to target position with all constraints applied"""
+        # Get original position when drag started
+        if len(whip_info) == 3:
+            tracker_id, harness_idx, polarity = whip_info
+            original_pos = self.get_harness_whip_current_stored_position(tracker_id, harness_idx, polarity)
+            if not original_pos:
+                original_pos = self.get_realistic_whip_position(tracker_id, polarity, harness_idx)
+        else:
+            tracker_id, polarity = whip_info
+            original_pos = self.get_whip_current_stored_position(tracker_id, polarity)
+            if not original_pos:
+                original_pos = self.get_realistic_whip_position(tracker_id, polarity)
+        
+        if not original_pos:
+            return
+        
+        # In realistic mode, preserve the original centerline X and only allow Y movement
+        if self.routing_mode_var.get() == "realistic":
+            target_x = original_pos[0]  # Keep the original centerline X position
+            target_y = target_world_y   # Allow Y movement
+        else:
+            # In conceptual mode, allow both X and Y movement
+            target_x = target_world_x
+            target_y = target_world_y
+        
+        # Apply N/S constraint if enabled (only allow Y movement)
+        if self.right_angle_var.get():
+            target_x = original_pos[0]  # Keep original X, only allow Y movement
+        
+        # Apply 5ft snapping if enabled
+        if self.snap_5ft_var.get():
+            snap_increment = 1.524  # 5 feet in meters
+            target_y = round(target_y / snap_increment) * snap_increment
+        
+        # Store the new position
+        if len(whip_info) == 3:
+            self.store_harness_whip_position(tracker_id, harness_idx, polarity, target_x, target_y)
+        else:
+            self.store_regular_whip_position(tracker_id, polarity, target_x, target_y)
+
+    def store_regular_whip_position(self, tracker_id, polarity, x, y):
+        """Store regular whip point position"""
+        # Ensure custom_whip_points exists
+        if not hasattr(self.block, 'wiring_config') or not self.block.wiring_config:
+            from ..models.block import WiringConfig, WiringType
+            self.block.wiring_config = WiringConfig(wiring_type=WiringType.HOMERUN)
+        
+        if not hasattr(self.block.wiring_config, 'custom_whip_points'):
+            self.block.wiring_config.custom_whip_points = {}
+        
+        if tracker_id not in self.block.wiring_config.custom_whip_points:
+            self.block.wiring_config.custom_whip_points[tracker_id] = {}
+        
+        self.block.wiring_config.custom_whip_points[tracker_id][polarity] = (x, y)
+
+    def store_harness_whip_position(self, tracker_id, harness_idx, polarity, x, y):
+        """Store harness whip point position"""
+        # Ensure custom_harness_whip_points exists
+        if not hasattr(self.block, 'wiring_config') or not self.block.wiring_config:
+            from ..models.block import WiringConfig, WiringType
+            self.block.wiring_config = WiringConfig(wiring_type=WiringType.HOMERUN)
+        
+        if not hasattr(self.block.wiring_config, 'custom_harness_whip_points'):
+            self.block.wiring_config.custom_harness_whip_points = {}
+        
+        if tracker_id not in self.block.wiring_config.custom_harness_whip_points:
+            self.block.wiring_config.custom_harness_whip_points[tracker_id] = {}
+        if harness_idx not in self.block.wiring_config.custom_harness_whip_points[tracker_id]:
+            self.block.wiring_config.custom_harness_whip_points[tracker_id][harness_idx] = {}
+        
+        self.block.wiring_config.custom_harness_whip_points[tracker_id][harness_idx][polarity] = (x, y)
+
+    def apply_movement_constraints(self, dx, dy):
+        """Apply movement constraints based on routing mode and user settings"""
+        # In realistic mode, only allow Y-axis movement (along centerline)
+        if self.routing_mode_var.get() == "realistic":
+            dx = 0  # Force to centerline, no X movement allowed
+        
+        # Apply North/South constraint if enabled (vertical movement only)
+        if self.right_angle_var.get():
+            dx = 0  # Constrain to vertical movement only
+        
+        return dx, dy
+
+    def apply_5ft_snapping(self, dx, dy):
+        """Apply 5-foot increment snapping - but we'll handle this in the position update instead"""
+        # For now, just return the original deltas
+        # The actual snapping will happen in the position update methods
+        return dx, dy
+    
+    def update_whip_point_position_with_constraints(self, whip_info, dx, dy):
+        """Update whip point position with realistic mode centerline constraints"""
+        if len(whip_info) == 3:
+            tracker_id, harness_idx, polarity = whip_info
+            self.update_harness_whip_position_with_constraints(tracker_id, harness_idx, polarity, dx, dy)
+        else:
+            tracker_id, polarity = whip_info
+            self.update_regular_whip_position_with_constraints(tracker_id, polarity, dx, dy)
+
+    def update_regular_whip_position_with_constraints(self, tracker_id, polarity, dx, dy):
+        """Update regular whip point position with centerline constraints for realistic mode"""
+        # Get current position (custom or default)
+        current_pos = self.get_whip_current_stored_position(tracker_id, polarity)
+        if not current_pos:
+            current_pos = self.get_whip_default_position(tracker_id, polarity)
+        
+        if not current_pos:
+            return
+        
+        # Calculate new position
+        new_x = current_pos[0] + dx
+        new_y = current_pos[1] + dy
+        
+        # In realistic mode, force X to centerline
+        if self.routing_mode_var.get() == "realistic":
+            centerline_pos = self.get_realistic_whip_position(tracker_id, polarity)
+            if centerline_pos:
+                new_x = centerline_pos[0]  # Force to centerline X
+        
+        # Apply 5ft snapping to final position if enabled
+        if self.snap_5ft_var.get():
+            snap_increment = 1.524  # 5 feet in meters
+            new_y = round(new_y / snap_increment) * snap_increment
+        
+        # Ensure custom_whip_points exists
+        if not hasattr(self.block, 'wiring_config') or not self.block.wiring_config:
+            from ..models.block import WiringConfig, WiringType
+            self.block.wiring_config = WiringConfig(wiring_type=WiringType.HOMERUN)
+        
+        if not hasattr(self.block.wiring_config, 'custom_whip_points'):
+            self.block.wiring_config.custom_whip_points = {}
+        
+        # Store the new position
+        if tracker_id not in self.block.wiring_config.custom_whip_points:
+            self.block.wiring_config.custom_whip_points[tracker_id] = {}
+        
+        self.block.wiring_config.custom_whip_points[tracker_id][polarity] = (new_x, new_y)
+
+    def update_regular_whip_position_with_constraints(self, tracker_id, polarity, dx, dy):
+        """Update regular whip point position with centerline constraints for realistic mode"""
+        # Get current position (custom or default)
+        current_pos = self.get_whip_current_stored_position(tracker_id, polarity)
+        if not current_pos:
+            current_pos = self.get_whip_default_position(tracker_id, polarity)
+        
+        if not current_pos:
+            return
+        
+        # Calculate new position
+        new_x = current_pos[0] + dx
+        new_y = current_pos[1] + dy
+        
+        # In realistic mode, force X to centerline
+        if self.routing_mode_var.get() == "realistic":
+            centerline_pos = self.get_realistic_whip_position(tracker_id, polarity)
+            if centerline_pos:
+                new_x = centerline_pos[0]  # Force to centerline X
+        
+        # Ensure custom_whip_points exists
+        if not hasattr(self.block, 'wiring_config') or not self.block.wiring_config:
+            from ..models.block import WiringConfig, WiringType
+            self.block.wiring_config = WiringConfig(wiring_type=WiringType.HOMERUN)
+        
+        if not hasattr(self.block.wiring_config, 'custom_whip_points'):
+            self.block.wiring_config.custom_whip_points = {}
+        
+        # Store the new position
+        if tracker_id not in self.block.wiring_config.custom_whip_points:
+            self.block.wiring_config.custom_whip_points[tracker_id] = {}
+        
+        self.block.wiring_config.custom_whip_points[tracker_id][polarity] = (new_x, new_y)
+
+    def update_harness_whip_position_with_constraints(self, tracker_id, harness_idx, polarity, dx, dy):
+        """Update harness-specific whip point position with centerline constraints"""
+        # Get current position (custom or default)
+        current_pos = self.get_harness_whip_current_stored_position(tracker_id, harness_idx, polarity)
+        if not current_pos:
+            current_pos = self.get_whip_default_position(tracker_id, polarity, harness_idx)
+        
+        if not current_pos:
+            return
+        
+        # Calculate new position
+        new_x = current_pos[0] + dx
+        new_y = current_pos[1] + dy
+        
+        # In realistic mode, force X to centerline
+        if self.routing_mode_var.get() == "realistic":
+            centerline_pos = self.get_realistic_whip_position(tracker_id, polarity, harness_idx)
+            if centerline_pos:
+                new_x = centerline_pos[0]  # Force to centerline X
+        
+        # Ensure custom_harness_whip_points exists
+        if not hasattr(self.block, 'wiring_config') or not self.block.wiring_config:
+            from ..models.block import WiringConfig, WiringType
+            self.block.wiring_config = WiringConfig(wiring_type=WiringType.HOMERUN)
+        
+        if not hasattr(self.block.wiring_config, 'custom_harness_whip_points'):
+            self.block.wiring_config.custom_harness_whip_points = {}
+        
+        # Store the new position
+        if tracker_id not in self.block.wiring_config.custom_harness_whip_points:
+            self.block.wiring_config.custom_harness_whip_points[tracker_id] = {}
+        if harness_idx not in self.block.wiring_config.custom_harness_whip_points[tracker_id]:
+            self.block.wiring_config.custom_harness_whip_points[tracker_id][harness_idx] = {}
+        
+        self.block.wiring_config.custom_harness_whip_points[tracker_id][harness_idx][polarity] = (new_x, new_y)
+
+    def get_whip_current_stored_position(self, tracker_id, polarity):
+        """Get the currently stored custom position for a whip point"""
+        if (hasattr(self.block, 'wiring_config') and 
+            self.block.wiring_config and 
+            hasattr(self.block.wiring_config, 'custom_whip_points') and
+            tracker_id in self.block.wiring_config.custom_whip_points and
+            polarity in self.block.wiring_config.custom_whip_points[tracker_id]):
+            return self.block.wiring_config.custom_whip_points[tracker_id][polarity]
+        return None
+
+    def get_harness_whip_current_stored_position(self, tracker_id, harness_idx, polarity):
+        """Get the currently stored custom position for a harness whip point"""
+        if (hasattr(self.block, 'wiring_config') and 
+            self.block.wiring_config and 
+            hasattr(self.block.wiring_config, 'custom_harness_whip_points') and
+            tracker_id in self.block.wiring_config.custom_harness_whip_points and
+            harness_idx in self.block.wiring_config.custom_harness_whip_points[tracker_id] and
+            polarity in self.block.wiring_config.custom_harness_whip_points[tracker_id][harness_idx]):
+            return self.block.wiring_config.custom_harness_whip_points[tracker_id][harness_idx][polarity]
+        return None
 
     def on_canvas_release(self, event):
         """Handle end of drag operation"""
@@ -1066,20 +1323,41 @@ class WiringConfigurator(tk.Toplevel):
         if not self.selected_whips:
             return
             
-        for tracker_id, polarity in self.selected_whips:
-            if (hasattr(self.block, 'wiring_config') and 
-                self.block.wiring_config and 
-                hasattr(self.block.wiring_config, 'custom_whip_points') and
-                tracker_id in self.block.wiring_config.custom_whip_points and
-                polarity in self.block.wiring_config.custom_whip_points[tracker_id]):
-                
-                # Remove custom position
-                del self.block.wiring_config.custom_whip_points[tracker_id][polarity]
-                
-                # Clean up empty entries
-                if not self.block.wiring_config.custom_whip_points[tracker_id]:
-                    del self.block.wiring_config.custom_whip_points[tracker_id]
+        for whip_info in self.selected_whips:
+            if len(whip_info) == 3:
+                # Harness whip point: (tracker_id, harness_idx, polarity)
+                tracker_id, harness_idx, polarity = whip_info
+                if (hasattr(self.block, 'wiring_config') and 
+                    self.block.wiring_config and 
+                    hasattr(self.block.wiring_config, 'custom_harness_whip_points') and
+                    tracker_id in self.block.wiring_config.custom_harness_whip_points and
+                    harness_idx in self.block.wiring_config.custom_harness_whip_points[tracker_id] and
+                    polarity in self.block.wiring_config.custom_harness_whip_points[tracker_id][harness_idx]):
                     
+                    # Remove custom harness whip position
+                    del self.block.wiring_config.custom_harness_whip_points[tracker_id][harness_idx][polarity]
+                    
+                    # Clean up empty entries
+                    if not self.block.wiring_config.custom_harness_whip_points[tracker_id][harness_idx]:
+                        del self.block.wiring_config.custom_harness_whip_points[tracker_id][harness_idx]
+                    if not self.block.wiring_config.custom_harness_whip_points[tracker_id]:
+                        del self.block.wiring_config.custom_harness_whip_points[tracker_id]
+            else:
+                # Regular whip point: (tracker_id, polarity)
+                tracker_id, polarity = whip_info
+                if (hasattr(self.block, 'wiring_config') and 
+                    self.block.wiring_config and 
+                    hasattr(self.block.wiring_config, 'custom_whip_points') and
+                    tracker_id in self.block.wiring_config.custom_whip_points and
+                    polarity in self.block.wiring_config.custom_whip_points[tracker_id]):
+                    
+                    # Remove custom position
+                    del self.block.wiring_config.custom_whip_points[tracker_id][polarity]
+                    
+                    # Clean up empty entries
+                    if not self.block.wiring_config.custom_whip_points[tracker_id]:
+                        del self.block.wiring_config.custom_whip_points[tracker_id]
+                        
         self.draw_wiring_layout()
 
     def reset_all_whips(self, event=None):
@@ -1111,10 +1389,6 @@ class WiringConfigurator(tk.Toplevel):
 
     def get_whip_position(self, tracker_id, polarity, harness_idx=None):
         """Get the current position of a whip point (custom or default)"""
-        # In realistic mode, always use centerline positions
-        if hasattr(self, 'routing_mode_var') and self.routing_mode_var.get() == "realistic":
-            return self.get_realistic_whip_position(tracker_id, polarity, harness_idx)
-        
         # Check for custom harness whip points first
         if (harness_idx is not None and 
             hasattr(self.block, 'wiring_config') and 
@@ -1132,9 +1406,12 @@ class WiringConfigurator(tk.Toplevel):
             tracker_id in self.block.wiring_config.custom_whip_points and
             polarity in self.block.wiring_config.custom_whip_points[tracker_id]):
             return self.block.wiring_config.custom_whip_points[tracker_id][polarity]
-            
-        # Fall back to default position
-        return self.get_whip_default_position(tracker_id, polarity, harness_idx)
+        
+        # Fall back to default position based on routing mode
+        if hasattr(self, 'routing_mode_var') and self.routing_mode_var.get() == "realistic":
+            return self.get_realistic_whip_position(tracker_id, polarity, harness_idx)
+        else:
+            return self.get_whip_default_position(tracker_id, polarity, harness_idx)
 
     def get_realistic_whip_position(self, tracker_id, polarity, harness_idx=None):
         """Get whip position aligned with harness cable for realistic mode"""
