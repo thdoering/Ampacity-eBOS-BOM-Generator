@@ -112,7 +112,7 @@ class BOMGenerator:
                     whip_length_feet = round(cable_lengths['whip_cable_positive'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
 
                     block_quantities[f'Positive Whip Cable ({whip_cable_size})'] = {
-                        'description': f'DC Positive Whip Cable {whip_cable_size}',
+                        'description': self.get_whip_description_format(whip_cable_size).format(length="TOTAL"),
                         'quantity': whip_length_feet,
                         'unit': 'feet',
                         'category': 'eBOS'
@@ -122,7 +122,7 @@ class BOMGenerator:
                     whip_length_feet = round(cable_lengths['whip_cable_negative'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
 
                     block_quantities[f'Negative Whip Cable ({whip_cable_size})'] = {
-                        'description': f'DC Negative Whip Cable {whip_cable_size}',
+                        'description': self.get_whip_description_format(whip_cable_size).format(length="TOTAL"),
                         'quantity': whip_length_feet,
                         'unit': 'feet',
                         'category': 'eBOS'
@@ -137,15 +137,35 @@ class BOMGenerator:
                     harness_cable_size = block.wiring_config.harness_cable_size
                     string_cable_size = block.wiring_config.string_cable_size
                     
+                    # Calculate string spacing for harness matching
+                    if block.tracker_template and block.tracker_template.module_spec:
+                        module_spec = block.tracker_template.module_spec
+                        modules_per_string = block.tracker_template.modules_per_string
+                        module_spacing_m = block.tracker_template.module_spacing_m
+                        
+                        string_spacing_ft = self.calculate_string_spacing_ft(
+                            modules_per_string, module_spec.width_mm, module_spacing_m
+                        )
+                    else:
+                        string_spacing_ft = 102.0  # Default spacing
+                        
+                    # Get descriptions from harness library
+                    pos_description = self.get_harness_description(
+                        string_count, 'positive', string_spacing_ft, harness_cable_size, string_cable_size
+                    )
+                    neg_description = self.get_harness_description(
+                        string_count, 'negative', string_spacing_ft, harness_cable_size, string_cable_size
+                    )
+
                     block_quantities[f'Positive {string_count}-String Harness'] = {
-                        'description': f'Positive {string_count}-String Harness ({harness_cable_size} trunk, {string_cable_size} drops)',
+                        'description': pos_description,
                         'quantity': count,
                         'unit': 'units',
                         'category': 'eBOS'
                     }
-                    
+
                     block_quantities[f'Negative {string_count}-String Harness'] = {
-                        'description': f'Negative {string_count}-String Harness ({harness_cable_size} trunk, {string_cable_size} drops)',
+                        'description': neg_description,
                         'quantity': count,
                         'unit': 'units',
                         'category': 'eBOS'
@@ -168,7 +188,7 @@ class BOMGenerator:
                     whip_length_feet = round(cable_lengths['whip_cable_positive'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
 
                     block_quantities[f'Positive Whip Cable ({whip_cable_size})'] = {
-                        'description': f'DC Positive Whip Cable {whip_cable_size}',
+                        'description': self.get_whip_description_format(whip_cable_size).format(length="TOTAL"),
                         'quantity': whip_length_feet,
                         'unit': 'feet',
                         'category': 'eBOS'
@@ -178,7 +198,7 @@ class BOMGenerator:
                     whip_length_feet = round(cable_lengths['whip_cable_negative'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
 
                     block_quantities[f'Negative Whip Cable ({whip_cable_size})'] = {
-                        'description': f'DC Negative Whip Cable {whip_cable_size}',
+                        'description': self.get_whip_description_format(whip_cable_size).format(length="TOTAL"),
                         'quantity': whip_length_feet,
                         'unit': 'feet',
                         'category': 'eBOS'
@@ -191,7 +211,7 @@ class BOMGenerator:
                     extender_length_feet = round(cable_lengths['extender_cable_positive'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
 
                     block_quantities[f'Positive Extender Cable ({extender_cable_size})'] = {
-                        'description': f'DC Positive Extender Cable {extender_cable_size}',
+                        'description': self.get_extender_description_format(extender_cable_size).format(length="TOTAL"),
                         'quantity': extender_length_feet,
                         'unit': 'feet',
                         'category': 'Extender Cables'
@@ -201,7 +221,7 @@ class BOMGenerator:
                     extender_length_feet = round(cable_lengths['extender_cable_negative'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
 
                     block_quantities[f'Negative Extender Cable ({extender_cable_size})'] = {
-                        'description': f'DC Negative Extender Cable {extender_cable_size}',
+                        'description': self.get_extender_description_format(extender_cable_size).format(length="TOTAL"),
                         'quantity': extender_length_feet,
                         'unit': 'feet',
                         'category': 'Extender Cables'
@@ -1080,6 +1100,67 @@ class BOMGenerator:
         except Exception as e:
             print(f"Error loading whip library: {e}")
             return {}
+        
+    def get_whip_description_format(self, wire_gauge):
+        """Get whip description format from library"""
+        # Find any whip with matching wire gauge to get description format
+        for spec in self.whip_library.values():
+            if spec.get('wire_gauge') == wire_gauge:
+                # Extract format without the length
+                desc = spec.get('description', '')
+                # Replace the length part with placeholder
+                import re
+                return re.sub(r'LENGTH \(FT\): \d+', 'LENGTH (FT): {length}', desc)
+        # Default format if not found
+        return f"1500 VDC {wire_gauge} WHIP WITH MC4 CONNECTOR AND BLUNT CUT END, LENGTH (FT): {{length}}"
+
+    def get_extender_description_format(self, wire_gauge):
+        """Get extender description format from library"""
+        # Find any extender with matching wire gauge to get description format
+        for spec in self.extender_library.values():
+            if spec.get('wire_gauge') == wire_gauge:
+                # Extract format without the length
+                desc = spec.get('description', '')
+                # Replace the length part with placeholder
+                import re
+                return re.sub(r'LENGTH \(FT\): \d+', 'LENGTH (FT): {length}', desc)
+        # Default format if not found
+        return f"1500 VDC {wire_gauge} EXTENDER WITH MC4 CONNECTORS, LENGTH (FT): {{length}}"
+    
+    def get_harness_description(self, num_strings, polarity, string_spacing_ft, trunk_cable_size, string_cable_size):
+        """Get harness description from library based on matching part number"""
+        # First find the matching part number
+        part_number = self.find_matching_harness_part_number(
+            num_strings, polarity, string_spacing_ft, trunk_cable_size
+        )
+        
+        if part_number == "N/A" or " or " in part_number:
+            # If no match or multiple matches, return a generic description
+            pol_text = "Positive" if polarity == 'positive' else "Negative"
+            string_text = "String" if num_strings == 1 else "String"
+            fuse_text = ""
+            
+            # Try to determine if this should be fused based on polarity and string count
+            if polarity == 'positive' and num_strings > 1:
+                # Make an educated guess about fuse rating based on string count
+                if num_strings <= 2:
+                    fuse_text = "20A Fuses, " if string_spacing_ft > 110 else "Unfused, "
+                else:
+                    fuse_text = "30A Fuses, " if string_spacing_ft > 120 else "20A Fuses, "
+            
+            return f"{num_strings} {string_text}, {pol_text}, {fuse_text}{string_cable_size} Drops w/{trunk_cable_size} Trunk, {int(string_spacing_ft)}' string length, MC4 connectors"
+        
+        # If single part number found, get its description
+        if part_number in self.harness_library:
+            return self.harness_library[part_number].get('description', f"Harness {part_number}")
+        
+        # Handle multiple matches by using first one's description format
+        if " or " in part_number:
+            first_part = part_number.split(" or ")[0]
+            if first_part in self.harness_library:
+                return self.harness_library[first_part].get('description', f"Harness {first_part}")
+        
+        return f"Harness {part_number}"
 
     def calculate_string_spacing_ft(self, modules_per_string, module_width_mm, module_spacing_m):
         """Calculate string spacing in feet based on module specs"""
@@ -1270,8 +1351,18 @@ class BOMGenerator:
             else:
                 category = 'eBOS Segments'
             
+            # Generate proper description based on cable type
+            if "Whip Cable" in prefix:
+                base_desc = self.get_whip_description_format(cable_size)
+                description = base_desc.format(length=int(length))
+            elif "Extender Cable" in prefix:
+                base_desc = self.get_extender_description_format(cable_size)
+                description = base_desc.format(length=int(length))
+            else:
+                description = f"{int(length)}ft {prefix} Segment ({cable_size})"
+
             block_quantities[segment_key] = {
-                'description': f"{int(length)}ft {prefix} Segment ({cable_size})",
+                'description': description,
                 'quantity': count,
                 'unit': 'segments',
                 'category': category
@@ -1310,8 +1401,16 @@ class BOMGenerator:
             else:
                 category = 'eBOS'
 
+            # Generate proper description for totals
+            if "Whip Cable" in prefix:
+                description = self.get_whip_description_format(cable_size).format(length="TOTAL")
+            elif "Extender Cable" in prefix:
+                description = self.get_extender_description_format(cable_size).format(length="TOTAL")
+            else:
+                description = f'DC {prefix} {cable_size}'
+
             block_quantities[total_key] = {
-                'description': f'DC {prefix} {cable_size}',
+                'description': description,
                 'quantity': total_length if "Whip Cable" in prefix or "Extender Cable" in prefix else round(total_length, 1),
                 'unit': 'feet',
                 'category': category
