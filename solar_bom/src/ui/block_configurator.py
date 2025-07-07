@@ -69,6 +69,26 @@ class BlockConfigurator(ttk.Frame):
         self._current_module = module
         self.update_template_list()  # Refresh templates with new module
 
+
+    def update_current_labels(self):
+        """Update the string current and NEC current display labels"""
+        if self.drag_template and self.drag_template.module_spec:
+            module_spec = self.drag_template.module_spec
+            
+            # Update string current (Imp)
+            self.string_current = module_spec.imp
+            self.string_current_label.config(text=f"{self.string_current:.2f} A")
+            
+            # Update NEC current (Isc × 1.25)
+            self.nec_current = module_spec.isc * 1.25
+            self.nec_current_label.config(text=f"{self.nec_current:.2f} A")
+        else:
+            # No template selected - show dashes
+            self.string_current = 0.0
+            self.nec_current = 0.0
+            self.string_current_label.config(text="-- A")
+            self.nec_current_label.config(text="-- A")
+
     def validate_float_input(self, var, default_value):
         """Validate float input, returning default value if invalid"""
         try:
@@ -1181,7 +1201,10 @@ class BlockConfigurator(ttk.Frame):
             
         template_key = values[0]
         self.drag_template = self.tracker_templates.get(template_key)
-        
+
+        # Update the current labels
+        self.update_current_labels()
+
         # Update current block's template if one is selected and there are no existing trackers
         if self.current_block and self.blocks[self.current_block] and len(self.blocks[self.current_block].tracker_positions) == 0:
             self.blocks[self.current_block].tracker_template = self.drag_template

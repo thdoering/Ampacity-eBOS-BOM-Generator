@@ -2121,5 +2121,115 @@
         "max_system_voltage": 1500
       }
     }
+  },
+  "Heliene": {
+    "NXT-92-625W": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 23,
+      "strings_per_tracker": 4,
+      "module_spacing_m": 0.01,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 0,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 1,
+      "motor_split_north": 14,
+      "motor_split_south": 9,
+      "module_spec": {
+        "manufacturer": "Heliene",
+        "model": "156HC M10 NTYP BF SL 625 W",
+        "type": "Bifacial",
+        "length_mm": 2464.0,
+        "width_mm": 1134.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 625.0,
+        "vmp": 47.01,
+        "imp": 13.29,
+        "voc": 55.8,
+        "isc": 14.06,
+        "max_system_voltage": 1500
+      }
+    },
+    "NXT-69-625W": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 23,
+      "strings_per_tracker": 3,
+      "module_spacing_m": 0.01,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 3,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 1,
+      "motor_split_north": 14,
+      "motor_split_south": 9,
+      "module_spec": {
+        "manufacturer": "Heliene",
+        "model": "156HC M10 NTYP BF SL 625 W",
+        "type": "Bifacial",
+        "length_mm": 2464.0,
+        "width_mm": 1134.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 625.0,
+        "vmp": 47.01,
+        "imp": 13.29,
+        "voc": 55.8,
+        "isc": 14.06,
+        "max_system_voltage": 1500
+      }
+    },
+    "NXT-46-625W": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 23,
+      "strings_per_tracker": 2,
+      "module_spacing_m": 0.01,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 2,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 1,
+      "motor_split_north": 14,
+      "motor_split_south": 9,
+      "module_spec": {
+        "manufacturer": "Heliene",
+        "model": "156HC M10 NTYP BF SL 625 W",
+        "type": "Bifacial",
+        "length_mm": 2464.0,
+        "width_mm": 1134.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 625.0,
+        "vmp": 47.01,
+        "imp": 13.29,
+        "voc": 55.8,
+        "isc": 14.06,
+        "max_system_voltage": 1500
+      }
+    },
+    "NXT-23-625W": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 23,
+      "strings_per_tracker": 1,
+      "module_spacing_m": 0.01,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 1,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 1,
+      "motor_split_north": 14,
+      "motor_split_south": 9,
+      "module_spec": {
+        "manufacturer": "Heliene",
+        "model": "156HC M10 NTYP BF SL 625 W",
+        "type": "Bifacial",
+        "length_mm": 2464.0,
+        "width_mm": 1134.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 625.0,
+        "vmp": 47.01,
+        "imp": 13.29,
+        "voc": 55.8,
+        "isc": 14.06,
+        "max_system_voltage": 1500
+      }
+    }
   }
 }
