@@ -155,7 +155,8 @@ class SolarBOMApplication:
             module_spec=None,
             on_template_saved=on_template_saved,
             on_template_deleted=on_template_deleted,
-            current_project=self.current_project
+            current_project=self.current_project,
+            on_template_enabled_changed=on_template_enabled_changed
         )
         tracker_creator.pack(fill='both', expand=True, padx=5, pady=5)
         

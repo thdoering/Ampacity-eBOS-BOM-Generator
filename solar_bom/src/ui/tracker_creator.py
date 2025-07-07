@@ -8,14 +8,16 @@ from ..models.module import ModuleSpec, ModuleType
 
 class TrackerTemplateCreator(ttk.Frame):
     def __init__(self, parent, module_spec: Optional[ModuleSpec] = None, 
-         on_template_saved: Optional[Callable[[TrackerTemplate], None]] = None,
-         on_template_deleted: Optional[Callable[[str], None]] = None,
-         current_project=None):
+        on_template_saved: Optional[Callable[[TrackerTemplate], None]] = None,
+        on_template_deleted: Optional[Callable[[str], None]] = None,
+        current_project=None,
+        on_template_enabled_changed: Optional[Callable[[], None]] = None):
         super().__init__(parent)
         self.current_project = current_project
         self.parent = parent
         self.on_template_saved = on_template_saved
         self.on_template_deleted = on_template_deleted
+        self.on_template_enabled_changed = on_template_enabled_changed
         self._module_spec = None
         self.templates = self.load_templates()
         self.setup_ui()  # Creates current_module_label
@@ -371,6 +373,13 @@ class TrackerTemplateCreator(ttk.Frame):
             
     def update_template_list(self):
         """Update the template tree view with checkbox functionality"""
+        # Save expanded state of manufacturer nodes
+        expanded_manufacturers = set()
+        for item in self.template_tree.get_children():
+            if self.template_tree.item(item, 'open'):
+                manufacturer_text = self.template_tree.item(item, 'text')
+                expanded_manufacturers.add(manufacturer_text)
+        
         # Clear existing items
         for item in self.template_tree.get_children():
             self.template_tree.delete(item)
@@ -419,8 +428,14 @@ class TrackerTemplateCreator(ttk.Frame):
                                         values=(checkbox,), 
                                         tags=(tag,))
                 
-                # Store mapping for later retrieval
+                # Store mapping from tree item to template key
                 self.tree_item_to_template[template_item] = template_key
+        
+        # Restore expanded state
+        for manufacturer_item in self.template_tree.get_children():
+            manufacturer_text = self.template_tree.item(manufacturer_item, 'text')
+            if manufacturer_text in expanded_manufacturers:
+                self.template_tree.item(manufacturer_item, open=True)
             
     def on_template_select(self, event=None):
         """Handle template selection event"""
@@ -523,9 +538,29 @@ class TrackerTemplateCreator(ttk.Frame):
             self.save_templates()
             self.update_template_list()
 
-            # Auto-enable newly created template
+            # Auto-enable newly created template with full key including manufacturer
             if self.current_project:
-                self._add_enabled_template(name)
+                # Get the manufacturer from the template's module spec
+                manufacturer = template.module_spec.manufacturer
+                full_template_key = f"{manufacturer} - {name}"
+                self._add_enabled_template(full_template_key)
+
+            # Update the UI to show the template as enabled
+            for manufacturer_item in self.template_tree.get_children():
+                for template_item in self.template_tree.get_children(manufacturer_item):
+                    if template_item in self.tree_item_to_template:
+                        if self.tree_item_to_template[template_item] == full_template_key:
+                            values = list(self.template_tree.item(template_item, 'values'))
+                            values[0] = '☑'
+                            self.template_tree.item(template_item, values=values, tags=('checked',))
+                            break
+
+            # Expand the manufacturer node to show the new template
+            for manufacturer_item in self.template_tree.get_children():
+                manufacturer_text = self.template_tree.item(manufacturer_item, 'text')
+                if manufacturer_text == manufacturer:
+                    self.template_tree.item(manufacturer_item, open=True)
+                    break
             
             if self.on_template_saved:
                 self.on_template_saved(template)
@@ -622,10 +657,14 @@ class TrackerTemplateCreator(ttk.Frame):
                         self.on_template_deleted(template_key)
             return
             
-        # Delete individual template
-        template_key = values[0]
+        # Get template key from mapping
+        if item not in self.tree_item_to_template:
+            messagebox.showwarning("Warning", "Template mapping not found")
+            return
+            
+        template_key = self.tree_item_to_template[item]
         template_text = self.template_tree.item(item, 'text')
-        
+
         if messagebox.askyesno("Confirm", f"Delete template '{template_text}'?"):
             if template_key in self.templates:
                 del self.templates[template_key]
@@ -829,11 +868,15 @@ class TrackerTemplateCreator(ttk.Frame):
         """Add template to enabled list"""
         if self.current_project and template_key not in self.current_project.enabled_templates:
             self.current_project.enabled_templates.append(template_key)
+            if self.on_template_enabled_changed:
+                self.on_template_enabled_changed()
 
     def _remove_enabled_template(self, template_key):
         """Remove template from enabled list"""
         if self.current_project and template_key in self.current_project.enabled_templates:
             self.current_project.enabled_templates.remove(template_key)
+            if self.on_template_enabled_changed:
+                self.on_template_enabled_changed()
 
     def _is_template_enabled(self, template_key):
         """Check if template is enabled for current project"""
