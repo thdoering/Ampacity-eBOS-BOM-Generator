@@ -367,6 +367,10 @@ class SolarBOMApplication:
                 block_configurator.block_listbox.delete(0, tk.END)
                 for block_id in reconstructed_blocks:
                     block_configurator.block_listbox.insert(tk.END, block_id)
+            
+            # Update the project reference and UI
+            if hasattr(block_configurator, 'set_project'):
+                block_configurator.set_project(self.current_project)
 
             update_bom_blocks()
         
@@ -493,7 +497,12 @@ class SolarBOMApplication:
             # Convert blocks to serializable format
             serialized_blocks = {}
             for block_id, block in block_configurator.blocks.items():
-                serialized_blocks[block_id] = block.to_dict()
+                block_dict = block.to_dict()
+                serialized_blocks[block_id] = block_dict
+                print(f"[Main.update_project_blocks] Serializing block {block_id}:")
+                print(f"  - device_type: {block_dict.get('device_type', 'NOT FOUND')}")
+                print(f"  - num_inputs: {block_dict.get('num_inputs', 'NOT FOUND')}")
+                print(f"  - max_current_per_input: {block_dict.get('max_current_per_input', 'NOT FOUND')}")
                 
             # Update the project's blocks
             self.current_project.blocks = serialized_blocks

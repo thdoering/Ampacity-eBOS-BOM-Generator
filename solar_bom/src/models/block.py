@@ -23,14 +23,6 @@ class CollectionPoint:
     current_rating: float
 
 @dataclass
-class DeviceInputPoint:
-    """Represents an input connection point on a device"""
-    index: int  # Input number
-    x: float  # X coordinate relative to device corner
-    y: float  # Y coordinate relative to device corner
-    max_current: float  # Maximum current rating for this input
-
-@dataclass
 class HarnessGroup:
     """Represents a group of strings combined into a harness"""
     string_indices: List[int]  # Indices of strings in this harness
@@ -73,7 +65,9 @@ class BlockConfig:
     device_x: float = 0.0  # X coordinate of device in meters
     device_y: float = 0.0  # Y coordinate of device in meters
     device_spacing_m: float = 1.83  # 6ft in meters default
-    input_points: List[DeviceInputPoint] = field(default_factory=list)
+    device_type: DeviceType = DeviceType.STRING_INVERTER  # Default device type
+    num_inputs: int = 20  # Default number of inputs
+    max_current_per_input: float = 20.0  # Default max current per input in amps
     block_realistic_routes: Dict[str, List[tuple[float, float]]] = field(default_factory=dict)
     
     # Optional fields with defaults must come after
@@ -276,8 +270,16 @@ class BlockConfig:
             'tracker_positions': tracker_positions_data,
             'device_x': self.device_x,
             'device_y': self.device_y,
-            'device_spacing_m': self.device_spacing_m
+            'device_spacing_m': self.device_spacing_m,
+            'device_type': self.device_type.value,
+            'num_inputs': self.num_inputs,
+            'max_current_per_input': self.max_current_per_input
         }
+
+        print(f"[BlockConfig.to_dict] Saving block {self.block_id}:")
+        print(f"  - device_type: {self.device_type.value}")
+        print(f"  - num_inputs: {self.num_inputs}")
+        print(f"  - max_current_per_input: {self.max_current_per_input}")
         
         # Add inverter reference if exists
         if self.inverter:
@@ -369,8 +371,19 @@ class BlockConfig:
             description=data.get('description'),
             device_x=data.get('device_x', 0.0),
             device_y=data.get('device_y', 0.0),
-            device_spacing_m=data.get('device_spacing_m', 1.83)
+            device_spacing_m=data.get('device_spacing_m', 1.83),
+            device_type=DeviceType(data.get('device_type', DeviceType.STRING_INVERTER.value)),
+            num_inputs=data.get('num_inputs', 20),
+            max_current_per_input=data.get('max_current_per_input', 20.0)
         )
+
+        print(f"[BlockConfig.from_dict] Loading block {block.block_id}:")
+        print(f"  - device_type from data: {data.get('device_type', 'NOT FOUND')}")
+        print(f"  - num_inputs from data: {data.get('num_inputs', 'NOT FOUND')}")
+        print(f"  - max_current_per_input from data: {data.get('max_current_per_input', 'NOT FOUND')}")
+        print(f"  - Resulting block device_type: {block.device_type.value}")
+        print(f"  - Resulting block num_inputs: {block.num_inputs}")
+        print(f"  - Resulting block max_current_per_input: {block.max_current_per_input}")
         
         # Load tracker positions
         from .tracker import TrackerPosition, StringPosition

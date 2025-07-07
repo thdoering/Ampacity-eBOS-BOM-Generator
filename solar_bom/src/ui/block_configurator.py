@@ -337,6 +337,11 @@ class BlockConfigurator(ttk.Frame):
         self.num_inputs_var.trace('w', lambda *args: self.update_device_max_current())
         self.max_current_per_input_var.trace('w', lambda *args: self.update_device_max_current())
 
+        # Add traces for device configuration changes
+        self.device_type_var.trace('w', self.on_device_config_change)
+        self.num_inputs_var.trace('w', self.on_device_config_change)  
+        self.max_current_per_input_var.trace('w', self.on_device_config_change)
+
         # Add trace for device type to show/hide inverter frame
         self.device_type_var.trace('w', lambda *args: self.toggle_inverter_frame())
 
@@ -350,7 +355,6 @@ class BlockConfigurator(ttk.Frame):
         if self.device_type_var.get() == DeviceType.STRING_INVERTER.value:
             # Show inverter widgets
             self.inverter_label.grid(row=6, column=1, padx=5, pady=2, sticky=tk.W)
-            self.inverter_label.grid(row=6, column=1, padx=5, pady=2, sticky=tk.W)
             for widget in [
                 self.inverter_label,
                 self.inverter_select_button
@@ -363,6 +367,22 @@ class BlockConfigurator(ttk.Frame):
                 self.inverter_select_button
             ]:
                 widget.grid_remove()
+
+    def set_project(self, project):
+        """Set the current project and update UI accordingly"""
+        self.current_project = project
+        
+        # If there's a selected block, update the UI to show its device configuration
+        if self.current_block and self.current_block in self.blocks:
+            block = self.blocks[self.current_block]
+            
+            # Update device configuration UI from block
+            self.updating_ui = True
+            self.device_type_var.set(block.device_type.value)
+            self.num_inputs_var.set(str(block.num_inputs))
+            self.max_current_per_input_var.set(str(block.max_current_per_input))
+            self.update_device_max_current()  # Recalculate total current
+            self.updating_ui = False
 
     def on_inverter_selected(self, inverter):
         """Handle inverter selection"""
@@ -472,13 +492,16 @@ class BlockConfigurator(ttk.Frame):
                 tracker_template=selected_template,
                 width_m=20,  # Initial minimum width
                 height_m=20,  # Initial minimum height
-                row_spacing_m=row_spacing_m,  # Use project's default row spacing
+                row_spacing_m=row_spacing_m,
                 ns_spacing_m=float(self.ns_spacing_var.get()),
-                gcr=0.0,  # This will be calculated when a tracker template is assigned
+                gcr=0.0,
                 description=f"New block {block_id}",
                 device_spacing_m=self.ft_to_m(float(self.device_spacing_var.get())),
-                device_x=initial_device_x,  # Set initial X position
-                device_y=0.0  # Start at top
+                device_x=initial_device_x,
+                device_y=0.0,
+                device_type=DeviceType(self.device_type_var.get()),
+                num_inputs=int(self.num_inputs_var.get()),
+                max_current_per_input=float(self.max_current_per_input_var.get())
             )
             
             # Add to blocks dictionary
@@ -568,7 +591,19 @@ class BlockConfigurator(ttk.Frame):
             return
             
         block = self.blocks[block_id]
+
+        print(f"[BlockConfigurator.on_block_select] Selected block {block_id}:")
+        print(f"  - device_type: {block.device_type.value}")
+        print(f"  - num_inputs: {block.num_inputs}")
+        print(f"  - max_current_per_input: {block.max_current_per_input}")
         
+        # Update device configuration UI from block
+        self.updating_ui = True
+        self.device_type_var.set(block.device_type.value)
+        self.num_inputs_var.set(str(block.num_inputs))
+        self.max_current_per_input_var.set(str(block.max_current_per_input))
+        self.update_device_max_current()  # Recalculate total current
+
         # Update UI with block data (convert meters to feet)
         self.updating_ui = True
         self.block_id_var.set(block.block_id)
@@ -619,6 +654,68 @@ class BlockConfigurator(ttk.Frame):
                 # Manually call the template selection handler
                 self.on_template_select()
         
+    def on_device_config_change(self, *args):
+        """Update block configuration when device settings change"""
+        if not self.current_block or self.updating_ui:
+            return
+            
+        try:
+            block = self.blocks[self.current_block]
+            
+            print(f"[BlockConfigurator.on_device_config_change] Updating block {self.current_block}")
+            print(f"  - Old values: type={block.device_type.value}, inputs={block.num_inputs}, current={block.max_current_per_input}")
+            
+            # Update device type
+            new_device_type = DeviceType(self.device_type_var.get())
+            
+            # Check if device type change is allowed
+            if not self.check_device_type_consistency(new_device_type):
+                # Revert to current block's device type
+                self.device_type_var.set(block.device_type.value)
+                return
+            
+            # Update block with new values
+            block.device_type = new_device_type
+            block.num_inputs = int(self.num_inputs_var.get())
+            block.max_current_per_input = float(self.max_current_per_input_var.get())
+            
+            print(f"  - New values: type={block.device_type.value}, inputs={block.num_inputs}, current={block.max_current_per_input}")
+            
+            # Save state for undo
+            self._push_state("Update device configuration")
+            
+        except ValueError:
+            # Revert to current values if invalid input
+            self.device_type_var.set(block.device_type.value)
+            self.num_inputs_var.set(str(block.num_inputs))
+            self.max_current_per_input_var.set(str(block.max_current_per_input))
+    
+    def check_device_type_consistency(self, new_device_type):
+        """Check if all blocks have the same device type"""
+        existing_types = set()
+        for block_id, block in self.blocks.items():
+            if block_id != self.current_block:  # Skip current block
+                existing_types.add(block.device_type)
+        
+        if existing_types and new_device_type not in existing_types:
+            # Different device type found
+            existing_type = next(iter(existing_types))
+            result = messagebox.askyesno(
+                "Device Type Consistency",
+                f"Other blocks use {existing_type.value}.\n"
+                f"Do you want to change ALL blocks to {new_device_type.value}?"
+            )
+            
+            if result:
+                # Change all blocks to new device type
+                for block in self.blocks.values():
+                    block.device_type = new_device_type
+                return True
+            else:
+                return False
+        
+        return True
+
     def clear_config_display(self):
         """Clear block configuration display"""
         self.block_id_var.set("")
@@ -1547,7 +1644,10 @@ class BlockConfigurator(ttk.Frame):
                 'tracker_positions': positions,
                 'inverter_name': f"{block.inverter.manufacturer} {block.inverter.model}" if block.inverter else None,
                 'template_name': block.tracker_template.template_name if block.tracker_template else None,
-                'device_spacing_m': block.device_spacing_m
+                'device_spacing_m': block.device_spacing_m,
+                'device_type': block.device_type.value,
+                'num_inputs': block.num_inputs,
+                'max_current_per_input': block.max_current_per_input
             }
             
             # Add wiring configuration if exists
@@ -1617,6 +1717,9 @@ class BlockConfigurator(ttk.Frame):
                 gcr=block_data['gcr'],
                 description=block_data['description'],
                 device_spacing_m=block_data.get('device_spacing_m', 1.83),  # 6ft default
+                device_type=DeviceType(block_data.get('device_type', DeviceType.STRING_INVERTER.value)),
+                num_inputs=block_data.get('num_inputs', 20),
+                max_current_per_input=block_data.get('max_current_per_input', 20.0),
                 device_x=initial_device_x,
                 device_y=0.0
             )
