@@ -258,19 +258,29 @@ class BOMManager(ttk.Frame):
             # Get part number for harnesses and fuses
             part_number = self.get_part_number_for_component(row, selected_blocks)
 
+            # Check if this is a 1-string harness
+            is_1_string_harness = '1-String Harness' in row['Component Type']
+
+            # Set default checked state - unchecked for 1-string harnesses
+            default_checked = '☐' if is_1_string_harness else '☑'
+            default_tag = 'unchecked' if is_1_string_harness else 'checked'
+
             item = self.preview_tree.insert(
                 '', 'end',
                 values=(
-                    '☑',  # Default to checked
+                    default_checked,
                     row['Component Type'],
                     part_number,
                     row['Description'],
                     quantity_str,
                     row['Unit']
                 ),
-                tags=('checked',)
+                tags=(default_tag,)
             )
-            self.checked_items.add(item)
+
+            # Only add to checked_items if it's checked by default
+            if not is_1_string_harness:
+                self.checked_items.add(item)
     
     def export_bom(self):
         """Export BOM to Excel file"""
