@@ -95,8 +95,8 @@ class SolarBOMApplication:
         block_frame = ttk.Frame(notebook)
         bom_frame = ttk.Frame(notebook)
         
-        # Create BOM manager tab
-        bom_manager = BOMManager(bom_frame)
+        # Create BOM manager tab - pass reference to main app
+        bom_manager = BOMManager(bom_frame, main_app=self)
         bom_manager.pack(fill='both', expand=True, padx=5, pady=5)
         
         # Create block configurator tab first (so we can reference it later)

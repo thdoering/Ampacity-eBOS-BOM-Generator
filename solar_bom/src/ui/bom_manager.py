@@ -9,14 +9,31 @@ from ..utils.bom_generator import BOMGenerator
 from .harness_catalog_dialog import HarnessCatalogDialog
 from .harness_designer import HarnessDesigner
 
+def clean_filename(filename: str) -> str:
+    """Clean filename by removing/replacing special characters"""
+    import re
+    # Replace common separators with underscores
+    filename = filename.replace(' ', '_')
+    filename = filename.replace(',', '_')
+    filename = filename.replace('/', '_')
+    filename = filename.replace('\\', '_')
+    # Remove other special characters
+    filename = re.sub(r'[<>:"|?*]', '', filename)
+    # Remove multiple underscores
+    filename = re.sub(r'_+', '_', filename)
+    # Strip leading/trailing underscores
+    filename = filename.strip('_')
+    return filename
+
 class BOMManager(ttk.Frame):
     """UI component for managing BOM generation"""
     
-    def __init__(self, parent, blocks: Optional[Dict[str, BlockConfig]] = None):
+    def __init__(self, parent, blocks: Optional[Dict[str, BlockConfig]] = None, main_app=None):
         super().__init__(parent)
         self.parent = parent
         self.blocks = blocks or {}
         self.selected_blocks = []  # Store selected block IDs
+        self.main_app = main_app  # Store reference to main application
         
         self.setup_ui()
         self.update_block_list()
@@ -322,35 +339,11 @@ class BOMManager(ttk.Frame):
             if not messagebox.askyesno("Missing Wiring Configurations", message, icon='warning'):
                 return
         
-        # Ask for export location
-        filepath = filedialog.asksaveasfilename(
-            defaultextension=".xlsx",
-            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
-            title="Export BOM to Excel"
-        )
-        
-        if not filepath:
-            return
-        
         # Get project information if available
         project_info = None
         try:
-            # Try different approaches to find the current project
-            main_app = None
-            
-            # First, try to get from the root window
-            root = self.winfo_toplevel()
-            if hasattr(root, 'current_project') and root.current_project:
-                main_app = root
-            
-            # Look up the widget hierarchy to find the main application
-            if not main_app:
-                widget = self
-                while widget:
-                    if hasattr(widget, 'current_project') and widget.current_project:
-                        main_app = widget
-                        break
-                    widget = widget.master
+            # Use the stored main_app reference
+            main_app = self.main_app
             
             # If we found the main app with a project, get the info
             if main_app and main_app.current_project:
@@ -402,15 +395,34 @@ class BOMManager(ttk.Frame):
                     'Module Model': ', '.join(module_model) if module_model else 'Unknown',
                     'Inverter Manufacturer': ', '.join(inverter_manufacturer) if inverter_manufacturer else 'Unknown',
                     'Inverter Model': ', '.join(inverter_model) if inverter_model else 'Unknown',
-                    'DC Collection': ', '.join(dc_collection_types) if dc_collection_types else 'Unknown',
-                    'Description': project.metadata.description or '',
-                    'Notes': project.metadata.notes or '',
-                    'Blocks Without Wiring': len(blocks_without_wiring) if blocks_without_wiring else 0
+                    'DC Collection': ', '.join(dc_collection_types) if dc_collection_types else 'Unknown'
                 }
-                
-                print("Project info for BOM:", project_info)
         except Exception as e:
             print(f"Error getting project info: {str(e)}")
+        
+        # Generate suggested filename
+        suggested_filename = "output.xlsx"  # Default fallback
+        try:
+            if project_info:
+                client = clean_filename(project_info.get('Customer', 'Unknown_Client'))
+                project_name = clean_filename(project_info.get('Project Name', 'Unknown_Project'))
+                dc_collection = clean_filename(project_info.get('DC Collection', 'Unknown'))
+                
+                # Build filename
+                suggested_filename = f"{client}_{project_name}_Ampacity eBOM_{dc_collection}.xlsx"
+        except Exception as e:
+            print(f"Error generating suggested filename: {str(e)}")
+        
+        # Ask for export location
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+            title="Export BOM to Excel",
+            initialfile=suggested_filename
+        )
+        
+        if not filepath:
+            return
         
         # Get checked components for filtering
         checked_components = self.get_checked_components()
@@ -638,12 +650,10 @@ class BOMManager(ttk.Frame):
                 return "N/A"
             
             fuse_rating_amps = int(rating_match.group(1))
-            print(f"Looking for fuse with {fuse_rating_amps}A rating")
             
             # Find exact match first
             for part_number, spec in fuse_library.items():
                 if spec.get('fuse_rating_amps') == fuse_rating_amps:
-                    print(f"Found exact match: {part_number}")
                     return part_number
             
             # If no exact match, find the next higher rating

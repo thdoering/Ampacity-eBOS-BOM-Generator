@@ -586,7 +586,7 @@ class BOMGenerator:
             writer = pd.ExcelWriter(filepath, engine='openpyxl')
             
             # Write summary data
-            summary_data.to_excel(writer, sheet_name='BOM Summary', index=False, startrow=10)  # Start after project info
+            summary_data.to_excel(writer, sheet_name='BOM Summary', index=False, startrow=13)
 
             # Write detailed data  
             detailed_data.to_excel(writer, sheet_name='Block Details', index=False)
@@ -624,7 +624,7 @@ class BOMGenerator:
                     summary_sheet.cell(row=row, column=2, value=str(value))  
             
             # Add section header for BOM
-            row = 9
+            row = 12
             summary_sheet.merge_cells(f'A{row}:E{row}')
             summary_sheet.cell(row=row, column=1, value="Bill of Materials").font = Font(bold=True, size=14)
             
@@ -635,7 +635,7 @@ class BOMGenerator:
             self._format_excel_sheet(workbook['Block Details'], detailed_data)
             
             # Add filter to summary sheet for easier sorting
-            summary_sheet.auto_filter.ref = f"A10:E{10 + len(summary_data)}"
+            summary_sheet.auto_filter.ref = f"A16:E{16 + len(summary_data)}"
             
             # Save the Excel file
             writer.close()
@@ -719,7 +719,7 @@ class BOMGenerator:
             writer = pd.ExcelWriter(filepath, engine='openpyxl')
             
             # Write summary data
-            summary_data.to_excel(writer, sheet_name='BOM Summary', index=False, startrow=10)
+            summary_data.to_excel(writer, sheet_name='BOM Summary', index=False, startrow=13)  # Start after project info
             
             # Write detailed data  
             detailed_data.to_excel(writer, sheet_name='Block Details', index=False)
@@ -742,16 +742,16 @@ class BOMGenerator:
                     summary_sheet.cell(row=row, column=2, value=value)
             
             # Add section header for BOM
-            row = 9
-            summary_sheet.merge_cells(f'A{row}:F{row}')
+            row = 12
+            summary_sheet.merge_cells(f'A{row}:E{row}')
             summary_sheet.cell(row=row, column=1, value="Bill of Materials").font = Font(bold=True, size=14)
             
             # Format sheets
-            self._format_excel_sheet(workbook['BOM Summary'], summary_data, start_row=10)
+            self._format_excel_sheet(workbook['BOM Summary'], summary_data, start_row=13)
             self._format_excel_sheet(workbook['Block Details'], detailed_data)
             
             # Add filter
-            summary_sheet.auto_filter.ref = f"A10:F{10 + len(summary_data)}"
+            summary_sheet.auto_filter.ref = f"A13:F{13 + len(summary_data)}"
             
             # Save and open
             writer.close()
