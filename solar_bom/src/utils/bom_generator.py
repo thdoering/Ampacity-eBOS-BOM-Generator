@@ -682,9 +682,6 @@ class BOMGenerator:
             bottom=Side(style='thin')
         )
         
-        # Category styles
-        category_fill = PatternFill(start_color="E6E6E6", end_color="E6E6E6", fill_type="solid")
-        
         # Warning style
         warning_fill = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type="solid")  # Light red
         
@@ -704,9 +701,6 @@ class BOMGenerator:
                 cell = worksheet.cell(row=row_num, column=part_number_col)
                 cell.alignment = centered_alignment
         
-        # Format data cells and apply auto-width
-        current_category = None
-        
         for i, row in enumerate(worksheet.iter_rows(min_row=start_row+1, 
                                                     max_row=start_row+len(data), 
                                                     min_col=1, 
@@ -721,17 +715,6 @@ class BOMGenerator:
                 unit_value = worksheet.cell(row=row_index, column=unit_col_idx + 1).value
                 if unit_value and 'warning' in str(unit_value).lower():
                     is_warning = True
-            
-            # Check if category has changed
-            if 'Category' in data.columns:
-                category_col_idx = list(data.columns).index('Category')
-                category = worksheet.cell(row=row_index, column=category_col_idx + 1).value
-                
-                if category != current_category:
-                    current_category = category
-                    # Add subtle highlight for category rows
-                    for cell in row:
-                        cell.fill = category_fill
             
             # Apply warning formatting if this is a warning row
             if is_warning:
