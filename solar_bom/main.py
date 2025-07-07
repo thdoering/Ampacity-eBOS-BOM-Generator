@@ -499,10 +499,6 @@ class SolarBOMApplication:
             for block_id, block in block_configurator.blocks.items():
                 block_dict = block.to_dict()
                 serialized_blocks[block_id] = block_dict
-                print(f"[Main.update_project_blocks] Serializing block {block_id}:")
-                print(f"  - device_type: {block_dict.get('device_type', 'NOT FOUND')}")
-                print(f"  - num_inputs: {block_dict.get('num_inputs', 'NOT FOUND')}")
-                print(f"  - max_current_per_input: {block_dict.get('max_current_per_input', 'NOT FOUND')}")
                 
             # Update the project's blocks
             self.current_project.blocks = serialized_blocks

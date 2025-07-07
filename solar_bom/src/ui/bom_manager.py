@@ -572,15 +572,15 @@ class BOMManager(ttk.Frame):
             from ..utils.bom_generator import BOMGenerator
             bom_generator = BOMGenerator(selected_blocks)
             
-            # Extract harness info from description
-            description = row['Description']
-            
-            # Determine polarity and string count from description
-            polarity = 'positive' if 'Positive' in description else 'negative'
-            
-            # Extract string count (look for patterns like "2 String", "3 String", etc.)
+            # Extract harness info from component type
+            component_type = row['Component Type']
+
+            # Determine polarity and string count from component type
+            polarity = 'positive' if 'Positive' in component_type else 'negative'
+
+            # Extract string count from component type (e.g., "Positive 2-String Harness")
             import re
-            string_match = re.search(r'(\d+)-String', description)
+            string_match = re.search(r'(\d+)-String', component_type)
             if not string_match:
                 return "N/A"
             

@@ -591,11 +591,6 @@ class BlockConfigurator(ttk.Frame):
             return
             
         block = self.blocks[block_id]
-
-        print(f"[BlockConfigurator.on_block_select] Selected block {block_id}:")
-        print(f"  - device_type: {block.device_type.value}")
-        print(f"  - num_inputs: {block.num_inputs}")
-        print(f"  - max_current_per_input: {block.max_current_per_input}")
         
         # Update device configuration UI from block
         self.updating_ui = True

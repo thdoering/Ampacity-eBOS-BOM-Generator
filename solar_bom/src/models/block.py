@@ -275,11 +275,6 @@ class BlockConfig:
             'num_inputs': self.num_inputs,
             'max_current_per_input': self.max_current_per_input
         }
-
-        print(f"[BlockConfig.to_dict] Saving block {self.block_id}:")
-        print(f"  - device_type: {self.device_type.value}")
-        print(f"  - num_inputs: {self.num_inputs}")
-        print(f"  - max_current_per_input: {self.max_current_per_input}")
         
         # Add inverter reference if exists
         if self.inverter:
@@ -376,14 +371,6 @@ class BlockConfig:
             num_inputs=data.get('num_inputs', 20),
             max_current_per_input=data.get('max_current_per_input', 20.0)
         )
-
-        print(f"[BlockConfig.from_dict] Loading block {block.block_id}:")
-        print(f"  - device_type from data: {data.get('device_type', 'NOT FOUND')}")
-        print(f"  - num_inputs from data: {data.get('num_inputs', 'NOT FOUND')}")
-        print(f"  - max_current_per_input from data: {data.get('max_current_per_input', 'NOT FOUND')}")
-        print(f"  - Resulting block device_type: {block.device_type.value}")
-        print(f"  - Resulting block num_inputs: {block.num_inputs}")
-        print(f"  - Resulting block max_current_per_input: {block.max_current_per_input}")
         
         # Load tracker positions
         from .tracker import TrackerPosition, StringPosition
