@@ -3388,6 +3388,9 @@ class WiringConfigurator(tk.Toplevel):
             # The extender points are at different y-coordinates
             device_y = self.block.device_y
             
+            # Calculate the midpoint between the two harness extender points
+            harness_midpoint_y = (extender_point[1] + opposite_extender_point[1]) / 2
+            
             # Determine which harness needs the long trunk
             if device_y < min(extender_point[1], opposite_extender_point[1]):
                 # Device is north of both harnesses
@@ -3396,8 +3399,13 @@ class WiringConfigurator(tk.Toplevel):
                 # Device is south of both harnesses  
                 needs_long_trunk = is_positive  # Positive gets long trunk
             else:
-                # Device is between harnesses - no change needed
-                needs_long_trunk = False
+                # Device is between harnesses - check which side of center
+                if device_y < harness_midpoint_y:
+                    # Device is on north side of center
+                    needs_long_trunk = not is_positive  # Negative gets long trunk
+                else:
+                    # Device is on south side of center (or exactly at center)
+                    needs_long_trunk = is_positive  # Positive gets long trunk
                 
             if needs_long_trunk:
                 # Create new extender point at the same y-coordinate as opposite harness
