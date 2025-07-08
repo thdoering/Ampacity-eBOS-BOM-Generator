@@ -283,11 +283,11 @@ class BlockConfigurator(ttk.Frame):
         self.trench_depth_m_entry.config(state='disabled')
         self.trench_depth_ft_entry.config(state='disabled')
 
-        # Add traces for bidirectional conversion
-        self.pile_reveal_m_var.trace('w', lambda *args: self.update_pile_reveal_ft())
-        self.pile_reveal_ft_var.trace('w', lambda *args: self.update_pile_reveal_m())
-        self.trench_depth_m_var.trace('w', lambda *args: self.update_trench_depth_ft())
-        self.trench_depth_ft_var.trace('w', lambda *args: self.update_trench_depth_m())
+        # Add traces for bidirectional conversion AND saving to block
+        self.pile_reveal_m_var.trace('w', lambda *args: (self.update_pile_reveal_ft(), self.save_underground_settings()))
+        self.pile_reveal_ft_var.trace('w', lambda *args: (self.update_pile_reveal_m(), self.save_underground_settings()))
+        self.trench_depth_m_var.trace('w', lambda *args: (self.update_trench_depth_ft(), self.save_underground_settings()))
+        self.trench_depth_ft_var.trace('w', lambda *args: (self.update_trench_depth_m(), self.save_underground_settings()))
 
         # Add spacing after device frame
         ttk.Label(config_frame, text="").grid(row=6, column=0, pady=5)  # Spacer
@@ -419,6 +419,24 @@ class BlockConfigurator(ttk.Frame):
                 self.inverter_select_button
             ]:
                 widget.grid_remove()
+
+    def save_underground_settings(self):
+        """Save underground routing settings to current block"""
+        if self.updating_ui or not self.current_block or self.current_block not in self.blocks:
+            return
+        
+        block = self.blocks[self.current_block]
+        
+        # Save the values from the metric inputs (as they're the source of truth)
+        try:
+            block.pile_reveal_m = float(self.pile_reveal_m_var.get())
+            block.trench_depth_m = float(self.trench_depth_m_var.get())
+        except ValueError:
+            # If there's an error parsing, keep the existing values
+            pass
+        
+        # Notify that blocks have changed
+        self._notify_blocks_changed()
 
     def set_project(self, project):
         """Set the current project and update UI accordingly"""
@@ -655,9 +673,20 @@ class BlockConfigurator(ttk.Frame):
         self.update_device_max_current()  # Recalculate total current
 
         # Update underground routing UI from block
+        self.updating_ui = True
         self.underground_routing_var.set(block.underground_routing if hasattr(block, 'underground_routing') else False)
-        self.pile_reveal_m_var.set(str(getattr(block, 'pile_reveal_m', 1.5)))
-        self.trench_depth_m_var.set(str(getattr(block, 'trench_depth_m', 0.91)))
+
+        # Update both metric and feet values
+        pile_reveal_m = getattr(block, 'pile_reveal_m', 1.5)
+        trench_depth_m = getattr(block, 'trench_depth_m', 0.91)
+
+        self.pile_reveal_m_var.set(str(pile_reveal_m))
+        self.pile_reveal_ft_var.set(f"{self.m_to_ft(pile_reveal_m):.1f}")
+
+        self.trench_depth_m_var.set(str(trench_depth_m))
+        self.trench_depth_ft_var.set(f"{self.m_to_ft(trench_depth_m):.1f}")
+
+        self.updating_ui = False
 
         # Update the entry states based on underground routing setting
         self.toggle_underground_routing()
