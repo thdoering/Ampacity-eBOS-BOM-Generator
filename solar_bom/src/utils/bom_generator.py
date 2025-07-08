@@ -844,8 +844,18 @@ class BOMGenerator:
                 elif "neg_src" in route_id or "neg_node" in route_id or "neg_string" in route_id:
                     string_segments_neg.append(segment_length_feet)
                 elif "pos_dev" in route_id or "pos_main" in route_id or "whip_pos" in route_id or "pos_whip" in route_id:
+                    # Add underground routing component if enabled
+                    if hasattr(block, 'underground_routing') and block.underground_routing:
+                        underground_addition_m = 2 * (block.pile_reveal_m + block.trench_depth_m)
+                        underground_addition_ft = underground_addition_m * 3.28084
+                        segment_length_feet += underground_addition_ft
                     whip_segments_pos.append(segment_length_feet)
                 elif "neg_dev" in route_id or "neg_main" in route_id or "whip_neg" in route_id or "neg_whip" in route_id:
+                    # Add underground routing component if enabled
+                    if hasattr(block, 'underground_routing') and block.underground_routing:
+                        underground_addition_m = 2 * (block.pile_reveal_m + block.trench_depth_m)
+                        underground_addition_ft = underground_addition_m * 3.28084
+                        segment_length_feet += underground_addition_ft
                     whip_segments_neg.append(segment_length_feet)
             
             # Process string segments only for HOMERUN wiring

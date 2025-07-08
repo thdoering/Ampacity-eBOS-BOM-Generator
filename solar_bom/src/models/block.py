@@ -69,6 +69,9 @@ class BlockConfig:
     num_inputs: int = 20  # Default number of inputs
     max_current_per_input: float = 20.0  # Default max current per input in amps
     block_realistic_routes: Dict[str, List[tuple[float, float]]] = field(default_factory=dict)
+    underground_routing: bool = False
+    pile_reveal_m: float = 1.5
+    trench_depth_m: float = 0.91  # 3ft default
     
     # Optional fields with defaults must come after
     description: Optional[str] = None
@@ -157,9 +160,19 @@ class BlockConfig:
                 elif "neg_string" in route_id:
                     neg_string_cable_length += route_length
                 elif "pos_whip" in route_id:
-                    pos_whip_cable_length += route_length
+                    # Add underground routing vertical component if enabled
+                    if hasattr(self, 'underground_routing') and self.underground_routing:
+                        underground_addition = 2 * (self.pile_reveal_m + self.trench_depth_m)
+                        pos_whip_cable_length += route_length + underground_addition
+                    else:
+                        pos_whip_cable_length += route_length
                 elif "neg_whip" in route_id:
-                    neg_whip_cable_length += route_length
+                    # Add underground routing vertical component if enabled
+                    if hasattr(self, 'underground_routing') and self.underground_routing:
+                        underground_addition = 2 * (self.pile_reveal_m + self.trench_depth_m)
+                        neg_whip_cable_length += route_length + underground_addition
+                    else:
+                        neg_whip_cable_length += route_length
             
             lengths["string_cable_positive"] = pos_string_cable_length
             lengths["string_cable_negative"] = neg_string_cable_length
@@ -194,9 +207,19 @@ class BlockConfig:
                     neg_harness_cable_length += route_length
                 # More flexible whip route pattern matching
                 elif "pos_main" in route_id or "pos_dev" in route_id or "whip_pos" in route_id or "pos_whip" in route_id:
-                    pos_whip_cable_length += route_length
+                    # Add underground routing vertical component if enabled
+                    if hasattr(self, 'underground_routing') and self.underground_routing:
+                        underground_addition = 2 * (self.pile_reveal_m + self.trench_depth_m)
+                        pos_whip_cable_length += route_length + underground_addition
+                    else:
+                        pos_whip_cable_length += route_length
                 elif "neg_main" in route_id or "neg_dev" in route_id or "whip_neg" in route_id or "neg_whip" in route_id:
-                    neg_whip_cable_length += route_length
+                    # Add underground routing vertical component if enabled
+                    if hasattr(self, 'underground_routing') and self.underground_routing:
+                        underground_addition = 2 * (self.pile_reveal_m + self.trench_depth_m)
+                        neg_whip_cable_length += route_length + underground_addition
+                    else:
+                        neg_whip_cable_length += route_length
             
             lengths["string_cable_positive"] = pos_string_cable_length
             lengths["string_cable_negative"] = neg_string_cable_length
@@ -273,7 +296,10 @@ class BlockConfig:
             'device_spacing_m': self.device_spacing_m,
             'device_type': self.device_type.value,
             'num_inputs': self.num_inputs,
-            'max_current_per_input': self.max_current_per_input
+            'max_current_per_input': self.max_current_per_input,
+            'underground_routing': self.underground_routing,
+            'pile_reveal_m': self.pile_reveal_m,
+            'trench_depth_m': self.trench_depth_m
         }
         
         # Add inverter reference if exists
@@ -369,7 +395,10 @@ class BlockConfig:
             device_spacing_m=data.get('device_spacing_m', 1.83),
             device_type=DeviceType(data.get('device_type', DeviceType.STRING_INVERTER.value)),
             num_inputs=data.get('num_inputs', 20),
-            max_current_per_input=data.get('max_current_per_input', 20.0)
+            max_current_per_input=data.get('max_current_per_input', 20.0),
+            underground_routing=data.get('underground_routing', False),
+            pile_reveal_m=data.get('pile_reveal_m', 1.5),
+            trench_depth_m=data.get('trench_depth_m', 0.91)
         )
         
         # Load tracker positions

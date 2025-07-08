@@ -112,7 +112,7 @@ class BlockConfigurator(ttk.Frame):
         list_frame.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
         
         # Block listbox
-        self.block_listbox = tk.Listbox(list_frame, width=30, height=10)
+        self.block_listbox = tk.Listbox(list_frame, width=30, height=20)
         self.block_listbox.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
         self.block_listbox.bind('<<ListboxSelect>>', self.on_block_select)
         
@@ -123,6 +123,20 @@ class BlockConfigurator(ttk.Frame):
         ttk.Button(btn_frame, text="New Block", command=self.create_new_block).grid(row=0, column=0, padx=2)
         ttk.Button(btn_frame, text="Delete Block", command=self.delete_block).grid(row=0, column=1, padx=2)
         ttk.Button(btn_frame, text="Copy Block", command=self.copy_block).grid(row=0, column=2, padx=2)
+
+        # Device Placement Mode
+        placement_frame = ttk.LabelFrame(list_frame, text="Device Placement Mode")
+        placement_frame.grid(row=2, column=0, padx=5, pady=5, sticky=(tk.W, tk.E))
+
+        ttk.Radiobutton(placement_frame, text="Center Between Rows", 
+                    variable=self.device_placement_mode, value="row_center",
+                    command=self.update_device_placement).grid(
+                    row=0, column=0, padx=5, pady=2, sticky=tk.W)
+
+        ttk.Radiobutton(placement_frame, text="Align With Tracker", 
+                    variable=self.device_placement_mode, value="tracker_align",
+                    command=self.update_device_placement).grid(
+                    row=1, column=0, padx=5, pady=2, sticky=tk.W)
         
         # Right side - Block Configuration
         config_frame = ttk.LabelFrame(main_container, text="Block Configuration", padding="5")
@@ -223,19 +237,57 @@ class BlockConfigurator(ttk.Frame):
             self.draw_block()
         ))
 
-        # Add placement mode radio buttons
-        placement_frame = ttk.LabelFrame(device_frame, text="Device Placement Mode")
-        placement_frame.grid(row=7, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
+        # Underground Routing Configuration - goes after the inverter button row
+        underground_frame = ttk.LabelFrame(device_frame, text="Whip Routing")
+        underground_frame.grid(row=7, column=0, columnspan=3, padx=5, pady=5, sticky=(tk.W, tk.E))
 
-        ttk.Radiobutton(placement_frame, text="Center Between Rows", 
-                    variable=self.device_placement_mode, value="row_center",
-                    command=self.update_device_placement).grid(
-                    row=0, column=0, padx=5, pady=2, sticky=tk.W)
+        # Toggle for above/below ground
+        self.underground_routing_var = tk.BooleanVar(value=False)
+        self.underground_toggle = ttk.Checkbutton(
+            underground_frame, 
+            text="Route whips underground",
+            variable=self.underground_routing_var,
+            command=self.toggle_underground_routing
+        )
+        self.underground_toggle.grid(row=0, column=0, columnspan=3, padx=5, pady=2, sticky=tk.W)
 
-        ttk.Radiobutton(placement_frame, text="Align With Tracker", 
-                    variable=self.device_placement_mode, value="tracker_align",
-                    command=self.update_device_placement).grid(
-                    row=1, column=0, padx=5, pady=2, sticky=tk.W)
+        # Pile reveal input
+        ttk.Label(underground_frame, text="Pile Reveal:").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
+        self.pile_reveal_m_var = tk.StringVar(value="1.5")
+        self.pile_reveal_m_entry = ttk.Entry(underground_frame, textvariable=self.pile_reveal_m_var, width=10)
+        self.pile_reveal_m_entry.grid(row=1, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        ttk.Label(underground_frame, text="m").grid(row=1, column=2, padx=2, pady=2, sticky=tk.W)
+
+        # Pile reveal in feet (bidirectional)
+        self.pile_reveal_ft_var = tk.StringVar(value="4.9")
+        self.pile_reveal_ft_entry = ttk.Entry(underground_frame, textvariable=self.pile_reveal_ft_var, width=10)
+        self.pile_reveal_ft_entry.grid(row=1, column=3, padx=5, pady=2, sticky=(tk.W, tk.E))
+        ttk.Label(underground_frame, text="ft").grid(row=1, column=4, padx=2, pady=2, sticky=tk.W)
+
+        # Trench depth input
+        ttk.Label(underground_frame, text="Trench Depth:").grid(row=2, column=0, padx=5, pady=2, sticky=tk.W)
+        self.trench_depth_m_var = tk.StringVar(value="0.91")  # 3ft in meters
+        self.trench_depth_m_entry = ttk.Entry(underground_frame, textvariable=self.trench_depth_m_var, width=10)
+        self.trench_depth_m_entry.grid(row=2, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        ttk.Label(underground_frame, text="m").grid(row=2, column=2, padx=2, pady=2, sticky=tk.W)
+
+        # Trench depth in feet (bidirectional)
+        self.trench_depth_ft_var = tk.StringVar(value="3.0")
+        self.trench_depth_ft_entry = ttk.Entry(underground_frame, textvariable=self.trench_depth_ft_var, width=10)
+        self.trench_depth_ft_entry.grid(row=2, column=3, padx=5, pady=2, sticky=(tk.W, tk.E))
+        ttk.Label(underground_frame, text="ft").grid(row=2, column=4, padx=2, pady=2, sticky=tk.W)
+
+        # Initially disable the inputs
+        self.pile_reveal_m_entry.config(state='disabled')
+        self.pile_reveal_ft_entry.config(state='disabled')
+        self.trench_depth_m_entry.config(state='disabled')
+        self.trench_depth_ft_entry.config(state='disabled')
+
+        # Add traces for bidirectional conversion
+        self.pile_reveal_m_var.trace('w', lambda *args: self.update_pile_reveal_ft())
+        self.pile_reveal_ft_var.trace('w', lambda *args: self.update_pile_reveal_m())
+        self.trench_depth_m_var.trace('w', lambda *args: self.update_trench_depth_ft())
+        self.trench_depth_ft_var.trace('w', lambda *args: self.update_trench_depth_m())
 
         # Add spacing after device frame
         ttk.Label(config_frame, text="").grid(row=6, column=0, pady=5)  # Spacer
@@ -501,7 +553,10 @@ class BlockConfigurator(ttk.Frame):
                 device_y=0.0,
                 device_type=DeviceType(self.device_type_var.get()),
                 num_inputs=int(self.num_inputs_var.get()),
-                max_current_per_input=float(self.max_current_per_input_var.get())
+                max_current_per_input=float(self.max_current_per_input_var.get()),
+                underground_routing=False,
+                pile_reveal_m=1.5,
+                trench_depth_m=0.91
             )
             
             # Add to blocks dictionary
@@ -598,6 +653,14 @@ class BlockConfigurator(ttk.Frame):
         self.num_inputs_var.set(str(block.num_inputs))
         self.max_current_per_input_var.set(str(block.max_current_per_input))
         self.update_device_max_current()  # Recalculate total current
+
+        # Update underground routing UI from block
+        self.underground_routing_var.set(block.underground_routing if hasattr(block, 'underground_routing') else False)
+        self.pile_reveal_m_var.set(str(getattr(block, 'pile_reveal_m', 1.5)))
+        self.trench_depth_m_var.set(str(getattr(block, 'trench_depth_m', 0.91)))
+
+        # Update the entry states based on underground routing setting
+        self.toggle_underground_routing()
 
         # Update UI with block data (convert meters to feet)
         self.updating_ui = True
@@ -1642,7 +1705,10 @@ class BlockConfigurator(ttk.Frame):
                 'device_spacing_m': block.device_spacing_m,
                 'device_type': block.device_type.value,
                 'num_inputs': block.num_inputs,
-                'max_current_per_input': block.max_current_per_input
+                'max_current_per_input': block.max_current_per_input,
+                'underground_routing': getattr(block, 'underground_routing', False),
+                'pile_reveal_m': getattr(block, 'pile_reveal_m', 1.5),
+                'trench_depth_m': getattr(block, 'trench_depth_m', 0.91)
             }
             
             # Add wiring configuration if exists
@@ -1716,7 +1782,10 @@ class BlockConfigurator(ttk.Frame):
                 num_inputs=block_data.get('num_inputs', 20),
                 max_current_per_input=block_data.get('max_current_per_input', 20.0),
                 device_x=initial_device_x,
-                device_y=0.0
+                device_y=0.0,
+                underground_routing=block_data.get('underground_routing', False),
+                pile_reveal_m=block_data.get('pile_reveal_m', 1.5),
+                trench_depth_m=block_data.get('trench_depth_m', 0.91)
             )
             
             # Clear existing tracker positions
@@ -1942,6 +2011,14 @@ class BlockConfigurator(ttk.Frame):
         
         # Update the ID
         new_block.block_id = new_id
+
+        # Ensure underground routing attributes exist (for backward compatibility)
+        if not hasattr(new_block, 'underground_routing'):
+            new_block.underground_routing = False
+        if not hasattr(new_block, 'pile_reveal_m'):
+            new_block.pile_reveal_m = 1.5
+        if not hasattr(new_block, 'trench_depth_m'):
+            new_block.trench_depth_m = 0.91
         
         # Add to blocks dictionary
         self.blocks[new_id] = new_block
@@ -2350,3 +2427,86 @@ class BlockConfigurator(ttk.Frame):
             return False, warning_msg
         
         return True, None
+    
+    def toggle_underground_routing(self):
+        """Toggle underground routing mode and enable/disable inputs"""
+        is_underground = self.underground_routing_var.get()
+        
+        if is_underground:
+            self.pile_reveal_m_entry.config(state='normal')
+            self.pile_reveal_ft_entry.config(state='normal')
+            self.trench_depth_m_entry.config(state='normal')
+            self.trench_depth_ft_entry.config(state='normal')
+        else:
+            self.pile_reveal_m_entry.config(state='disabled')
+            self.pile_reveal_ft_entry.config(state='disabled')
+            self.trench_depth_m_entry.config(state='disabled')
+            self.trench_depth_ft_entry.config(state='disabled')
+        
+        # Update the current block if one is selected
+        if self.current_block and self.current_block in self.blocks:
+            block = self.blocks[self.current_block]
+            block.underground_routing = is_underground
+            if is_underground:
+                try:
+                    block.pile_reveal_m = float(self.pile_reveal_m_var.get())
+                    block.trench_depth_m = float(self.trench_depth_m_var.get())
+                except ValueError:
+                    pass
+            self._notify_blocks_changed()
+
+    def update_pile_reveal_ft(self):
+        """Update feet display when meters value changes"""
+        if self.updating_ui:
+            return
+        try:
+            self.updating_ui = True
+            meters = float(self.pile_reveal_m_var.get())
+            feet = self.m_to_ft(meters)
+            self.pile_reveal_ft_var.set(f"{feet:.1f}")
+        except ValueError:
+            pass
+        finally:
+            self.updating_ui = False
+
+    def update_pile_reveal_m(self):
+        """Update meters when feet value changes"""
+        if self.updating_ui:
+            return
+        try:
+            self.updating_ui = True
+            feet = float(self.pile_reveal_ft_var.get())
+            meters = self.ft_to_m(feet)
+            self.pile_reveal_m_var.set(f"{meters:.2f}")
+        except ValueError:
+            pass
+        finally:
+            self.updating_ui = False
+
+    def update_trench_depth_ft(self):
+        """Update feet display when meters value changes"""
+        if self.updating_ui:
+            return
+        try:
+            self.updating_ui = True
+            meters = float(self.trench_depth_m_var.get())
+            feet = self.m_to_ft(meters)
+            self.trench_depth_ft_var.set(f"{feet:.1f}")
+        except ValueError:
+            pass
+        finally:
+            self.updating_ui = False
+
+    def update_trench_depth_m(self):
+        """Update meters when feet value changes"""
+        if self.updating_ui:
+            return
+        try:
+            self.updating_ui = True
+            feet = float(self.trench_depth_ft_var.get())
+            meters = self.ft_to_m(feet)
+            self.trench_depth_m_var.set(f"{meters:.2f}")
+        except ValueError:
+            pass
+        finally:
+            self.updating_ui = False
