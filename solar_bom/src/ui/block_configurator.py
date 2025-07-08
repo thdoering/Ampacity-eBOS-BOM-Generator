@@ -277,6 +277,11 @@ class BlockConfigurator(ttk.Frame):
         self.trench_depth_ft_entry.grid(row=2, column=3, padx=5, pady=2, sticky=(tk.W, tk.E))
         ttk.Label(underground_frame, text="ft").grid(row=2, column=4, padx=2, pady=2, sticky=tk.W)
 
+        # Apply to all blocks button
+        ttk.Button(underground_frame, text="Apply to All Blocks", 
+                command=self.apply_underground_routing_to_all).grid(
+                row=3, column=0, columnspan=5, padx=5, pady=5)
+
         # Initially disable the inputs
         self.pile_reveal_m_entry.config(state='disabled')
         self.pile_reveal_ft_entry.config(state='disabled')
@@ -2539,3 +2544,45 @@ class BlockConfigurator(ttk.Frame):
             pass
         finally:
             self.updating_ui = False
+
+    def apply_underground_routing_to_all(self):
+        """Apply current block's underground routing settings to all blocks"""
+        if not self.current_block or self.current_block not in self.blocks:
+            messagebox.showwarning("Warning", "Please select a block first")
+            return
+        
+        # Get current block's settings
+        current_block = self.blocks[self.current_block]
+        underground_routing = getattr(current_block, 'underground_routing', False)
+        pile_reveal_m = getattr(current_block, 'pile_reveal_m', 1.5)
+        trench_depth_m = getattr(current_block, 'trench_depth_m', 0.91)
+        
+        # Create message for confirmation
+        if underground_routing:
+            pile_reveal_ft = self.m_to_ft(pile_reveal_m)
+            trench_depth_ft = self.m_to_ft(trench_depth_m)
+            message = (f"Apply underground routing to all blocks?\n\n"
+                    f"Pile Reveal: {pile_reveal_m:.2f}m ({pile_reveal_ft:.1f}ft)\n"
+                    f"Trench Depth: {trench_depth_m:.2f}m ({trench_depth_ft:.1f}ft)")
+        else:
+            message = "Apply above ground routing to all blocks?"
+        
+        if messagebox.askyesno("Apply to All Blocks", message):
+            # Save state for undo
+            self._push_state("Apply underground routing to all blocks")
+            
+            # Apply settings to all blocks
+            for block_id, block in self.blocks.items():
+                block.underground_routing = underground_routing
+                block.pile_reveal_m = pile_reveal_m
+                block.trench_depth_m = trench_depth_m
+            
+            # Refresh current display if needed
+            if self.current_block:
+                self.on_block_select()
+            
+            # Notify blocks changed
+            self._notify_blocks_changed()
+            
+            messagebox.showinfo("Success", 
+                            f"Underground routing settings applied to {len(self.blocks)} blocks")
