@@ -3096,8 +3096,18 @@ class WiringConfigurator(tk.Toplevel):
                 harness = self.block.wiring_config.harness_groupings[string_count][harness_idx]
                 string_indices = harness.string_indices
                 
+                # Check if this is a 1-string harness
+                if len(string_indices) == 1:
+                    # For 1-string harness, return the collection point directly
+                    string_idx = string_indices[0]
+                    if string_idx < len(pos.strings):
+                        string = pos.strings[string_idx]
+                        routing_mode = self.routing_mode_var.get()
+                        collection_point = self.get_harness_collection_point(pos, string, harness_idx, polarity == 'positive', routing_mode)
+                        return collection_point
+                
                 if string_indices:
-                    # Get collection points for this harness
+                    # For multi-string harness, continue with existing logic
                     routing_mode = self.routing_mode_var.get()
                     collection_points = []
                     
@@ -3371,6 +3381,14 @@ class WiringConfigurator(tk.Toplevel):
         if not collection_points or not extender_point:
             return
         
+        # Check if this is a 1-string harness
+        if num_strings == 1:
+            # For 1-string harness, no harness trunk is drawn
+            # The extender point is already at the collection point
+            # Just update the extended extender points to match
+            self.extended_extender_points[(tracker_idx, harness_idx, 'positive' if is_positive else 'negative')] = collection_points[0]
+            return
+        
         # Sort collection points to route from far end toward extender point
         extender_point = self.get_harness_extender_end(tracker_idx, harness_idx, is_positive, collection_points)
         if not extender_point:
@@ -3468,6 +3486,12 @@ class WiringConfigurator(tk.Toplevel):
     def draw_simple_harness_connection(self, collection_points, extender_point, num_strings, is_positive):
         """Draw simple harness connection for default single harness"""
         if not collection_points or not extender_point:
+            return
+        
+        # Check if this is a 1-string configuration
+        if num_strings == 1:
+            # For 1-string, no harness trunk is drawn
+            # The extender will run directly from the collection point
             return
         
         # Find which end should be the extender point (closest to device)
