@@ -362,9 +362,11 @@ class BOMManager(ttk.Frame):
                     # Count modules
                     if block.tracker_template and block.tracker_template.module_spec:
                         module_spec = block.tracker_template.module_spec
-                        modules_per_tracker = block.tracker_template.get_total_modules()
-                        tracker_count = len(block.tracker_positions)
-                        block_modules = modules_per_tracker * tracker_count
+                        # Count modules correctly by iterating through actual strings
+                        block_modules = 0
+                        for pos in block.tracker_positions:
+                            for string in pos.strings:
+                                block_modules += string.num_modules
                         
                         total_modules += block_modules
                         
