@@ -752,11 +752,7 @@ class BlockConfigurator(ttk.Frame):
             return
             
         try:
-            block = self.blocks[self.current_block]
-            
-            print(f"[BlockConfigurator.on_device_config_change] Updating block {self.current_block}")
-            print(f"  - Old values: type={block.device_type.value}, inputs={block.num_inputs}, current={block.max_current_per_input}")
-            
+            block = self.blocks[self.current_block]            
             # Update device type
             new_device_type = DeviceType(self.device_type_var.get())
             
@@ -770,8 +766,6 @@ class BlockConfigurator(ttk.Frame):
             block.device_type = new_device_type
             block.num_inputs = int(self.num_inputs_var.get())
             block.max_current_per_input = float(self.max_current_per_input_var.get())
-            
-            print(f"  - New values: type={block.device_type.value}, inputs={block.num_inputs}, current={block.max_current_per_input}")
             
             # Save state for undo
             self._push_state("Update device configuration")

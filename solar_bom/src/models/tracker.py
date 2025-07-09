@@ -88,61 +88,43 @@ class TrackerPosition:
                                 (south_modules - 1) * self.template.module_spacing_m)
                     
                     # This string spans from current_y to current_y + north_height + gap + south_height
-                    # Get wiring mode from project if available
-                    wiring_mode = 'daisy_chain'  # default
-                    if hasattr(self, '_project_ref') and hasattr(self._project_ref, 'wiring_mode'):
-                        wiring_mode = self._project_ref.wiring_mode
+                    y_start = current_y
+                    y_end = current_y + north_height + self.template.motor_gap_m + south_height
                     
-                    if wiring_mode == 'leapfrog':
-                        # In leapfrog mode, both positive and negative connect at top
-                        string = StringPosition(
-                            index=i,
-                            positive_source_x=0,  # Left side of torque tube
-                            positive_source_y=current_y,  # Top of string
-                            negative_source_x=module_width,  # Right side of torque tube
-                            negative_source_y=current_y,  # Also at top of string
-                            num_modules=modules_per_string
-                        )
-                    else:
-                        # Daisy-chain mode (default)
-                        string = StringPosition(
-                            index=i,
-                            positive_source_x=0,  # Left side of torque tube
-                            positive_source_y=current_y,  # Top of string
-                            negative_source_x=module_width,  # Right side of torque tube
-                            negative_source_y=current_y + single_string_height,  # Bottom of string
-                            num_modules=modules_per_string
-                        )
-                    self.strings.append(string)
-                    current_y += north_height + self.template.motor_gap_m + south_height
+                    # Move current_y for next string
+                    current_y = y_end
                 else:
                     # Normal string without motor
-                    wiring_mode = 'daisy_chain'  # default
-                    if hasattr(self, '_project_ref') and hasattr(self._project_ref, 'wiring_mode'):
-                        wiring_mode = self._project_ref.wiring_mode
-                    
-                    if wiring_mode == 'leapfrog':
-                        # In leapfrog mode, both positive and negative connect at top
-                        string = StringPosition(
-                            index=i,
-                            positive_source_x=0,  # Left side of torque tube
-                            positive_source_y=y_start,  # Top of string
-                            negative_source_x=module_width,  # Right side of torque tube
-                            negative_source_y=y_start,  # Also at top of string
-                            num_modules=modules_per_string
-                        )
-                    else:
-                        # Daisy-chain mode (default)
-                        string = StringPosition(
-                            index=i,
-                            positive_source_x=0,  # Left side of torque tube
-                            positive_source_y=y_start,  # Top of string
-                            negative_source_x=module_width,  # Right side of torque tube
-                            negative_source_y=y_end,  # Bottom of string
-                            num_modules=modules_per_string
-                        )
-                    self.strings.append(string)
-                    current_y += single_string_height
+                    y_start = current_y
+                    y_end = current_y + single_string_height
+                    current_y = y_end
+                
+                # Get wiring mode from project if available
+                wiring_mode = 'daisy_chain'  # default
+                if hasattr(self, '_project_ref') and hasattr(self._project_ref, 'wiring_mode'):
+                    wiring_mode = self._project_ref.wiring_mode
+                
+                if wiring_mode == 'leapfrog':
+                    # In leapfrog mode, both positive and negative connect at top
+                    string = StringPosition(
+                        index=i,
+                        positive_source_x=0,  # Left side of torque tube
+                        positive_source_y=y_start,  # Top of string
+                        negative_source_x=module_width,  # Right side of torque tube
+                        negative_source_y=y_start,  # Also at top of string
+                        num_modules=modules_per_string
+                    )
+                else:
+                    # Daisy-chain mode (default)
+                    string = StringPosition(
+                        index=i,
+                        positive_source_x=0,  # Left side of torque tube
+                        positive_source_y=y_start,  # Top of string
+                        negative_source_x=module_width,  # Right side of torque tube
+                        negative_source_y=y_end,  # Bottom of string (for daisy-chain)
+                        num_modules=modules_per_string
+                    )
+                self.strings.append(string)
         else:
             # Original between_strings logic
             for i in range(self.template.strings_per_tracker):
