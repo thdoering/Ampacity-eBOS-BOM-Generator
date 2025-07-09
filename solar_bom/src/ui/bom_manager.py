@@ -259,7 +259,9 @@ class BOMManager(ttk.Frame):
             return
         
         # Generate BOM
-        bom_generator = BOMGenerator(selected_blocks)
+        # Get the current project
+        project = getattr(self.parent, 'current_project', None) if hasattr(self, 'parent') else None
+        bom_generator = BOMGenerator(selected_blocks, project)
         quantities = bom_generator.calculate_cable_quantities()
         summary_data = bom_generator.generate_summary_data(quantities)
         
@@ -434,7 +436,9 @@ class BOMManager(ttk.Frame):
             # Get the data that's currently displayed in the preview
             preview_data = self.get_preview_data_for_export()
             
-            bom_generator = BOMGenerator(selected_blocks)
+            # Get the current project
+            project = getattr(self.parent, 'current_project', None) if hasattr(self, 'parent') else None
+            bom_generator = BOMGenerator(selected_blocks, project)
             success = bom_generator.export_bom_to_excel_with_preview_data(filepath, project_info, preview_data)
             
             if success:
@@ -584,7 +588,9 @@ class BOMManager(ttk.Frame):
         """Get matching harness part number from library"""
         try:
             from ..utils.bom_generator import BOMGenerator
-            bom_generator = BOMGenerator(selected_blocks)
+            # Get the current project
+            project = getattr(self.parent, 'current_project', None) if hasattr(self, 'parent') else None
+            bom_generator = BOMGenerator(selected_blocks, project)
             
             # Extract harness info from component type
             component_type = row['Component Type']
@@ -685,7 +691,9 @@ class BOMManager(ttk.Frame):
         """Get whip cable segment part number from library"""
         try:
             from ..utils.bom_generator import BOMGenerator
-            bom_generator = BOMGenerator(selected_blocks)
+            # Get the current project
+            project = getattr(self.parent, 'current_project', None) if hasattr(self, 'parent') else None
+            bom_generator = BOMGenerator(selected_blocks, project)
             
             component_type = row['Component Type']
             
@@ -716,7 +724,9 @@ class BOMManager(ttk.Frame):
         """Get extender cable segment part number from library"""
         try:
             from ..utils.bom_generator import BOMGenerator
-            bom_generator = BOMGenerator(selected_blocks)
+            # Get the current project
+            project = getattr(self.parent, 'current_project', None) if hasattr(self, 'parent') else None
+            bom_generator = BOMGenerator(selected_blocks, project)
             
             component_type = row['Component Type']
             

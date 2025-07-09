@@ -734,6 +734,33 @@
         "isc": 13.99,
         "max_system_voltage": 1500
       }
+    },
+    "ATI-26-545W": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 26,
+      "strings_per_tracker": 1,
+      "module_spacing_m": 0.01,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 0,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 1,
+      "motor_split_north": 14,
+      "motor_split_south": 12,
+      "module_spec": {
+        "manufacturer": "JA Solar",
+        "model": "JAM72D30 - 545W (bifacial adjusted)",
+        "type": "Mono PERC",
+        "length_mm": 2278.0,
+        "width_mm": 1134.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 545.0,
+        "vmp": 41.8,
+        "imp": 13.95,
+        "voc": 49.45,
+        "isc": 14.91,
+        "max_system_voltage": 1500
+      }
     }
   },
   "First Solar": {

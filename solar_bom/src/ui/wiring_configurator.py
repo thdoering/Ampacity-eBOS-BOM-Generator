@@ -23,6 +23,7 @@ class WiringConfigurator(tk.Toplevel):
         super().__init__(parent)
         self.parent = parent
         self.block = block
+        self.project = getattr(parent, 'current_project', None)
 
         self.parent_notify_blocks_changed = getattr(parent, '_notify_blocks_changed', None)
 
@@ -111,6 +112,7 @@ class WiringConfigurator(tk.Toplevel):
         controls_frame.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
         
         self.setup_wiring_type_selection(controls_frame)
+        self.setup_wiring_mode_selection(controls_frame)
         self.setup_cable_specifications(controls_frame)
         self.setup_harness_configuration(controls_frame)
         self.setup_routing_controls(controls_frame)
@@ -139,15 +141,41 @@ class WiringConfigurator(tk.Toplevel):
         """Set up wiring type selection dropdown"""
         ttk.Label(controls_frame, text="Wiring Type:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
         self.wiring_type_var = tk.StringVar(value=WiringType.HARNESS.value)
+        # Initialize wiring mode variable
+        # Get project reference - parent is BlockConfigurator
+        project = getattr(self.parent, 'current_project', None)
+        default_mode = 'daisy_chain'
+        if project and hasattr(project, 'wiring_mode'):
+            default_mode = project.wiring_mode
+        self.wiring_mode_var = tk.StringVar(value=default_mode)
         wiring_type_combo = ttk.Combobox(controls_frame, textvariable=self.wiring_type_var, state='readonly')
         wiring_type_combo['values'] = [t.value for t in WiringType]
         wiring_type_combo.grid(row=0, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         wiring_type_combo.bind('<<ComboboxSelected>>', self.on_wiring_type_change)
+    
+    def setup_wiring_mode_selection(self, controls_frame):
+        """Set up wiring mode selection (daisy-chain vs leapfrog)"""
+        mode_frame = ttk.Frame(controls_frame)
+        mode_frame.grid(row=1, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
+        
+        ttk.Label(mode_frame, text="Wiring Mode:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
+        
+        radio_frame = ttk.Frame(mode_frame)
+        radio_frame.grid(row=0, column=1, padx=5, pady=2, sticky=tk.W)
+        
+        ttk.Radiobutton(radio_frame, text="Daisy-chain", 
+                       variable=self.wiring_mode_var,
+                       value="daisy_chain",
+                       command=self.on_wiring_mode_change).pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(radio_frame, text="Leapfrog", 
+                       variable=self.wiring_mode_var,
+                       value="leapfrog",
+                       command=self.on_wiring_mode_change).pack(side=tk.LEFT, padx=5)
 
     def setup_cable_specifications(self, controls_frame):
         """Set up cable specifications section"""
         cable_frame = ttk.LabelFrame(controls_frame, text="Cable Specifications", padding="5")
-        cable_frame.grid(row=1, column=0, columnspan=2, padx=5, pady=10, sticky=(tk.W, tk.E))
+        cable_frame.grid(row=2, column=0, columnspan=2, padx=5, pady=10, sticky=(tk.W, tk.E))
 
         # String Cable Size
         ttk.Label(cable_frame, text="String Cable Size:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
@@ -197,7 +225,7 @@ class WiringConfigurator(tk.Toplevel):
     def setup_harness_configuration(self, controls_frame):
         """Set up harness configuration section"""
         self.harness_config_frame = ttk.LabelFrame(controls_frame, text="Tracker Harness Configuration", padding="5")
-        self.harness_config_frame.grid(row=2, column=0, columnspan=2, padx=5, pady=10, sticky=(tk.W, tk.E))
+        self.harness_config_frame.grid(row=3, column=0, columnspan=2, padx=5, pady=10, sticky=(tk.W, tk.E))
 
         # String count selector
         ttk.Label(self.harness_config_frame, text="Configure trackers with:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
@@ -381,6 +409,10 @@ class WiringConfigurator(tk.Toplevel):
 
     def draw_wiring_layout(self):
         """Draw block layout with wiring visualization"""
+        # Ensure all tracker positions have project reference for wiring mode
+        if self.project:
+            for pos in self.block.tracker_positions:
+                pos._project_ref = self.project
         # Initialize route storage for Block Configurator
         self.saved_routes_for_block = {}
 
@@ -482,6 +514,37 @@ class WiringConfigurator(tk.Toplevel):
     def on_wiring_type_change(self, event=None):
         """Handle wiring type selection change"""
         self.update_ui_for_wiring_type()
+    
+    def on_wiring_mode_change(self):
+        """Handle wiring mode change"""
+        new_mode = self.wiring_mode_var.get()
+        
+        # Show warning dialog
+        result = messagebox.askyesno(
+            "Change Wiring Mode", 
+            "Changing the wiring mode will affect all blocks in the project. Do you want to proceed?"
+        )
+        
+        if result:
+            # Update project wiring mode
+            if self.project:
+                self.project.wiring_mode = new_mode
+            
+            # Recalculate string positions for current block
+            for pos in self.block.tracker_positions:
+                # Pass project reference so it can access wiring mode
+                pos._project_ref = self.project
+                pos.calculate_string_positions()
+            
+            # Clear the canvas and redraw everything
+            self.canvas.delete("all")
+            self.draw_wiring_layout()
+        else:
+            # Revert the radio button
+            if self.project and hasattr(self.project, 'wiring_mode'):
+                self.wiring_mode_var.set(self.project.wiring_mode)
+            else:
+                self.wiring_mode_var.set('daisy_chain')
         
     def on_canvas_resize(self, event):
         """Handle canvas resize event"""
@@ -869,9 +932,6 @@ class WiringConfigurator(tk.Toplevel):
             
             module_spec = self.block.tracker_template.module_spec
             string_current = module_spec.imp
-        else:
-            # Log warning for debugging
-            print(f"Warning: No module spec available for current calculation, using default {string_current}A")
         
         result = string_current * num_strings
         
@@ -1548,7 +1608,14 @@ class WiringConfigurator(tk.Toplevel):
             
             offset = -0.5 if is_positive else 0.5
             node_x = tracker_center_x + offset
-            node_y = tracker_pos.y + (string.positive_source_y if is_positive else string.negative_source_y)
+            # Check wiring mode
+            wiring_mode = self.project.wiring_mode if self.project and hasattr(self.project, 'wiring_mode') else 'daisy_chain'
+            
+            # In leapfrog mode, both use positive source Y
+            if wiring_mode == 'leapfrog':
+                node_y = tracker_pos.y + string.positive_source_y
+            else:
+                node_y = tracker_pos.y + (string.positive_source_y if is_positive else string.negative_source_y)
             
             return (node_x, node_y)
         else:
@@ -1556,12 +1623,19 @@ class WiringConfigurator(tk.Toplevel):
             # Each harness positions itself relative to its own strings naturally
             horizontal_offset = 0.6
             
+            # Check wiring mode
+            wiring_mode = self.project.wiring_mode if self.project and hasattr(self.project, 'wiring_mode') else 'daisy_chain'
+            
             if is_positive:
                 node_x = tracker_pos.x + string.positive_source_x - horizontal_offset
                 node_y = tracker_pos.y + string.positive_source_y
             else:
                 node_x = tracker_pos.x + string.negative_source_x + horizontal_offset
-                node_y = tracker_pos.y + string.negative_source_y
+                # In leapfrog mode, use positive source Y (top) for negative too
+                if wiring_mode == 'leapfrog':
+                    node_y = tracker_pos.y + string.positive_source_y
+                else:
+                    node_y = tracker_pos.y + string.negative_source_y
                     
             return (node_x, node_y)
 
@@ -2177,6 +2251,15 @@ class WiringConfigurator(tk.Toplevel):
             
     def draw_trackers(self):
         """Draw all trackers with modules and source points"""
+        # Ensure all tracker positions have project reference and are recalculated
+        if self.project:
+            for i, pos in enumerate(self.block.tracker_positions):
+                pos._project_ref = self.project
+                pos.calculate_string_positions()
+        else:
+            print("No project reference available in wiring configurator!")
+        
+        scale = self.get_canvas_scale()
         scale = self.get_canvas_scale()
         
         for pos in self.block.tracker_positions:

@@ -187,6 +187,26 @@
       "bifaciality_factor": null,
       "default_orientation": "Portrait",
       "cells_per_module": 72
+    },
+    "JAM72D30 - 545W (bifacial adjusted)": {
+      "manufacturer": "JA Solar",
+      "model": "JAM72D30 - 545W (bifacial adjusted)",
+      "type": "Mono PERC",
+      "length_mm": 2278.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 545.0,
+      "vmp": 41.8,
+      "imp": 13.95,
+      "voc": 49.45,
+      "isc": 14.91,
+      "max_system_voltage": 1500,
+      "efficiency": null,
+      "temperature_coefficient": null,
+      "bifaciality_factor": null,
+      "default_orientation": "Portrait",
+      "cells_per_module": 72
     }
   },
   "First Solar": {

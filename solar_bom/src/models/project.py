@@ -30,6 +30,8 @@ class Project:
     default_row_spacing_m: float = 6.0  # Default value of 6m (approx 19.7ft)
     # Store enabled tracker template names for this project
     enabled_templates: List[str] = field(default_factory=list)
+    # Wiring mode for the project (daisy_chain or leapfrog)
+    wiring_mode: str = "daisy_chain"  # Default to daisy chain
     
     def update_modified_date(self):
         """Update the last modified date"""
@@ -51,7 +53,8 @@ class Project:
             'selected_modules': self.selected_modules,
             'selected_inverters': self.selected_inverters,
             'default_row_spacing_m': self.default_row_spacing_m,
-            'enabled_templates': self.enabled_templates
+            'enabled_templates': self.enabled_templates,
+            'wiring_mode': self.wiring_mode
         }
     
     @classmethod
@@ -73,7 +76,8 @@ class Project:
             selected_modules=data.get('selected_modules', []),
             selected_inverters=data.get('selected_inverters', []),
             default_row_spacing_m=data.get('default_row_spacing', 6.0),
-            enabled_templates=data.get('enabled_templates', [])
+            enabled_templates=data.get('enabled_templates', []),
+            wiring_mode=data.get('wiring_mode', 'daisy_chain')
         )
     
     def save(self, projects_dir: str = 'projects') -> bool:

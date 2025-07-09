@@ -14,14 +14,16 @@ class BOMGenerator:
     # Constants for BOM calculations
     CABLE_WASTE_FACTOR = 1.05  # 5% extra for waste/installation
     
-    def __init__(self, blocks: Dict[str, BlockConfig]):
+    def __init__(self, blocks: Dict[str, BlockConfig], project=None):
         """
-        Initialize BOM Generator with block configurations
+        Initialize BOM Generator
         
         Args:
-            blocks: Dictionary of block configurations (id -> BlockConfig)
+            blocks: Dictionary of block configurations
+            project: Project object (optional)
         """
         self.blocks = blocks
+        self.project = project
         # Load library json files
         self.harness_library = self.load_harness_library()
         self.fuse_library = self.load_fuse_library()
@@ -380,7 +382,7 @@ class BOMGenerator:
         component_type = item['Component Type']
         description = item['Description']
         
-        if 'Harness' in component_type:
+        if 'Harness' in component_type:                
             # Extract info from description to find harness part number
             polarity = 'positive' if 'Positive' in description else 'negative'
             
@@ -609,6 +611,14 @@ class BOMGenerator:
                     summary_sheet.cell(row=row, column=1, value=key).font = Font(bold=True)
                     summary_sheet.cell(row=row, column=2, value=value)
             
+            # Add wiring mode to project info in columns C and D
+            if hasattr(self.project, 'wiring_mode'):
+                wiring_mode_display = "Leapfrog" if self.project.wiring_mode == 'leapfrog' else "Daisy-chain"
+                # Find which row to use (after the last project info row)
+                wiring_mode_row = len(project_info) + 2 if project_info else 2
+                summary_sheet.cell(row=wiring_mode_row, column=3, value="Wiring Mode:").font = Font(bold=True)
+                summary_sheet.cell(row=wiring_mode_row, column=4, value=wiring_mode_display)
+
             # Add section header for BOM
             row = 12
             summary_sheet.merge_cells(f'A{row}:E{row}')
@@ -989,7 +999,7 @@ class BOMGenerator:
         return f"1500 VDC {wire_gauge} EXTENDER WITH MC4 CONNECTORS, LENGTH (FT): {{length}}"
     
     def get_harness_description(self, num_strings, polarity, string_spacing_ft, trunk_cable_size, string_cable_size):
-        """Get harness description from library based on matching part number"""
+        """Get harness description from library based on matching part number"""      
         # First find the matching part number
         part_number = self.find_matching_harness_part_number(
             num_strings, polarity, string_spacing_ft, trunk_cable_size

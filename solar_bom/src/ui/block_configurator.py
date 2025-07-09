@@ -1240,7 +1240,10 @@ class BlockConfigurator(ttk.Frame):
         
         # Create new TrackerPosition
         pos = TrackerPosition(x=x_m, y=y_m, rotation=0.0, template=self.drag_template)
-        pos.calculate_string_positions() # Calculate string and collection point positions
+        # Pass project reference for wiring mode
+        if hasattr(self, 'current_project'):
+            pos._project_ref = self.current_project
+        pos.calculate_string_positions()
         block.tracker_positions.append(pos)
         
         # Update device position if in tracker align mode
@@ -1854,6 +1857,9 @@ class BlockConfigurator(ttk.Frame):
                             pos.strings.append(string)
                     else:
                         # Fallback to calculation if string data not available
+                        # Pass project reference for wiring mode
+                        if hasattr(self, 'project'):
+                            pos._project_ref = self.project
                         pos.calculate_string_positions()
                         
                     block.tracker_positions.append(pos)
