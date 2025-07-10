@@ -1381,10 +1381,10 @@ class BlockConfigurator(ttk.Frame):
             
         item = selection[0]
         
-        # Check if this is a template (has values) or manufacturer (no values)
+        # Check if this is a template (has values) or parent node
         values = self.template_tree.item(item, 'values')
         if not values:
-            # This is a manufacturer node, not a template
+            # This is a parent node (manufacturer, model, or string size), not a template
             return
             
         template_key = values[0]
@@ -1413,38 +1413,61 @@ class BlockConfigurator(ttk.Frame):
             self.template_tree.tag_configure('message', foreground='gray', font=('TkDefaultFont', 9, 'italic'))
             return
         
-        # Group templates by manufacturer
-        manufacturers = {}
+        # Group templates hierarchically
+        hierarchy = {}
+        
         for template_key, template in self.tracker_templates.items():
-            # Extract manufacturer from module_spec
-            manufacturer = template.module_spec.manufacturer
-            
             # Skip duplicate entries (we store both old and new names for compatibility)
-            if ' - ' in template_key and not template_key.startswith(manufacturer):
+            if ' - ' in template_key and not template_key.startswith(template.module_spec.manufacturer):
                 continue
                 
+            # Extract grouping information
+            manufacturer = template.module_spec.manufacturer
+            model = template.module_spec.model
+            modules_per_string = template.modules_per_string
+            
+            # Build hierarchy: Manufacturer -> Model -> String Size -> Templates
+            if manufacturer not in hierarchy:
+                hierarchy[manufacturer] = {}
+            if model not in hierarchy[manufacturer]:
+                hierarchy[manufacturer][model] = {}
+            if modules_per_string not in hierarchy[manufacturer][model]:
+                hierarchy[manufacturer][model][modules_per_string] = []
+            
             # Extract template name (remove manufacturer prefix if present)
             if ' - ' in template_key and template_key.startswith(manufacturer):
                 template_name = template_key.split(' - ', 1)[1]
             else:
                 template_name = template_key
                 
-            if manufacturer not in manufacturers:
-                manufacturers[manufacturer] = []
-            manufacturers[manufacturer].append((template_name, template_key, template))
+            hierarchy[manufacturer][model][modules_per_string].append((template_name, template_key, template))
         
-        # Add manufacturers and their templates to tree
-        for manufacturer, template_list in sorted(manufacturers.items()):
+        # Add items to tree hierarchically
+        for manufacturer in sorted(hierarchy.keys()):
             # Add manufacturer node
             manufacturer_node = self.template_tree.insert('', 'end', text=manufacturer, open=True)
             
-            # Add templates under manufacturer
-            for template_name, template_key, template in sorted(template_list, key=lambda x: x[0]):
-                # Show module info in template display
-                model = template.module_spec.model
-                wattage = template.module_spec.wattage
-                template_text = f"{template_name} ({model} - {wattage}W)"
-                self.template_tree.insert(manufacturer_node, 'end', text=template_text, values=(template_key,))
+            for model in sorted(hierarchy[manufacturer].keys()):
+                # Add model node with wattage if available
+                wattage = None
+                # Get wattage from any template with this model
+                for string_size in hierarchy[manufacturer][model]:
+                    if hierarchy[manufacturer][model][string_size]:
+                        wattage = hierarchy[manufacturer][model][string_size][0][2].module_spec.wattage
+                        break
+                
+                model_text = f"{model} - {wattage}W" if wattage else model
+                model_node = self.template_tree.insert(manufacturer_node, 'end', text=model_text, open=True)
+                
+                for string_size in sorted(hierarchy[manufacturer][model].keys()):
+                    # Add string size node
+                    string_size_text = f"{string_size} modules per string"
+                    string_size_node = self.template_tree.insert(model_node, 'end', text=string_size_text, open=True)
+                    
+                    # Add templates under string size
+                    templates_list = hierarchy[manufacturer][model][string_size]
+                    for template_name, template_key, template in sorted(templates_list, key=lambda x: x[0]):
+                        self.template_tree.insert(string_size_node, 'end', text=template_name, values=(template_key,))
 
     def m_to_ft(self, meters):
         return meters * 3.28084

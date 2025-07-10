@@ -373,23 +373,46 @@ class TrackerTemplateCreator(ttk.Frame):
             
     def update_template_list(self):
         """Update the template tree view with checkbox functionality"""
-        # Save expanded state of manufacturer nodes
-        expanded_manufacturers = set()
-        for item in self.template_tree.get_children():
+        # Save expanded state of all nodes
+        expanded_nodes = set()
+        
+        def save_expanded_state(item, path=""):
+            """Recursively save expanded state of tree"""
             if self.template_tree.item(item, 'open'):
-                manufacturer_text = self.template_tree.item(item, 'text')
-                expanded_manufacturers.add(manufacturer_text)
+                item_text = self.template_tree.item(item, 'text')
+                full_path = f"{path}/{item_text}" if path else item_text
+                expanded_nodes.add(full_path)
+            
+            for child in self.template_tree.get_children(item):
+                item_text = self.template_tree.item(item, 'text')
+                child_path = f"{path}/{item_text}" if path else item_text
+                save_expanded_state(child, child_path)
+        
+        # Save expanded state of all root items
+        for item in self.template_tree.get_children():
+            save_expanded_state(item)
         
         # Clear existing items
         for item in self.template_tree.get_children():
             self.template_tree.delete(item)
         
-        # Group templates by manufacturer
-        manufacturers = {}
+        # Group templates hierarchically
+        hierarchy = {}
+        
         for template_key, template_data in self.templates.items():
-            # Extract manufacturer from module_spec
+            # Extract grouping information
             module_spec = template_data.get('module_spec', {})
             manufacturer = module_spec.get('manufacturer', 'Unknown')
+            model = module_spec.get('model', 'Unknown')
+            modules_per_string = template_data.get('modules_per_string', 0)
+            
+            # Build hierarchy: Manufacturer -> Model -> String Size -> Templates
+            if manufacturer not in hierarchy:
+                hierarchy[manufacturer] = {}
+            if model not in hierarchy[manufacturer]:
+                hierarchy[manufacturer][model] = {}
+            if modules_per_string not in hierarchy[manufacturer][model]:
+                hierarchy[manufacturer][model][modules_per_string] = []
             
             # Extract template name (remove manufacturer prefix if present)
             if ' - ' in template_key and template_key.startswith(manufacturer):
@@ -397,62 +420,59 @@ class TrackerTemplateCreator(ttk.Frame):
             else:
                 template_name = template_key
                 
-            if manufacturer not in manufacturers:
-                manufacturers[manufacturer] = []
-            manufacturers[manufacturer].append((template_name, template_key, template_data))
+            hierarchy[manufacturer][model][modules_per_string].append((template_name, template_key, template_data))
         
         # Store template_key mapping for quick lookup
         self.tree_item_to_template = {}
         
-        # Add manufacturers and their templates to tree
-        for manufacturer, templates_list in sorted(manufacturers.items()):
-            # Add manufacturer node (no checkbox for manufacturer)
-            manufacturer_node = self.template_tree.insert('', 'end', text=manufacturer, values=('',), open=False)
+        # Add items to tree hierarchically
+        for manufacturer in sorted(hierarchy.keys()):
+            # Add manufacturer node
+            manufacturer_path = manufacturer
+            manufacturer_node = self.template_tree.insert('', 'end', text=manufacturer, values=('',), 
+                                                        open=(manufacturer_path in expanded_nodes))
             
-            # Add templates under manufacturer
-            for template_name, template_key, template_data in sorted(templates_list, key=lambda x: x[0]):
-                # Show module info in template display
-                module_spec = template_data.get('module_spec', {})
-                model = module_spec.get('model', 'Unknown')
-                wattage = module_spec.get('wattage', 0)
-                template_text = f"{template_name} ({model} - {wattage}W)"
+            for model in sorted(hierarchy[manufacturer].keys()):
+                # Add model node
+                model_path = f"{manufacturer}/{model}"
+                model_node = self.template_tree.insert(manufacturer_node, 'end', text=model, values=('',),
+                                                    open=(model_path in expanded_nodes))
                 
-                # Check if template is enabled
-                is_enabled = self._is_template_enabled(template_key)
-                checkbox = '☑' if is_enabled else '☐'
-                tag = 'checked' if is_enabled else 'unchecked'
-                
-                # Insert template with checkbox
-                template_item = self.template_tree.insert(manufacturer_node, 'end', 
-                                        text=template_text,
-                                        values=(checkbox,), 
-                                        tags=(tag,))
-                
-                # Store mapping from tree item to template key
-                self.tree_item_to_template[template_item] = template_key
-        
-        # Restore expanded state
-        for manufacturer_item in self.template_tree.get_children():
-            manufacturer_text = self.template_tree.item(manufacturer_item, 'text')
-            if manufacturer_text in expanded_manufacturers:
-                self.template_tree.item(manufacturer_item, open=True)
+                for string_size in sorted(hierarchy[manufacturer][model].keys()):
+                    # Add string size node
+                    string_size_text = f"{string_size} modules per string"
+                    string_size_path = f"{manufacturer}/{model}/{string_size_text}"
+                    string_size_node = self.template_tree.insert(model_node, 'end', text=string_size_text, 
+                                                            values=('',),
+                                                            open=(string_size_path in expanded_nodes))
+                    
+                    # Add templates under string size
+                    templates_list = hierarchy[manufacturer][model][string_size]
+                    for template_name, template_key, template_data in sorted(templates_list, key=lambda x: x[0]):
+                        # Check if template is enabled
+                        is_enabled = self._is_template_enabled(template_key)
+                        checkbox = '☑' if is_enabled else '☐'
+                        tag = 'checked' if is_enabled else 'unchecked'
+                        
+                        # Insert template with checkbox
+                        template_item = self.template_tree.insert(string_size_node, 'end', 
+                                                text=template_name,
+                                                values=(checkbox,), 
+                                                tags=(tag,))
+                        
+                        # Store mapping from tree item to template key
+                        self.tree_item_to_template[template_item] = template_key
             
     def on_template_select(self, event=None):
         """Handle template selection event"""
         selection = self.template_tree.selection()
         if not selection:
             return
-            
-        item = selection[0]
         
-        # Check if this is a template (has values) or manufacturer (no values)
+        item = selection[0]
         values = self.template_tree.item(item, 'values')
-        if not values:
-            # This is a manufacturer node, not a template
-            return
-            
-        # This is a template, load it
-        self.load_template()
+        if not values or values[0] == '':
+            return  # This is a parent node (manufacturer, model, or string size)
             
     def create_template(self) -> Optional[TrackerTemplate]:
         """Create a TrackerTemplate from current UI values"""
@@ -555,11 +575,28 @@ class TrackerTemplateCreator(ttk.Frame):
                             self.template_tree.item(template_item, values=values, tags=('checked',))
                             break
 
-            # Expand the manufacturer node to show the new template
+            # Expand the parent nodes to show the new template
             for manufacturer_item in self.template_tree.get_children():
                 manufacturer_text = self.template_tree.item(manufacturer_item, 'text')
                 if manufacturer_text == manufacturer:
                     self.template_tree.item(manufacturer_item, open=True)
+                    
+                    # Find and expand the model node
+                    model = template.module_spec.model
+                    for model_item in self.template_tree.get_children(manufacturer_item):
+                        model_text = self.template_tree.item(model_item, 'text')
+                        if model_text == model:
+                            self.template_tree.item(model_item, open=True)
+                            
+                            # Find and expand the string size node
+                            string_size = template.modules_per_string
+                            string_size_text = f"{string_size} modules per string"
+                            for string_item in self.template_tree.get_children(model_item):
+                                string_text = self.template_tree.item(string_item, 'text')
+                                if string_text == string_size_text:
+                                    self.template_tree.item(string_item, open=True)
+                                    break
+                            break
                     break
             
             if self.on_template_saved:
@@ -633,30 +670,87 @@ class TrackerTemplateCreator(ttk.Frame):
             
         item = selection[0]
         
-        # Check if this is a template (has values) or manufacturer (no values)
+        # Check if this is a template or a parent node
         values = self.template_tree.item(item, 'values')
-        if not values:
-            # This is a manufacturer node, ask if they want to delete all templates
-            manufacturer = self.template_tree.item(item, 'text')
-            templates_to_delete = [key for key, template_data in self.templates.items() 
-                                if template_data.get('module_spec', {}).get('manufacturer') == manufacturer]
+        if not values or values[0] == '':
+            # This is a parent node - determine which level
+            parent = self.template_tree.parent(item)
+            grandparent = self.template_tree.parent(parent) if parent else None
             
-            if not templates_to_delete:
-                return
+            if not parent:
+                # This is a manufacturer node
+                manufacturer = self.template_tree.item(item, 'text')
+                templates_to_delete = [key for key, template_data in self.templates.items() 
+                                    if template_data.get('module_spec', {}).get('manufacturer') == manufacturer]
                 
-            if messagebox.askyesno("Confirm", 
-                                f"Delete all {len(templates_to_delete)} templates from {manufacturer}?"):
-                for template_key in templates_to_delete:
-                    del self.templates[template_key]
-                self.save_templates()
-                self.update_template_list()
-                
-                # Call the deletion callback if provided
-                if self.on_template_deleted:
+                if not templates_to_delete:
+                    return
+                    
+                if messagebox.askyesno("Confirm", 
+                                    f"Delete all {len(templates_to_delete)} templates from {manufacturer}?"):
                     for template_key in templates_to_delete:
-                        self.on_template_deleted(template_key)
+                        del self.templates[template_key]
+                    self.save_templates()
+                    self.update_template_list()
+                    
+                    # Call the deletion callback if provided
+                    if self.on_template_deleted:
+                        for template_key in templates_to_delete:
+                            self.on_template_deleted(template_key)
+                            
+            elif not grandparent:
+                # This is a model node
+                manufacturer = self.template_tree.item(parent, 'text')
+                model = self.template_tree.item(item, 'text')
+                templates_to_delete = [key for key, template_data in self.templates.items() 
+                                    if template_data.get('module_spec', {}).get('manufacturer') == manufacturer
+                                    and template_data.get('module_spec', {}).get('model') == model]
+                
+                if not templates_to_delete:
+                    return
+                    
+                if messagebox.askyesno("Confirm", 
+                                    f"Delete all {len(templates_to_delete)} templates for {manufacturer} {model}?"):
+                    for template_key in templates_to_delete:
+                        del self.templates[template_key]
+                    self.save_templates()
+                    self.update_template_list()
+                    
+                    # Call the deletion callback if provided
+                    if self.on_template_deleted:
+                        for template_key in templates_to_delete:
+                            self.on_template_deleted(template_key)
+                            
+            else:
+                # This is a string size node
+                manufacturer = self.template_tree.item(grandparent, 'text')
+                model = self.template_tree.item(parent, 'text')
+                string_text = self.template_tree.item(item, 'text')
+                # Extract number from "X modules per string"
+                string_size = int(string_text.split()[0])
+                
+                templates_to_delete = [key for key, template_data in self.templates.items() 
+                                    if template_data.get('module_spec', {}).get('manufacturer') == manufacturer
+                                    and template_data.get('module_spec', {}).get('model') == model
+                                    and template_data.get('modules_per_string') == string_size]
+                
+                if not templates_to_delete:
+                    return
+                    
+                if messagebox.askyesno("Confirm", 
+                                    f"Delete all {len(templates_to_delete)} templates for {manufacturer} {model} with {string_size} modules per string?"):
+                    for template_key in templates_to_delete:
+                        del self.templates[template_key]
+                    self.save_templates()
+                    self.update_template_list()
+                    
+                    # Call the deletion callback if provided
+                    if self.on_template_deleted:
+                        for template_key in templates_to_delete:
+                            self.on_template_deleted(template_key)
             return
             
+        # This is a template node - existing code continues
         # Get template key from mapping
         if item not in self.tree_item_to_template:
             messagebox.showwarning("Warning", "Template mapping not found")
@@ -666,14 +760,13 @@ class TrackerTemplateCreator(ttk.Frame):
         template_text = self.template_tree.item(item, 'text')
 
         if messagebox.askyesno("Confirm", f"Delete template '{template_text}'?"):
-            if template_key in self.templates:
-                del self.templates[template_key]
-                self.save_templates()
-                self.update_template_list()
-                
-                # Call the deletion callback if provided
-                if self.on_template_deleted:
-                    self.on_template_deleted(template_key)
+            del self.templates[template_key]
+            self.save_templates()
+            self.update_template_list()
+            
+            # Call the deletion callback if provided
+            if self.on_template_deleted:
+                self.on_template_deleted(template_key)
             
     def update_preview(self):
         """Update the preview canvas with current template layout"""
@@ -842,27 +935,11 @@ class TrackerTemplateCreator(ttk.Frame):
 
     def toggle_item_enabled(self, item):
         """Toggle the enabled state of a template"""
-        # Check if this is a template (has values) or manufacturer (no values)
+        # Check if this is a template (has checkbox) or parent node
         values = list(self.template_tree.item(item, 'values'))
-        if not values or len(values) == 0:
-            # This is a manufacturer node, not a template
+        if not values or len(values) == 0 or values[0] == '':
+            # This is a parent node, not a template
             return
-        
-        # Get template key from mapping
-        if item not in self.tree_item_to_template:
-            return
-        template_key = self.tree_item_to_template[item]
-        
-        # Toggle enabled state
-        current_checkbox = values[0] if values else '☐'
-        if current_checkbox == '☐':  # Currently unchecked
-            values[0] = '☑'  # Check it
-            self.template_tree.item(item, values=values, tags=('checked',))
-            self._add_enabled_template(template_key)
-        else:  # Currently checked
-            values[0] = '☐'  # Uncheck it
-            self.template_tree.item(item, values=values, tags=('unchecked',))
-            self._remove_enabled_template(template_key)
 
     def _add_enabled_template(self, template_key):
         """Add template to enabled list"""
