@@ -3449,9 +3449,6 @@ class WiringConfigurator(tk.Toplevel):
             self.legend_canvas.create_text(190, y_pos, text=label, 
                                         font=('Arial', 8), anchor='w')
         
-        # Add importance note
-        self.legend_canvas.create_text(140, 110, text="(Darker colors = higher importance)", 
-                                    font=('Arial', 7, 'italic'), anchor='center', fill='gray')
         
     def get_shared_whip_point(self, tracker_idx, polarity):
         """Get the shared whip point that all harnesses connect to via extenders"""
