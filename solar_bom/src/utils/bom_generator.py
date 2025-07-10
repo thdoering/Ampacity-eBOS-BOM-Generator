@@ -177,7 +177,7 @@ class BOMGenerator:
                 fuse_counts = self._count_fuses_by_rating(block)
                 for rating, count in fuse_counts.items():
                     block_quantities[f'DC String Fuse {rating}A'] = {
-                        'description': f'DC String Fuse {rating}A',
+                        'description': self.get_fuse_description(rating),
                         'quantity': count,
                         'unit': 'units',
                         'category': 'eBOS'
@@ -1101,6 +1101,19 @@ class BOMGenerator:
                 return self.harness_library[first_part].get('description', f"Harness {first_part}")
         
         return f"Harness {part_number}"
+    
+    def get_fuse_description(self, fuse_rating_amps):
+        """Get fuse description from library based on rating"""
+        # Find the fuse part number by rating
+        part_number = self.get_fuse_part_number_by_rating(fuse_rating_amps)
+        
+        # If we have a valid part number, get its description
+        if part_number and part_number != "N/A" and not part_number.startswith("FUSE-"):
+            if part_number in self.fuse_library:
+                return self.fuse_library[part_number].get('description', f'DC String Fuse {fuse_rating_amps}A')
+        
+        # Default description if not found
+        return f'DC String Fuse {fuse_rating_amps}A'
 
     def calculate_string_spacing_ft(self, modules_per_string, module_width_mm, module_spacing_m):
         """Calculate string spacing in feet based on module specs"""
