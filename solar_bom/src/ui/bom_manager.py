@@ -389,6 +389,32 @@ class BOMManager(ttk.Frame):
                         dc_collection_types.add(block.wiring_config.wiring_type.value)
                 
                 # Create the project info dictionary
+                # Collect additional info
+                total_strings = 0
+                string_sizes = set()
+                module_dimensions = set()
+                
+                for block_id, block in selected_blocks.items():
+                    # Count total strings
+                    if block.tracker_positions:
+                        for pos in block.tracker_positions:
+                            total_strings += len(pos.strings)
+                    
+                    # Get string size from tracker template
+                    if block.tracker_template:
+                        string_sizes.add(block.tracker_template.modules_per_string)
+                    
+                    # Get module dimensions
+                    if block.tracker_template and block.tracker_template.module_spec:
+                        module_spec = block.tracker_template.module_spec
+                        dim_str = f"{int(module_spec.length_mm)} mm x {int(module_spec.width_mm)} mm"
+                        module_dimensions.add(dim_str)
+                
+                # Get wiring mode from project
+                wiring_mode = 'Unknown'
+                if project and hasattr(project, 'wiring_mode'):
+                    wiring_mode = "Leapfrog" if project.wiring_mode == 'leapfrog' else "Daisy Chain"
+                
                 project_info = {
                     'Project Name': project.metadata.name,
                     'Customer': project.metadata.client or 'Unknown',
@@ -399,7 +425,12 @@ class BOMManager(ttk.Frame):
                     'Module Model': ', '.join(module_model) if module_model else 'Unknown',
                     'Inverter Manufacturer': ', '.join(inverter_manufacturer) if inverter_manufacturer else 'Unknown',
                     'Inverter Model': ', '.join(inverter_model) if inverter_model else 'Unknown',
-                    'DC Collection': ', '.join(dc_collection_types) if dc_collection_types else 'Unknown'
+                    'DC Collection': ', '.join(dc_collection_types) if dc_collection_types else 'Unknown',
+                    'String Size': ', '.join(str(s) for s in sorted(string_sizes)) if string_sizes else 'Unknown',
+                    'Number of Strings': total_strings,
+                    'Module Wiring': wiring_mode,
+                    'Module Dimensions': ', '.join(module_dimensions) if module_dimensions else 'Unknown',
+                    'Number of Combiner Boxes': len(selected_blocks)
                 }
         except Exception as e:
             print(f"Error getting project info: {str(e)}")

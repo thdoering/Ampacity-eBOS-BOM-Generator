@@ -601,23 +601,58 @@ class BOMGenerator:
             # Add project info to summary sheet
             row = 1
             summary_sheet.merge_cells(f'A{row}:F{row}')
-            summary_sheet.cell(row=row, column=1, value="Project Information").font = Font(bold=True, size=14)
+            project_info_cell = summary_sheet.cell(row=row, column=1, value="Project Information")
+            project_info_cell.font = Font(bold=True, size=14)
+            project_info_cell.alignment = Alignment(horizontal='center')
             
             if project_info:
-                for i, (key, value) in enumerate(project_info.items()):
-                    if key == 'System Size (kW DC)' and isinstance(value, (int, float)):
-                        value = round(value, 2)
-                    row = i + 2
-                    summary_sheet.cell(row=row, column=1, value=key).font = Font(bold=True)
-                    summary_sheet.cell(row=row, column=2, value=value)
-            
-            # Add wiring mode to project info in columns C and D
-            if hasattr(self.project, 'wiring_mode'):
-                wiring_mode_display = "Leapfrog" if self.project.wiring_mode == 'leapfrog' else "Daisy-chain"
-                # Find which row to use (after the last project info row)
-                wiring_mode_row = len(project_info) + 2 if project_info else 2
-                summary_sheet.cell(row=wiring_mode_row, column=3, value="Wiring Mode:").font = Font(bold=True)
-                summary_sheet.cell(row=wiring_mode_row, column=4, value=wiring_mode_display)
+                # First set of info in columns A and B
+                main_info = ['Project Name', 'Customer', 'Location', 'System Size (kW DC)', 
+                            'Number of Modules', 'Module Manufacturer', 'Module Model', 
+                            'Inverter Manufacturer', 'Inverter Model', 'DC Collection']
+                
+                # Additional info for columns C and D
+                additional_info = {
+                    'String Size': project_info.get('String Size', 'Unknown'),
+                    'Number of Strings': project_info.get('Number of Strings', 0),
+                    'Module Wiring': project_info.get('Module Wiring', 'Unknown'),
+                    'Module Dimensions': project_info.get('Module Dimensions', 'Unknown'),
+                    'Number of Combiner Boxes': project_info.get('Number of Combiner Boxes', 0)
+                }
+                
+                # Write main info with units
+                row = 2
+                for key in main_info:
+                    if key in project_info:
+                        value = project_info[key]
+                        
+                        # Add units to specific fields
+                        if key == 'System Size (kW DC)' and isinstance(value, (int, float)):
+                            value = f"{round(value, 2)} kW"
+                        elif key == 'Number of Modules' and isinstance(value, int):
+                            value = f"{value} modules"
+                        
+                        summary_sheet.cell(row=row, column=1, value=key).font = Font(bold=True)
+                        summary_sheet.cell(row=row, column=2, value=value)
+                        row += 1
+                
+                # Write additional info in columns C and D
+                row = 2
+                for key, value in additional_info.items():
+                    # Add units to specific fields
+                    if key == 'String Size' and value != 'Unknown':
+                        value = f"{value} modules per string"
+                    elif key == 'Number of Strings' and isinstance(value, int):
+                        value = f"{value} strings"
+                    elif key == 'Number of Combiner Boxes' and isinstance(value, int):
+                        if value == 1:
+                            value = f"{value} combiner box"
+                        else:
+                            value = f"{value} combiner boxes"
+                    
+                    summary_sheet.cell(row=row, column=3, value=key).font = Font(bold=True)
+                    summary_sheet.cell(row=row, column=4, value=value)
+                    row += 1
 
             # Add section header for BOM
             row = 12
@@ -763,7 +798,12 @@ class BOMGenerator:
             'Module Model': 'Unknown',
             'DC Collection': 'Unknown',
             'Inverter Manufacturer': 'Unknown',
-            'Inverter Model': 'Unknown'
+            'Inverter Model': 'Unknown',
+            'String Size': 0,
+            'Number of Strings': 0,
+            'Module Wiring': 'Unknown',
+            'Module Dimensions': 'Unknown',
+            'Number of Combiner Boxes': 0
         }
         
         # Calculate total system size and module count
@@ -773,6 +813,11 @@ class BOMGenerator:
         inverter_manufacturer = set()
         inverter_model = set()
         dc_collection_types = set()
+        
+        # New counters for additional info
+        total_strings = 0
+        string_sizes = set()
+        module_dimensions = set()
         
         for block_id, block in self.blocks.items():
             # Count modules
@@ -793,6 +838,19 @@ class BOMGenerator:
                 
                 # Calculate system size
                 info['System Size (kW DC)'] += (block_modules * module_spec.wattage) / 1000
+                
+                # Get module dimensions
+                dim_str = f"{int(module_spec.length_mm)} mm x {int(module_spec.width_mm)} mm"
+                module_dimensions.add(dim_str)
+            
+            # Count strings and get string size
+            if block.tracker_positions:
+                for pos in block.tracker_positions:
+                    total_strings += len(pos.strings)
+            
+            # Get string size from tracker template
+            if block.tracker_template:
+                string_sizes.add(block.tracker_template.modules_per_string)
             
             # Add inverter info
             if block.inverter:
@@ -803,13 +861,24 @@ class BOMGenerator:
             if block.wiring_config:
                 dc_collection_types.add(block.wiring_config.wiring_type.value)
         
-        # Update info dict
+        # Set the collected values
         info['Number of Modules'] = total_modules
         info['Module Manufacturer'] = ', '.join(module_manufacturer) if module_manufacturer else 'Unknown'
         info['Module Model'] = ', '.join(module_model) if module_model else 'Unknown'
         info['Inverter Manufacturer'] = ', '.join(inverter_manufacturer) if inverter_manufacturer else 'Unknown'
         info['Inverter Model'] = ', '.join(inverter_model) if inverter_model else 'Unknown'
         info['DC Collection'] = ', '.join(dc_collection_types) if dc_collection_types else 'Unknown'
+        
+        # Set new fields
+        info['String Size'] = ', '.join(str(s) for s in sorted(string_sizes)) if string_sizes else 'Unknown'
+        info['Number of Strings'] = total_strings
+        info['Module Dimensions'] = ', '.join(module_dimensions) if module_dimensions else 'Unknown'
+        info['Number of Combiner Boxes'] = len(self.blocks)
+        
+        # Get module wiring from project
+        if hasattr(self.project, 'wiring_mode'):
+            wiring_mode = "Leapfrog" if self.project.wiring_mode == 'leapfrog' else "Daisy Chain"
+            info['Module Wiring'] = wiring_mode
         
         return info
 
