@@ -142,11 +142,13 @@ class BlockConfigurator(ttk.Frame):
         config_frame = ttk.LabelFrame(main_container, text="Block Configuration", padding="5")
         config_frame.grid(row=0, column=1, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
         
-        # Block ID
-        ttk.Label(config_frame, text="Block ID:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
+        # Block ID - more compact layout
+        id_frame = ttk.Frame(config_frame)
+        id_frame.grid(row=0, column=0, columnspan=2, padx=5, pady=2, sticky=(tk.W, tk.E))
+        ttk.Label(id_frame, text="Block ID:").grid(row=0, column=0, padx=(0,5), sticky=tk.W)
         self.block_id_var = tk.StringVar()
-        ttk.Entry(config_frame, textvariable=self.block_id_var).grid(row=0, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
-        ttk.Button(config_frame, text="Rename", command=self.rename_block).grid(row=0, column=2, padx=5, pady=2)
+        ttk.Entry(id_frame, textvariable=self.block_id_var, width=15).grid(row=0, column=1, padx=(0,5), sticky=(tk.W, tk.E))
+        ttk.Button(id_frame, text="Rename", command=self.rename_block).grid(row=0, column=2)
 
         # Spacing Configuration
         spacing_frame = ttk.LabelFrame(config_frame, text="Spacing Configuration", padding="5")
@@ -311,7 +313,7 @@ class BlockConfigurator(ttk.Frame):
 
         # Configure tree columns
         self.template_tree.heading('#0', text='Templates')
-        self.template_tree.column('#0', width=250)
+        self.template_tree.column('#0', width=350)
 
         # Add scrollbar for tree
         template_scrollbar = ttk.Scrollbar(templates_frame, orient=tk.VERTICAL, command=self.template_tree.yview)
