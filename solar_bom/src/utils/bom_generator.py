@@ -6,6 +6,7 @@ from ..models.block import BlockConfig, WiringType
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+from ..models.device import HarnessConnection, CombinerBoxConfig
 
 
 class BOMGenerator:
@@ -593,6 +594,23 @@ class BOMGenerator:
             
             # Write detailed data  
             detailed_data.to_excel(writer, sheet_name='Block Details', index=False)
+
+            # Add combiner box sheet if there are any combiner boxes
+            combiner_box_count = self.count_combiner_boxes()
+            if combiner_box_count > 0:
+                # Check if device configurator has combiner configs
+                from ..ui.device_configurator import DeviceConfigurator
+                device_configs = {}
+                
+                # Try to get device configurations from the UI if available
+                if hasattr(self, 'parent') and hasattr(self.parent, 'device_configurator'):
+                    device_configurator = self.parent.device_configurator
+                    if hasattr(device_configurator, 'combiner_configs'):
+                        device_configs = device_configurator.combiner_configs
+                
+                # Generate combiner box data
+                combiner_data = self.generate_combiner_box_data(device_configs)
+                combiner_data.to_excel(writer, sheet_name='Combiner Boxes', index=False)
             
             # Format the sheets (same as original method)
             workbook = writer.book
@@ -662,6 +680,10 @@ class BOMGenerator:
             # Format sheets
             self._format_excel_sheet(workbook['BOM Summary'], summary_data, start_row=13)
             self._format_excel_sheet(workbook['Block Details'], detailed_data)
+            
+            # Format combiner box sheet if it exists
+            if 'Combiner Boxes' in workbook.sheetnames and combiner_box_count > 0:
+                self._format_combiner_sheet(workbook['Combiner Boxes'], combiner_data)
             
             # Add filter
             summary_sheet.auto_filter.ref = f"A13:F{13 + len(summary_data)}"
@@ -842,6 +864,10 @@ class BOMGenerator:
                 # Get module dimensions
                 dim_str = f"{int(module_spec.length_mm)} mm x {int(module_spec.width_mm)} mm"
                 module_dimensions.add(dim_str)
+
+            # Count combiner boxes
+            combiner_box_count = self.count_combiner_boxes()
+            info['Number of Combiner Boxes'] = combiner_box_count
             
             # Count strings and get string size
             if block.tracker_positions:
@@ -1435,3 +1461,84 @@ class BOMGenerator:
         except Exception as e:
             print(f"Error loading fuse library: {e}")
             return {}
+        
+    def generate_combiner_box_data(self, device_configs: Dict[str, 'CombinerBoxConfig']) -> pd.DataFrame:
+        """
+        Generate combiner box configuration data for Excel export
+        
+        Args:
+            device_configs: Dictionary of combiner box configurations
+            
+        Returns:
+            DataFrame with combiner box data
+        """
+        combiner_data = []
+        
+        for combiner_id in sorted(device_configs.keys()):
+            config = device_configs[combiner_id]
+            
+            # Add a header row for each combiner box
+            for i, conn in enumerate(config.connections):
+                row_data = {
+                    'Combiner': combiner_id,
+                    'Tracker': conn.tracker_id,
+                    'Harness': conn.harness_id,
+                    '# Strings': conn.num_strings,
+                    'Module Isc': f"{conn.module_isc:.2f}",
+                    'NEC Safety Factor': conn.nec_factor,
+                    'Harness Current': f"{conn.harness_current:.2f}",
+                    'Fuse Size': conn.get_display_fuse_size(),
+                    'Cable Size': conn.get_display_cable_size(),
+                    'Total Current': '',  # Only on first row
+                    'Breaker Size': ''    # Only on first row
+                }
+                
+                # Add total current and breaker size only to first row
+                if i == 0:
+                    row_data['Total Current'] = f"{config.total_input_current:.2f}"
+                    row_data['Breaker Size'] = config.get_display_breaker_size()
+                
+                combiner_data.append(row_data)
+            
+            # Add empty row between combiner boxes (except after last one)
+            if combiner_id != sorted(device_configs.keys())[-1]:
+                combiner_data.append({})
+        
+        return pd.DataFrame(combiner_data)
+    
+    def count_combiner_boxes(self) -> int:
+        """Count the number of combiner boxes in the project"""
+        count = 0
+        for block in self.blocks.values():
+            if hasattr(block, 'device_type'):
+                from ..models.block import DeviceType
+                if block.device_type == DeviceType.COMBINER_BOX:
+                    count += 1
+        return count
+    
+    def _format_combiner_sheet(self, worksheet, data: pd.DataFrame):
+        """
+        Format the combiner box sheet with special handling for cable mismatches
+        
+        Args:
+            worksheet: openpyxl worksheet
+            data: DataFrame with combiner data
+        """
+        # Use standard formatting first
+        self._format_excel_sheet(worksheet, data)
+        
+        # Additional formatting for cable size mismatches
+        red_font = Font(color="FF0000")
+        
+        # Find Cable Size column
+        cable_col = None
+        for col in range(1, worksheet.max_column + 1):
+            if worksheet.cell(row=1, column=col).value == 'Cable Size':
+                cable_col = col
+                break
+        
+        if cable_col:
+            # Check each cable size cell for mismatches
+            # This would need integration with actual mismatch detection
+            # For now, we'll leave it as a placeholder for future enhancement
+            pass

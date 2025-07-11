@@ -93,7 +93,13 @@ class SolarBOMApplication:
         module_frame = ttk.Frame(notebook)
         tracker_frame = ttk.Frame(notebook)
         block_frame = ttk.Frame(notebook)
+        device_frame = ttk.Frame(notebook)
         bom_frame = ttk.Frame(notebook)
+        
+        # Create Device Configurator tab
+        from src.ui.device_configurator import DeviceConfigurator
+        device_configurator = DeviceConfigurator(device_frame, project_manager=None)
+        device_configurator.pack(fill='both', expand=True, padx=5, pady=5)
         
         # Create BOM manager tab - pass reference to main app
         bom_manager = BOMManager(bom_frame, main_app=self)
@@ -118,6 +124,11 @@ class SolarBOMApplication:
             
             # UPDATE THE BOM MANAGER WITH THE ACTUAL BLOCKCONFIG OBJECTS
             bom_manager.set_blocks(block_configurator.blocks)
+            
+            # Update device configurator
+            if self.current_project:
+                self.current_project.blocks = block_configurator.blocks
+                device_configurator.load_project(self.current_project)
             
             # Store serialized blocks in project for saving
             if hasattr(self, 'current_project') and self.current_project:
@@ -185,6 +196,7 @@ class SolarBOMApplication:
         notebook.add(module_frame, text='Modules')
         notebook.add(tracker_frame, text='Tracker Templates')
         notebook.add(block_frame, text='Block Layout')
+        notebook.add(device_frame, text='Configure Device')
         notebook.add(bom_frame, text='BOM Generator')
         
         # Load blocks from project if available
