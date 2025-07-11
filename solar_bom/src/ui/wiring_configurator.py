@@ -50,7 +50,7 @@ class WiringConfigurator(tk.Toplevel):
         
         # Make window modal
         self.transient(parent)
-        self.grab_set()
+        # self.grab_set()
         
         # Position window relative to parent
         x = parent.winfo_rootx() + 50
@@ -2218,6 +2218,7 @@ class WiringConfigurator(tk.Toplevel):
         
         # Update the wiring visualization
         self.draw_wiring_layout()
+        self.notify_wiring_changed()
 
     def delete_harness(self, string_count, harness_idx):
         """Delete a harness from the configuration"""
@@ -2234,6 +2235,7 @@ class WiringConfigurator(tk.Toplevel):
             
             # Update the wiring visualization
             self.draw_wiring_layout()
+            self.notify_wiring_changed()
 
     def draw_device(self):
         """Draw inverter/combiner box"""
@@ -2998,6 +3000,8 @@ class WiringConfigurator(tk.Toplevel):
             row=0, column=0, padx=5)
         ttk.Button(button_frame, text="Cancel", command=dialog.destroy).grid(
             row=0, column=1, padx=5)
+        
+        self.notify_wiring_changed()
         
     def calculate_recommended_fuse_size(self, string_indices):
         """Calculate recommended fuse size based on NEC (1.25 × Isc)"""
@@ -3985,3 +3989,13 @@ class WiringConfigurator(tk.Toplevel):
             neg_target = self.get_shared_whip_point(tracker_idx, 'negative')
         
         return pos_target, neg_target
+    
+    def notify_wiring_changed(self):
+        """Notify that wiring configuration has changed"""
+        # Save state
+        if self.parent_notify_blocks_changed:
+            self.parent_notify_blocks_changed()
+        
+        # If the main app has a device configurator, refresh it
+        if hasattr(self.parent, 'main_app') and hasattr(self.parent.main_app, 'device_configurator'):
+            self.parent.main_app.device_configurator.refresh_display()

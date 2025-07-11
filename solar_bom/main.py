@@ -100,6 +100,10 @@ class SolarBOMApplication:
         from src.ui.device_configurator import DeviceConfigurator
         device_configurator = DeviceConfigurator(device_frame, project_manager=None)
         device_configurator.pack(fill='both', expand=True, padx=5, pady=5)
+        # Add reference to main app
+        device_configurator.main_app = self
+        # Store reference for other components to access
+        self.device_configurator = device_configurator
         
         # Create BOM manager tab - pass reference to main app
         bom_manager = BOMManager(bom_frame, main_app=self)
