@@ -6,6 +6,63 @@ from ..models.module import ModuleOrientation
 from ..models.tracker import TrackerPosition
 from ..utils.calculations import get_ampacity_for_wire_gauge, calculate_nec_current, wire_harness_compatibility
 
+class CollapsibleFrame(ttk.Frame):
+    """A collapsible frame widget with instant show/hide"""
+    
+    def __init__(self, parent, text="", start_collapsed=True, **kwargs):
+        super().__init__(parent, **kwargs)
+        
+        self.is_collapsed = start_collapsed
+        
+        # Header frame
+        self.header_frame = ttk.Frame(self)
+        self.header_frame.pack(fill=tk.X, padx=5, pady=2)
+        
+        # Toggle button
+        self.toggle_btn = ttk.Label(self.header_frame, text="▶" if start_collapsed else "▼", 
+                                   cursor="hand2", font=('TkDefaultFont', 10))
+        self.toggle_btn.pack(side=tk.LEFT, padx=(0, 5))
+        self.toggle_btn.bind("<Button-1>", lambda e: self.toggle())
+        
+        # Title label
+        self.title_label = ttk.Label(self.header_frame, text=text, font=('TkDefaultFont', 10, 'bold'))
+        self.title_label.pack(side=tk.LEFT)
+        self.title_label.bind("<Button-1>", lambda e: self.toggle())
+        
+        # Content frame
+        self.content_frame = ttk.LabelFrame(self, text="", padding="5")
+        
+        if start_collapsed:
+            # Start with content hidden
+            self.content_frame.pack_forget()
+        else:
+            self.content_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=2)
+    
+    def toggle(self):
+        """Toggle the collapsed state"""
+        if self.is_collapsed:
+            self.expand()
+        else:
+            self.collapse()
+    
+    def expand(self):
+        """Expand the frame"""
+        if not self.is_collapsed:
+            return
+            
+        self.is_collapsed = False
+        self.toggle_btn.config(text="▼")
+        self.content_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=2)
+    
+    def collapse(self):
+        """Collapse the frame"""
+        if self.is_collapsed:
+            return
+            
+        self.is_collapsed = True
+        self.toggle_btn.config(text="▶")
+        self.content_frame.pack_forget()
+
 class WiringConfigurator(tk.Toplevel):
 
     # AWG to mm² conversion
@@ -174,8 +231,12 @@ class WiringConfigurator(tk.Toplevel):
 
     def setup_cable_specifications(self, controls_frame):
         """Set up cable specifications section"""
-        cable_frame = ttk.LabelFrame(controls_frame, text="Cable Specifications", padding="5")
-        cable_frame.grid(row=2, column=0, columnspan=2, padx=5, pady=10, sticky=(tk.W, tk.E))
+        # Create collapsible frame
+        cable_collapsible = CollapsibleFrame(controls_frame, text="Cable Specifications", start_collapsed=True)
+        cable_collapsible.grid(row=2, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
+        
+        # Use the content_frame inside the collapsible
+        cable_frame = cable_collapsible.content_frame
 
         # String Cable Size
         ttk.Label(cable_frame, text="String Cable Size:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
@@ -224,8 +285,15 @@ class WiringConfigurator(tk.Toplevel):
 
     def setup_harness_configuration(self, controls_frame):
         """Set up harness configuration section"""
-        self.harness_config_frame = ttk.LabelFrame(controls_frame, text="Tracker Harness Configuration", padding="5")
-        self.harness_config_frame.grid(row=3, column=0, columnspan=2, padx=5, pady=10, sticky=(tk.W, tk.E))
+        # Create collapsible frame
+        harness_collapsible = CollapsibleFrame(controls_frame, text="Tracker Harness Configuration", start_collapsed=True)
+        harness_collapsible.grid(row=3, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
+        
+        # Store reference to collapsible frame
+        self.harness_collapsible = harness_collapsible
+        
+        # Use the content_frame inside the collapsible
+        self.harness_config_frame = harness_collapsible.content_frame
 
         # String count selector
         ttk.Label(self.harness_config_frame, text="Configure trackers with:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
@@ -256,7 +324,7 @@ class WiringConfigurator(tk.Toplevel):
 
         # Initially hide harness configuration if not in harness mode
         if self.wiring_type_var.get() != WiringType.HARNESS.value:
-            self.harness_config_frame.grid_remove()
+            harness_collapsible.grid_remove()
 
     def setup_routing_controls(self, controls_frame):
         """Set up remaining routing controls section (whip controls moved to bottom)"""
@@ -347,10 +415,15 @@ class WiringConfigurator(tk.Toplevel):
         # Bind canvas resize
         self.canvas.bind('<Configure>', self.on_canvas_resize)
 
-        # Add mouse wheel binding for zoom
-        self.canvas.bind('<MouseWheel>', self.on_mouse_wheel)  # Windows
-        self.canvas.bind('<Button-4>', self.on_mouse_wheel)    # Linux scroll up
-        self.canvas.bind('<Button-5>', self.on_mouse_wheel)    # Linux scroll down
+        # Add mouse wheel binding for zoom (only when over canvas)
+        def on_canvas_mousewheel(event):
+            # Only zoom if we're actually over the canvas, not the controls
+            if self.canvas.winfo_containing(event.x_root, event.y_root) == self.canvas:
+                self.on_mouse_wheel(event)
+                
+        self.canvas.bind('<MouseWheel>', on_canvas_mousewheel)  # Windows
+        self.canvas.bind('<Button-4>', on_canvas_mousewheel)    # Linux scroll up
+        self.canvas.bind('<Button-5>', on_canvas_mousewheel)    # Linux scroll down
 
         # Pan bindings
         self.canvas.bind('<Button-2>', self.start_pan)  # Middle mouse button
@@ -1987,7 +2060,7 @@ class WiringConfigurator(tk.Toplevel):
         if is_harness:
             self.harness_frame.grid()
             self.extender_frame.grid()
-            self.harness_config_frame.grid()
+            self.harness_collapsible.grid()
             
             # Make sure we have the quick patterns section
             if not hasattr(self, 'quick_patterns_frame'):
@@ -1997,7 +2070,7 @@ class WiringConfigurator(tk.Toplevel):
         else:
             self.harness_frame.grid_remove()
             self.extender_frame.grid_remove()
-            self.harness_config_frame.grid_remove()
+            self.harness_collapsible.grid_remove()
         
         # Update legend to reflect current mode
         if hasattr(self, 'draw_legend'):
