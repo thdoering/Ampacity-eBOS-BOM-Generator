@@ -940,6 +940,27 @@ class TrackerTemplateCreator(ttk.Frame):
         if not values or len(values) == 0 or values[0] == '':
             # This is a parent node, not a template
             return
+        
+        # Get the template key from our mapping
+        if item not in self.tree_item_to_template:
+            return
+            
+        template_key = self.tree_item_to_template[item]
+        
+        # Check current state
+        current_enabled = self._is_template_enabled(template_key)
+        
+        # Toggle the state
+        if current_enabled:
+            self._remove_enabled_template(template_key)
+            # Update UI
+            values[0] = '☐'
+            self.template_tree.item(item, values=values, tags=('unchecked',))
+        else:
+            self._add_enabled_template(template_key)
+            # Update UI
+            values[0] = '☑'
+            self.template_tree.item(item, values=values, tags=('checked',))
 
     def _add_enabled_template(self, template_key):
         """Add template to enabled list"""
