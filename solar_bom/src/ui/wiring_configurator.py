@@ -232,7 +232,7 @@ class WiringConfigurator(tk.Toplevel):
     def setup_cable_specifications(self, controls_frame):
         """Set up cable specifications section"""
         # Create collapsible frame
-        cable_collapsible = CollapsibleFrame(controls_frame, text="Cable Specifications", start_collapsed=True)
+        cable_collapsible = CollapsibleFrame(controls_frame, text="Cable Specifications", start_collapsed=False)
         cable_collapsible.grid(row=2, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
         
         # Use the content_frame inside the collapsible
@@ -286,7 +286,7 @@ class WiringConfigurator(tk.Toplevel):
     def setup_harness_configuration(self, controls_frame):
         """Set up harness configuration section"""
         # Create collapsible frame
-        harness_collapsible = CollapsibleFrame(controls_frame, text="Tracker Harness Configuration", start_collapsed=True)
+        harness_collapsible = CollapsibleFrame(controls_frame, text="Tracker Harness Configuration", start_collapsed=False)
         harness_collapsible.grid(row=3, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
         
         # Store reference to collapsible frame

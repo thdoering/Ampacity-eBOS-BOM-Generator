@@ -764,12 +764,12 @@ class BOMGenerator:
         # Apply center alignment to Part Number column data
         if 'Part Number' in data.columns:
             part_number_col = list(data.columns).index('Part Number') + 1
-            for row_num in range(start_row + 1, start_row + len(data) + 1):
+            for row_num in range(start_row + 1, start_row + len(data) + 2):  # +2 to include last row
                 cell = worksheet.cell(row=row_num, column=part_number_col)
                 cell.alignment = centered_alignment
         
         for i, row in enumerate(worksheet.iter_rows(min_row=start_row+1, 
-                                                    max_row=start_row+len(data), 
+                                                    max_row=start_row+len(data)+1,  # +1 to ensure last row is included
                                                     min_col=1, 
                                                     max_col=len(data.columns)), 1):
             # Get the row index
