@@ -113,8 +113,8 @@ class DeviceConfigurator(ttk.Frame):
         tree_frame.grid_rowconfigure(0, weight=1)
         tree_frame.grid_columnconfigure(0, weight=1)
         
-        # Bind double-click for editing
-        self.tree.bind('<Double-Button-1>', self.on_double_click)
+        # Bind click for inline editing
+        self.tree.bind('<Button-1>', self.on_click)
     
     def create_control_buttons(self, parent):
         """Create control buttons"""
@@ -316,37 +316,55 @@ class DeviceConfigurator(ttk.Frame):
         # Update warnings
         self.update_warnings()
     
-    def on_double_click(self, event):
-        """Handle double-click for editing"""
-        # Get clicked item and column
+    def on_click(self, event):
+        """Handle click for inline editing"""
+        # Identify the clicked cell
+        region = self.tree.identify_region(event.x, event.y)
+        if region != "cell":
+            return
+            
+        # Get the item and column
         item = self.tree.identify('item', event.x, event.y)
         column = self.tree.identify('column', event.x, event.y)
         
         if not item or not column:
             return
         
-        # Check if it's a child item (connection)
-        parent = self.tree.parent(item)
-        if not parent:
-            return  # Clicked on combiner header
-        
         # Get column index
         col_idx = int(column.replace('#', '')) - 1
         
-        # Only allow editing fuse size (col 6) and cable size (col 7)
-        if col_idx not in [6, 7]:
+        # Only allow editing fuse size (col 6), cable size (col 7), and breaker size (col 9)
+        if col_idx not in [6, 7, 9]:
             return
         
-        # Get current values
-        values = self.tree.item(item, 'values')
-        combiner_id = self.tree.item(parent, 'text')
+        # Check if it's a combiner header or connection row
+        parent = self.tree.parent(item)
         
-        # Find the connection
+        # Handle breaker size editing (only on first child row)
+        if col_idx == 9:
+            if not parent:
+                return  # Skip combiner headers
+            
+            # Only allow editing on first child
+            children = list(self.tree.get_children(parent))
+            if item != children[0]:
+                return
+            
+            combiner_id = self.tree.item(parent, 'text')
+            self.create_inline_breaker_combo(item, column, combiner_id)
+            return
+        
+        # Handle fuse and cable size editing
+        if not parent:
+            return  # Skip combiner headers
+        
+        # Get combiner and connection info
+        combiner_id = self.tree.item(parent, 'text')
         config = self.combiner_configs.get(combiner_id)
         if not config:
             return
         
-        # Determine which connection this is
+        # Find connection index
         children = list(self.tree.get_children(parent))
         conn_idx = children.index(item)
         
@@ -355,51 +373,36 @@ class DeviceConfigurator(ttk.Frame):
         
         connection = config.connections[conn_idx]
         
-        # Edit the value
+        # Create inline editor based on column
         if col_idx == 6:  # Fuse size
-            self.edit_fuse_size(connection, combiner_id)
+            self.create_inline_fuse_combo(item, column, connection, combiner_id)
         elif col_idx == 7:  # Cable size
-            self.edit_cable_size(connection, combiner_id)
-    
-    def edit_fuse_size(self, connection: HarnessConnection, combiner_id: str):
-        """Edit fuse size for a connection"""
-        # Create dialog
-        dialog = tk.Toplevel(self)
-        dialog.title("Edit Fuse Size")
-        dialog.geometry("300x150")
+            self.create_inline_cable_combo(item, column, connection, combiner_id)
+
+    def create_inline_fuse_combo(self, item, column, connection, combiner_id):
+        """Create inline combobox for fuse size editing"""
+        # Get the bounding box of the cell
+        bbox = self.tree.bbox(item, column)
+        if not bbox:
+            return
         
-        # Center the dialog
-        dialog.transient(self)
-        dialog.grab_set()
-        
-        # Content
-        ttk.Label(dialog, text=f"Tracker: {connection.tracker_id}, Harness: {connection.harness_id}").pack(pady=10)
-        ttk.Label(dialog, text=f"Calculated: {connection.calculated_fuse_size}A").pack()
-        
-        # Fuse size selection
-        frame = ttk.Frame(dialog)
-        frame.pack(pady=10)
-        
-        ttk.Label(frame, text="Fuse Size:").grid(row=0, column=0, padx=5)
-        
+        # Create combobox
         fuse_var = tk.StringVar(value=str(connection.get_display_fuse_size()))
-        fuse_combo = ttk.Combobox(frame, textvariable=fuse_var, state='readonly', width=10)
-        fuse_combo['values'] = [str(s) for s in STANDARD_FUSE_SIZES]
-        fuse_combo.grid(row=0, column=1, padx=5)
+        combo = ttk.Combobox(self.tree, textvariable=fuse_var, state='readonly', width=8)
+        combo['values'] = [str(s) for s in STANDARD_FUSE_SIZES]
         
-        # Buttons
-        button_frame = ttk.Frame(dialog)
-        button_frame.pack(pady=10)
+        # Position the combobox
+        combo.place(x=bbox[0], y=bbox[1], width=bbox[2], height=bbox[3])
         
-        def save():
+        def save_fuse(event=None):
             try:
                 new_size = int(fuse_var.get())
                 
                 # Validate
                 if new_size < connection.harness_current:
                     messagebox.showerror("Invalid Size", 
-                                       f"Fuse size must be at least {connection.harness_current:.1f}A "
-                                       f"for the harness current.")
+                                    f"Fuse size must be at least {connection.harness_current:.1f}A")
+                    combo.destroy()
                     return
                 
                 # Update connection
@@ -418,47 +421,37 @@ class DeviceConfigurator(ttk.Frame):
                 connection.calculated_cable_size = connection._calculate_cable_size()
                 
                 self.refresh_display()
-                dialog.destroy()
+                combo.destroy()
                 
             except ValueError:
-                messagebox.showerror("Error", "Invalid fuse size")
+                combo.destroy()
         
-        ttk.Button(button_frame, text="Save", command=save).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT, padx=5)
-    
-    def edit_cable_size(self, connection: HarnessConnection, combiner_id: str):
-        """Edit cable size for a connection"""
-        # Create dialog
-        dialog = tk.Toplevel(self)
-        dialog.title("Edit Cable Size")
-        dialog.geometry("350x200")
+        def cancel(event=None):
+            combo.destroy()
         
-        # Center the dialog
-        dialog.transient(self)
-        dialog.grab_set()
+        combo.bind('<<ComboboxSelected>>', save_fuse)
+        combo.bind('<Return>', save_fuse)
+        combo.bind('<Escape>', cancel)
+        combo.bind('<FocusOut>', cancel)
+        combo.focus_set()
+        combo.event_generate('<Button-1>')  # Open dropdown immediately
+
+    def create_inline_cable_combo(self, item, column, connection, combiner_id):
+        """Create inline combobox for cable size editing"""
+        # Get the bounding box of the cell
+        bbox = self.tree.bbox(item, column)
+        if not bbox:
+            return
         
-        # Content
-        ttk.Label(dialog, text=f"Tracker: {connection.tracker_id}, Harness: {connection.harness_id}").pack(pady=10)
-        ttk.Label(dialog, text=f"Calculated: {connection.calculated_cable_size}").pack()
-        ttk.Label(dialog, text=f"Wiring Config: {connection.actual_cable_size}", 
-                 foreground='red' if connection.is_cable_size_mismatch() else 'black').pack()
-        
-        # Cable size selection
-        frame = ttk.Frame(dialog)
-        frame.pack(pady=10)
-        
-        ttk.Label(frame, text="Cable Size:").grid(row=0, column=0, padx=5)
-        
+        # Create combobox
         cable_var = tk.StringVar(value=connection.get_display_cable_size())
-        cable_combo = ttk.Combobox(frame, textvariable=cable_var, state='readonly', width=12)
-        cable_combo['values'] = ["10 AWG", "8 AWG", "6 AWG", "4 AWG"]
-        cable_combo.grid(row=0, column=1, padx=5)
+        combo = ttk.Combobox(self.tree, textvariable=cable_var, state='readonly', width=10)
+        combo['values'] = ["10 AWG", "8 AWG", "6 AWG", "4 AWG"]
         
-        # Buttons
-        button_frame = ttk.Frame(dialog)
-        button_frame.pack(pady=10)
+        # Position the combobox
+        combo.place(x=bbox[0], y=bbox[1], width=bbox[2], height=bbox[3])
         
-        def save():
+        def save_cable(event=None):
             new_size = cable_var.get()
             
             # Validate ampacity
@@ -468,8 +461,9 @@ class DeviceConfigurator(ttk.Frame):
             
             if ampacity < required_ampacity:
                 messagebox.showerror("Invalid Size", 
-                                   f"Cable ampacity ({ampacity}A) must be at least "
-                                   f"equal to fuse rating ({required_ampacity}A).")
+                                f"Cable ampacity ({ampacity}A) must be at least "
+                                f"equal to fuse rating ({required_ampacity}A).")
+                combo.destroy()
                 return
             
             # Update connection
@@ -485,11 +479,77 @@ class DeviceConfigurator(ttk.Frame):
                 self.edited_cells.add(cell_id)
             
             self.refresh_display()
-            dialog.destroy()
+            combo.destroy()
         
-        ttk.Button(button_frame, text="Save", command=save).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT, padx=5)
-    
+        def cancel(event=None):
+            combo.destroy()
+        
+        combo.bind('<<ComboboxSelected>>', save_cable)
+        combo.bind('<Return>', save_cable)
+        combo.bind('<Escape>', cancel)
+        combo.bind('<FocusOut>', cancel)
+        combo.focus_set()
+        combo.event_generate('<Button-1>')  # Open dropdown immediately
+
+    def create_inline_breaker_combo(self, item, column, combiner_id):
+        """Create inline combobox for breaker size editing"""
+        config = self.combiner_configs.get(combiner_id)
+        if not config:
+            return
+        
+        # Get the bounding box of the cell
+        bbox = self.tree.bbox(item, column)
+        if not bbox:
+            return
+        
+        # Create combobox
+        from ..utils.calculations import STANDARD_BREAKER_SIZES
+        breaker_var = tk.StringVar(value=str(config.get_display_breaker_size()))
+        combo = ttk.Combobox(self.tree, textvariable=breaker_var, state='readonly', width=10)
+        combo['values'] = [str(s) for s in STANDARD_BREAKER_SIZES]
+        
+        # Position the combobox
+        combo.place(x=bbox[0], y=bbox[1], width=bbox[2], height=bbox[3])
+        
+        def save_breaker(event=None):
+            try:
+                new_size = int(breaker_var.get())
+                
+                # Validate
+                if new_size < config.total_input_current:
+                    messagebox.showerror("Invalid Size", 
+                                    f"Breaker size must be at least {config.total_input_current:.1f}A")
+                    combo.destroy()
+                    return
+                
+                # Update config
+                if new_size == config.calculated_breaker_size:
+                    config.user_breaker_size = None
+                    config.breaker_manually_set = False
+                    cell_id = f"{combiner_id}_breaker"
+                    self.edited_cells.discard(cell_id)
+                else:
+                    config.user_breaker_size = new_size
+                    config.breaker_manually_set = True
+                    cell_id = f"{combiner_id}_breaker"
+                    self.edited_cells.add(cell_id)
+                
+                self.refresh_display()
+                combo.destroy()
+                
+            except ValueError:
+                combo.destroy()
+        
+        def cancel(event=None):
+            combo.destroy()
+        
+        combo.bind('<<ComboboxSelected>>', save_breaker)
+        combo.bind('<Return>', save_breaker)
+        combo.bind('<Escape>', cancel)
+        combo.bind('<FocusOut>', cancel)
+        combo.focus_set()
+        combo.event_generate('<Button-1>')  # Open dropdown immediately
+            
     def reset_selected(self):
         """Reset selected items to calculated values"""
         selection = self.tree.selection()
