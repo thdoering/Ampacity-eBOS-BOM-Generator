@@ -32,6 +32,8 @@ class Project:
     enabled_templates: List[str] = field(default_factory=list)
     # Wiring mode for the project (daisy_chain or leapfrog)
     wiring_mode: str = "daisy_chain"  # Default to daisy chain
+    # Device configurations (combiner boxes, etc.)
+    device_configs: Dict[str, dict] = field(default_factory=dict)
     
     def update_modified_date(self):
         """Update the last modified date"""
@@ -54,7 +56,8 @@ class Project:
             'selected_inverters': self.selected_inverters,
             'default_row_spacing_m': self.default_row_spacing_m,
             'enabled_templates': self.enabled_templates,
-            'wiring_mode': self.wiring_mode
+            'wiring_mode': self.wiring_mode,
+            'device_configs': self.device_configs
         }
     
     @classmethod
@@ -77,7 +80,8 @@ class Project:
             selected_inverters=data.get('selected_inverters', []),
             default_row_spacing_m=data.get('default_row_spacing', 6.0),
             enabled_templates=data.get('enabled_templates', []),
-            wiring_mode=data.get('wiring_mode', 'daisy_chain')
+            wiring_mode=data.get('wiring_mode', 'daisy_chain'),
+            device_configs=data.get('device_configs', {})
         )
     
     def save(self, projects_dir: str = 'projects') -> bool:

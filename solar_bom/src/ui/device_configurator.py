@@ -150,13 +150,55 @@ class DeviceConfigurator(ttk.Frame):
         
         # Generate configurations for all combiner boxes
         self.generate_combiner_configs()
-        
+
+        # Load saved device configurations if they exist
+        if hasattr(project, 'device_configs') and project.device_configs:
+            self.load_saved_configurations(project.device_configs)
+
         # Update display
         self.refresh_display()
         
         # Update status
         combiner_count = len(self.combiner_configs)
         self.status_var.set(f"Loaded {combiner_count} combiner box(es)")
+
+    def load_saved_configurations(self, saved_configs: Dict[str, dict]):
+        """Load saved device configurations"""
+        for combiner_id, saved_config in saved_configs.items():
+            if combiner_id not in self.combiner_configs:
+                continue
+            
+            config = self.combiner_configs[combiner_id]
+            
+            # Update breaker settings
+            if 'user_breaker_size' in saved_config:
+                config.user_breaker_size = saved_config.get('user_breaker_size')
+                config.breaker_manually_set = saved_config.get('breaker_manually_set', False)
+                if config.breaker_manually_set:
+                    self.edited_cells.add(f"{combiner_id}_breaker")
+            
+            # Update connections
+            saved_connections = saved_config.get('connections', [])
+            for i, saved_conn in enumerate(saved_connections):
+                if i >= len(config.connections):
+                    continue
+                
+                conn = config.connections[i]
+                
+                # Update user overrides
+                if saved_conn.get('user_fuse_size'):
+                    conn.user_fuse_size = saved_conn['user_fuse_size']
+                    conn.fuse_manually_set = saved_conn.get('fuse_manually_set', True)
+                    if conn.fuse_manually_set:
+                        cell_id = f"{combiner_id}_{conn.tracker_id}_{conn.harness_id}_fuse"
+                        self.edited_cells.add(cell_id)
+                
+                if saved_conn.get('user_cable_size'):
+                    conn.user_cable_size = saved_conn['user_cable_size']
+                    conn.cable_manually_set = saved_conn.get('cable_manually_set', True)
+                    if conn.cable_manually_set:
+                        cell_id = f"{combiner_id}_{conn.tracker_id}_{conn.harness_id}_cable"
+                        self.edited_cells.add(cell_id)
     
     def generate_combiner_configs(self):
         """Generate combiner box configurations from project blocks"""
@@ -421,6 +463,7 @@ class DeviceConfigurator(ttk.Frame):
                 connection.calculated_cable_size = connection._calculate_cable_size()
                 
                 self.refresh_display()
+                self.save_configuration_to_project()
                 combo.destroy()
                 
             except ValueError:
@@ -479,6 +522,7 @@ class DeviceConfigurator(ttk.Frame):
                 self.edited_cells.add(cell_id)
             
             self.refresh_display()
+            self.save_configuration_to_project()
             combo.destroy()
         
         def cancel(event=None):
@@ -535,6 +579,7 @@ class DeviceConfigurator(ttk.Frame):
                     self.edited_cells.add(cell_id)
                 
                 self.refresh_display()
+                self.save_configuration_to_project()
                 combo.destroy()
                 
             except ValueError:
@@ -549,7 +594,50 @@ class DeviceConfigurator(ttk.Frame):
         combo.bind('<FocusOut>', cancel)
         combo.focus_set()
         combo.event_generate('<Button-1>')  # Open dropdown immediately
+
+    def save_configuration_to_project(self):
+        """Save device configuration to the current project"""
+        if not self.current_project:
+            return
+        
+        # Convert combiner configs to serializable format
+        device_configs = {}
+        for combiner_id, config in self.combiner_configs.items():
+            connections = []
+            for conn in config.connections:
+                connections.append({
+                    'block_id': conn.block_id,
+                    'tracker_id': conn.tracker_id,
+                    'harness_id': conn.harness_id,
+                    'num_strings': conn.num_strings,
+                    'module_isc': conn.module_isc,
+                    'nec_factor': conn.nec_factor,
+                    'actual_cable_size': conn.actual_cable_size,
+                    'calculated_fuse_size': conn.calculated_fuse_size,
+                    'user_fuse_size': conn.user_fuse_size,
+                    'calculated_cable_size': conn.calculated_cable_size,
+                    'user_cable_size': conn.user_cable_size,
+                    'fuse_manually_set': conn.fuse_manually_set,
+                    'cable_manually_set': conn.cable_manually_set
+                })
             
+            device_configs[combiner_id] = {
+                'combiner_id': config.combiner_id,
+                'block_id': config.block_id,
+                'connections': connections,
+                'calculated_breaker_size': config.calculated_breaker_size,
+                'user_breaker_size': config.user_breaker_size,
+                'breaker_manually_set': config.breaker_manually_set,
+                'total_input_current': config.total_input_current
+            }
+        
+        # Save to project
+        self.current_project.device_configs = device_configs
+        
+        # Trigger autosave if available
+        if hasattr(self, 'main_app') and hasattr(self.main_app, 'autosave_project'):
+            self.main_app.autosave_project()
+
     def reset_selected(self):
         """Reset selected items to calculated values"""
         selection = self.tree.selection()
