@@ -1215,10 +1215,12 @@ class BOMGenerator:
             # Round up to next 5ft increment for extender lengths
             target_length = ((required_length_ft - 1) // 5 + 1) * 5
             target_length = max(10, target_length)  # Remove the max 300 clamp
-
-            # If over 300ft, return custom part number
+            
+            # If over 300ft, return custom part number with wire gauge and polarity
             if target_length > 300:
-                return f"EXT-CUSTOM-{target_length}"
+                polarity_code = 'P' if polarity == 'positive' else 'N'
+                awg_size = wire_gauge.split()[0]  # Extract just the number from "8 AWG"
+                return f"EXT-{awg_size}-{polarity_code}-{target_length}-CUSTOM"
             
             # Search for matching extender
             for part_number, spec in self.extender_library.items():
@@ -1244,9 +1246,11 @@ class BOMGenerator:
             target_length = ((required_length_ft - 1) // 5 + 1) * 5
             target_length = max(10, target_length)  # Remove the max 300 clamp
 
-            # If over 300ft, return custom part number
+            # If over 300ft, return custom part number with wire gauge and polarity
             if target_length > 300:
-                return f"WHI-CUSTOM-{target_length}"
+                polarity_code = 'P' if polarity == 'positive' else 'N'
+                awg_size = wire_gauge.split()[0]  # Extract just the number from "8 AWG"
+                return f"WHI-{awg_size}-{polarity_code}-{target_length}-CUSTOM"
             
             # Search for matching whip
             for part_number, spec in self.whip_library.items():

@@ -289,6 +289,26 @@
       "bifaciality_factor": null,
       "default_orientation": "Portrait",
       "cells_per_module": 72
+    },
+    "Series 7 535W": {
+      "manufacturer": "First Solar",
+      "model": "Series 7 535W",
+      "type": "Thin Film",
+      "length_mm": 2300.0,
+      "width_mm": 1216.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 535.0,
+      "vmp": 187.8,
+      "imp": 2.85,
+      "voc": 227.2,
+      "isc": 3.06,
+      "max_system_voltage": 1500,
+      "efficiency": null,
+      "temperature_coefficient": null,
+      "bifaciality_factor": null,
+      "default_orientation": "Portrait",
+      "cells_per_module": 72
     }
   },
   "NE Solar": {
