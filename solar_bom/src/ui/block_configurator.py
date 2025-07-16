@@ -213,11 +213,6 @@ class BlockConfigurator(ttk.Frame):
         )
         max_current_spinbox.grid(row=2, column=1, padx=5, pady=2, sticky=tk.W)
 
-        # Device Max Current (calculated)
-        ttk.Label(device_frame, text="Device Max Current (A):").grid(row=3, column=0, padx=5, pady=2, sticky=tk.W)
-        self.device_max_current_label = ttk.Label(device_frame, text="--")
-        self.device_max_current_label.grid(row=3, column=1, padx=5, pady=2, sticky=tk.W)
-
         # Device Spacing
         ttk.Label(device_frame, text="Device Spacing (ft):").grid(row=5, column=0, padx=5, pady=2, sticky=tk.W)
         self.device_spacing_var = tk.StringVar(value="6.0")
@@ -392,10 +387,6 @@ class BlockConfigurator(ttk.Frame):
         self.canvas.bind('<B1-Motion>', self.on_canvas_drag)
         self.canvas.bind('<ButtonRelease-1>', self.on_canvas_release)
 
-        # Add traces for max current calculation
-        self.num_inputs_var.trace('w', lambda *args: self.update_device_max_current())
-        self.max_current_per_input_var.trace('w', lambda *args: self.update_device_max_current())
-
         # Add traces for device configuration changes
         self.device_type_var.trace('w', self.on_device_config_change)
         self.num_inputs_var.trace('w', self.on_device_config_change)  
@@ -403,9 +394,6 @@ class BlockConfigurator(ttk.Frame):
 
         # Add trace for device type to show/hide inverter frame
         self.device_type_var.trace('w', lambda *args: self.toggle_inverter_frame())
-
-        # Initialize device max current calculation
-        self.update_device_max_current()
 
         # Initialize GCR calculation
 
@@ -458,7 +446,6 @@ class BlockConfigurator(ttk.Frame):
             self.device_type_var.set(block.device_type.value)
             self.num_inputs_var.set(str(block.num_inputs))
             self.max_current_per_input_var.set(str(block.max_current_per_input))
-            self.update_device_max_current()  # Recalculate total current
             self.updating_ui = False
 
     def on_inverter_selected(self, inverter):
@@ -677,7 +664,6 @@ class BlockConfigurator(ttk.Frame):
         self.device_type_var.set(block.device_type.value)
         self.num_inputs_var.set(str(block.num_inputs))
         self.max_current_per_input_var.set(str(block.max_current_per_input))
-        self.update_device_max_current()  # Recalculate total current
 
         # Update underground routing UI from block
         self.updating_ui = True
@@ -1994,16 +1980,6 @@ class BlockConfigurator(ttk.Frame):
             x1, y1_device, x2, y2_device,
             fill='red', tags='device'
         )
-
-    def update_device_max_current(self, *args):
-        """Update the calculated device max current"""
-        try:
-            num_inputs = int(self.num_inputs_var.get())
-            max_current_per_input = int(self.max_current_per_input_var.get())
-            total_current = num_inputs * max_current_per_input
-            self.device_max_current_label.config(text=f"{total_current}")
-        except ValueError:
-            self.device_max_current_label.config(text="--")
 
     def update_device_spacing_display(self):
         """Update the meters display when feet value changes"""
