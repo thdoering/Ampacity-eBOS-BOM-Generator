@@ -386,10 +386,10 @@ def calculate_harness_inputs_required(
         return input_count
     
 # Standard fuse sizes in amps
-STANDARD_FUSE_SIZES = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 80, 90]
+STANDARD_FUSE_SIZES = [5, 10, 15, 20, 25, 30, 32, 35, 40, 45, 50, 60, 70, 80, 90]
 
 # Standard breaker sizes in amps
-STANDARD_BREAKER_SIZES = [100, 125, 150, 175, 200, 225, 250, 300, 350, 400, 450, 500, 600, 700, 800]
+STANDARD_BREAKER_SIZES = [100, 125, 150, 175, 200, 225, 250, 275, 300, 350, 400, 450, 500, 600, 700, 800]
 
 # Ampacity table for 90°C rated cables (THWN-2, XHHW-2)
 CABLE_AMPACITY_90C = {
