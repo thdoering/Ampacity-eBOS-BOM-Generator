@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2025-07-17
+
+### Added
+- **Updated Harness Library**: Enhanced wire harness specifications with long trunk ends for improved installation flexibility
+- **Automatic Part Numbers**: BOM generator now automatically pulls in standard part numbers for all components
+- **Motor Placement Control**: Added ability to specify motor placement within tracker strings
+- **Underground Routing Controls**: Added controls for routing whip cables underground before connecting to devices
+- **Leapfrog Wiring Input**: Added support for leapfrog wiring configuration as an alternative to daisy chain
+- **Device Configuration Tab**: Created new tab for configuring combiner boxes and other electrical devices
+- **Excel File Naming**: Automated suggestion of appropriate Excel file names based on project details
+- **Collapsible Wiring Sections**: Made sections in wiring configurator collapsible for better organization
+- **Combiner Boxes Tab**: Added dedicated combiner boxes tab to Excel BOM export
+
+### Changed
+- **GCR/Row Spacing**: Made GCR and row spacing inputs bidirectional - updating one automatically updates the other
+- **Whip Point Manipulation**: Allow realistic manipulation of routing whip connection points
+- **BOM Descriptions**: Updated all BOM descriptions to match standard part library nomenclature
+- **BOM Project Info**: Enhanced project information section in BOM exports
+- **Excel BOM Styling**: Improved Excel BOM formatting and styling for better readability
+- **Tracker Template Organization**: Templates now categorized based on module model and string size
+- **Wiring Configurator Access**: Allow wiring configurator to remain open while working in other tabs
+
+### Fixed
+- **String Homerun Configurations**: Fixed bugs related to string homerun cable calculations and configurations
+- **Tracker Template Display**: Resolved issue where tracker templates weren't displaying correctly in selection dialog
+- **Various Bug Fixes**: Multiple minor bug fixes and performance improvements throughout the application
+
 ## [2.0.0] - 2025-06-27
 
 ### BREAKING CHANGES
