@@ -377,6 +377,10 @@ class SolarBOMApplication:
             
             # Set blocks in configurator
             block_configurator.blocks = reconstructed_blocks
+
+            # Update device configurator with the loaded project and blocks
+            self.current_project.blocks = reconstructed_blocks
+            device_configurator.load_project(self.current_project)
             
             # Update block listbox
             if hasattr(block_configurator, 'block_listbox'):

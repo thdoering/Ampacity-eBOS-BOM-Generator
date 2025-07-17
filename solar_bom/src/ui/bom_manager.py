@@ -470,6 +470,10 @@ class BOMManager(ttk.Frame):
             # Get the current project
             project = getattr(self.parent, 'current_project', None) if hasattr(self, 'parent') else None
             bom_generator = BOMGenerator(selected_blocks, project)
+
+            # Pass the parent reference to the generator so it can access device configurator
+            bom_generator.parent = self.main_app
+
             success = bom_generator.export_bom_to_excel_with_preview_data(filepath, project_info, preview_data)
             
             if success:

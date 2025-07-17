@@ -1531,18 +1531,64 @@ class BOMGenerator:
         # Use standard formatting first
         self._format_excel_sheet(worksheet, data)
         
-        # Additional formatting for cable size mismatches
+        # Additional formatting
+        red_fill = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type="solid")  # Light red
         red_font = Font(color="FF0000")
+        centered_alignment = Alignment(horizontal='center', vertical='center')
         
-        # Find Cable Size column
-        cable_col = None
-        for col in range(1, worksheet.max_column + 1):
-            if worksheet.cell(row=1, column=col).value == 'Cable Size':
-                cable_col = col
-                break
+        # Apply center alignment to all cells
+        for row in worksheet.iter_rows():
+            for cell in row:
+                if cell.value is not None:  # Only format cells with content
+                    cell.alignment = centered_alignment
         
-        if cable_col:
-            # Check each cable size cell for mismatches
-            # This would need integration with actual mismatch detection
-            # For now, we'll leave it as a placeholder for future enhancement
-            pass
+        # Track if we found any mismatches
+        has_mismatches = False
+        
+        # Check for cable size mismatches and apply red formatting
+        if hasattr(self, 'parent') and hasattr(self.parent, 'device_configurator'):
+            device_configurator = self.parent.device_configurator
+            if hasattr(device_configurator, 'combiner_configs'):
+                # Get the actual combiner configs to check for mismatches
+                for row_idx in range(2, worksheet.max_row + 1):  # Skip header row
+                    combiner_id = worksheet.cell(row=row_idx, column=1).value
+                    if not combiner_id or combiner_id == '':  # Skip empty rows
+                        continue
+                        
+                    # Get the config for this combiner
+                    config = device_configurator.combiner_configs.get(combiner_id)
+                    if config:
+                        # Find which connection this row represents
+                        tracker_id = worksheet.cell(row=row_idx, column=2).value
+                        harness_id = worksheet.cell(row=row_idx, column=3).value
+                        
+                        # Find the matching connection
+                        for conn in config.connections:
+                            if conn.tracker_id == tracker_id and conn.harness_id == harness_id:
+                                if conn.is_cable_size_mismatch():
+                                    has_mismatches = True
+                                    # Apply red background to entire row
+                                    for col in range(1, worksheet.max_column + 1):
+                                        cell = worksheet.cell(row=row_idx, column=col)
+                                        cell.fill = red_fill
+                                break
+        
+        # Add legend/note to the right of the data if there are mismatches
+        if has_mismatches:
+            # Find the rightmost column with data
+            last_data_col = worksheet.max_column
+            note_col = last_data_col + 2  # Leave one column gap
+            
+            # Add header for the note
+            note_header_cell = worksheet.cell(row=1, column=note_col, value="Notes")
+            note_header_cell.font = Font(bold=True)
+            note_header_cell.alignment = Alignment(horizontal='left')
+            
+            # Add the note about red highlighting
+            note_cell = worksheet.cell(row=2, column=note_col, 
+                                    value="Red rows indicate cable size mismatch with wiring configuration")
+            note_cell.font = Font(color="FF0000", italic=True)
+            note_cell.alignment = Alignment(horizontal='left', wrap_text=True)
+            
+            # Set column width for note
+            worksheet.column_dimensions[get_column_letter(note_col)].width = 40
