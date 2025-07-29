@@ -2015,7 +2015,12 @@ class BlockConfigurator(ttk.Frame):
             
         # Get the source block
         source_block = self.blocks[self.current_block]
-        source_id = source_block.block_id
+        # Use the last block in the sorted list to determine the ID pattern
+        sorted_blocks = sorted(self.blocks.keys())
+        if sorted_blocks:
+            source_id = sorted_blocks[-1]  # Get the last block ID for pattern
+        else:
+            source_id = source_block.block_id  # Fallback to current block
         
         # Try to parse the source ID to find a numerical suffix
         import re
