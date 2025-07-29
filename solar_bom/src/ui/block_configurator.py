@@ -107,18 +107,33 @@ class BlockConfigurator(ttk.Frame):
         main_container.grid_columnconfigure(2, weight=1)  # Make column 2 (canvas) expand
         main_container.grid_rowconfigure(0, weight=1)     # Make rows expand
         
-        # Left side - Block List and Controls
+        # Block list
         list_frame = ttk.LabelFrame(main_container, text="Blocks", padding="5")
         list_frame.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
-        
-        # Block listbox
-        self.block_listbox = tk.Listbox(list_frame, width=30, height=20)
-        self.block_listbox.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        # Sorting controls frame
+        sort_frame = ttk.Frame(list_frame)
+        sort_frame.grid(row=0, column=0, padx=5, pady=(0, 5), sticky=(tk.W, tk.E))
+
+        ttk.Label(sort_frame, text="Sort by:").grid(row=0, column=0, padx=(0, 5))
+        self.sort_mode_var = tk.StringVar(value="natural")
+        sort_combo = ttk.Combobox(sort_frame, textvariable=self.sort_mode_var, state='readonly', width=15)
+        sort_combo['values'] = ["Natural", "Natural (Reverse)", "Alphabetical", "Alphabetical (Reverse)", "Creation Order"]
+        sort_combo.set("Natural")
+        sort_combo.grid(row=0, column=1, padx=(0, 5))
+        sort_combo.bind('<<ComboboxSelected>>', lambda e: self.update_block_listbox())
+
+        # Add creation order tracking
+        if not hasattr(self, 'block_creation_order'):
+            self.block_creation_order = []
+
+        self.block_listbox = tk.Listbox(list_frame, height=10, selectmode=tk.EXTENDED)
+        self.block_listbox.grid(row=1, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
         self.block_listbox.bind('<<ListboxSelect>>', self.on_block_select)
-        
+
         # Block control buttons
         btn_frame = ttk.Frame(list_frame)
-        btn_frame.grid(row=1, column=0, padx=5, pady=5)
+        btn_frame.grid(row=2, column=0, padx=5, pady=5)
         
         ttk.Button(btn_frame, text="New Block", command=self.create_new_block).grid(row=0, column=0, padx=2)
         ttk.Button(btn_frame, text="Delete Block", command=self.delete_block).grid(row=0, column=1, padx=2)
@@ -397,6 +412,249 @@ class BlockConfigurator(ttk.Frame):
 
         # Initialize GCR calculation
 
+    def show_context_menu(self, event):
+        """Show context menu on right-click"""
+        # Get the index under the cursor
+        index = self.block_listbox.nearest(event.y)
+        
+        # If clicking on an item that's not selected, select only that item
+        if index not in self.block_listbox.curselection():
+            self.block_listbox.selection_clear(0, tk.END)
+            self.block_listbox.selection_set(index)
+        
+        # Create context menu
+        context_menu = tk.Menu(self, tearoff=0)
+        
+        selected_indices = self.block_listbox.curselection()
+        if len(selected_indices) > 1:
+            # Multiple selection
+            context_menu.add_command(label=f"Batch Copy {len(selected_indices)} blocks...", 
+                                    command=self.batch_copy_blocks)
+            context_menu.add_command(label=f"Delete {len(selected_indices)} blocks", 
+                                    command=self.batch_delete_blocks)
+        elif len(selected_indices) == 1:
+            # Single selection
+            context_menu.add_command(label="Copy Block", command=self.copy_block)
+            context_menu.add_command(label="Rename Block", command=self.rename_block)
+            context_menu.add_command(label="Delete Block", command=self.delete_block)
+        
+        # Show the menu
+        context_menu.post(event.x_root, event.y_root)
+
+    def batch_copy_blocks(self):
+        """Copy multiple selected blocks with pattern replacement"""
+        selected_indices = self.block_listbox.curselection()
+        selected_blocks = [self.block_listbox.get(i) for i in selected_indices]
+        
+        if not selected_blocks:
+            return
+        
+        # Create dialog
+        dialog = tk.Toplevel(self)
+        dialog.title("Batch Copy Blocks")
+        dialog.transient(self)
+        dialog.grab_set()
+        
+        # Main frame
+        main_frame = ttk.Frame(dialog, padding="10")
+        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # Instructions
+        ttk.Label(main_frame, text=f"Copying {len(selected_blocks)} blocks:").grid(
+            row=0, column=0, columnspan=2, padx=5, pady=5, sticky=tk.W)
+        
+        # Show selected blocks (max 10 with ellipsis)
+        block_list_text = "\n".join(selected_blocks[:10])
+        if len(selected_blocks) > 10:
+            block_list_text += f"\n... and {len(selected_blocks) - 10} more"
+        
+        block_list_label = ttk.Label(main_frame, text=block_list_text, 
+                                    foreground="gray")
+        block_list_label.grid(row=1, column=0, columnspan=2, padx=20, pady=5, sticky=tk.W)
+        
+        # Pattern replacement
+        ttk.Label(main_frame, text="Find pattern:").grid(
+            row=2, column=0, padx=5, pady=5, sticky=tk.W)
+        find_var = tk.StringVar()
+        find_entry = ttk.Entry(main_frame, textvariable=find_var, width=30)
+        find_entry.grid(row=2, column=1, padx=5, pady=5, sticky=(tk.W, tk.E))
+        
+        ttk.Label(main_frame, text="Replace with:").grid(
+            row=3, column=0, padx=5, pady=5, sticky=tk.W)
+        replace_var = tk.StringVar()
+        replace_entry = ttk.Entry(main_frame, textvariable=replace_var, width=30)
+        replace_entry.grid(row=3, column=1, padx=5, pady=5, sticky=(tk.W, tk.E))
+        
+        # Auto-detect common pattern
+        if selected_blocks:
+            # Try to find common pattern like "CBX.1.1."
+            import re
+            first_block = selected_blocks[0]
+            match = re.match(r'(.+?)(\d+)$', first_block)
+            if match:
+                base_pattern = match.group(1)
+                # Check if all selected blocks share this pattern
+                if all(block.startswith(base_pattern) for block in selected_blocks):
+                    find_var.set(base_pattern)
+        
+        # Preview frame
+        preview_frame = ttk.LabelFrame(main_frame, text="Preview", padding="5")
+        preview_frame.grid(row=4, column=0, columnspan=2, padx=5, pady=10, 
+                        sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # Preview text widget
+        preview_text = tk.Text(preview_frame, height=10, width=50)
+        preview_text.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # Preview scrollbar
+        preview_scroll = ttk.Scrollbar(preview_frame, orient="vertical", 
+                                    command=preview_text.yview)
+        preview_scroll.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        preview_text.configure(yscrollcommand=preview_scroll.set)
+        
+        # Variables to store new block mappings
+        new_blocks_mapping = {}
+        conflicts = []
+        
+        def update_preview(*args):
+            """Update preview when find/replace values change"""
+            nonlocal new_blocks_mapping, conflicts
+            preview_text.delete(1.0, tk.END)
+            
+            find_pattern = find_var.get()
+            replace_pattern = replace_var.get()
+            
+            if not find_pattern:
+                preview_text.insert(tk.END, "Enter a pattern to find...")
+                return
+            
+            new_blocks_mapping = {}
+            conflicts = []
+            
+            for old_id in selected_blocks:
+                new_id = old_id.replace(find_pattern, replace_pattern)
+                new_blocks_mapping[old_id] = new_id
+                
+                # Check for conflicts
+                if new_id in self.blocks and new_id not in selected_blocks:
+                    conflicts.append((old_id, new_id))
+                    preview_text.insert(tk.END, f"❌ {old_id} → {new_id} (EXISTS!)\n", "conflict")
+                else:
+                    preview_text.insert(tk.END, f"✓ {old_id} → {new_id}\n", "success")
+            
+            # Configure tags for coloring
+            preview_text.tag_configure("conflict", foreground="red")
+            preview_text.tag_configure("success", foreground="green")
+            
+            # Update dialog with conflict info
+            if conflicts:
+                conflict_label.config(text=f"⚠️ {len(conflicts)} conflicts will be skipped", 
+                                    foreground="red")
+            else:
+                conflict_label.config(text="✓ No conflicts detected", foreground="green")
+        
+        # Bind preview update to variable changes
+        find_var.trace('w', update_preview)
+        replace_var.trace('w', update_preview)
+        
+        # Conflict warning label
+        conflict_label = ttk.Label(main_frame, text="")
+        conflict_label.grid(row=5, column=0, columnspan=2, padx=5, pady=5)
+        
+        # Button frame
+        button_frame = ttk.Frame(main_frame)
+        button_frame.grid(row=6, column=0, columnspan=2, pady=10)
+        
+        def perform_copy():
+            """Execute the batch copy operation"""
+            if not new_blocks_mapping:
+                messagebox.showwarning("Warning", "No blocks to copy")
+                return
+            
+            # Save state for undo
+            self._push_state("Batch copy blocks")
+            
+            successful_copies = []
+            skipped_copies = []
+            
+            for old_id, new_id in new_blocks_mapping.items():
+                if new_id in self.blocks and new_id not in selected_blocks:
+                    skipped_copies.append((old_id, new_id))
+                    continue
+                
+                # Deep copy the block
+                from copy import deepcopy
+                new_block = deepcopy(self.blocks[old_id])
+                new_block.block_id = new_id
+                
+                # Ensure attributes exist
+                if not hasattr(new_block, 'underground_routing'):
+                    new_block.underground_routing = False
+                if not hasattr(new_block, 'pile_reveal_m'):
+                    new_block.pile_reveal_m = 1.5
+                if not hasattr(new_block, 'trench_depth_m'):
+                    new_block.trench_depth_m = 0.91
+                
+                self.blocks[new_id] = new_block
+                successful_copies.append(new_id)
+                self.most_recent_block = new_id  # Track last created
+            
+            # Update UI
+            self.update_block_listbox()
+            self._notify_blocks_changed()
+            
+            # Show results
+            result_msg = f"Successfully copied {len(successful_copies)} blocks"
+            if skipped_copies:
+                result_msg += f"\nSkipped {len(skipped_copies)} blocks due to conflicts:\n"
+                result_msg += "\n".join([f"  {old} → {new}" for old, new in skipped_copies[:5]])
+                if len(skipped_copies) > 5:
+                    result_msg += f"\n  ... and {len(skipped_copies) - 5} more"
+            
+            messagebox.showinfo("Batch Copy Complete", result_msg)
+            dialog.destroy()
+        
+        ttk.Button(button_frame, text="Copy Blocks", command=perform_copy).grid(
+            row=0, column=0, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).grid(
+            row=0, column=1, padx=5)
+        
+        # Center dialog on parent
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f"+{x}+{y}")
+        
+        # Focus on find entry
+        find_entry.focus()
+
+    def batch_delete_blocks(self):
+        """Delete multiple selected blocks"""
+        selected_indices = self.block_listbox.curselection()
+        selected_blocks = [self.block_listbox.get(i) for i in selected_indices]
+        
+        if not selected_blocks:
+            return
+            
+        # Confirm deletion
+        if messagebox.askyesno("Confirm Batch Delete", 
+                            f"Delete {len(selected_blocks)} blocks?\n\n" + 
+                            "\n".join(selected_blocks[:10]) + 
+                            ("\n..." if len(selected_blocks) > 10 else "")):
+            # Save state for undo
+            self._push_state("Batch delete blocks")
+            
+            # Delete each block
+            for block_id in selected_blocks:
+                if block_id in self.blocks:
+                    del self.blocks[block_id]
+            
+            # Update UI
+            self.update_block_listbox()
+            self.current_block = None
+            self.clear_config_display()
+            self._notify_blocks_changed()
+
     def toggle_inverter_frame(self, *args):
         """Show/hide inverter selection elements based on device type"""
         if self.device_type_var.get() == DeviceType.STRING_INVERTER.value:
@@ -573,6 +831,14 @@ class BlockConfigurator(ttk.Frame):
             
             # Add to blocks dictionary
             self.blocks[block_id] = block
+
+            # Add to blocks dictionary
+            self.blocks[block_id] = block
+
+            # Track creation order
+            if not hasattr(self, 'block_creation_order'):
+                self.block_creation_order = []
+            self.block_creation_order.append(block_id)
             
             # Update listbox with sorted blocks
             self.update_block_listbox()
@@ -637,102 +903,57 @@ class BlockConfigurator(ttk.Frame):
         selection = self.block_listbox.curselection()
         if not selection:
             return
-                
-        block_id = self.block_listbox.get(selection[0])
-        self.current_block = block_id
-
-        # Add this check to preserve realistic routes if they exist
-        if block_id in self.blocks and hasattr(self.blocks[block_id], 'wiring_config') and self.blocks[block_id].wiring_config:
-            # If the block has existing realistic routes, keep a copy
-            cable_routes = getattr(self.blocks[block_id], 'block_realistic_routes', None)
-            wiring_routes = self.blocks[block_id].wiring_config.cable_routes
         
-        # Add error handling to check if block exists
-        if block_id not in self.blocks:
-            print(f"Warning: Block '{block_id}' not found in blocks dictionary")
-            messagebox.showwarning("Warning", f"Block '{block_id}' not found. It may have been deleted or corrupted.")
+        # For multi-selection, only update display if single selection
+        if len(selection) == 1:
+            block_id = self.block_listbox.get(selection[0])
+            self.current_block = block_id
+
+            # Add this check to preserve realistic routes if they exist
+            if block_id in self.blocks and hasattr(self.blocks[block_id], 'wiring_config') and self.blocks[block_id].wiring_config:
+                # If the block has existing realistic routes, keep a copy
+                cable_routes = getattr(self.blocks[block_id], 'block_realistic_routes', None)
+                wiring_routes = self.blocks[block_id].wiring_config.cable_routes
             
-            # Remove this item from the listbox
-            self.block_listbox.delete(selection[0])
+            # Add error handling to check if block exists
+            if block_id not in self.blocks:
+                print(f"Warning: Block '{block_id}' not found in blocks dictionary")
+                messagebox.showwarning("Warning", f"Block '{block_id}' not found. It may have been deleted or corrupted.")
+                return
+            
+            # Update the UI with block configuration
+            block = self.blocks[block_id]
+            
+            # Update the block ID field
+            self.block_id_var.set(block_id)
+            
+            # Update row spacing
+            if hasattr(block, 'row_spacing_m'):
+                self.updating_ui = True
+                feet_value = self.m_to_ft(block.row_spacing_m)
+                self.row_spacing_var.set(str(round(feet_value, 1)))
+                self.updating_ui = False
+            
+            # Update device configuration
+            if hasattr(self, 'device_type_var') and self.device_type_var:
+                self.updating_ui = True
+                self.device_type_var.set(block.device_type.value)
+                self.num_inputs_var.set(str(block.num_inputs))
+                self.max_current_per_input_var.set(str(block.max_current_per_input))
+                self.updating_ui = False
+            
+            # Update inverter display
+            if block.inverter:
+                self.inverter_label.config(text=f"{block.inverter.manufacturer} {block.inverter.model}")
+            else:
+                self.inverter_label.config(text="No inverter selected")
+            
+            # Redraw canvas with current block
+            self.draw_block()
+        else:
+            # Multiple selection - clear current block display but keep selection
             self.current_block = None
-            return
-            
-        block = self.blocks[block_id]
-        
-        # Update device configuration UI from block
-        self.updating_ui = True
-        self.device_type_var.set(block.device_type.value)
-        self.num_inputs_var.set(str(block.num_inputs))
-        self.max_current_per_input_var.set(str(block.max_current_per_input))
-
-        # Update underground routing UI from block
-        self.updating_ui = True
-        self.underground_routing_var.set(block.underground_routing if hasattr(block, 'underground_routing') else False)
-
-        # Update both metric and feet values
-        pile_reveal_m = getattr(block, 'pile_reveal_m', 1.5)
-        trench_depth_m = getattr(block, 'trench_depth_m', 0.91)
-
-        self.pile_reveal_m_var.set(str(pile_reveal_m))
-        self.pile_reveal_ft_var.set(f"{self.m_to_ft(pile_reveal_m):.1f}")
-
-        self.trench_depth_m_var.set(str(trench_depth_m))
-        self.trench_depth_ft_var.set(f"{self.m_to_ft(trench_depth_m):.1f}")
-
-        self.updating_ui = False
-
-        # Update the entry states based on underground routing setting
-        self.toggle_underground_routing()
-
-        # Update UI with block data (convert meters to feet)
-        self.updating_ui = True
-        self.block_id_var.set(block.block_id)
-        self.row_spacing_var.set(str(self.m_to_ft(block.row_spacing_m)))
-        self.updating_ui = False
-        self.calculate_gcr()  # Update the GCR label
-        
-        # After all other initialization, just before draw_block(), restore the routes if needed
-        if block_id in self.blocks and hasattr(self.blocks[block_id], 'wiring_config') and self.blocks[block_id].wiring_config:
-            if cable_routes and not hasattr(self.blocks[block_id], 'block_realistic_routes'):
-                self.blocks[block_id].block_realistic_routes = cable_routes
-            if wiring_routes and not self.blocks[block_id].wiring_config.cable_routes:
-                self.blocks[block_id].wiring_config.cable_routes = wiring_routes
-
-        # Update canvas
-        self.draw_block()
-        
-        # Auto-select a template if available
-        if self.template_tree.get_children():
-            # If the block has a template, try to select it in the tree
-            if block.tracker_template and block.tracker_template.template_name:
-                template_name = block.tracker_template.template_name
-                # Search through the tree to find and select the template
-                for manufacturer_item in self.template_tree.get_children():
-                    for template_item in self.template_tree.get_children(manufacturer_item):
-                        values = self.template_tree.item(template_item, 'values')
-                        if values and values[0] == template_name:
-                            # Expand the manufacturer and select the template
-                            self.template_tree.item(manufacturer_item, open=True)
-                            self.template_tree.selection_set(template_item)
-                            self.template_tree.see(template_item)
-                            # Set the drag template
-                            self.drag_template = self.tracker_templates.get(template_name)
-                            # Manually call the template selection handler
-                            self.on_template_select()
-                            break
-                
-            # If no template was matched but there are templates, select the first available template
-            if not self.drag_template and self.template_tree.get_children():
-                # Find the first actual template (not just a manufacturer)
-                for manufacturer_item in self.template_tree.get_children():
-                    templates = self.template_tree.get_children(manufacturer_item)
-                    if templates:
-                        self.template_tree.item(manufacturer_item, open=True)
-                        self.template_tree.selection_set(templates[0])
-                        self.template_tree.see(templates[0])
-                        break
-                # Manually call the template selection handler
-                self.on_template_select()
+            self.clear_config_display()
         
     def on_device_config_change(self, *args):
         """Update block configuration when device settings change"""
@@ -2062,6 +2283,14 @@ class BlockConfigurator(ttk.Frame):
         
         # Add to blocks dictionary
         self.blocks[new_id] = new_block
+
+        # Add to blocks dictionary
+        self.blocks[new_id] = new_block
+
+        # Track creation order
+        if not hasattr(self, 'block_creation_order'):
+            self.block_creation_order = []
+        self.block_creation_order.append(new_id)
         
         # Save state for undo
         self._push_state("Copy block")
@@ -2122,7 +2351,14 @@ class BlockConfigurator(ttk.Frame):
         
         # Remove the old entry from the dictionary
         del self.blocks[self.current_block]
-        
+
+        # Remove from dictionary
+        del self.blocks[self.current_block]
+
+        # Remove from creation order if tracking
+        if hasattr(self, 'block_creation_order') and self.current_block in self.block_creation_order:
+            self.block_creation_order.remove(self.current_block)
+                
         # Update the block ID
         block.block_id = new_id
         
@@ -2287,25 +2523,57 @@ class BlockConfigurator(ttk.Frame):
 
     def update_block_listbox(self):
         """Update the block listbox with sorted block IDs"""
+        # Save current selections (plural)
+        current_selections = []
+        for i in self.block_listbox.curselection():
+            current_selections.append(self.block_listbox.get(i))
+        
+        # Clear listbox
         self.block_listbox.delete(0, tk.END)
         
-        # Sort blocks by numerical value
-        def get_block_sort_key(block_id):
-            import re
-            # Try to extract prefix and number for proper sorting
-            match = re.match(r'(.*?)(\d+)$', block_id)
-            if match:
-                prefix = match.group(1)
-                number = int(match.group(2))
-                return (prefix, number)
+        # Import the natural sort function
+        from ..utils.calculations import natural_sort_key
+        
+        # Get sort mode
+        sort_mode = self.sort_mode_var.get()
+        
+        # Sort blocks based on selected mode
+        if sort_mode == "Natural":
+            sorted_block_ids = sorted(self.blocks.keys(), key=natural_sort_key)
+        elif sort_mode == "Natural (Reverse)":
+            sorted_block_ids = sorted(self.blocks.keys(), key=natural_sort_key, reverse=True)
+        elif sort_mode == "Alphabetical":
+            sorted_block_ids = sorted(self.blocks.keys())
+        elif sort_mode == "Alphabetical (Reverse)":
+            sorted_block_ids = sorted(self.blocks.keys(), reverse=True)
+        elif sort_mode == "Creation Order":
+            # Use creation order if available, otherwise fall back to natural sort
+            if hasattr(self, 'block_creation_order'):
+                # Filter to only include blocks that still exist
+                sorted_block_ids = [bid for bid in self.block_creation_order if bid in self.blocks]
+                # Add any blocks not in creation order (shouldn't happen, but just in case)
+                for bid in self.blocks.keys():
+                    if bid not in sorted_block_ids:
+                        sorted_block_ids.append(bid)
             else:
-                # No number found, sort alphabetically
-                return (block_id, 0)
+                sorted_block_ids = sorted(self.blocks.keys(), key=natural_sort_key)
+        else:
+            # Default to natural sort
+            sorted_block_ids = sorted(self.blocks.keys(), key=natural_sort_key)
         
-        sorted_block_ids = sorted(self.blocks.keys(), key=get_block_sort_key)
-        
+        # Populate listbox
         for block_id in sorted_block_ids:
             self.block_listbox.insert(tk.END, block_id)
+        
+        # Restore selections if possible
+        for selection in current_selections:
+            for i in range(self.block_listbox.size()):
+                if self.block_listbox.get(i) == selection:
+                    self.block_listbox.selection_set(i)
+                    # Make sure at least one selected item is visible
+                    if selection == current_selections[0]:
+                        self.block_listbox.see(i)
+                    break
 
     def get_module_length_from_templates(self):
         """Get module length from available templates and check for consistency"""

@@ -212,8 +212,9 @@ class BOMManager(ttk.Frame):
         
         self.selected_blocks = []
         
-        # Sort block IDs for consistent order
-        sorted_block_ids = sorted(self.blocks.keys())
+        # Sort block IDs for consistent order using natural sorting
+        from ..utils.calculations import natural_sort_key
+        sorted_block_ids = sorted(self.blocks.keys(), key=natural_sort_key)
         
         # Add blocks to listbox
         for block_id in sorted_block_ids:

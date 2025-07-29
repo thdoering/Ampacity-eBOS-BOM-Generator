@@ -423,3 +423,47 @@ def calculate_breaker_size(current_amps: float) -> int:
         if size >= current_amps:
             return size
     return STANDARD_BREAKER_SIZES[-1]
+
+def natural_sort_key(text):
+    """
+    Create a key for natural sorting that handles various formats including:
+    - Simple numeric: "Block_01", "Block_2" 
+    - Dotted notation: "2.5.01", "3.1.20"
+    - Mixed alphanumeric: "Area2Block1"
+    - Non-numeric: "MainBlock"
+    
+    Args:
+        text: String to create sort key for
+        
+    Returns:
+        Tuple suitable for sorting
+    """
+    import re
+    
+    # Split the text into parts, separating numbers from text
+    parts = []
+    
+    # Handle dotted notation specially
+    if '.' in text:
+        # Split by dots first
+        segments = text.split('.')
+        for segment in segments:
+            # For each segment, separate numbers and text
+            tokens = re.split(r'(\d+)', segment)
+            for token in tokens:
+                if token:  # Skip empty strings
+                    if token.isdigit():
+                        parts.append(int(token))
+                    else:
+                        parts.append(token.lower())
+    else:
+        # Regular splitting for non-dotted strings
+        tokens = re.split(r'(\d+)', text)
+        for token in tokens:
+            if token:  # Skip empty strings
+                if token.isdigit():
+                    parts.append(int(token))
+                else:
+                    parts.append(token.lower())
+    
+    return tuple(parts)
