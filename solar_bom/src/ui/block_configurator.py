@@ -130,6 +130,7 @@ class BlockConfigurator(ttk.Frame):
         self.block_listbox = tk.Listbox(list_frame, height=10, selectmode=tk.EXTENDED)
         self.block_listbox.grid(row=1, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
         self.block_listbox.bind('<<ListboxSelect>>', self.on_block_select)
+        self.block_listbox.bind('<Button-3>', self.show_context_menu)  # Right-click
 
         # Block control buttons
         btn_frame = ttk.Frame(list_frame)
