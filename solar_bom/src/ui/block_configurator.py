@@ -127,7 +127,7 @@ class BlockConfigurator(ttk.Frame):
         if not hasattr(self, 'block_creation_order'):
             self.block_creation_order = []
 
-        self.block_listbox = tk.Listbox(list_frame, height=10, selectmode=tk.EXTENDED)
+        self.block_listbox = tk.Listbox(list_frame, height=20, selectmode=tk.EXTENDED)
         self.block_listbox.grid(row=1, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
         self.block_listbox.bind('<<ListboxSelect>>', self.on_block_select)
         self.block_listbox.bind('<Button-3>', self.show_context_menu)  # Right-click
@@ -135,14 +135,14 @@ class BlockConfigurator(ttk.Frame):
         # Block control buttons
         btn_frame = ttk.Frame(list_frame)
         btn_frame.grid(row=2, column=0, padx=5, pady=5)
-        
+
         ttk.Button(btn_frame, text="New Block", command=self.create_new_block).grid(row=0, column=0, padx=2)
         ttk.Button(btn_frame, text="Delete Block", command=self.delete_block).grid(row=0, column=1, padx=2)
         ttk.Button(btn_frame, text="Copy Block", command=self.copy_block).grid(row=0, column=2, padx=2)
 
         # Device Placement Mode
         placement_frame = ttk.LabelFrame(list_frame, text="Device Placement Mode")
-        placement_frame.grid(row=2, column=0, padx=5, pady=5, sticky=(tk.W, tk.E))
+        placement_frame.grid(row=3, column=0, padx=5, pady=5, sticky=(tk.W, tk.E))
 
         ttk.Radiobutton(placement_frame, text="Center Between Rows", 
                     variable=self.device_placement_mode, value="row_center",
@@ -2351,9 +2351,6 @@ class BlockConfigurator(ttk.Frame):
         old_id = self.current_block
         
         # Remove the old entry from the dictionary
-        del self.blocks[self.current_block]
-
-        # Remove from dictionary
         del self.blocks[self.current_block]
 
         # Remove from creation order if tracking
