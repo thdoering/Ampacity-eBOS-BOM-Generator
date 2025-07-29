@@ -473,6 +473,9 @@ class TrackerTemplateCreator(ttk.Frame):
         values = self.template_tree.item(item, 'values')
         if not values or values[0] == '':
             return  # This is a parent node (manufacturer, model, or string size)
+        
+        # Load the selected template
+        self.load_template()
             
     def create_template(self) -> Optional[TrackerTemplate]:
         """Create a TrackerTemplate from current UI values"""

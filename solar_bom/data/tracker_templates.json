@@ -254,6 +254,60 @@
         "isc": 18.54,
         "max_system_voltage": 1500
       }
+    },
+    "NXT-87-700W": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 29,
+      "strings_per_tracker": 3,
+      "module_spacing_m": 0.01,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 2,
+      "motor_placement_type": "middle_of_string",
+      "motor_string_index": 2,
+      "motor_split_north": 15,
+      "motor_split_south": 14,
+      "module_spec": {
+        "manufacturer": "CSI Solar",
+        "model": "CS7N-700TB-AG",
+        "type": "Bifacial",
+        "length_mm": 2384.0,
+        "width_mm": 1303.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 700.0,
+        "vmp": 40.0,
+        "imp": 17.51,
+        "voc": 47.9,
+        "isc": 18.49,
+        "max_system_voltage": 1500
+      }
+    },
+    "NXT-58-700W": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 29,
+      "strings_per_tracker": 2,
+      "module_spacing_m": 0.01,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 1,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 2,
+      "motor_split_north": 15,
+      "motor_split_south": 14,
+      "module_spec": {
+        "manufacturer": "CSI Solar",
+        "model": "CS7N-700TB-AG",
+        "type": "Bifacial",
+        "length_mm": 2384.0,
+        "width_mm": 1303.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 700.0,
+        "vmp": 40.0,
+        "imp": 17.51,
+        "voc": 47.9,
+        "isc": 18.49,
+        "max_system_voltage": 1500
+      }
     }
   },
   "ZnShine": {
@@ -506,29 +560,6 @@
     }
   },
   "VSUN": {
-    "ATI-104-590W": {
-      "module_orientation": "Portrait",
-      "modules_per_string": 26,
-      "strings_per_tracker": 4,
-      "module_spacing_m": 0.01,
-      "motor_gap_m": 1.0,
-      "motor_position_after_string": 2,
-      "module_spec": {
-        "manufacturer": "VSUN",
-        "model": "VSUN590N-144BMH-DG",
-        "type": "Mono PERC",
-        "length_mm": 2278.0,
-        "width_mm": 1134.0,
-        "depth_mm": 40,
-        "weight_kg": 25,
-        "wattage": 590.0,
-        "vmp": 44.5,
-        "imp": 13.26,
-        "voc": 52.48,
-        "isc": 13.93,
-        "max_system_voltage": 1500
-      }
-    },
     "ATI-104-540W (VSUN)": {
       "module_orientation": "Portrait",
       "modules_per_string": 26,
@@ -664,6 +695,33 @@
         "imp": 12.97,
         "voc": 49.65,
         "isc": 13.85,
+        "max_system_voltage": 1500
+      }
+    },
+    "ATI-104-590W": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 26,
+      "strings_per_tracker": 4,
+      "module_spacing_m": 0.01,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 2,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 2,
+      "motor_split_north": 13,
+      "motor_split_south": 13,
+      "module_spec": {
+        "manufacturer": "VSUN",
+        "model": "VSUN590N-144BMH-DG",
+        "type": "Mono PERC",
+        "length_mm": 2278.0,
+        "width_mm": 1134.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 590.0,
+        "vmp": 44.5,
+        "imp": 13.26,
+        "voc": 52.48,
+        "isc": 13.93,
         "max_system_voltage": 1500
       }
     }
