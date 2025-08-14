@@ -582,5 +582,27 @@
       "default_orientation": "Portrait",
       "cells_per_module": 72
     }
+  },
+  "Hyperion": {
+    "HY-DH144N8": {
+      "manufacturer": "Hyperion",
+      "model": "HY-DH144N8",
+      "type": "Bifacial",
+      "length_mm": 2278.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 570.0,
+      "vmp": 42.29,
+      "imp": 13.48,
+      "voc": 51.07,
+      "isc": 14.25,
+      "max_system_voltage": 1500,
+      "efficiency": null,
+      "temperature_coefficient": null,
+      "bifaciality_factor": null,
+      "default_orientation": "Portrait",
+      "cells_per_module": 72
+    }
   }
 }

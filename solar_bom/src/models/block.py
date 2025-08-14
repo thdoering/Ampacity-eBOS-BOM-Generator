@@ -26,7 +26,10 @@ class CollectionPoint:
 class HarnessGroup:
     """Represents a group of strings combined into a harness"""
     string_indices: List[int]  # Indices of strings in this harness
-    cable_size: str = "8 AWG"  # Cable size for this harness
+    cable_size: str = "8 AWG"  # Cable size for this harness trunk
+    string_cable_size: str = ""  # Cable size for strings (empty = use block default)
+    extender_cable_size: str = ""  # Cable size for extenders (empty = use block default)
+    whip_cable_size: str = ""  # Cable size for whips (empty = use block default)
     fuse_rating_amps: int = 15  # Fuse rating in amps
     use_fuse: bool = True  # Whether to use fuses for this harness (default to True for 2+ strings)
     
@@ -336,14 +339,17 @@ class BlockConfig:
                 harness_groups_data = {}
                 for string_count, harness_list in self.wiring_config.harness_groupings.items():
                     harness_groups_data[string_count] = [
-                        {
-                            'string_indices': harness.string_indices,
-                            'cable_size': getattr(harness, 'cable_size', "8 AWG"),
-                            'fuse_rating_amps': getattr(harness, 'fuse_rating_amps', 15),
-                            'use_fuse': getattr(harness, 'use_fuse', True)
-                        }
-                        for harness in harness_list
-                    ]
+                    {
+                        'string_indices': harness.string_indices,
+                        'cable_size': getattr(harness, 'cable_size', "8 AWG"),
+                        'string_cable_size': getattr(harness, 'string_cable_size', ""),
+                        'extender_cable_size': getattr(harness, 'extender_cable_size', ""),
+                        'whip_cable_size': getattr(harness, 'whip_cable_size', ""),
+                        'fuse_rating_amps': getattr(harness, 'fuse_rating_amps', 15),
+                        'use_fuse': getattr(harness, 'use_fuse', True)
+                    }
+                    for harness in harness_list
+                ]
                 wiring_data['harness_groupings'] = harness_groups_data
             
             # Serialize collection points
@@ -466,6 +472,9 @@ class BlockConfig:
                         harness = HarnessGroup(
                             string_indices=harness_data['string_indices'],
                             cable_size=harness_data.get('cable_size', "8 AWG"),
+                            string_cable_size=harness_data.get('string_cable_size', ""),
+                            extender_cable_size=harness_data.get('extender_cable_size', ""),
+                            whip_cable_size=harness_data.get('whip_cable_size', ""),
                             fuse_rating_amps=harness_data.get('fuse_rating_amps', 15),
                             use_fuse=harness_data.get('use_fuse', True)
                         )

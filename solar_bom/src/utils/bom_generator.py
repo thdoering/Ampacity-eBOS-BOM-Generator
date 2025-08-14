@@ -2,7 +2,7 @@ import pandas as pd
 import json
 import os
 from typing import Dict, List, Any, Optional
-from ..models.block import BlockConfig, WiringType
+from ..models.block import BlockConfig, WiringType, WiringConfig, HarnessGroup
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
@@ -30,6 +30,41 @@ class BOMGenerator:
         self.fuse_library = self.load_fuse_library()
         self.extender_library = self.load_extender_library()
         self.whip_library = self.load_whip_library()
+
+    def _get_cable_size(self, harness_group: Optional[HarnessGroup], cable_type: str, block: BlockConfig) -> str:
+        """
+        Get cable size from harness group with fallback to block-level wiring config
+        
+        Args:
+            harness_group: The harness group (may be None for non-harness configurations)
+            cable_type: Type of cable ('string', 'extender', 'whip', or 'harness')
+            block: The block configuration for fallback
+            
+        Returns:
+            The cable size string
+        """
+        if harness_group:
+            # Try to get harness-specific size first
+            if cable_type == 'string' and harness_group.string_cable_size:
+                return harness_group.string_cable_size
+            elif cable_type == 'extender' and harness_group.extender_cable_size:
+                return harness_group.extender_cable_size
+            elif cable_type == 'whip' and harness_group.whip_cable_size:
+                return harness_group.whip_cable_size
+            elif cable_type == 'harness':
+                return harness_group.cable_size  # This one doesn't fall back
+        
+        # Fall back to block-level wiring config
+        if cable_type == 'string':
+            return block.wiring_config.string_cable_size
+        elif cable_type == 'extender':
+            return block.wiring_config.extender_cable_size
+        elif cable_type == 'whip':
+            return block.wiring_config.whip_cable_size
+        elif cable_type == 'harness':
+            return block.wiring_config.harness_cable_size
+        
+        return "8 AWG"  # Default fallback
     
     def calculate_cable_quantities(self) -> Dict[str, Dict[str, Any]]:
         """
@@ -107,19 +142,29 @@ class BOMGenerator:
                         'category': 'eBOS'
                     }
                     
-                # Get the whip cable size
-                whip_cable_size = getattr(block.wiring_config, 'whip_cable_size', '6 AWG')  # Default to 6 AWG if not specified
+                # Get whip cable size - check if we have harness-specific sizes
+                # For harness configurations, we need to check all harness groups
+                whip_cable_sizes = set()
+                if hasattr(block.wiring_config, 'harness_groupings'):
+                    for string_count, harness_groups in block.wiring_config.harness_groupings.items():
+                        for hg in harness_groups:
+                            whip_size = self._get_cable_size(hg, 'whip', block)
+                            whip_cable_sizes.add(whip_size)
+                
+                # If all harnesses use the same whip size, or we have no harness groups
+                if len(whip_cable_sizes) <= 1:
+                    whip_cable_size = whip_cable_sizes.pop() if whip_cable_sizes else getattr(block.wiring_config, 'whip_cable_size', '8 AWG')
+                    
+                    # Split whip cable by polarity
+                    if 'whip_cable_positive' in cable_lengths:
+                        whip_length_feet = round(cable_lengths['whip_cable_positive'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
 
-                # Split whip cable by polarity
-                if 'whip_cable_positive' in cable_lengths:
-                    whip_length_feet = round(cable_lengths['whip_cable_positive'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
-
-                    block_quantities[f'Positive Whip Cable ({whip_cable_size})'] = {
-                        'description': self.get_whip_description_format(whip_cable_size).format(length="TOTAL"),
-                        'quantity': whip_length_feet,
-                        'unit': 'feet',
-                        'category': 'eBOS'
-                    }
+                        block_quantities[f'Positive Whip Cable ({whip_cable_size})'] = {
+                            'description': self.get_whip_description_format(whip_cable_size).format(length="TOTAL"),
+                            'quantity': whip_length_feet,
+                            'unit': 'feet',
+                            'category': 'eBOS'
+                        }
                 
                 if 'whip_cable_negative' in cable_lengths:
                     whip_length_feet = round(cable_lengths['whip_cable_negative'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
@@ -137,8 +182,20 @@ class BOMGenerator:
                 
                 # Add each harness type, separately for positive and negative
                 for string_count, count in harness_counts.items():
-                    harness_cable_size = block.wiring_config.harness_cable_size
-                    string_cable_size = block.wiring_config.string_cable_size
+                    # Get the first harness group for this string count to determine cable sizes
+                    harness_group = None
+                    if hasattr(block.wiring_config, 'harness_groupings') and string_count in block.wiring_config.harness_groupings:
+                        harness_groups = block.wiring_config.harness_groupings[string_count]
+                        if harness_groups:
+                            # Find the harness group that matches this string count
+                            for hg in harness_groups:
+                                if len(hg.string_indices) == string_count:
+                                    harness_group = hg
+                                    break
+                    
+                    # Get cable sizes with fallback
+                    harness_cable_size = self._get_cable_size(harness_group, 'harness', block)
+                    string_cable_size = self._get_cable_size(harness_group, 'string', block)
                     
                     # Calculate string spacing for harness matching
                     if block.tracker_template and block.tracker_template.module_spec:
@@ -207,18 +264,28 @@ class BOMGenerator:
                         'category': 'eBOS'
                     }
 
-                # Split extender cable by polarity
-                extender_cable_size = getattr(block.wiring_config, 'extender_cable_size', '8 AWG')
+                # Get extender cable size - check if we have harness-specific sizes
+                extender_cable_sizes = set()
+                if hasattr(block.wiring_config, 'harness_groupings'):
+                    for string_count, harness_groups in block.wiring_config.harness_groupings.items():
+                        for hg in harness_groups:
+                            extender_size = self._get_cable_size(hg, 'extender', block)
+                            extender_cable_sizes.add(extender_size)
+                
+                # If all harnesses use the same extender size, or we have no harness groups
+                if len(extender_cable_sizes) <= 1:
+                    extender_cable_size = extender_cable_sizes.pop() if extender_cable_sizes else getattr(block.wiring_config, 'extender_cable_size', '8 AWG')
+                    
+                    # Split extender cable by polarity
+                    if 'extender_cable_positive' in cable_lengths:
+                        extender_length_feet = round(cable_lengths['extender_cable_positive'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
 
-                if 'extender_cable_positive' in cable_lengths:
-                    extender_length_feet = round(cable_lengths['extender_cable_positive'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
-
-                    block_quantities[f'Positive Extender Cable ({extender_cable_size})'] = {
-                        'description': self.get_extender_description_format(extender_cable_size).format(length="TOTAL"),
-                        'quantity': extender_length_feet,
-                        'unit': 'feet',
-                        'category': 'Extender Cables'
-                    }
+                        block_quantities[f'Positive Extender Cable ({extender_cable_size})'] = {
+                            'description': self.get_extender_description_format(extender_cable_size).format(length="TOTAL"),
+                            'quantity': extender_length_feet,
+                            'unit': 'feet',
+                            'category': 'Extender Cables'
+                        }
 
                 if 'extender_cable_negative' in cable_lengths:
                     extender_length_feet = round(cable_lengths['extender_cable_negative'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
@@ -976,11 +1043,33 @@ class BOMGenerator:
                 self.calculate_totals_from_segments(block_quantities, string_size, "Negative String Cable")
             
             # Process whip segments for all wiring types
-            whip_size = getattr(block.wiring_config, 'whip_cable_size', "8 AWG")
-            self._add_segment_analysis(block_quantities, whip_segments_pos, 
-                                    whip_size, "Positive Whip Cable", 1)
-            self._add_segment_analysis(block_quantities, whip_segments_neg, 
-                                    whip_size, "Negative Whip Cable", 1)
+            # For harness configurations, check if all harnesses use the same whip size
+            whip_sizes = set()
+            if block.wiring_config.wiring_type == WiringType.HARNESS and hasattr(block.wiring_config, 'harness_groupings'):
+                for string_count, harness_groups in block.wiring_config.harness_groupings.items():
+                    for hg in harness_groups:
+                        whip_size = self._get_cable_size(hg, 'whip', block)
+                        whip_sizes.add(whip_size)
+            
+            # If all use the same size or not a harness config, process normally
+            if len(whip_sizes) <= 1:
+                whip_size = whip_sizes.pop() if whip_sizes else getattr(block.wiring_config, 'whip_cable_size', "8 AWG")
+                self._add_segment_analysis(block_quantities, whip_segments_pos, 
+                                        whip_size, "Positive Whip Cable", 1)
+                self._add_segment_analysis(block_quantities, whip_segments_neg, 
+                                        whip_size, "Negative Whip Cable", 1)
+                
+                # Calculate and add total whip entries from segments
+                self.calculate_totals_from_segments(block_quantities, whip_size, "Positive Whip Cable")
+                self.calculate_totals_from_segments(block_quantities, whip_size, "Negative Whip Cable")
+            else:
+                # TODO: Handle multiple whip sizes - would need to track which segments use which size
+                # For now, fall back to block-level size
+                whip_size = getattr(block.wiring_config, 'whip_cable_size', "8 AWG")
+                self._add_segment_analysis(block_quantities, whip_segments_pos, 
+                                        whip_size, "Positive Whip Cable", 1)
+                self._add_segment_analysis(block_quantities, whip_segments_neg, 
+                                        whip_size, "Negative Whip Cable", 1)
             
             # Calculate and add total whip entries from segments
             self.calculate_totals_from_segments(block_quantities, whip_size, "Positive Whip Cable")

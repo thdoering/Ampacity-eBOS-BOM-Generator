@@ -3600,5 +3600,34 @@
         "max_system_voltage": 1500
       }
     }
+  },
+  "Hyperion": {
+    "NXT-81-570W": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 27,
+      "strings_per_tracker": 3,
+      "module_spacing_m": 0.01,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 0,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 2,
+      "motor_split_north": 14,
+      "motor_split_south": 13,
+      "module_spec": {
+        "manufacturer": "Hyperion",
+        "model": "HY-DH144N8",
+        "type": "Bifacial",
+        "length_mm": 2278.0,
+        "width_mm": 1134.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 570.0,
+        "vmp": 42.29,
+        "imp": 13.48,
+        "voc": 51.07,
+        "isc": 14.25,
+        "max_system_voltage": 1500
+      }
+    }
   }
 }
