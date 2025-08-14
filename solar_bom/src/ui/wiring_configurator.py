@@ -240,23 +240,28 @@ class WiringConfigurator(tk.Toplevel):
     def setup_cable_specifications(self, controls_frame):
         """Set up cable specifications section"""
         # Create collapsible frame
-        cable_collapsible = CollapsibleFrame(controls_frame, text="Cable Specifications", start_collapsed=False)
+        cable_collapsible = CollapsibleFrame(controls_frame, text="Default Cable Sizes", start_collapsed=True)
         cable_collapsible.grid(row=2, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
         
         # Use the content_frame inside the collapsible
         cable_frame = cable_collapsible.content_frame
 
+        # Add note about defaults
+        note_text = "These sizes are used as defaults for new harness configurations"
+        note_label = ttk.Label(cable_frame, text=note_text, font=('TkDefaultFont', 9, 'italic'))
+        note_label.grid(row=0, column=0, columnspan=2, padx=5, pady=(0, 5), sticky=tk.W)
+
         # String Cable Size
-        ttk.Label(cable_frame, text="String Cable Size:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(cable_frame, text="String Cable Size:").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
         self.string_cable_size_var = tk.StringVar(value="10 AWG")
         string_cable_combo = ttk.Combobox(cable_frame, textvariable=self.string_cable_size_var, state='readonly', width=10)
         string_cable_combo['values'] = list(self.AWG_SIZES.keys())
-        string_cable_combo.grid(row=0, column=1, padx=5, pady=2)
+        string_cable_combo.grid(row=1, column=1, padx=5, pady=2)
         self.string_cable_size_var.trace('w', lambda *args: self.draw_wiring_layout())
 
         # Wire Harness Size
         self.harness_frame = ttk.Frame(cable_frame)
-        self.harness_frame.grid(row=1, column=0, columnspan=2, padx=0, pady=5, sticky=(tk.W, tk.E))
+        self.harness_frame.grid(row=2, column=0, columnspan=2, padx=0, pady=5, sticky=(tk.W, tk.E))
         ttk.Label(self.harness_frame, text="Harness Cable Size:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
         self.harness_cable_size_var = tk.StringVar(value="8 AWG")
         harness_cable_combo = ttk.Combobox(self.harness_frame, textvariable=self.harness_cable_size_var, state='readonly', width=10)
@@ -266,7 +271,7 @@ class WiringConfigurator(tk.Toplevel):
 
         # Extender Cable Size
         self.extender_frame = ttk.Frame(cable_frame)
-        self.extender_frame.grid(row=2, column=0, columnspan=2, padx=0, pady=5, sticky=(tk.W, tk.E))
+        self.extender_frame.grid(row=3, column=0, columnspan=2, padx=0, pady=5, sticky=(tk.W, tk.E))
         ttk.Label(self.extender_frame, text="Extender Cable Size:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
         self.extender_cable_size_var = tk.StringVar(value="8 AWG")
         extender_cable_combo = ttk.Combobox(self.extender_frame, textvariable=self.extender_cable_size_var, state='readonly', width=10)
@@ -276,7 +281,7 @@ class WiringConfigurator(tk.Toplevel):
 
         # Whip Cable Size
         self.whip_frame = ttk.Frame(cable_frame)
-        self.whip_frame.grid(row=3, column=0, columnspan=2, padx=0, pady=5, sticky=(tk.W, tk.E))
+        self.whip_frame.grid(row=4, column=0, columnspan=2, padx=0, pady=5, sticky=(tk.W, tk.E))
         ttk.Label(self.whip_frame, text="Whip Cable Size:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
         self.whip_cable_size_var = tk.StringVar(value="8 AWG")
         whip_cable_combo = ttk.Combobox(self.whip_frame, textvariable=self.whip_cable_size_var, state='readonly', width=10)
@@ -287,9 +292,9 @@ class WiringConfigurator(tk.Toplevel):
         # Current label toggle button
         self.show_current_labels_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(cable_frame, text="Show Current Labels", 
-                        variable=self.show_current_labels_var,
-                        command=self.toggle_current_labels).grid(
-                        row=4, column=0, columnspan=2, padx=5, pady=5, sticky=tk.W)
+                variable=self.show_current_labels_var,
+                command=self.toggle_current_labels).grid(
+                row=5, column=0, columnspan=2, padx=5, pady=5, sticky=tk.W)
 
     def setup_harness_configuration(self, controls_frame):
         """Set up harness configuration section"""
