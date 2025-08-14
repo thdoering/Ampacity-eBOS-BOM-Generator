@@ -1,9 +1,37 @@
 {
   "_comment_first_solar": "========== FIRST SOLAR HARNESSES (10AWG Drops, 10AWG Trunk, 26' String Length) ==========",
   
-  "5STP-10D10T-F65": {
-    "part_number": "5STP-10D10T-F65",
-    "atpi_part_number": "PR-5STP10D10TF65",
+    "4P-10D10T-F66": {
+    "part_number": "4P-10D10T-F66",
+    "atpi_part_number": "PR-4P10D10TF66",
+    "description": "4 String, Positive, 5A Fuses, 10AWG Drops w/10AWG Trunk, 26' string length, PV4S drop connectors, MC4 trunk connector",
+    "num_strings": 4,
+    "polarity": "positive",
+    "string_spacing_ft": 26.0,
+    "category": "First Solar",
+    "drop_wire_gauge": "10 AWG",
+    "trunk_wire_gauge": "10 AWG",
+    "connector_type": "PV4S/MC4",
+    "fused": true,
+    "fuse_rating": "5A"
+  },
+  "4N-10D10T-F66": {
+    "part_number": "4N-10D10T-F66",
+    "atpi_part_number": "PR-4N10D10TF66",
+    "description": "4 String, Negative, 10AWG Drops w/10AWG Trunk, 26' string length, PV4S drop connectors, MC4 trunk connector",
+    "num_strings": 4,
+    "polarity": "negative",
+    "string_spacing_ft": 26.0,
+    "category": "First Solar",
+    "drop_wire_gauge": "10 AWG",
+    "trunk_wire_gauge": "10 AWG",
+    "connector_type": "PV4S/MC4",
+    "fused": false,
+    "fuse_rating": null
+  },
+  "5P-10D10T-F66": {
+    "part_number": "5P-10D10T-F66",
+    "atpi_part_number": "PR-5P10D10TF66",
     "description": "5 String, Positive, 5A Fuses, 10AWG Drops w/10AWG Trunk, 26' string length, PV4S drop connectors, MC4 trunk connector",
     "num_strings": 5,
     "polarity": "positive",
@@ -15,9 +43,9 @@
     "fused": true,
     "fuse_rating": "5A"
   },
-  "5STN-10D10T-F65": {
-    "part_number": "5STN-10D10T-F65",
-    "atpi_part_number": "PR-5STN10D10TF65",
+  "5N-10D10T-F66": {
+    "part_number": "5N-10D10T-F66",
+    "atpi_part_number": "PR-5N10D10TF66",
     "description": "5 String, Negative, 10AWG Drops w/10AWG Trunk, 26' string length, PV4S drop connectors, MC4 trunk connector",
     "num_strings": 5,
     "polarity": "negative",
@@ -29,9 +57,9 @@
     "fused": false,
     "fuse_rating": null
   },
-  "6STP-10D10T-F65": {
-    "part_number": "6STP-10D10T-F65",
-    "atpi_part_number": "PR-6STP10D10TF65",
+  "6P-10D10T-F66": {
+    "part_number": "6P-10D10T-F66",
+    "atpi_part_number": "PR-6P10D10TF66",
     "description": "6 String, Positive, 5A Fuses, 10AWG Drops w/10AWG Trunk, 26' string length, PV4S drop connectors, MC4 trunk connector",
     "num_strings": 6,
     "polarity": "positive",
@@ -43,9 +71,9 @@
     "fused": true,
     "fuse_rating": "5A"
   },
-  "6STN-10D10T-F65": {
-    "part_number": "6STN-10D10T-F65",
-    "atpi_part_number": "PR-6STN10D10TF65",
+  "6N-10D10T-F66": {
+    "part_number": "6N-10D10T-F66",
+    "atpi_part_number": "PR-6N10D10TF66",
     "description": "6 String, Negative, 10AWG Drops w/10AWG Trunk, 26' string length, PV4S drop connectors, MC4 trunk connector",
     "num_strings": 6,
     "polarity": "negative",
@@ -57,9 +85,9 @@
     "fused": false,
     "fuse_rating": null
   },
-  "7STP-10D10T-F65": {
-    "part_number": "7STP-10D10T-F65",
-    "atpi_part_number": "PR-7STP10D10TF65",
+  "7P-10D10T-F66": {
+    "part_number": "7P-10D10T-F66",
+    "atpi_part_number": "PR-7P10D10TF66",
     "description": "7 String, Positive, 5A Fuses, 10AWG Drops w/10AWG Trunk, 26' string length, PV4S drop connectors, MC4 trunk connector",
     "num_strings": 7,
     "polarity": "positive",
@@ -71,9 +99,9 @@
     "fused": true,
     "fuse_rating": "5A"
   },
-  "7STN-10D10T-F65": {
-    "part_number": "7STN-10D10T-F65",
-    "atpi_part_number": "PR-7STN10D10TF65",
+  "7N-10D10T-F66": {
+    "part_number": "7N-10D10T-F66",
+    "atpi_part_number": "PR-7N10D10TF66",
     "description": "7 String, Negative, 10AWG Drops w/10AWG Trunk, 26' string length, PV4S drop connectors, MC4 trunk connector",
     "num_strings": 7,
     "polarity": "negative",
@@ -85,9 +113,9 @@
     "fused": false,
     "fuse_rating": null
   },
-  "8STP-10D10T-F65": {
-    "part_number": "8STP-10D10T-F65",
-    "atpi_part_number": "PR-8STP10D10TF65",
+  "8P-10D10T-F66": {
+    "part_number": "8P-10D10T-F66",
+    "atpi_part_number": "PR-8P10D10TF66",
     "description": "8 String, Positive, 5A Fuses, 10AWG Drops w/10AWG Trunk, 26' string length, PV4S drop connectors, MC4 trunk connector",
     "num_strings": 8,
     "polarity": "positive",
@@ -99,9 +127,9 @@
     "fused": true,
     "fuse_rating": "5A"
   },
-  "8STN-10D10T-F65": {
-    "part_number": "8STN-10D10T-F65",
-    "atpi_part_number": "PR-8STN10D10TF65",
+  "8N-10D10T-F66": {
+    "part_number": "8N-10D10T-F66",
+    "atpi_part_number": "PR-8N10D10TF66",
     "description": "8 String, Negative, 10AWG Drops w/10AWG Trunk, 26' string length, PV4S drop connectors, MC4 trunk connector",
     "num_strings": 8,
     "polarity": "negative",
