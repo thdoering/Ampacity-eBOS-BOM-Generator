@@ -181,6 +181,7 @@ class WiringConfigurator(tk.Toplevel):
         self.setup_cable_specifications(controls_frame)
         self.setup_harness_configuration(controls_frame)
         self.setup_routing_controls(controls_frame)
+        self.setup_harness_cable_table(controls_frame)
 
     def setup_canvas_frame(self, main_container):
         """Set up the right side canvas frame"""
@@ -339,6 +340,349 @@ class WiringConfigurator(tk.Toplevel):
         if self.wiring_type_var.get() != WiringType.HARNESS.value:
             harness_collapsible.grid_remove()
 
+    def setup_harness_cable_table(self, controls_frame):
+        """Set up harness cable configuration table"""
+        # Create collapsible frame
+        cable_table_collapsible = CollapsibleFrame(controls_frame, text="Harness Cable Configuration", start_collapsed=False)
+        cable_table_collapsible.grid(row=4, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
+        
+        # Store reference
+        self.cable_table_collapsible = cable_table_collapsible
+        
+        # Use the content_frame inside the collapsible
+        table_frame = cable_table_collapsible.content_frame
+        
+        # Instructions
+        instructions = ttk.Label(table_frame, 
+                            text="Configure cable sizes for each harness type. Right-click to reset to defaults.",
+                            font=('TkDefaultFont', 9, 'italic'))
+        instructions.grid(row=0, column=0, padx=5, pady=(0, 5), sticky=tk.W)
+        
+        # Create Treeview
+        columns = ('string_cable', 'harness_cable', 'extender_cable', 'whip_cable', 'recommended')
+        self.harness_cable_tree = ttk.Treeview(table_frame, columns=columns, height=6, show='tree headings')
+        self.harness_cable_tree.grid(row=1, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # Column configuration
+        self.harness_cable_tree.column('#0', width=200, minwidth=150)
+        self.harness_cable_tree.column('string_cable', width=100, minwidth=80)
+        self.harness_cable_tree.column('harness_cable', width=100, minwidth=80)
+        self.harness_cable_tree.column('extender_cable', width=100, minwidth=80)
+        self.harness_cable_tree.column('whip_cable', width=100, minwidth=80)
+        self.harness_cable_tree.column('recommended', width=150, minwidth=120)
+        
+        # Column headers
+        self.harness_cable_tree.heading('#0', text='Harness Type')
+        self.harness_cable_tree.heading('string_cable', text='String Cable')
+        self.harness_cable_tree.heading('harness_cable', text='Harness Cable')
+        self.harness_cable_tree.heading('extender_cable', text='Extender Cable')
+        self.harness_cable_tree.heading('whip_cable', text='Whip Cable')
+        self.harness_cable_tree.heading('recommended', text='Recommended')
+        
+        # Scrollbar
+        scrollbar = ttk.Scrollbar(table_frame, orient='vertical', command=self.harness_cable_tree.yview)
+        scrollbar.grid(row=1, column=1, sticky=(tk.N, tk.S))
+        self.harness_cable_tree.configure(yscrollcommand=scrollbar.set)
+        
+        # Tags for styling
+        self.harness_cable_tree.tag_configure('edited', foreground='blue')
+        self.harness_cable_tree.tag_configure('undersized', background='#ffcccc')
+        
+        # Bind events for inline editing
+        self.harness_cable_tree.bind('<Double-Button-1>', self.on_harness_cable_click)
+        self.harness_cable_tree.bind('<Button-3>', self.show_harness_cable_context_menu)
+        
+        # Track edited cells
+        self.harness_cable_edited_cells = set()
+        
+        # Context menu
+        self.harness_cable_menu = tk.Menu(self.harness_cable_tree, tearoff=0)
+        self.harness_cable_menu.add_command(label="Reset to Defaults", command=self.reset_harness_cable_sizes)
+
+    def update_harness_cable_table(self):
+        """Update the harness cable configuration table"""
+        # Clear existing items
+        for item in self.harness_cable_tree.get_children():
+            self.harness_cable_tree.delete(item)
+        
+        if not self.block or not self.block.wiring_config:
+            return
+        
+        if self.block.wiring_config.wiring_type != WiringType.HARNESS:
+            return
+        
+        # Group harnesses by string count
+        harness_groups = {}
+        
+        # Get custom groupings if they exist
+        if hasattr(self.block.wiring_config, 'harness_groupings') and self.block.wiring_config.harness_groupings:
+            # Use custom harness groupings
+            for string_count, harness_list in self.block.wiring_config.harness_groupings.items():
+                # Count trackers with this string count
+                tracker_count = sum(1 for pos in self.block.tracker_positions if len(pos.strings) == string_count)
+                
+                for harness_idx, harness in enumerate(harness_list):
+                    actual_string_count = len(harness.string_indices)
+                    key = f"{actual_string_count}_string_{harness_idx}"
+                    
+                    if key not in harness_groups:
+                        harness_groups[key] = {
+                            'string_count': actual_string_count,
+                            'count': 0,
+                            'harness': harness
+                        }
+                    harness_groups[key]['count'] += tracker_count
+        else:
+            # Default grouping - all strings in one harness per tracker
+            for pos in self.block.tracker_positions:
+                string_count = len(pos.strings)
+                key = f"{string_count}_string_0"
+                
+                if key not in harness_groups:
+                    harness_groups[key] = {
+                        'string_count': string_count,
+                        'count': 0,
+                        'harness': None  # Will use defaults
+                    }
+                harness_groups[key]['count'] += 1
+        
+        # Add rows for each harness group
+        for key, group in sorted(harness_groups.items()):
+            string_count = group['string_count']
+            harness = group['harness']
+            count = group['count']
+            
+            # Get cable sizes
+            if harness:
+                string_size = getattr(harness, 'string_cable_size', self.string_cable_size_var.get())
+                harness_size = getattr(harness, 'cable_size', self.harness_cable_size_var.get())
+                extender_size = getattr(harness, 'extender_cable_size', self.extender_cable_size_var.get())
+                whip_size = getattr(harness, 'whip_cable_size', self.whip_cable_size_var.get())
+            else:
+                # Use defaults
+                string_size = self.string_cable_size_var.get()
+                harness_size = self.harness_cable_size_var.get()
+                extender_size = self.extender_cable_size_var.get()
+                whip_size = self.whip_cable_size_var.get()
+            
+            # Calculate recommended size
+            recommended = self.calculate_recommended_harness_size(string_count)
+            
+            # Determine tags
+            tags = []
+            if harness and any([
+                hasattr(harness, 'string_cable_size'),
+                hasattr(harness, 'extender_cable_size'),
+                hasattr(harness, 'whip_cable_size')
+            ]):
+                tags.append('edited')
+            
+            # Check if undersized
+            if self.is_cable_undersized(harness_size, string_count):
+                tags.append('undersized')
+            
+            # Format label
+            label = f"{string_count}-string harnesses ({count} total)"
+            
+            # Insert row
+            item = self.harness_cable_tree.insert('', 'end', text=label,
+                                                values=(string_size, harness_size, extender_size, whip_size, recommended),
+                                                tags=tuple(tags))
+            
+            # Store harness reference in item
+            self.harness_cable_tree.set(item, 'harness_key', key)
+
+    def calculate_recommended_harness_size(self, string_count):
+        """Calculate recommended cable size for harness based on string count"""
+        if not self.project or not self.project.module:
+            return "8 AWG"
+        
+        # Calculate current: num_strings × module_Isc × 1.25 (NEC factor)
+        module_isc = self.project.module.electrical_specs.isc
+        total_current = string_count * module_isc * 1.25
+        
+        # Determine cable size based on ampacity
+        if total_current <= 40:
+            return "10 AWG"
+        elif total_current <= 55:
+            return "8 AWG"
+        elif total_current <= 75:
+            return "6 AWG"
+        else:
+            return "4 AWG"
+
+    def is_cable_undersized(self, cable_size, string_count):
+        """Check if cable size is undersized for the given string count"""
+        if not self.project or not self.project.module:
+            return False
+        
+        # Calculate required current
+        module_isc = self.project.module.electrical_specs.isc
+        required_current = string_count * module_isc * 1.25
+        
+        # Get cable ampacity
+        ampacity = get_ampacity_for_wire_gauge(cable_size)
+        
+        return ampacity < required_current
+    
+    def on_harness_cable_click(self, event):
+        """Handle double-click for inline editing"""
+        # Identify the clicked cell
+        region = self.harness_cable_tree.identify_region(event.x, event.y)
+        if region != "cell":
+            return
+        
+        # Get the item and column
+        item = self.harness_cable_tree.identify('item', event.x, event.y)
+        column = self.harness_cable_tree.identify('column', event.x, event.y)
+        
+        if not item or not column:
+            return
+        
+        # Only allow editing cable size columns (not recommended)
+        if column not in ['#1', '#2', '#3', '#4']:  # string, harness, extender, whip cables
+            return
+        
+        # Get column index
+        col_map = {'#1': 0, '#2': 1, '#3': 2, '#4': 3}
+        col_idx = col_map.get(column)
+        cable_types = ['string', 'harness', 'extender', 'whip']
+        cable_type = cable_types[col_idx]
+        
+        # Get current value
+        values = self.harness_cable_tree.item(item, 'values')
+        current_value = values[col_idx]
+        
+        # Get harness key
+        harness_key = self.harness_cable_tree.set(item, 'harness_key')
+        
+        # Create inline combo
+        self.create_harness_cable_combo(item, column, current_value, harness_key, cable_type)
+
+    def create_harness_cable_combo(self, item, column, current_value, harness_key, cable_type):
+        """Create inline combobox for cable size editing"""
+        # Get the bounding box of the cell
+        bbox = self.harness_cable_tree.bbox(item, column)
+        if not bbox:
+            return
+        
+        # Create combobox
+        cable_var = tk.StringVar(value=current_value)
+        combo = ttk.Combobox(self.harness_cable_tree, textvariable=cable_var, state='readonly', width=10)
+        combo['values'] = list(self.AWG_SIZES.keys())
+        
+        # Position the combobox
+        combo.place(x=bbox[0], y=bbox[1], width=bbox[2], height=bbox[3])
+        
+        def save_cable(event=None):
+            new_size = cable_var.get()
+            
+            # Update the harness configuration
+            self.update_harness_cable_size(harness_key, cable_type, new_size)
+            
+            # Mark as edited
+            self.harness_cable_edited_cells.add(f"{harness_key}_{cable_type}")
+            
+            # Refresh display
+            self.update_harness_cable_table()
+            self.draw_wiring_layout()
+            self.notify_wiring_changed()
+            
+            combo.destroy()
+        
+        def cancel(event=None):
+            combo.destroy()
+        
+        combo.bind('<<ComboboxSelected>>', save_cable)
+        combo.bind('<Return>', save_cable)
+        combo.bind('<Escape>', cancel)
+        combo.bind('<FocusOut>', cancel)
+        combo.focus_set()
+        combo.event_generate('<Button-1>')  # Open dropdown immediately
+
+    def update_harness_cable_size(self, harness_key, cable_type, new_size):
+        """Update cable size for a specific harness group"""
+        # Parse the harness key
+        parts = harness_key.split('_')
+        string_count = int(parts[0])
+        harness_idx = int(parts[2])
+        
+        # Ensure harness groupings exist
+        if not hasattr(self.block.wiring_config, 'harness_groupings'):
+            self.block.wiring_config.harness_groupings = {}
+        
+        # If this is a default grouping (harness_idx = 0 with no custom groupings), create it
+        if string_count not in self.block.wiring_config.harness_groupings:
+            # Create default harness for all strings
+            default_harness = HarnessGroup(
+                string_indices=list(range(string_count)),
+                cable_size=self.harness_cable_size_var.get()
+            )
+            self.block.wiring_config.harness_groupings[string_count] = [default_harness]
+        
+        # Get the harness
+        if harness_idx < len(self.block.wiring_config.harness_groupings[string_count]):
+            harness = self.block.wiring_config.harness_groupings[string_count][harness_idx]
+            
+            # Update the appropriate cable size
+            if cable_type == 'string':
+                harness.string_cable_size = new_size
+            elif cable_type == 'harness':
+                harness.cable_size = new_size
+            elif cable_type == 'extender':
+                harness.extender_cable_size = new_size
+            elif cable_type == 'whip':
+                harness.whip_cable_size = new_size
+
+    def show_harness_cable_context_menu(self, event):
+        """Show context menu for harness cable table"""
+        # Select the item under cursor
+        item = self.harness_cable_tree.identify('item', event.x, event.y)
+        if item:
+            self.harness_cable_tree.selection_set(item)
+            self.harness_cable_menu.post(event.x_root, event.y_root)
+
+    def reset_harness_cable_sizes(self):
+        """Reset selected harness cable sizes to defaults"""
+        selected = self.harness_cable_tree.selection()
+        if not selected:
+            return
+        
+        for item in selected:
+            harness_key = self.harness_cable_tree.set(item, 'harness_key')
+            
+            # Parse the harness key
+            parts = harness_key.split('_')
+            string_count = int(parts[0])
+            harness_idx = int(parts[2])
+            
+            # Get the harness
+            if (string_count in self.block.wiring_config.harness_groupings and
+                harness_idx < len(self.block.wiring_config.harness_groupings[string_count])):
+                
+                harness = self.block.wiring_config.harness_groupings[string_count][harness_idx]
+                
+                # Reset to defaults by removing custom attributes
+                if hasattr(harness, 'string_cable_size'):
+                    delattr(harness, 'string_cable_size')
+                if hasattr(harness, 'extender_cable_size'):
+                    delattr(harness, 'extender_cable_size')
+                if hasattr(harness, 'whip_cable_size'):
+                    delattr(harness, 'whip_cable_size')
+                
+                # Reset cable_size to default
+                harness.cable_size = self.harness_cable_size_var.get()
+                
+                # Clear edited markers
+                for cable_type in ['string', 'harness', 'extender', 'whip']:
+                    cell_id = f"{harness_key}_{cable_type}"
+                    self.harness_cable_edited_cells.discard(cell_id)
+        
+        # Refresh display
+        self.update_harness_cable_table()
+        self.draw_wiring_layout()
+        self.notify_wiring_changed()
+
     def setup_routing_controls(self, controls_frame):
         """Set up remaining routing controls section (whip controls moved to bottom)"""
         # This method now intentionally left minimal since whip controls moved to canvas area
@@ -492,6 +836,10 @@ class WiringConfigurator(tk.Toplevel):
         if self.block.wiring_config:
             self.wiring_type_var.set(self.block.wiring_config.wiring_type.value)
             self.update_ui_for_wiring_type()
+
+        # Update harness cable table if harness wiring
+        if self.block.wiring_config and self.block.wiring_config.wiring_type == WiringType.HARNESS:
+            self.update_harness_cable_table()
 
     def draw_wiring_layout(self):
         """Draw block layout with wiring visualization"""
@@ -2075,6 +2423,11 @@ class WiringConfigurator(tk.Toplevel):
             self.extender_frame.grid()
             self.harness_collapsible.grid()
             
+            # Show harness cable configuration table
+            if hasattr(self, 'cable_table_collapsible'):
+                self.cable_table_collapsible.grid()
+                self.update_harness_cable_table()
+            
             # Make sure we have the quick patterns section
             if not hasattr(self, 'quick_patterns_frame'):
                 self.setup_quick_patterns_ui()
@@ -2084,6 +2437,10 @@ class WiringConfigurator(tk.Toplevel):
             self.harness_frame.grid_remove()
             self.extender_frame.grid_remove()
             self.harness_collapsible.grid_remove()
+            
+            # Hide harness cable configuration table
+            if hasattr(self, 'cable_table_collapsible'):
+                self.cable_table_collapsible.grid_remove()
         
         # Update legend to reflect current mode
         if hasattr(self, 'draw_legend'):
@@ -2235,6 +2592,9 @@ class WiringConfigurator(tk.Toplevel):
             ttk.Button(button_frame, text="Delete", 
                     command=lambda h=i, sc=string_count: self.delete_harness(sc, h)).grid(
                     row=0, column=1, padx=5)
+            
+            # Also update the cable configuration table
+            self.update_harness_cable_table()
 
     def create_harness_from_selected(self):
         """Create a new harness from the selected strings"""
