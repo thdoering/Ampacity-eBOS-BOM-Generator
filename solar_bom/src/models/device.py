@@ -42,18 +42,16 @@ class HarnessConnection:
         return 90  # Max standard size
     
     def _calculate_cable_size(self) -> str:
-        """Calculate required cable size based on fuse rating"""
-        fuse_size = self.user_fuse_size if self.user_fuse_size else self.calculated_fuse_size
+        """Calculate required cable size based on harness current"""
+        from ..utils.cable_sizing import calculate_harness_cable_size
         
-        # Cable ampacity at 90°C
-        if fuse_size <= 40:
-            return "10 AWG"
-        elif fuse_size <= 55:
-            return "8 AWG"
-        elif fuse_size <= 75:
-            return "6 AWG"
-        else:
-            return "4 AWG"
+        # Use the new cable sizing service to calculate based on actual current
+        # Note: harness_current already includes NEC factor, so we pass factor=1.0
+        return calculate_harness_cable_size(
+            self.num_strings, 
+            self.module_isc, 
+            self.nec_factor
+        )
     
     def get_display_fuse_size(self) -> int:
         """Get fuse size to display (user override or calculated)"""

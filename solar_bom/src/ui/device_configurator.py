@@ -4,7 +4,7 @@ from typing import Dict, List, Optional, Set
 import json
 from ..models.block import BlockConfig, DeviceType
 from ..models.device import HarnessConnection, CombinerBoxConfig
-from ..utils.calculations import STANDARD_FUSE_SIZES, calculate_required_cable_size_for_current
+from ..utils.calculations import STANDARD_FUSE_SIZES
 
 class DeviceConfigurator(ttk.Frame):
     """UI for configuring combiner boxes and other devices"""
@@ -489,7 +489,7 @@ class DeviceConfigurator(ttk.Frame):
         # Create combobox
         cable_var = tk.StringVar(value=connection.get_display_cable_size())
         combo = ttk.Combobox(self.tree, textvariable=cable_var, state='readonly', width=10)
-        combo['values'] = ["10 AWG", "8 AWG", "6 AWG", "4 AWG"]
+        combo['values'] = ["14 AWG", "12 AWG", "10 AWG", "8 AWG", "6 AWG", "4 AWG", "2 AWG", "1/0 AWG", "2/0 AWG", "4/0 AWG"]
         
         # Position the combobox
         combo.place(x=bbox[0], y=bbox[1], width=bbox[2], height=bbox[3])
@@ -498,14 +498,14 @@ class DeviceConfigurator(ttk.Frame):
             new_size = cable_var.get()
             
             # Validate ampacity
-            from ..utils.calculations import get_cable_ampacity
+            from ..utils.cable_sizing import get_cable_ampacity
             ampacity = get_cable_ampacity(new_size)
             required_ampacity = connection.get_display_fuse_size()
-            
+
             if ampacity < required_ampacity:
                 messagebox.showerror("Invalid Size", 
-                                f"Cable ampacity ({ampacity}A) must be at least "
-                                f"equal to fuse rating ({required_ampacity}A).")
+                                    f"Cable ampacity ({ampacity}A) must be at least "
+                                    f"equal to fuse rating ({required_ampacity}A).")
                 combo.destroy()
                 return
             

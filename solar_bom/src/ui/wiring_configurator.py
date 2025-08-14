@@ -5,6 +5,8 @@ from ..models.block import BlockConfig, WiringType, CollectionPoint, WiringConfi
 from ..models.module import ModuleOrientation
 from ..models.tracker import TrackerPosition
 from ..utils.calculations import get_ampacity_for_wire_gauge, calculate_nec_current, wire_harness_compatibility
+from ..utils.cable_sizing import CABLE_SIZE_ORDER, calculate_all_cable_sizes
+from ..utils.calculations import calculate_fuse_size
 
 class CollapsibleFrame(ttk.Frame):
     """A collapsible frame widget with instant show/hide"""
@@ -65,12 +67,18 @@ class CollapsibleFrame(ttk.Frame):
 
 class WiringConfigurator(tk.Toplevel):
 
-    # AWG to mm² conversion
+    # AWG to mm² conversion - Extended with more sizes
     AWG_SIZES: ClassVar[Dict[str, float]] = {
-        "4 AWG": 21.15,
-        "6 AWG": 13.30,
+        "14 AWG": 3.31,
+        "12 AWG": 3.31,
+        "10 AWG": 5.26,
         "8 AWG": 8.37,
-        "10 AWG": 5.26
+        "6 AWG": 13.30,
+        "4 AWG": 21.15,
+        "2 AWG": 33.62,
+        "1/0 AWG": 53.49,
+        "2/0 AWG": 67.43,
+        "4/0 AWG": 107.22
     }
 
     # Standard fuse ratings in amps
@@ -3084,16 +3092,15 @@ class WiringConfigurator(tk.Toplevel):
         # Get Isc from module spec
         isc = self.block.tracker_template.module_spec.isc
         
-        # Calculate NEC minimum (1.25 × Isc)
-        nec_min = isc * 1.25
+        # Number of strings in this harness
+        num_strings = len(string_indices)
         
-        # Round up to the nearest standard fuse size
-        for rating in self.FUSE_RATINGS:
-            if rating >= nec_min:
-                return rating
+        # Total current for the harness
+        total_current = num_strings * isc
         
-        # If it's larger than our highest rating, return the highest
-        return self.FUSE_RATINGS[-1]
+        # Use our cable sizing service to calculate fuse size
+        from ..utils.cable_sizing import calculate_fuse_size as calc_fuse_size
+        return calc_fuse_size(total_current * 1.25)  # Apply NEC factor
     
     def get_current_routes(self):
         """Get routes based on current routing mode (realistic or conceptual)"""

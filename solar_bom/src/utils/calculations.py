@@ -391,25 +391,6 @@ STANDARD_FUSE_SIZES = [5, 10, 15, 20, 25, 30, 32, 35, 40, 45, 50, 60, 70, 80, 90
 # Standard breaker sizes in amps
 STANDARD_BREAKER_SIZES = [100, 125, 150, 175, 200, 225, 250, 275, 300, 320, 325, 350, 400, 450, 500, 600, 700, 800]
 
-# Ampacity table for 90°C rated cables (THWN-2, XHHW-2)
-CABLE_AMPACITY_90C = {
-    "10 AWG": 40,
-    "8 AWG": 55,
-    "6 AWG": 75,
-    "4 AWG": 95
-}
-
-def get_cable_ampacity(cable_size: str) -> float:
-    """Get ampacity for a given cable size at 90°C"""
-    return CABLE_AMPACITY_90C.get(cable_size, 0)
-
-def calculate_required_cable_size_for_current(current_amps: float) -> str:
-    """Calculate required cable size based on current"""
-    for cable_size, ampacity in CABLE_AMPACITY_90C.items():
-        if ampacity >= current_amps:
-            return cable_size
-    return "4 AWG"  # Max size in our list
-
 def calculate_fuse_size(current_amps: float) -> int:
     """Calculate required fuse size based on current"""
     for size in STANDARD_FUSE_SIZES:
