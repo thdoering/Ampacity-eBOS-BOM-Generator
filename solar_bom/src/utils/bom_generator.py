@@ -66,6 +66,42 @@ class BOMGenerator:
         
         return "8 AWG"  # Default fallback
     
+    def _get_cable_size_for_segment(self, block: BlockConfig, segment: Dict, cable_type: str) -> str:
+        """
+        Determine the cable size for a specific wire segment based on its route
+        
+        Args:
+            block: The block configuration
+            segment: The wire segment with 'route' information
+            cable_type: Type of cable ('string', 'extender', 'whip', or 'harness')
+            
+        Returns:
+            The cable size string for this segment
+        """
+        # For non-harness configurations, use block-level sizes
+        if block.wiring_config.wiring_type != WiringType.HARNESS:
+            return getattr(block.wiring_config, f'{cable_type}_cable_size', "8 AWG")
+        
+        # Try to determine which harness this segment belongs to
+        # This is a simplified approach - in practice, you might need more sophisticated matching
+        if 'route' in segment and len(segment['route']) > 0:
+            # Get the starting point of the route
+            start_x, start_y = segment['route'][0]
+            
+            # Find which tracker and harness this belongs to
+            for tracker_idx, pos in enumerate(block.tracker_positions):
+                string_count = len(pos.strings)
+                
+                if string_count in block.wiring_config.harness_groupings:
+                    for harness_idx, harness in enumerate(block.wiring_config.harness_groupings[string_count]):
+                        # Check if this segment's position matches this harness
+                        # This is a simplified check - you may need to enhance this
+                        # based on your actual route structure
+                        return self._get_cable_size(harness, cable_type, block)
+        
+        # Default fallback
+        return getattr(block.wiring_config, f'{cable_type}_cable_size', "8 AWG")
+    
     def calculate_cable_quantities(self) -> Dict[str, Dict[str, Any]]:
         """
         Calculate cable quantities by block and type, separating positive and negative
@@ -661,6 +697,9 @@ class BOMGenerator:
             
             # Write detailed data  
             detailed_data.to_excel(writer, sheet_name='Block Details', index=False)
+            
+            # Add harness cable size information to Block Details sheet
+            self._add_harness_cable_info_to_block_details(writer, detailed_data)
 
             # Add combiner box sheet if there are any combiner boxes
             combiner_box_count = self.count_combiner_boxes()
@@ -777,6 +816,87 @@ class BOMGenerator:
                     writer.close()
                 except:
                     pass
+
+    def _add_harness_cable_info_to_block_details(self, writer, detailed_data):
+        """Add harness-specific cable size information to Block Details sheet"""
+        try:
+            worksheet = writer.sheets['Block Details']
+            
+            # Find the last row with data
+            last_data_row = len(detailed_data) + 1  # +1 for header
+            
+            # Add some spacing
+            info_start_row = last_data_row + 3
+            
+            # Check if any blocks have custom harness cable sizes
+            has_custom_sizes = False
+            harness_info = []
+            
+            for block_id, block in self.blocks.items():
+                if (hasattr(block, 'wiring_config') and 
+                    block.wiring_config and 
+                    block.wiring_config.wiring_type == WiringType.HARNESS and
+                    hasattr(block.wiring_config, 'harness_groupings')):
+                    
+                    for string_count, harness_list in block.wiring_config.harness_groupings.items():
+                        for harness_idx, harness in enumerate(harness_list):
+                            # Check if this harness has custom cable sizes
+                            if (hasattr(harness, 'string_cable_size') and harness.string_cable_size) or \
+                               (hasattr(harness, 'extender_cable_size') and harness.extender_cable_size) or \
+                               (hasattr(harness, 'whip_cable_size') and harness.whip_cable_size):
+                                has_custom_sizes = True
+                                
+                                # Build info string
+                                actual_string_count = len(harness.string_indices)
+                                info = {
+                                    'Block': block_id,
+                                    'Harness Type': f"{actual_string_count}-string harness",
+                                    'String Cable': harness.string_cable_size if hasattr(harness, 'string_cable_size') and harness.string_cable_size else f"Default ({block.wiring_config.string_cable_size})",
+                                    'Harness Cable': harness.cable_size,
+                                    'Extender Cable': harness.extender_cable_size if hasattr(harness, 'extender_cable_size') and harness.extender_cable_size else f"Default ({block.wiring_config.extender_cable_size})",
+                                    'Whip Cable': harness.whip_cable_size if hasattr(harness, 'whip_cable_size') and harness.whip_cable_size else f"Default ({block.wiring_config.whip_cable_size})"
+                                }
+                                harness_info.append(info)
+            
+            if has_custom_sizes and harness_info:
+                # Add header
+                worksheet.cell(row=info_start_row, column=1, value="Harness-Specific Cable Sizes:").font = Font(bold=True, size=12)
+                
+                # Add column headers
+                headers = ['Block', 'Harness Type', 'String Cable', 'Harness Cable', 'Extender Cable', 'Whip Cable']
+                for col_idx, header in enumerate(headers, 1):
+                    cell = worksheet.cell(row=info_start_row + 1, column=col_idx, value=header)
+                    cell.font = Font(bold=True)
+                    cell.fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+                    cell.border = Border(
+                        left=Side(style='thin'),
+                        right=Side(style='thin'),
+                        top=Side(style='thin'),
+                        bottom=Side(style='thin')
+                    )
+                
+                # Add data rows
+                for row_idx, info in enumerate(harness_info, info_start_row + 2):
+                    for col_idx, (key, value) in enumerate(info.items(), 1):
+                        cell = worksheet.cell(row=row_idx, column=col_idx, value=value)
+                        cell.border = Border(
+                            left=Side(style='thin'),
+                            right=Side(style='thin'),
+                            top=Side(style='thin'),
+                            bottom=Side(style='thin')
+                        )
+                        
+                        # Highlight custom sizes
+                        if key in ['String Cable', 'Extender Cable', 'Whip Cable'] and not value.startswith('Default'):
+                            cell.fill = PatternFill(start_color="FFFFCC", end_color="FFFFCC", fill_type="solid")
+                
+                # Auto-fit columns
+                for col_idx in range(1, 7):
+                    column_letter = get_column_letter(col_idx)
+                    worksheet.column_dimensions[column_letter].auto_size = True
+                    
+        except Exception as e:
+            print(f"Error adding harness cable info to Excel: {e}")
 
     def filter_data_by_checked_components(self, data_df, checked_components, is_detailed=False):
         """Filter DataFrame based on checked components"""
@@ -1043,37 +1163,48 @@ class BOMGenerator:
                 self.calculate_totals_from_segments(block_quantities, string_size, "Negative String Cable")
             
             # Process whip segments for all wiring types
-            # For harness configurations, check if all harnesses use the same whip size
-            whip_sizes = set()
+            # For harness configurations, we need to group segments by cable size
             if block.wiring_config.wiring_type == WiringType.HARNESS and hasattr(block.wiring_config, 'harness_groupings'):
-                for string_count, harness_groups in block.wiring_config.harness_groupings.items():
-                    for hg in harness_groups:
-                        whip_size = self._get_cable_size(hg, 'whip', block)
-                        whip_sizes.add(whip_size)
-            
-            # If all use the same size or not a harness config, process normally
-            if len(whip_sizes) <= 1:
-                whip_size = whip_sizes.pop() if whip_sizes else getattr(block.wiring_config, 'whip_cable_size', "8 AWG")
-                self._add_segment_analysis(block_quantities, whip_segments_pos, 
-                                        whip_size, "Positive Whip Cable", 1)
-                self._add_segment_analysis(block_quantities, whip_segments_neg, 
-                                        whip_size, "Negative Whip Cable", 1)
+                # Group whip segments by cable size
+                whip_segments_by_size_pos = {}
+                whip_segments_by_size_neg = {}
                 
-                # Calculate and add total whip entries from segments
-                self.calculate_totals_from_segments(block_quantities, whip_size, "Positive Whip Cable")
-                self.calculate_totals_from_segments(block_quantities, whip_size, "Negative Whip Cable")
+                # Analyze each segment to determine its cable size
+                for segment in whip_segments_pos:
+                    # Determine which harness this segment belongs to based on its route
+                    cable_size = self._get_cable_size_for_segment(block, segment, 'whip')
+                    
+                    if cable_size not in whip_segments_by_size_pos:
+                        whip_segments_by_size_pos[cable_size] = []
+                    whip_segments_by_size_pos[cable_size].append(segment)
+                
+                for segment in whip_segments_neg:
+                    cable_size = self._get_cable_size_for_segment(block, segment, 'whip')
+                    
+                    if cable_size not in whip_segments_by_size_neg:
+                        whip_segments_by_size_neg[cable_size] = []
+                    whip_segments_by_size_neg[cable_size].append(segment)
+                
+                # Process each cable size group separately
+                for cable_size, segments in whip_segments_by_size_pos.items():
+                    self._add_segment_analysis(block_quantities, segments, 
+                                            cable_size, f"Positive Whip Cable ({cable_size})", 1)
+                    self.calculate_totals_from_segments(block_quantities, cable_size, f"Positive Whip Cable")
+                
+                for cable_size, segments in whip_segments_by_size_neg.items():
+                    self._add_segment_analysis(block_quantities, segments, 
+                                            cable_size, f"Negative Whip Cable ({cable_size})", 1)
+                    self.calculate_totals_from_segments(block_quantities, cable_size, f"Negative Whip Cable")
             else:
-                # TODO: Handle multiple whip sizes - would need to track which segments use which size
-                # For now, fall back to block-level size
+                # Non-harness or single cable size - process normally
                 whip_size = getattr(block.wiring_config, 'whip_cable_size', "8 AWG")
                 self._add_segment_analysis(block_quantities, whip_segments_pos, 
                                         whip_size, "Positive Whip Cable", 1)
                 self._add_segment_analysis(block_quantities, whip_segments_neg, 
                                         whip_size, "Negative Whip Cable", 1)
-            
-            # Calculate and add total whip entries from segments
-            self.calculate_totals_from_segments(block_quantities, whip_size, "Positive Whip Cable")
-            self.calculate_totals_from_segments(block_quantities, whip_size, "Negative Whip Cable")
+                
+                self.calculate_totals_from_segments(block_quantities, whip_size, "Positive Whip Cable")
+                self.calculate_totals_from_segments(block_quantities, whip_size, "Negative Whip Cable")
 
             # Process extender segments
             extender_segments_pos = []
@@ -1100,16 +1231,49 @@ class BOMGenerator:
                 elif "neg_extender" in route_id:
                     extender_segments_neg.append(segment_length_feet)
 
-            # Process extender segments
-            extender_size = getattr(block.wiring_config, 'extender_cable_size', "8 AWG")
-            self._add_segment_analysis(block_quantities, extender_segments_pos, 
-                                    extender_size, "Positive Extender Cable", 5)
-            self._add_segment_analysis(block_quantities, extender_segments_neg, 
-                                    extender_size, "Negative Extender Cable", 5)
+            # Process extender segments - handle harness-specific cable sizes
+            if block.wiring_config.wiring_type == WiringType.HARNESS and hasattr(block.wiring_config, 'harness_groupings'):
+                # Group extender segments by cable size
+                extender_segments_by_size_pos = {}
+                extender_segments_by_size_neg = {}
+                
+                # Analyze each segment to determine its cable size
+                for segment in extender_segments_pos:
+                    # Determine which harness this segment belongs to based on its route
+                    cable_size = self._get_cable_size_for_segment(block, segment, 'extender')
+                    
+                    if cable_size not in extender_segments_by_size_pos:
+                        extender_segments_by_size_pos[cable_size] = []
+                    extender_segments_by_size_pos[cable_size].append(segment)
+                
+                for segment in extender_segments_neg:
+                    cable_size = self._get_cable_size_for_segment(block, segment, 'extender')
+                    
+                    if cable_size not in extender_segments_by_size_neg:
+                        extender_segments_by_size_neg[cable_size] = []
+                    extender_segments_by_size_neg[cable_size].append(segment)
+                
+                # Process each cable size group separately
+                for cable_size, segments in extender_segments_by_size_pos.items():
+                    self._add_segment_analysis(block_quantities, segments, 
+                                            cable_size, f"Positive Extender Cable ({cable_size})", 5)
+                    self.calculate_totals_from_segments(block_quantities, cable_size, f"Positive Extender Cable")
+                
+                for cable_size, segments in extender_segments_by_size_neg.items():
+                    self._add_segment_analysis(block_quantities, segments, 
+                                            cable_size, f"Negative Extender Cable ({cable_size})", 5)
+                    self.calculate_totals_from_segments(block_quantities, cable_size, f"Negative Extender Cable")
+            else:
+                # Non-harness or single cable size - process normally
+                extender_size = getattr(block.wiring_config, 'extender_cable_size', "8 AWG")
+                self._add_segment_analysis(block_quantities, extender_segments_pos, 
+                                        extender_size, "Positive Extender Cable", 5)
+                self._add_segment_analysis(block_quantities, extender_segments_neg, 
+                                        extender_size, "Negative Extender Cable", 5)
 
-            # Calculate and add total extender entries from segments
-            self.calculate_totals_from_segments(block_quantities, extender_size, "Positive Extender Cable")
-            self.calculate_totals_from_segments(block_quantities, extender_size, "Negative Extender Cable")
+                # Calculate and add total extender entries from segments
+                self.calculate_totals_from_segments(block_quantities, extender_size, "Positive Extender Cable")
+                self.calculate_totals_from_segments(block_quantities, extender_size, "Negative Extender Cable")
                     
             # Update quantities
             quantities[block_id] = block_quantities

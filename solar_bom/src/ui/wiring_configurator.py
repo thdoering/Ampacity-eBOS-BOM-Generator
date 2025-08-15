@@ -831,15 +831,30 @@ class WiringConfigurator(tk.Toplevel):
             
             # Update UI based on wiring type
             self.update_ui_for_wiring_type()
-
-        # Check if block has an existing configuration
-        if self.block.wiring_config:
-            self.wiring_type_var.set(self.block.wiring_config.wiring_type.value)
-            self.update_ui_for_wiring_type()
-
-        # Update harness cable table if harness wiring
-        if self.block.wiring_config and self.block.wiring_config.wiring_type == WiringType.HARNESS:
-            self.update_harness_cable_table()
+            
+            # Load harness cable table if in harness mode
+            if self.block.wiring_config.wiring_type == WiringType.HARNESS:
+                # Update the harness cable table to show existing configurations
+                self.update_harness_cable_table()
+                
+                # If we have custom harness cable sizes, mark them as edited
+                if hasattr(self.block.wiring_config, 'harness_groupings'):
+                    for string_count, harness_list in self.block.wiring_config.harness_groupings.items():
+                        for harness_idx, harness in enumerate(harness_list):
+                            # Check if any custom cable sizes are set
+                            if (hasattr(harness, 'string_cable_size') and harness.string_cable_size) or \
+                               (hasattr(harness, 'extender_cable_size') and harness.extender_cable_size) or \
+                               (hasattr(harness, 'whip_cable_size') and harness.whip_cable_size):
+                                # Mark cells as edited
+                                actual_string_count = len(harness.string_indices)
+                                harness_key = f"{actual_string_count}_string_{harness_idx}"
+                                
+                                if hasattr(harness, 'string_cable_size') and harness.string_cable_size:
+                                    self.harness_cable_edited_cells.add(f"{harness_key}_string")
+                                if hasattr(harness, 'extender_cable_size') and harness.extender_cable_size:
+                                    self.harness_cable_edited_cells.add(f"{harness_key}_extender")
+                                if hasattr(harness, 'whip_cable_size') and harness.whip_cable_size:
+                                    self.harness_cable_edited_cells.add(f"{harness_key}_whip")
 
     def draw_wiring_layout(self):
         """Draw block layout with wiring visualization"""
@@ -1024,6 +1039,29 @@ class WiringConfigurator(tk.Toplevel):
         
         # Get existing custom settings
         custom_whip_points, harness_groupings = self.get_existing_custom_settings()
+        
+        # If we have existing harness groupings with custom cable sizes, preserve them
+        if harness_groupings and hasattr(self.block.wiring_config, 'harness_groupings'):
+            # Create a new harness_groupings dict to preserve custom cable sizes
+            preserved_harness_groupings = {}
+            
+            for string_count, existing_harness_list in self.block.wiring_config.harness_groupings.items():
+                preserved_harness_groupings[string_count] = []
+                
+                for existing_harness in existing_harness_list:
+                    # Create a new HarnessGroup with preserved cable sizes
+                    new_harness = HarnessGroup(
+                        string_indices=existing_harness.string_indices,
+                        cable_size=existing_harness.cable_size,  # Preserve harness cable size
+                        string_cable_size=getattr(existing_harness, 'string_cable_size', ''),
+                        extender_cable_size=getattr(existing_harness, 'extender_cable_size', ''),
+                        whip_cable_size=getattr(existing_harness, 'whip_cable_size', ''),
+                        fuse_rating_amps=getattr(existing_harness, 'fuse_rating_amps', 15),
+                        use_fuse=getattr(existing_harness, 'use_fuse', True)
+                    )
+                    preserved_harness_groupings[string_count].append(new_harness)
+            
+            harness_groupings = preserved_harness_groupings
         
         # Create the WiringConfig instance
         return WiringConfig(
