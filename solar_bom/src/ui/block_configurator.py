@@ -1161,16 +1161,95 @@ class BlockConfigurator(ttk.Frame):
             # Determine wire properties based on route type
             is_positive = 'pos_' in route_id
             if 'src_' in route_id or 'node_' in route_id:
-                wire_gauge = block.wiring_config.string_cable_size
+                # Extract tracker and harness info from route_id if available
+                wire_gauge = block.wiring_config.string_cable_size  # Default
+                
+                # Try to get harness-specific size
+                parts = route_id.split('_')
+                if len(parts) >= 4:  # Format: pos_src_0_0_h0
+                    try:
+                        tracker_idx = int(parts[2])
+                        if 'h' in parts[-1]:
+                            harness_idx = int(parts[-1][1:])
+                            string_count = len(block.tracker_positions[tracker_idx].strings)
+                            
+                            if (hasattr(block.wiring_config, 'harness_groupings') and
+                                string_count in block.wiring_config.harness_groupings and
+                                harness_idx < len(block.wiring_config.harness_groupings[string_count])):
+                                harness = block.wiring_config.harness_groupings[string_count][harness_idx]
+                                if harness.string_cable_size:
+                                    wire_gauge = harness.string_cable_size
+                    except (ValueError, IndexError):
+                        pass
+                
                 line_thickness = self.get_line_thickness_for_wire_gauge(wire_gauge)
+                
             elif 'harness_' in route_id:
-                wire_gauge = block.wiring_config.harness_cable_size
+                # Similar logic for harness cables
+                wire_gauge = block.wiring_config.harness_cable_size  # Default
+                
+                parts = route_id.split('_')
+                if len(parts) >= 4:
+                    try:
+                        tracker_idx = int(parts[2])
+                        if 'h' in parts[-1]:
+                            harness_idx = int(parts[-1][1:])
+                            string_count = len(block.tracker_positions[tracker_idx].strings)
+                            
+                            if (hasattr(block.wiring_config, 'harness_groupings') and
+                                string_count in block.wiring_config.harness_groupings and
+                                harness_idx < len(block.wiring_config.harness_groupings[string_count])):
+                                harness = block.wiring_config.harness_groupings[string_count][harness_idx]
+                                wire_gauge = harness.cable_size
+                    except (ValueError, IndexError):
+                        pass
+                
                 line_thickness = self.get_line_thickness_for_wire_gauge(wire_gauge)
+                
             elif 'extender_' in route_id:
-                wire_gauge = getattr(block.wiring_config, 'extender_cable_size', '8 AWG')
+                wire_gauge = getattr(block.wiring_config, 'extender_cable_size', '8 AWG')  # Default
+                
+                # Try to get harness-specific size
+                parts = route_id.split('_')
+                if len(parts) >= 4:
+                    try:
+                        tracker_idx = int(parts[2])
+                        if 'h' in parts[-1]:
+                            harness_idx = int(parts[-1][1:])
+                            string_count = len(block.tracker_positions[tracker_idx].strings)
+                            
+                            if (hasattr(block.wiring_config, 'harness_groupings') and
+                                string_count in block.wiring_config.harness_groupings and
+                                harness_idx < len(block.wiring_config.harness_groupings[string_count])):
+                                harness = block.wiring_config.harness_groupings[string_count][harness_idx]
+                                if harness.extender_cable_size:
+                                    wire_gauge = harness.extender_cable_size
+                    except (ValueError, IndexError):
+                        pass
+                
                 line_thickness = self.get_line_thickness_for_wire_gauge(wire_gauge)
+                
             else:  # whip routes (dev_, main_)
-                wire_gauge = getattr(block.wiring_config, 'whip_cable_size', '8 AWG')
+                wire_gauge = getattr(block.wiring_config, 'whip_cable_size', '8 AWG')  # Default
+                
+                # Try to get harness-specific size
+                parts = route_id.split('_')
+                if len(parts) >= 3:
+                    try:
+                        tracker_idx = int(parts[2])
+                        if 'h' in parts[-1]:
+                            harness_idx = int(parts[-1][1:])
+                            string_count = len(block.tracker_positions[tracker_idx].strings)
+                            
+                            if (hasattr(block.wiring_config, 'harness_groupings') and
+                                string_count in block.wiring_config.harness_groupings and
+                                harness_idx < len(block.wiring_config.harness_groupings[string_count])):
+                                harness = block.wiring_config.harness_groupings[string_count][harness_idx]
+                                if harness.whip_cable_size:
+                                    wire_gauge = harness.whip_cable_size
+                    except (ValueError, IndexError):
+                        pass
+                
                 line_thickness = self.get_line_thickness_for_wire_gauge(wire_gauge)
             
             # Draw the route

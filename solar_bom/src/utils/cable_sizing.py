@@ -221,3 +221,24 @@ def is_cable_size_larger(size1: str, size2: str) -> bool:
         return False
     
     return idx1 > idx2
+
+def calculate_fuse_size(total_current: float) -> int:
+    """
+    Calculate required fuse size based on total current.
+    
+    Args:
+        total_current: Total current including NEC factor
+        
+    Returns:
+        int: Recommended fuse size in amperes
+    """
+    # Standard fuse sizes per NEC
+    FUSE_SIZES = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 80, 90, 100]
+    
+    # Find the smallest fuse that can handle the current
+    for size in FUSE_SIZES:
+        if size >= total_current:
+            return size
+    
+    # If current exceeds standard sizes, return maximum
+    return 100

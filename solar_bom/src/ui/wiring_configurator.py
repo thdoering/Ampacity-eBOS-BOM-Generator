@@ -15,7 +15,23 @@ class CollapsibleFrame(ttk.Frame):
         super().__init__(parent, **kwargs)
         
         self.is_collapsed = start_collapsed
-        
+        self.harness_tree_items = {}  # Maps tree item IDs to harness keys
+        self.AWG_SIZES = {
+            "14 AWG": 14,
+            "12 AWG": 12, 
+            "10 AWG": 10,
+            "8 AWG": 8,
+            "6 AWG": 6,
+            "4 AWG": 4,
+            "2 AWG": 2,
+            "1/0 AWG": 0,
+            "2/0 AWG": -1,
+            "4/0 AWG": -3
+        }
+
+        self.harness_tree_items = {}  # Maps tree item IDs to harness keys
+        self.harness_cable_edited_cells = set()  # Track edited cells
+
         # Header frame
         self.header_frame = ttk.Frame(self)
         self.header_frame.pack(fill=tk.X, padx=5, pady=2)
@@ -362,6 +378,18 @@ class WiringConfigurator(tk.Toplevel):
         columns = ('string_cable', 'harness_cable', 'extender_cable', 'whip_cable', 'recommended')
         self.harness_cable_tree = ttk.Treeview(table_frame, columns=columns, height=6, show='tree headings')
         self.harness_cable_tree.grid(row=1, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        # Change cursor when hovering over editable cells
+        def on_motion(event):
+            region = self.harness_cable_tree.identify_region(event.x, event.y)
+            column = self.harness_cable_tree.identify('column', event.x, event.y)
+            
+            if region == "cell" and column in ['#1', '#2', '#3', '#4']:
+                self.harness_cable_tree.configure(cursor="hand2")
+            else:
+                self.harness_cable_tree.configure(cursor="")
+
+        self.harness_cable_tree.bind('<Motion>', on_motion)
         
         # Column configuration
         self.harness_cable_tree.column('#0', width=200, minwidth=150)
@@ -389,7 +417,7 @@ class WiringConfigurator(tk.Toplevel):
         self.harness_cable_tree.tag_configure('undersized', background='#ffcccc')
         
         # Bind events for inline editing
-        self.harness_cable_tree.bind('<Double-Button-1>', self.on_harness_cable_click)
+        self.harness_cable_tree.bind('<Button-1>', self.on_harness_cable_click)
         self.harness_cable_tree.bind('<Button-3>', self.show_harness_cable_context_menu)
         
         # Track edited cells
@@ -404,6 +432,9 @@ class WiringConfigurator(tk.Toplevel):
         # Clear existing items
         for item in self.harness_cable_tree.get_children():
             self.harness_cable_tree.delete(item)
+        
+        # Clear the mapping dictionary
+        self.harness_tree_items = {}
         
         if not self.block or not self.block.wiring_config:
             return
@@ -423,7 +454,9 @@ class WiringConfigurator(tk.Toplevel):
                 
                 for harness_idx, harness in enumerate(harness_list):
                     actual_string_count = len(harness.string_indices)
-                    key = f"{actual_string_count}_string_{harness_idx}"
+                    key = f"{actual_string_count}_string_{harness_idx}"  # Construct the key
+                    print(f"Creating key: {key} for harness with {actual_string_count} strings")  # Debug
+
                     
                     if key not in harness_groups:
                         harness_groups[key] = {
@@ -436,7 +469,7 @@ class WiringConfigurator(tk.Toplevel):
             # Default grouping - all strings in one harness per tracker
             for pos in self.block.tracker_positions:
                 string_count = len(pos.strings)
-                key = f"{string_count}_string_0"
+                key = f"{string_count}_string_0"  # Construct the key for default harness
                 
                 if key not in harness_groups:
                     harness_groups[key] = {
@@ -488,46 +521,41 @@ class WiringConfigurator(tk.Toplevel):
             item = self.harness_cable_tree.insert('', 'end', text=label,
                                                 values=(string_size, harness_size, extender_size, whip_size, recommended),
                                                 tags=tuple(tags))
-            
-            # Store harness reference in item
-            self.harness_cable_tree.set(item, 'harness_key', key)
+
+            # Store harness reference in dictionary
+            self.harness_tree_items[item] = key
 
     def calculate_recommended_harness_size(self, string_count):
         """Calculate recommended cable size for harness based on string count"""
-        if not self.project or not self.project.module:
+        # Get module Isc from block's tracker template
+        if not self.block or not self.block.tracker_template or not self.block.tracker_template.module_spec:
             return "8 AWG"
         
         # Calculate current: num_strings × module_Isc × 1.25 (NEC factor)
-        module_isc = self.project.module.electrical_specs.isc
+        module_isc = self.block.tracker_template.module_spec.isc
         total_current = string_count * module_isc * 1.25
         
-        # Determine cable size based on ampacity
-        if total_current <= 40:
-            return "10 AWG"
-        elif total_current <= 55:
-            return "8 AWG"
-        elif total_current <= 75:
-            return "6 AWG"
-        else:
-            return "4 AWG"
+        # Use the cable sizing utility
+        from ..utils.cable_sizing import calculate_harness_cable_size
+        return calculate_harness_cable_size(string_count, module_isc, 1.25)
 
     def is_cable_undersized(self, cable_size, string_count):
         """Check if cable size is undersized for the given string count"""
-        if not self.project or not self.project.module:
+        # Get module Isc from block's tracker template
+        if not self.block or not self.block.tracker_template or not self.block.tracker_template.module_spec:
             return False
         
         # Calculate required current
-        module_isc = self.project.module.electrical_specs.isc
-        required_current = string_count * module_isc * 1.25
+        module_isc = self.block.tracker_template.module_spec.isc
+        required_current = string_count * module_isc
         
-        # Get cable ampacity
-        ampacity = get_ampacity_for_wire_gauge(cable_size)
-        
-        return ampacity < required_current
+        # Use cable sizing utility to validate
+        from ..utils.cable_sizing import validate_cable_size_for_current
+        return not validate_cable_size_for_current(cable_size, required_current, 1.25)
     
     def on_harness_cable_click(self, event):
-        """Handle double-click for inline editing"""
-        # Identify the clicked cell
+        """Handle click for inline editing - improved UX"""
+        # Identify the clicked region
         region = self.harness_cable_tree.identify_region(event.x, event.y)
         if region != "cell":
             return
@@ -543,6 +571,11 @@ class WiringConfigurator(tk.Toplevel):
         if column not in ['#1', '#2', '#3', '#4']:  # string, harness, extender, whip cables
             return
         
+        # Get the cell's bounding box
+        bbox = self.harness_cable_tree.bbox(item, column)
+        if not bbox:
+            return
+        
         # Get column index
         col_map = {'#1': 0, '#2': 1, '#3': 2, '#4': 3}
         col_idx = col_map.get(column)
@@ -553,10 +586,12 @@ class WiringConfigurator(tk.Toplevel):
         values = self.harness_cable_tree.item(item, 'values')
         current_value = values[col_idx]
         
-        # Get harness key
-        harness_key = self.harness_cable_tree.set(item, 'harness_key')
+        # Get harness key from dictionary
+        harness_key = self.harness_tree_items.get(item)
+        if not harness_key:
+            return
         
-        # Create inline combo
+        # Create inline combo immediately (no need to be precise with click location)
         self.create_harness_cable_combo(item, column, current_value, harness_key, cable_type)
 
     def create_harness_cable_combo(self, item, column, current_value, harness_key, cable_type):
@@ -602,10 +637,14 @@ class WiringConfigurator(tk.Toplevel):
 
     def update_harness_cable_size(self, harness_key, cable_type, new_size):
         """Update cable size for a specific harness group"""
+        print(f"Updating cable size: key={harness_key}, type={cable_type}, size={new_size}")  # Debug
+        
         # Parse the harness key
         parts = harness_key.split('_')
         string_count = int(parts[0])
         harness_idx = int(parts[2])
+        
+        print(f"Parsed: string_count={string_count}, harness_idx={harness_idx}")  # Debug
         
         # Ensure harness groupings exist
         if not hasattr(self.block.wiring_config, 'harness_groupings'):
@@ -613,6 +652,7 @@ class WiringConfigurator(tk.Toplevel):
         
         # If this is a default grouping (harness_idx = 0 with no custom groupings), create it
         if string_count not in self.block.wiring_config.harness_groupings:
+            print(f"Creating default harness for {string_count} strings")  # Debug
             # Create default harness for all strings
             default_harness = HarnessGroup(
                 string_indices=list(range(string_count)),
@@ -620,19 +660,36 @@ class WiringConfigurator(tk.Toplevel):
             )
             self.block.wiring_config.harness_groupings[string_count] = [default_harness]
         
+        # Check if we need to create additional harnesses
+        harness_list = self.block.wiring_config.harness_groupings[string_count]
+        while len(harness_list) <= harness_idx:
+            print(f"Creating additional harness at index {len(harness_list)}")  # Debug
+            # Create a new default harness
+            new_harness = HarnessGroup(
+                string_indices=list(range(string_count)),
+                cable_size=self.harness_cable_size_var.get()
+            )
+            harness_list.append(new_harness)
+        
         # Get the harness
-        if harness_idx < len(self.block.wiring_config.harness_groupings[string_count]):
-            harness = self.block.wiring_config.harness_groupings[string_count][harness_idx]
+        harness = self.block.wiring_config.harness_groupings[string_count][harness_idx]
+        print(f"Found harness: {harness}")  # Debug
+        
+        # Update the appropriate cable size
+        if cable_type == 'string':
+            harness.string_cable_size = new_size
+        elif cable_type == 'harness':
+            harness.cable_size = new_size
+        elif cable_type == 'extender':
+            harness.extender_cable_size = new_size
+        elif cable_type == 'whip':
+            harness.whip_cable_size = new_size
             
-            # Update the appropriate cable size
-            if cable_type == 'string':
-                harness.string_cable_size = new_size
-            elif cable_type == 'harness':
-                harness.cable_size = new_size
-            elif cable_type == 'extender':
-                harness.extender_cable_size = new_size
-            elif cable_type == 'whip':
-                harness.whip_cable_size = new_size
+        print(f"Updated {cable_type} to {new_size}")  # Debug
+        
+        # Force a redraw of the wiring
+        self.draw_wiring_layout()
+        self.notify_wiring_changed()
 
     def show_harness_cable_context_menu(self, event):
         """Show context menu for harness cable table"""
@@ -649,7 +706,7 @@ class WiringConfigurator(tk.Toplevel):
             return
         
         for item in selected:
-            harness_key = self.harness_cable_tree.set(item, 'harness_key')
+            harness_key = self.harness_tree_items.get(item)
             
             # Parse the harness key
             parts = harness_key.split('_')
@@ -1408,6 +1465,74 @@ class WiringConfigurator(tk.Toplevel):
         result = string_current * num_strings
         
         return result
+    
+    def validate_harness_cable_sizes(self):
+        """Validate all cable sizes for each harness assembly and return warnings"""
+        warnings = []
+        
+        if not self.block or not self.block.wiring_config:
+            return warnings
+        
+        if self.block.wiring_config.wiring_type != WiringType.HARNESS:
+            return warnings
+        
+        # Check each tracker
+        for tracker_idx, pos in enumerate(self.block.tracker_positions):
+            string_count = len(pos.strings)
+            
+            # Get harness groupings for this string count
+            if (hasattr(self.block.wiring_config, 'harness_groupings') and 
+                string_count in self.block.wiring_config.harness_groupings):
+                
+                for harness_idx, harness in enumerate(self.block.wiring_config.harness_groupings[string_count]):
+                    if not harness.string_indices:
+                        continue
+                    
+                    num_strings = len(harness.string_indices)
+                    
+                    # Validate each cable type
+                    # String cable
+                    string_size = harness.string_cable_size if harness.string_cable_size else self.block.wiring_config.string_cable_size
+                    string_current = self.calculate_current_for_segment('string')
+                    string_valid = self.validate_cable_size(string_size, string_current)
+                    
+                    # Harness cable
+                    harness_size = harness.cable_size
+                    harness_current = self.calculate_current_for_segment('harness', num_strings)
+                    harness_valid = self.validate_cable_size(harness_size, harness_current)
+                    
+                    # Extender cable
+                    extender_size = harness.extender_cable_size if harness.extender_cable_size else self.block.wiring_config.extender_cable_size
+                    extender_current = self.calculate_current_for_segment('extender', num_strings)
+                    extender_valid = self.validate_cable_size(extender_size, extender_current)
+                    
+                    # Whip cable
+                    whip_size = harness.whip_cable_size if harness.whip_cable_size else self.block.wiring_config.whip_cable_size
+                    whip_current = self.calculate_current_for_segment('whip', num_strings)
+                    whip_valid = self.validate_cable_size(whip_size, whip_current)
+                    
+                    # Add warnings for any undersized cables
+                    harness_id = f"T{tracker_idx+1:02d}-H{harness_idx+1:02d}"
+                    
+                    if not string_valid:
+                        warnings.append(f"{harness_id} string cable {string_size} undersized")
+                    if not harness_valid:
+                        warnings.append(f"{harness_id} harness cable {harness_size} undersized")
+                    if not extender_valid:
+                        warnings.append(f"{harness_id} extender cable {extender_size} undersized")
+                    if not whip_valid:
+                        warnings.append(f"{harness_id} whip cable {whip_size} undersized")
+        
+        return warnings
+
+    def validate_cable_size(self, cable_size, current):
+        """Validate if a cable size is adequate for the given current"""
+        ampacity = get_ampacity_for_wire_gauge(cable_size)
+        if ampacity == 0:
+            return True  # Unknown size, assume OK
+        
+        nec_current = calculate_nec_current(current)
+        return nec_current <= ampacity
 
     def add_current_label(self, points, current, is_positive, segment_type='string'):
         """Add current label to a wire segment if enabled"""
@@ -2194,70 +2319,6 @@ class WiringConfigurator(tk.Toplevel):
             # Show the context menu
             self.whip_menu.post(event.x_root, event.y_root)
             return "break"  # Prevent default right-click behavior
-        
-    def draw_wire_with_warning(self, points, wire_gauge, current, is_positive=True):
-        """Draw a wire segment with appropriate warnings based on loading"""
-        # Get standard wire properties
-        line_thickness = self.get_line_thickness_for_wire(wire_gauge)
-        base_color = self.get_wire_color(segment_type, is_positive)
-        
-        # Draw the wire with standard color
-        line_id = self.canvas.create_line(points, fill=base_color, width=line_thickness)
-        
-        # Check loading against ampacity
-        ampacity = get_ampacity_for_wire_gauge(wire_gauge)
-        if ampacity == 0:
-            return line_id  # Unknown wire size
-        
-        # Apply NEC factors (125% of continuous current)
-        nec_current = calculate_nec_current(current)
-        
-        # Calculate load percentage
-        load_percent = (nec_current / ampacity) * 100
-        
-        # Add warning indicator based on loading
-        if load_percent >= 100:
-            indicator_color = 'red'
-            bg_color = '#ffeeee'  # Light red background
-            indicator_text = "⚠ OVERLOAD"
-        elif load_percent >= 80:
-            indicator_color = '#dd6600'  # Dark orange - more readable
-            bg_color = '#fff0e0'  # Light orange background
-            indicator_text = "⚠ WARNING"
-        elif load_percent >= 60:
-            indicator_color = '#775500'  # Dark yellow/amber - more readable
-            bg_color = '#ffffd0'  # Light yellow background
-            indicator_text = "⚠ CAUTION"
-        else:
-            return line_id  # No warning needed
-        
-        # Find midpoint for warning
-        if len(points) >= 2:
-            mid_idx = len(points) // 2
-            mid_x = (points[mid_idx-1][0] + points[mid_idx][0]) / 2
-            mid_y = (points[mid_idx-1][1] + points[mid_idx][1]) / 2
-            
-            # Create warning indicator
-            tag_name = f"wire_warning_{line_id}"
-            
-            # Create a background rectangle for better visibility
-            self.canvas.create_rectangle(
-                mid_x - 40, mid_y - 12,
-                mid_x + 40, mid_y + 12,
-                fill=bg_color, outline=indicator_color,
-                tags=tag_name
-            )
-            
-            # Create warning text
-            self.canvas.create_text(
-                mid_x, mid_y,
-                text=f"{indicator_text} ({load_percent:.0f}%)",
-                fill=indicator_color,
-                font=('Arial', 8, 'bold'),
-                tags=tag_name
-            )
-        
-        return line_id
     
     def validate_mppt_capacity(self):
         """Check if the inverter MPPT can handle the string current"""
@@ -2403,7 +2464,7 @@ class WiringConfigurator(tk.Toplevel):
             widget.destroy()
         self.wire_warnings = {}
 
-    def draw_wire_segment(self, points, wire_gauge, current, is_positive=True, segment_type="string"):
+    def draw_wire_segment(self, points, wire_gauge, current, is_positive=True, segment_type="string", context_info=None):
         """Draw a wire segment with warnings only for overloads"""
         # Get standard wire properties
         line_thickness = self.get_line_thickness_for_wire(wire_gauge)
@@ -2425,11 +2486,17 @@ class WiringConfigurator(tk.Toplevel):
         # Only add warning if it's an overload (>100%)
         if load_percent > 100:
             polarity = "positive" if is_positive else "negative"
-            self.add_wire_warning(
-                line_id,
-                f"{polarity.capitalize()} {segment_type} {wire_gauge}: {load_percent:.0f}% (OVERLOAD)",
-                'overload'
-            )
+            
+            # Use context info if provided, otherwise use default
+            if context_info:
+                warning_text = f"{context_info} {polarity} {wire_gauge}: {load_percent:.0f}% (OVERLOAD)"
+            else:
+                warning_text = f"{polarity.capitalize()} {segment_type} {wire_gauge}: {load_percent:.0f}% (OVERLOAD)"
+            
+            self.add_wire_warning(line_id, warning_text, 'overload')
+            
+            # Optional: Make the line dashed to indicate overload
+            self.canvas.itemconfig(line_id, dash=(5, 3))
         
         return line_id
     
@@ -3043,6 +3110,8 @@ class WiringConfigurator(tk.Toplevel):
         string_indices = list(range(len(pos.strings)))
         routing_mode = self.routing_mode_var.get()
         
+        # For default harness, we don't have a harness group, so cable sizes come from block config
+        self._current_harness_group = None
         self.draw_harness_for_tracker(pos, 0, string_indices, routing_mode, is_default=True)
 
     def draw_custom_harnesses(self, pos, pos_whip, neg_whip, string_count):
@@ -3068,6 +3137,9 @@ class WiringConfigurator(tk.Toplevel):
         pos_whip_point = self.get_shared_whip_point(tracker_idx, 'positive')
         neg_whip_point = self.get_shared_whip_point(tracker_idx, 'negative')
         
+        # Store current harness group for use in drawing methods
+        self._current_harness_group = harness
+
         # Step 2: Calculate and draw collection points for this harness
         routing_mode = self.routing_mode_var.get()
         pos_nodes, neg_nodes = self.calculate_and_draw_harness_nodes(pos, string_indices, harness_idx, routing_mode)
@@ -3084,6 +3156,9 @@ class WiringConfigurator(tk.Toplevel):
         
         # Step 5: Draw whip to device connections
         self.draw_harness_whip_to_device(tracker_idx, harness_idx, len(string_indices))
+
+        # Clear current harness group
+        self._current_harness_group = None
 
     def calculate_and_draw_harness_nodes(self, pos, string_indices, harness_idx, routing_mode):
         """Calculate and draw collection nodes for a harness"""
@@ -3122,11 +3197,23 @@ class WiringConfigurator(tk.Toplevel):
         extended_pos = self.extended_extender_points.get((tracker_idx, harness_idx, 'positive'), pos_extender_point)
         extended_neg = self.extended_extender_points.get((tracker_idx, harness_idx, 'negative'), neg_extender_point)
 
+        # Get harness group for cable sizes
+        harness = None
+        string_count = len(self.block.tracker_positions[tracker_idx].strings)
+        if (hasattr(self.block.wiring_config, 'harness_groupings') and 
+            string_count in self.block.wiring_config.harness_groupings and
+            harness_idx < len(self.block.wiring_config.harness_groupings[string_count])):
+            harness = self.block.wiring_config.harness_groupings[string_count][harness_idx]
+
         if extended_pos and current_pos_whip:
+            self._current_harness_group = harness
             self.draw_extender_route(extended_pos, current_pos_whip, num_strings, True, tracker_idx, harness_idx)
+            self._current_harness_group = None
 
         if extended_neg and current_neg_whip:
+            self._current_harness_group = harness
             self.draw_extender_route(extended_neg, current_neg_whip, num_strings, False, tracker_idx, harness_idx)
+            self._current_harness_group = None
 
     def draw_harness_whip_to_device(self, tracker_idx, harness_idx, num_strings):
         """Draw whip to device connections for a harness"""
@@ -3135,11 +3222,23 @@ class WiringConfigurator(tk.Toplevel):
         current_pos_whip = self.get_whip_position(str(tracker_idx), 'positive', harness_idx)
         current_neg_whip = self.get_whip_position(str(tracker_idx), 'negative', harness_idx)
 
+        # Get harness group for cable sizes
+        harness = None
+        string_count = len(self.block.tracker_positions[tracker_idx].strings)
+        if (hasattr(self.block.wiring_config, 'harness_groupings') and 
+            string_count in self.block.wiring_config.harness_groupings and
+            harness_idx < len(self.block.wiring_config.harness_groupings[string_count])):
+            harness = self.block.wiring_config.harness_groupings[string_count][harness_idx]
+
         if current_pos_whip and pos_dest:
+            self._current_harness_group = harness
             self.draw_whip_to_device_connection(current_pos_whip, pos_dest, num_strings, True, harness_idx, tracker_idx)
+            self._current_harness_group = None
 
         if current_neg_whip and neg_dest:
+            self._current_harness_group = harness
             self.draw_whip_to_device_connection(current_neg_whip, neg_dest, num_strings, False, harness_idx, tracker_idx)
+            self._current_harness_group = None
 
     def draw_auto_harnesses_for_unconfigured(self, pos, pos_whip, neg_whip, unconfigured_indices):
         """Automatically draw harnesses for unconfigured strings"""
@@ -3257,9 +3356,16 @@ class WiringConfigurator(tk.Toplevel):
             is_positive, harness_idx
         )
 
+        # Get cable size from harness group if available
+        cable_size = self.whip_cable_size_var.get()  # Default
+        if hasattr(self, '_current_harness_group') and self._current_harness_group:
+            harness_cable_size = getattr(self._current_harness_group, 'whip_cable_size', '')
+            if harness_cable_size:
+                cable_size = harness_cable_size
+
         current = self.calculate_current_for_segment('whip', num_strings)
         context_info = f"T{tracker_idx+1}-H{harness_idx+1} Whip"
-        self.draw_wire_route(route, self.whip_cable_size_var.get(), current, is_positive, "whip", context_info)
+        self.draw_wire_route(route, cable_size, current, is_positive, "whip", context_info)
                 
     def apply_quick_pattern(self, pattern_type):
         """Apply a predefined harness pattern"""
@@ -3489,7 +3595,7 @@ class WiringConfigurator(tk.Toplevel):
         
     def calculate_recommended_fuse_size(self, string_indices):
         """Calculate recommended fuse size based on NEC (1.25 × Isc)"""
-        if not self.block.tracker_template or not self.block.tracker_template.module_spec:
+        if not self.block or not self.block.tracker_template or not self.block.tracker_template.module_spec:
             return 15  # Default if no module spec available
         
         # Get Isc from module spec
@@ -3604,11 +3710,18 @@ class WiringConfigurator(tk.Toplevel):
             (source_x, source_y), harness_node, routing_mode
         )
         
+        # Get cable size from harness group if available
+        cable_size = self.string_cable_size_var.get()  # Default
+        if hasattr(self, '_current_harness_group') and self._current_harness_group:
+            harness_cable_size = getattr(self._current_harness_group, 'string_cable_size', '')
+            if harness_cable_size:
+                cable_size = harness_cable_size
+
         # Draw the route
         current = self.calculate_current_for_segment('string')
         tracker_idx = self.block.tracker_positions.index(pos)
         context_info = f"T{tracker_idx+1}-S{string_idx+1} String"
-        return self.draw_wire_route(route, self.string_cable_size_var.get(), 
+        return self.draw_wire_route(route, cable_size, 
                                 current, is_positive, "string", context_info)
     
     def needs_extender(self, tracker_idx, harness_idx=None):
@@ -4219,7 +4332,7 @@ class WiringConfigurator(tk.Toplevel):
             self.saved_routes_for_block[route_id] = route.copy()
         
         # Draw the wire segment
-        line_id = self.draw_wire_segment(canvas_points, wire_gauge, current, is_positive, segment_type)
+        line_id = self.draw_wire_segment(canvas_points, wire_gauge, current, is_positive, segment_type, context_info)
         
         # Add current label if enabled
         if self.show_current_labels_var.get():

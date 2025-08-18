@@ -405,6 +405,44 @@ def calculate_breaker_size(current_amps: float) -> int:
             return size
     return STANDARD_BREAKER_SIZES[-1]
 
+def validate_cable_for_current(cable_size: str, current: float, nec_factor: float = 1.25) -> bool:
+    """
+    Validate if a cable size is adequate for the given current.
+    
+    Args:
+        cable_size: AWG cable size string
+        current: Current in amperes
+        nec_factor: NEC safety factor (default 1.25)
+        
+    Returns:
+        bool: True if cable is adequately sized
+    """
+    ampacity = get_ampacity_for_wire_gauge(cable_size)
+    if ampacity == 0:
+        return True  # Unknown size, assume OK
+    
+    nec_current = current * nec_factor
+    return nec_current <= ampacity
+
+def get_cable_load_percentage(cable_size: str, current: float, nec_factor: float = 1.25) -> float:
+    """
+    Calculate the load percentage for a cable.
+    
+    Args:
+        cable_size: AWG cable size string
+        current: Current in amperes
+        nec_factor: NEC safety factor (default 1.25)
+        
+    Returns:
+        float: Load percentage (0-100+)
+    """
+    ampacity = get_ampacity_for_wire_gauge(cable_size)
+    if ampacity == 0:
+        return 0  # Unknown size
+    
+    nec_current = current * nec_factor
+    return (nec_current / ampacity) * 100
+
 def natural_sort_key(text):
     """
     Create a key for natural sorting that handles various formats including:
