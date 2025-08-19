@@ -488,13 +488,16 @@ class WiringConfigurator(tk.Toplevel):
                 extender_size = "8 AWG"
                 whip_size = "8 AWG"
             
-            # Get fuse size for this harness
+            # Get fuse size and quantity for this harness
             fuse_size = "N/A"  # Default for 1-string harnesses
-            if harness and string_count > 1:
-                fuse_size = f"{harness.fuse_rating_amps}A"
-            elif string_count > 1:
-                # Multi-string harness should have fuse
-                fuse_size = "15A"  # Default fuse size
+            if string_count > 1:
+                if harness and hasattr(harness, 'fuse_rating_amps'):
+                    # Show fuse rating and quantity (one per string)
+                    fuse_size = f"{harness.fuse_rating_amps}A ({string_count}x)"
+                else:
+                    # Calculate default based on Imp
+                    default_fuse = self.calculate_recommended_fuse_size(list(range(string_count)))
+                    fuse_size = f"{default_fuse}A ({string_count}x)"
             
             # Calculate recommended size
             recommended = self.calculate_recommended_harness_size(string_count)
@@ -659,11 +662,11 @@ class WiringConfigurator(tk.Toplevel):
         fuse_var = tk.StringVar(value=current_fuse)
         combo = ttk.Combobox(self.harness_cable_tree, textvariable=fuse_var, state='readonly', width=10)
         
-        # Calculate minimum fuse size based on module Isc
+        # Calculate minimum fuse size based on module Imp
         if hasattr(self.block, 'tracker_template') and self.block.tracker_template.module_spec:
-            module_isc = self.block.tracker_template.module_spec.isc
-            min_fuse = module_isc * string_count * 1.25  # NEC requirement
-            combo['values'] = [str(r) for r in self.FUSE_RATINGS if r >= min_fuse]
+            module_imp = self.block.tracker_template.module_spec.imp
+            # Find next standard fuse size above Imp
+            combo['values'] = [str(r) for r in self.FUSE_RATINGS if r > module_imp]
         else:
             combo['values'] = [str(r) for r in self.FUSE_RATINGS]
         
@@ -1154,7 +1157,8 @@ class WiringConfigurator(tk.Toplevel):
             self.draw_wiring_layout()
         
     def apply_configuration(self):
-        """Apply wiring configuration to block"""
+        """Apply the current wiring configuration to the block"""
+        print("\n=== APPLYING WIRING CONFIGURATION ===")
         if not self.block:
             tk.messagebox.showerror("Error", "No block selected")
             self.destroy()
@@ -3424,22 +3428,18 @@ class WiringConfigurator(tk.Toplevel):
             del self.block.wiring_config.harness_groupings[string_count]
         
     def calculate_recommended_fuse_size(self, string_indices):
-        """Calculate recommended fuse size based on NEC (1.25 × Isc)"""
+        """Calculate recommended fuse size based on module Imp"""
         if not self.block or not self.block.tracker_template or not self.block.tracker_template.module_spec:
-            return 15  # Default if no module spec available
+            return 15  # Default
         
-        # Get Isc from module spec
-        isc = self.block.tracker_template.module_spec.isc
+        module_imp = self.block.tracker_template.module_spec.imp
         
-        # Number of strings in this harness
-        num_strings = len(string_indices)
+        # Find the next standard fuse size above Imp
+        for fuse_size in self.FUSE_RATINGS:
+            if fuse_size > module_imp:
+                return fuse_size
         
-        # Total current for the harness
-        total_current = num_strings * isc
-        
-        # Use our cable sizing service to calculate fuse size
-        from ..utils.cable_sizing import calculate_fuse_size as calc_fuse_size
-        return calc_fuse_size(total_current * 1.25)  # Apply NEC factor
+        return self.FUSE_RATINGS[-1]  # Return largest if none found
     
     def get_current_routes(self):
         """Get routes based on current routing mode (realistic or conceptual)"""

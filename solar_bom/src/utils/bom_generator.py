@@ -66,41 +66,48 @@ class BOMGenerator:
         
         return "8 AWG"  # Default fallback
     
-    def _get_cable_size_for_segment(self, block: BlockConfig, segment: Dict, cable_type: str) -> str:
+    def _get_cable_size_for_segment(self, block: BlockConfig, segment, cable_type: str) -> str:
         """
-        Determine the cable size for a specific wire segment based on its route
+        Get cable size for a specific segment, determining which harness it belongs to
         
         Args:
             block: The block configuration
-            segment: The wire segment with 'route' information
+            segment: The segment (can be a float length or dict with route info)
             cable_type: Type of cable ('string', 'extender', 'whip', or 'harness')
             
         Returns:
-            The cable size string for this segment
+            The cable size string
         """
-        # For non-harness configurations, use block-level sizes
-        if block.wiring_config.wiring_type != WiringType.HARNESS:
-            return getattr(block.wiring_config, f'{cable_type}_cable_size', "8 AWG")
+        # If segment is just a float (length), we can't determine specific harness
+        # Use block-level defaults
+        if isinstance(segment, (int, float)):
+            if cable_type == 'string':
+                return block.wiring_config.string_cable_size
+            elif cable_type == 'extender':
+                return block.wiring_config.extender_cable_size
+            elif cable_type == 'whip':
+                return block.wiring_config.whip_cable_size
+            elif cable_type == 'harness':
+                return block.wiring_config.harness_cable_size
+            return "8 AWG"
         
-        # Try to determine which harness this segment belongs to
-        # This is a simplified approach - in practice, you might need more sophisticated matching
+        # Original logic for when segment is a dictionary
         if 'route' in segment and len(segment['route']) > 0:
-            # Get the starting point of the route
-            start_x, start_y = segment['route'][0]
+            # Try to determine which harness this segment belongs to
+            # This is a simplified approach - in reality, you'd need to match
+            # the route to specific harness configurations
             
-            # Find which tracker and harness this belongs to
-            for tracker_idx, pos in enumerate(block.tracker_positions):
-                string_count = len(pos.strings)
-                
-                if string_count in block.wiring_config.harness_groupings:
-                    for harness_idx, harness in enumerate(block.wiring_config.harness_groupings[string_count]):
-                        # Check if this segment's position matches this harness
-                        # This is a simplified check - you may need to enhance this
-                        # based on your actual route structure
-                        return self._get_cable_size(harness, cable_type, block)
+            # For now, return block-level defaults
+            if cable_type == 'string':
+                return block.wiring_config.string_cable_size
+            elif cable_type == 'extender':
+                return block.wiring_config.extender_cable_size
+            elif cable_type == 'whip':
+                return block.wiring_config.whip_cable_size
+            elif cable_type == 'harness':
+                return block.wiring_config.harness_cable_size
         
-        # Default fallback
-        return getattr(block.wiring_config, f'{cable_type}_cable_size', "8 AWG")
+        return "8 AWG"  # Default fallback
     
     def calculate_cable_quantities(self) -> Dict[str, Dict[str, Any]]:
         """
@@ -482,9 +489,9 @@ class BOMGenerator:
         return df
     
     def get_component_part_number(self, item):
-        """Get part number for a summary data item"""
-        component_type = item['Component Type']
-        description = item['Description']
+        """Get part number for a component based on its type and properties"""
+        component_type = item.get('Component Type', '')
+        description = item.get('Description', '')
         
         if 'Harness' in component_type:                
             # Extract info from description to find harness part number
@@ -523,17 +530,14 @@ class BOMGenerator:
                 rating = int(rating_match.group(1))
                 return self.get_fuse_part_number_by_rating(rating)
         
-        # Handle whip cable segments
-        elif 'Whip Cable Segment' in component_type:
-            return self.get_whip_segment_part_number_from_item(item)
-        
-        # Handle extender cable segments  
-        elif 'Extender Cable Segment' in component_type:
-            return self.get_extender_segment_part_number_from_item(item)
-        
-        # Handle string cable segments (use extender part numbers)
-        elif 'String Cable Segment' in component_type:
-            return self.get_extender_segment_part_number_from_item(item)
+        # Handle cable segments - check for "Segment" and cable type
+        elif 'Segment' in component_type:
+            if 'Whip Cable' in component_type:
+                return self.get_whip_segment_part_number_from_item(item)
+            elif 'Extender Cable' in component_type:
+                return self.get_extender_segment_part_number_from_item(item)
+            elif 'String Cable' in component_type:
+                return self.get_extender_segment_part_number_from_item(item)
         
         return "N/A"
     
@@ -1428,8 +1432,6 @@ class BOMGenerator:
             if target_spacing is None:
                 target_spacing = max(available_spacings)  # Use largest if calculated is bigger than all
             
-            # print(f"Calculated spacing: {calculated_spacing_ft}ft, Target spacing: {target_spacing}ft, Strings: {num_strings}, Polarity: {polarity}")
-            
             # Search for matching harnesses
             for part_number, spec in self.harness_library.items():
                 # Skip comment entries
@@ -1485,7 +1487,6 @@ class BOMGenerator:
                     spec.get('length_ft') == target_length):
                     return part_number
             
-            print(f"No extender found for {wire_gauge}, {polarity}, {target_length}ft")
             return "N/A"
             
         except Exception as e:
@@ -1514,8 +1515,7 @@ class BOMGenerator:
                     spec.get('polarity') == polarity and
                     spec.get('length_ft') == target_length):
                     return part_number
-            
-            print(f"No whip found for {wire_gauge}, {polarity}, {target_length}ft")
+
             return "N/A"
             
         except Exception as e:
@@ -1549,9 +1549,8 @@ class BOMGenerator:
             print(f"Error getting fuse part number: {e}")
             return f"FUSE-{fuse_rating_amps}A-ERROR"
 
-    def _add_segment_analysis(self, block_quantities, segments, cable_size, 
-                   prefix, length_increment=5):
-        """Add segment analysis for a specific cable type"""
+    def _add_segment_analysis(self, quantities, segments, cable_size, cable_type_name, round_to=5):
+        """Add individual cable segments to BOM"""
         
         if not segments:
             return
@@ -1560,7 +1559,7 @@ class BOMGenerator:
         segments = [s * self.CABLE_WASTE_FACTOR for s in segments]
         
         # Always use 5ft increment for whip cables, otherwise use the passed-in increment
-        actual_increment = 5 if "Whip Cable" in prefix else length_increment
+        actual_increment = 5 if "Whip Cable" in cable_type_name else round_to
         
         # Round up to nearest increment, with minimum of 10ft
         rounded_segments = []
@@ -1579,25 +1578,25 @@ class BOMGenerator:
             
         # Add segment counts to quantities
         for length, count in segment_counts.items():
-            segment_key = f"{prefix} Segment {int(length)}ft ({cable_size})"
+            segment_key = f"{cable_type_name} Segment {int(length)}ft ({cable_size})"
             
             # Determine category based on cable type
-            if "Extender Cable" in prefix:
+            if "Extender Cable" in cable_type_name:
                 category = 'Extender Cable Segments'
             else:
                 category = 'eBOS Segments'
             
             # Generate proper description based on cable type
-            if "Whip Cable" in prefix:
+            if "Whip Cable" in cable_type_name:
                 base_desc = self.get_whip_description_format(cable_size)
                 description = base_desc.format(length=int(length))
-            elif "Extender Cable" in prefix:
+            elif "Extender Cable" in cable_type_name:
                 base_desc = self.get_extender_description_format(cable_size)
                 description = base_desc.format(length=int(length))
             else:
-                description = f"{int(length)}ft {prefix} Segment ({cable_size})"
+                description = f"{int(length)}ft {cable_type_name} Segment ({cable_size})"
 
-            block_quantities[segment_key] = {
+            quantities[segment_key] = {
                 'description': description,
                 'quantity': count,
                 'unit': 'segments',
