@@ -277,6 +277,8 @@ class BOMManager(ttk.Frame):
                 
             # Get part number from the DataFrame (already calculated by BOM generator)
             part_number = row.get('Part Number', 'N/A')
+            print(f"DEBUG: Row data: {row}")
+            print(f"DEBUG: Component Type: {row['Component Type']}, Part Number: {part_number}")
 
             # Check if this is a 1-string harness
             is_1_string_harness = '1-String Harness' in row['Component Type']
@@ -663,9 +665,11 @@ class BOMManager(ttk.Frame):
             trunk_cable_size = getattr(first_block.wiring_config, 'harness_cable_size', '8 AWG')
 
             # Find matching harness
-            return bom_generator.find_matching_harness_part_number(
+            part_number = bom_generator.find_matching_harness_part_number(
                 num_strings, polarity, string_spacing_ft, trunk_cable_size
             )
+            print(f"DEBUG: BOM Manager got harness part number: {part_number}")
+            return part_number
             
         except Exception as e:
             print(f"Error getting harness part number: {e}")

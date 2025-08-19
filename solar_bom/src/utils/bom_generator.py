@@ -559,6 +559,13 @@ class BOMGenerator:
         summary_data = sorted(summary_data, key=sort_key)
 
         # Add part numbers to summary data
+        print(f"\nDEBUG: Adding part numbers to {len(summary_data)} items")
+        for item in summary_data:
+            print(f"DEBUG: Processing item: {item['Component Type']}")
+            item['Part Number'] = self.get_component_part_number(item)
+            print(f"DEBUG: Got part number: {item['Part Number']}")
+
+        # Add part numbers to summary data
         for item in summary_data:
             item['Part Number'] = self.get_component_part_number(item)
 
@@ -582,34 +589,59 @@ class BOMGenerator:
         component_type = item.get('Component Type', '')
         description = item.get('Description', '')
         
+        print(f"\nDEBUG: get_component_part_number called for: {component_type}")
+        print(f"DEBUG: Description: {description}")
+        
         if 'Harness' in component_type:                
             # Extract info from description to find harness part number
             polarity = 'positive' if 'Positive' in description else 'negative'
             
-            # Extract string count
+            # Extract string count - handle both numeric and word forms
             import re
-            string_match = re.search(r'(\d+)-String', description)
+            
+            # First try numeric pattern (e.g., "1 String" or "2-String")
+            string_match = re.search(r'(\d+)[\s-]String', description)
             if string_match:
                 num_strings = int(string_match.group(1))
+            else:
+                # Try word forms
+                if 'Two String' in description:
+                    num_strings = 2
+                elif 'Three String' in description:
+                    num_strings = 3
+                elif 'One String' in description or '1 String' in description:
+                    num_strings = 1
+                else:
+                    return "N/A"
+            
+            # Get module specs from first block
+            if self.blocks:
+                first_block = next(iter(self.blocks.values()))
                 
-                # Get module specs from first block
-                if self.blocks:
-                    first_block = next(iter(self.blocks.values()))
-                    if first_block.tracker_template and first_block.tracker_template.module_spec:
-                        module_spec = first_block.tracker_template.module_spec
-                        modules_per_string = first_block.tracker_template.modules_per_string
-                        module_spacing_m = first_block.tracker_template.module_spacing_m
-                        
-                        string_spacing_ft = self.calculate_string_spacing_ft(
-                            modules_per_string, module_spec.width_mm, module_spacing_m
-                        )
-                        
-                        # Get trunk cable size from wiring config
-                        trunk_cable_size = getattr(first_block.wiring_config, 'harness_cable_size', '8 AWG')
-                        
-                        return self.find_matching_harness_part_number(
-                            num_strings, polarity, string_spacing_ft, trunk_cable_size
-                        )
+                # Extract trunk cable size from description (e.g., "10AWG Drops w/8AWG Trunk")
+                trunk_match = re.search(r'w/(\d+AWG)\s+Trunk', description)
+                if trunk_match:
+                    trunk_cable_size = trunk_match.group(1).replace('AWG', ' AWG')  # Add space if missing
+                else:
+                    # Fall back to block default
+                    trunk_cable_size = getattr(first_block.wiring_config, 'harness_cable_size', '8 AWG')
+                
+                if first_block.tracker_template and first_block.tracker_template.module_spec:
+                    module_spec = first_block.tracker_template.module_spec
+                    modules_per_string = first_block.tracker_template.modules_per_string
+                    module_spacing_m = first_block.tracker_template.module_spacing_m
+                    
+                    string_spacing_ft = self.calculate_string_spacing_ft(
+                        modules_per_string, module_spec.width_mm, module_spacing_m
+                    )
+                    
+                    part_number = self.find_matching_harness_part_number(
+                        num_strings, polarity, string_spacing_ft, trunk_cable_size
+                    )
+                    print(f"DEBUG: Got harness part number from find_matching: {part_number}")
+                    return part_number
+            
+            return "N/A"
         
         elif 'Fuse' in component_type:
             # Extract fuse rating from description
@@ -1525,6 +1557,7 @@ class BOMGenerator:
     def find_matching_harness_part_number(self, num_strings, polarity, calculated_spacing_ft, trunk_cable_size=None):
         """Find matching harness part number from library"""
         try:
+            print(f"\nDEBUG: Looking for harness - strings: {num_strings}, polarity: {polarity}, spacing: {calculated_spacing_ft}ft, trunk: {trunk_cable_size}")
             matches = []
             
             # Available harness spacing options based on your library
@@ -1540,21 +1573,29 @@ class BOMGenerator:
             
             if target_spacing is None:
                 target_spacing = max(available_spacings)  # Use largest if calculated is bigger than all
+                print(f"DEBUG: Calculated spacing: {calculated_spacing_ft}, using target: {target_spacing}")
             
             # Search for matching harnesses
             for part_number, spec in self.harness_library.items():
                 # Skip comment entries
                 if part_number.startswith('_comment_'):
                     continue
+                
+                # Debug print
+                if spec.get('num_strings') == num_strings and spec.get('polarity') == polarity:
+                    print(f"DEBUG: Checking {part_number} - spacing: {spec.get('string_spacing_ft')}, trunk: {spec.get('trunk_cable_size', spec.get('trunk_wire_gauge'))}")
                     
                 # Check basic criteria
                 if (spec.get('num_strings') == num_strings and 
                     spec.get('polarity') == polarity and
-                    abs(spec.get('string_spacing_ft', 0) - target_spacing) < 0.1):  # Allow small tolerance
+                    abs(spec.get('string_spacing_ft', 0) - target_spacing) < 0.1):
+                    
+                    print(f"DEBUG: Potential match {part_number}, checking trunk size")
                     
                     # If trunk cable size is specified, filter by it
                     if trunk_cable_size:
                         spec_trunk_size = spec.get('trunk_cable_size', spec.get('trunk_wire_gauge'))
+                        print(f"DEBUG: Spec trunk: {spec_trunk_size} vs requested: {trunk_cable_size}")
                         if spec_trunk_size != trunk_cable_size:
                             continue
                             
@@ -1562,11 +1603,14 @@ class BOMGenerator:
             
             if matches:
                 if len(matches) == 1:
+                    print(f"DEBUG: Returning single match: {matches[0]}")
                     return matches[0]
                 else:
-                    return " or ".join(sorted(matches))  # Sort for consistent output
+                    result = " or ".join(sorted(matches))
+                    print(f"DEBUG: Returning multiple matches: {result}")
+                    return result
             else:
-                # print(f"No matches found for {num_strings} strings, {polarity}, {target_spacing}ft")
+                print(f"DEBUG: No matches found, returning N/A")
                 return "N/A"
                 
         except Exception as e:
