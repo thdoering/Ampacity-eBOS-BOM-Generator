@@ -7,6 +7,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from ..models.device import HarnessConnection, CombinerBoxConfig
+import re
 
 
 class BOMGenerator:
@@ -44,70 +45,123 @@ class BOMGenerator:
             The cable size string
         """
         if harness_group:
-            # Try to get harness-specific size first
-            if cable_type == 'string' and harness_group.string_cable_size:
-                return harness_group.string_cable_size
-            elif cable_type == 'extender' and harness_group.extender_cable_size:
-                return harness_group.extender_cable_size
-            elif cable_type == 'whip' and harness_group.whip_cable_size:
-                return harness_group.whip_cable_size
-            elif cable_type == 'harness':
-                return harness_group.cable_size  # This one doesn't fall back
+            # For harness cable, always use the harness group's cable_size
+            if cable_type == 'harness':
+                return harness_group.cable_size
+                
+            # For other cable types, check if harness has a specific size
+            # Note: We check hasattr and the value is not None and not empty string
+            if cable_type == 'string':
+                if hasattr(harness_group, 'string_cable_size') and harness_group.string_cable_size:
+                    return harness_group.string_cable_size
+            elif cable_type == 'extender':
+                if hasattr(harness_group, 'extender_cable_size') and harness_group.extender_cable_size:
+                    return harness_group.extender_cable_size
+            elif cable_type == 'whip':
+                if hasattr(harness_group, 'whip_cable_size') and harness_group.whip_cable_size:
+                    return harness_group.whip_cable_size
         
         # Fall back to block-level wiring config
         if cable_type == 'string':
-            return block.wiring_config.string_cable_size
+            return getattr(block.wiring_config, 'string_cable_size', "10 AWG")
         elif cable_type == 'extender':
-            return block.wiring_config.extender_cable_size
+            return getattr(block.wiring_config, 'extender_cable_size', "8 AWG")
         elif cable_type == 'whip':
-            return block.wiring_config.whip_cable_size
+            return getattr(block.wiring_config, 'whip_cable_size', "8 AWG")
         elif cable_type == 'harness':
-            return block.wiring_config.harness_cable_size
+            # This shouldn't happen, but provide a default
+            return "8 AWG"
         
         return "8 AWG"  # Default fallback
+    
+    def _parse_route_harness_info(self, route_id: str) -> tuple:
+        """
+        Parse route_id to extract tracker and harness indices
+        
+        Args:
+            route_id: Route identifier (e.g., "pos_extender_0_h1", "neg_whip_t2-h1_whip")
+            
+        Returns:
+            tuple: (tracker_idx, harness_idx) or (None, None) if not found
+        """
+        try:
+            tracker_idx = None
+            harness_idx = None
+            
+            # Handle format like "pos_whip_t1-h1_whip"
+            if '_t' in route_id and '-h' in route_id:
+                # Extract the tX-hY part
+                import re
+                match = re.search(r't(\d+)-h(\d+)', route_id)
+                if match:
+                    tracker_idx = int(match.group(1)) - 1  # Convert to 0-based index
+                    harness_idx = int(match.group(2)) - 1  # Convert to 0-based index
+                    return tracker_idx, harness_idx
+            
+            # Handle old format like "pos_extender_0_h1"
+            parts = route_id.split('_')
+            
+            # Look for tracker index (usually after cable type)
+            for i, part in enumerate(parts):
+                if part.isdigit():
+                    tracker_idx = int(part)
+                    # Check if next part has harness index
+                    if i + 1 < len(parts) and parts[i + 1].startswith('h'):
+                        harness_idx = int(parts[i + 1][1:])
+                    break
+            
+            return tracker_idx, harness_idx
+        except (ValueError, IndexError) as e:
+            print(f"DEBUG: Parse error: {e}")
+            return None, None
     
     def _get_cable_size_for_segment(self, block: BlockConfig, segment, cable_type: str) -> str:
         """
         Get cable size for a specific segment, determining which harness it belongs to
-        
-        Args:
-            block: The block configuration
-            segment: The segment (can be a float length or dict with route info)
-            cable_type: Type of cable ('string', 'extender', 'whip', or 'harness')
-            
-        Returns:
-            The cable size string
         """
-        # If segment is just a float (length), we can't determine specific harness
-        # Use block-level defaults
-        if isinstance(segment, (int, float)):
-            if cable_type == 'string':
-                return block.wiring_config.string_cable_size
-            elif cable_type == 'extender':
-                return block.wiring_config.extender_cable_size
-            elif cable_type == 'whip':
-                return block.wiring_config.whip_cable_size
-            elif cable_type == 'harness':
-                return block.wiring_config.harness_cable_size
-            return "8 AWG"
+        block_name = getattr(block, 'block_id', 'Unknown Block')
         
-        # Original logic for when segment is a dictionary
-        if 'route' in segment and len(segment['route']) > 0:
-            # Try to determine which harness this segment belongs to
-            # This is a simplified approach - in reality, you'd need to match
-            # the route to specific harness configurations
+        # Handle new dict format with route information
+        if isinstance(segment, dict) and 'route_id' in segment:
+            route_id = segment['route_id']
+            tracker_idx, harness_idx = self._parse_route_harness_info(route_id)
             
-            # For now, return block-level defaults
-            if cable_type == 'string':
-                return block.wiring_config.string_cable_size
-            elif cable_type == 'extender':
-                return block.wiring_config.extender_cable_size
-            elif cable_type == 'whip':
-                return block.wiring_config.whip_cable_size
-            elif cable_type == 'harness':
-                return block.wiring_config.harness_cable_size
+            # If we found harness info, try to get harness-specific size
+            if tracker_idx is not None and harness_idx is not None:
+                # Get the tracker to find string count
+                if tracker_idx < len(block.tracker_positions):
+                    pos = block.tracker_positions[tracker_idx]
+                    string_count = len(pos.strings)
+                    
+                    # Look up the harness group
+                    if (hasattr(block.wiring_config, 'harness_groupings') and
+                        string_count in block.wiring_config.harness_groupings):
+                        harness_groups = block.wiring_config.harness_groupings[string_count]
+                        if harness_idx < len(harness_groups):
+                            harness_group = harness_groups[harness_idx]                            
+                            # Get cable size from harness group
+                            if cable_type == 'string' and harness_group.string_cable_size:
+                                return harness_group.string_cable_size
+                            elif cable_type == 'extender' and harness_group.extender_cable_size:
+                                return harness_group.extender_cable_size
+                            elif cable_type == 'whip' and harness_group.whip_cable_size:
+                                return harness_group.whip_cable_size
+                            elif cable_type == 'harness':
+                                return harness_group.cable_size
         
-        return "8 AWG"  # Default fallback
+        # Fall back to block-level defaults
+        if cable_type == 'string':
+            size = block.wiring_config.string_cable_size
+        elif cable_type == 'extender':
+            size = block.wiring_config.extender_cable_size
+        elif cable_type == 'whip':
+            size = block.wiring_config.whip_cable_size
+        elif cable_type == 'harness':
+            size = block.wiring_config.harness_cable_size
+        else:
+            size = "8 AWG"
+        
+        return size
     
     def calculate_cable_quantities(self) -> Dict[str, Dict[str, Any]]:
         """
@@ -132,72 +186,67 @@ class BOMGenerator:
                         tracker_counts[key] = 0
                     tracker_counts[key] += 1
             
-            # Add trackers to quantities (as structural components)
+            # Add tracker counts to quantities
             for tracker_type, count in tracker_counts.items():
                 block_quantities[tracker_type] = {
-                    'description': f"{tracker_type}",
+                    'description': tracker_type,
                     'quantity': count,
                     'unit': 'units',
                     'category': 'Structural'
                 }
             
-            # If block has no wiring config, add a note and store the block with just trackers
-            if not block.wiring_config:
-                block_quantities["No Wiring Configuration"] = {
-                    'description': f"Block requires wiring configuration",
-                    'quantity': 1,
-                    'unit': 'warning',
-                    'category': 'Warnings'
-                }
-                quantities[block_id] = block_quantities
-                continue
-                
+            # Calculate cable lengths
             cable_lengths = block.calculate_cable_lengths()
             
+            if not block.wiring_config:
+                quantities[block_id] = block_quantities
+                continue
+            
             if block.wiring_config.wiring_type == WiringType.HOMERUN:
-                # For homerun, we track string cable length - split by polarity
+                # Split string cable by polarity
+                string_cable_size = getattr(block.wiring_config, 'string_cable_size', '10 AWG')
+                
                 if 'string_cable_positive' in cable_lengths:
-                    length = cable_lengths['string_cable_positive'] * self.CABLE_WASTE_FACTOR
-                    # Convert from meters to feet (1m = 3.28084ft)
-                    length_feet = round(length * 3.28084, 1)
+                    string_length_feet = round(cable_lengths['string_cable_positive'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
                     
-                    # Get the cable size for more specific description
-                    cable_size = block.wiring_config.string_cable_size
-                    
-                    block_quantities[f'Positive String Wire ({cable_size})'] = {
-                        'description': f'DC Positive String Wire {cable_size}',
-                        'quantity': length_feet,
+                    block_quantities[f'Positive String Cable ({string_cable_size})'] = {
+                        'description': f'DC Positive String Cable {string_cable_size}',
+                        'quantity': string_length_feet,
                         'unit': 'feet',
                         'category': 'eBOS'
                     }
                 
                 if 'string_cable_negative' in cable_lengths:
-                    length = cable_lengths['string_cable_negative'] * self.CABLE_WASTE_FACTOR
-                    # Convert from meters to feet (1m = 3.28084ft)
-                    length_feet = round(length * 3.28084, 1)
+                    string_length_feet = round(cable_lengths['string_cable_negative'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
                     
-                    cable_size = block.wiring_config.string_cable_size
-                    
-                    block_quantities[f'Negative String Wire ({cable_size})'] = {
-                        'description': f'DC Negative String Wire {cable_size}',
-                        'quantity': length_feet,
+                    block_quantities[f'Negative String Cable ({string_cable_size})'] = {
+                        'description': f'DC Negative String Cable {string_cable_size}',
+                        'quantity': string_length_feet,
                         'unit': 'feet',
                         'category': 'eBOS'
                     }
                     
                 # Get whip cable size - check if we have harness-specific sizes
-                # For harness configurations, we need to check all harness groups
-                whip_cable_sizes = set()
+                whip_cable_sizes = {}  # Change to dict to track which harnesses use which size
                 if hasattr(block.wiring_config, 'harness_groupings'):
                     for string_count, harness_groups in block.wiring_config.harness_groupings.items():
-                        for hg in harness_groups:
+                        for hg_idx, hg in enumerate(harness_groups):
                             whip_size = self._get_cable_size(hg, 'whip', block)
-                            whip_cable_sizes.add(whip_size)
-                
-                # If all harnesses use the same whip size, or we have no harness groups
-                if len(whip_cable_sizes) <= 1:
-                    whip_cable_size = whip_cable_sizes.pop() if whip_cable_sizes else getattr(block.wiring_config, 'whip_cable_size', '8 AWG')
+                            key = f"{string_count}_{hg_idx}"
+                            whip_cable_sizes[key] = whip_size
+
+                # Check if all harnesses use the same whip size
+                unique_whip_sizes = set(whip_cable_sizes.values())
+                if len(unique_whip_sizes) == 1:
+                    whip_cable_size = unique_whip_sizes.pop()
+                elif len(unique_whip_sizes) == 0:
+                    whip_cable_size = getattr(block.wiring_config, 'whip_cable_size', '8 AWG')
+                else:
+                    # Multiple sizes - this will be handled in segment analysis
+                    whip_cable_size = None
                     
+                # Only add whip cables if we have a single size for all harnesses
+                if whip_cable_size:
                     # Split whip cable by polarity
                     if 'whip_cable_positive' in cable_lengths:
                         whip_length_feet = round(cable_lengths['whip_cable_positive'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
@@ -209,32 +258,25 @@ class BOMGenerator:
                             'category': 'eBOS'
                         }
                 
-                if 'whip_cable_negative' in cable_lengths:
-                    whip_length_feet = round(cable_lengths['whip_cable_negative'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
+                    if 'whip_cable_negative' in cable_lengths:
+                        whip_length_feet = round(cable_lengths['whip_cable_negative'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
 
-                    block_quantities[f'Negative Whip Cable ({whip_cable_size})'] = {
-                        'description': self.get_whip_description_format(whip_cable_size).format(length="TOTAL"),
-                        'quantity': whip_length_feet,
-                        'unit': 'feet',
-                        'category': 'eBOS'
-                    }
-                    
+                        block_quantities[f'Negative Whip Cable ({whip_cable_size})'] = {
+                            'description': self.get_whip_description_format(whip_cable_size).format(length="TOTAL"),
+                            'quantity': whip_length_feet,
+                            'unit': 'feet',
+                            'category': 'eBOS'
+                        }
+                        
             else:  # HARNESS configuration
                 # Add harnesses by number of strings they connect - split by polarity
-                harness_counts = self._count_harnesses_by_size(block)
+                harness_info = self._count_harnesses_by_size(block)
                 
                 # Add each harness type, separately for positive and negative
-                for string_count, count in harness_counts.items():
-                    # Get the first harness group for this string count to determine cable sizes
-                    harness_group = None
-                    if hasattr(block.wiring_config, 'harness_groupings') and string_count in block.wiring_config.harness_groupings:
-                        harness_groups = block.wiring_config.harness_groupings[string_count]
-                        if harness_groups:
-                            # Find the harness group that matches this string count
-                            for hg in harness_groups:
-                                if len(hg.string_indices) == string_count:
-                                    harness_group = hg
-                                    break
+                for key, info in harness_info.items():
+                    string_count = info['string_count']
+                    count = info['count']
+                    harness_group = info['harness']
                     
                     # Get cable sizes with fallback
                     harness_cable_size = self._get_cable_size(harness_group, 'harness', block)
@@ -284,41 +326,69 @@ class BOMGenerator:
                         'category': 'eBOS'
                     }
                 
-                # Split whip cables by polarity
-                whip_cable_size = getattr(block.wiring_config, 'whip_cable_size', '6 AWG')  # Default to 6 AWG if not specified
-                
-                if 'whip_cable_positive' in cable_lengths:
-                    whip_length_feet = round(cable_lengths['whip_cable_positive'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
-
-                    block_quantities[f'Positive Whip Cable ({whip_cable_size})'] = {
-                        'description': self.get_whip_description_format(whip_cable_size).format(length="TOTAL"),
-                        'quantity': whip_length_feet,
-                        'unit': 'feet',
-                        'category': 'eBOS'
-                    }
-                
-                if 'whip_cable_negative' in cable_lengths:
-                    whip_length_feet = round(cable_lengths['whip_cable_negative'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
-
-                    block_quantities[f'Negative Whip Cable ({whip_cable_size})'] = {
-                        'description': self.get_whip_description_format(whip_cable_size).format(length="TOTAL"),
-                        'quantity': whip_length_feet,
-                        'unit': 'feet',
-                        'category': 'eBOS'
-                    }
-
-                # Get extender cable size - check if we have harness-specific sizes
-                extender_cable_sizes = set()
+                # Get whip cable size - check if we have harness-specific sizes
+                whip_cable_sizes = {}  # Change to dict to track which harnesses use which size
                 if hasattr(block.wiring_config, 'harness_groupings'):
                     for string_count, harness_groups in block.wiring_config.harness_groupings.items():
-                        for hg in harness_groups:
-                            extender_size = self._get_cable_size(hg, 'extender', block)
-                            extender_cable_sizes.add(extender_size)
+                        for hg_idx, hg in enumerate(harness_groups):
+                            whip_size = self._get_cable_size(hg, 'whip', block)
+                            key = f"{string_count}_{hg_idx}"
+                            whip_cable_sizes[key] = whip_size
+
+                # Check if all harnesses use the same whip size
+                unique_whip_sizes = set(whip_cable_sizes.values())
+                if len(unique_whip_sizes) == 1:
+                    whip_cable_size = unique_whip_sizes.pop()
+                elif len(unique_whip_sizes) == 0:
+                    whip_cable_size = getattr(block.wiring_config, 'whip_cable_size', '8 AWG')
+                else:
+                    # Multiple sizes - this will be handled in segment analysis
+                    whip_cable_size = None
                 
-                # If all harnesses use the same extender size, or we have no harness groups
-                if len(extender_cable_sizes) <= 1:
-                    extender_cable_size = extender_cable_sizes.pop() if extender_cable_sizes else getattr(block.wiring_config, 'extender_cable_size', '8 AWG')
-                    
+                # Only add whip cables if we have a single size for all harnesses
+                if whip_cable_size:
+                    # Split whip cable by polarity
+                    if 'whip_cable_positive' in cable_lengths:
+                        whip_length_feet = round(cable_lengths['whip_cable_positive'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
+
+                        block_quantities[f'Positive Whip Cable ({whip_cable_size})'] = {
+                            'description': self.get_whip_description_format(whip_cable_size).format(length="TOTAL"),
+                            'quantity': whip_length_feet,
+                            'unit': 'feet',
+                            'category': 'eBOS'
+                        }
+                
+                    if 'whip_cable_negative' in cable_lengths:
+                        whip_length_feet = round(cable_lengths['whip_cable_negative'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
+
+                        block_quantities[f'Negative Whip Cable ({whip_cable_size})'] = {
+                            'description': self.get_whip_description_format(whip_cable_size).format(length="TOTAL"),
+                            'quantity': whip_length_feet,
+                            'unit': 'feet',
+                            'category': 'eBOS'
+                        }
+
+                # Get extender cable size - check if we have harness-specific sizes
+                extender_cable_sizes = {}  # Change to dict to track which harnesses use which size
+                if hasattr(block.wiring_config, 'harness_groupings'):
+                    for string_count, harness_groups in block.wiring_config.harness_groupings.items():
+                        for hg_idx, hg in enumerate(harness_groups):
+                            extender_size = self._get_cable_size(hg, 'extender', block)
+                            key = f"{string_count}_{hg_idx}"
+                            extender_cable_sizes[key] = extender_size
+
+                # Check if all harnesses use the same extender size
+                unique_extender_sizes = set(extender_cable_sizes.values())
+                if len(unique_extender_sizes) == 1:
+                    extender_cable_size = unique_extender_sizes.pop()
+                elif len(unique_extender_sizes) == 0:
+                    extender_cable_size = getattr(block.wiring_config, 'extender_cable_size', '8 AWG')
+                else:
+                    # Multiple sizes - this will be handled in segment analysis
+                    extender_cable_size = None
+
+                # Only add extender cables if we have a single size for all harnesses
+                if extender_cable_size:
                     # Split extender cable by polarity
                     if 'extender_cable_positive' in cable_lengths:
                         extender_length_feet = round(cable_lengths['extender_cable_positive'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
@@ -330,15 +400,16 @@ class BOMGenerator:
                             'category': 'Extender Cables'
                         }
 
-                if 'extender_cable_negative' in cable_lengths:
-                    extender_length_feet = round(cable_lengths['extender_cable_negative'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
+                    if 'extender_cable_negative' in cable_lengths:
+                        extender_length_feet = round(cable_lengths['extender_cable_negative'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
 
-                    block_quantities[f'Negative Extender Cable ({extender_cable_size})'] = {
-                        'description': self.get_extender_description_format(extender_cable_size).format(length="TOTAL"),
-                        'quantity': extender_length_feet,
-                        'unit': 'feet',
-                        'category': 'Extender Cables'
-                    }
+                        block_quantities[f'Negative Extender Cable ({extender_cable_size})'] = {
+                            'description': self.get_extender_description_format(extender_cable_size).format(length="TOTAL"),
+                            'quantity': extender_length_feet,
+                            'unit': 'feet',
+                            'category': 'Extender Cables'
+                        }
+                # else: Multiple cable sizes will be handled in segment analysis
             
             quantities[block_id] = block_quantities
         
@@ -351,38 +422,47 @@ class BOMGenerator:
 
         return quantities
         
-    def _count_harnesses_by_size(self, block: BlockConfig) -> Dict[int, int]:
+    def _count_harnesses_by_size(self, block: BlockConfig) -> Dict[str, Dict]:
         """
-        Count harnesses by number of strings they connect
+        Count harnesses by number of strings they connect and track cable sizes
         
         Args:
             block: Block configuration
             
         Returns:
-            Dictionary mapping string count to harness count
+            Dictionary mapping harness key to count and cable size info
         """
-        harness_counts = {}
+        harness_info = {}
         
         if not block.wiring_config or block.wiring_config.wiring_type != WiringType.HARNESS:
-            return harness_counts
+            return harness_info
         
         # Check if we have custom harness groupings
         has_custom_groupings = (hasattr(block.wiring_config, 'harness_groupings') and 
                             block.wiring_config.harness_groupings)
         
         if has_custom_groupings:
-            # Count custom harness groups
+            # Process each tracker's harness configuration
             for string_count, harness_groups in block.wiring_config.harness_groupings.items():
                 # Count trackers with this string count
                 tracker_count = sum(1 for pos in block.tracker_positions if len(pos.strings) == string_count)
                 
-                # For each harness group configuration, multiply by number of trackers
-                for harness in harness_groups:
-                    # The key is the number of strings in this harness group
+                # For each harness group configuration
+                for harness_idx, harness in enumerate(harness_groups):
+                    # The key identifies this specific harness configuration
                     actual_string_count = len(harness.string_indices)
-                    if actual_string_count not in harness_counts:
-                        harness_counts[actual_string_count] = 0
-                    harness_counts[actual_string_count] += tracker_count
+                    
+                    # Create unique key that includes cable sizes to differentiate harnesses
+                    cable_key = f"{harness.cable_size}_{harness.string_cable_size or 'default'}_{harness.extender_cable_size or 'default'}_{harness.whip_cable_size or 'default'}"
+                    key = f"{actual_string_count}string_{cable_key}"
+                    
+                    if key not in harness_info:
+                        harness_info[key] = {
+                            'count': 0,
+                            'string_count': actual_string_count,
+                            'harness': harness  # Store the actual harness object
+                        }
+                    harness_info[key]['count'] += tracker_count
                 
                 # Check for unconfigured strings
                 all_configured_indices = set()
@@ -391,20 +471,29 @@ class BOMGenerator:
                 
                 unconfigured_strings = string_count - len(all_configured_indices)
                 if unconfigured_strings > 0:
-                    # Add default harness for unconfigured strings
-                    if unconfigured_strings not in harness_counts:
-                        harness_counts[unconfigured_strings] = 0
-                    harness_counts[unconfigured_strings] += tracker_count
+                    # Create default harness for unconfigured strings
+                    key = f"{unconfigured_strings}string_default"
+                    if key not in harness_info:
+                        harness_info[key] = {
+                            'count': 0,
+                            'string_count': unconfigured_strings,
+                            'harness': None  # Will use defaults
+                        }
+                    harness_info[key]['count'] += tracker_count
         else:
-            # Use the default behavior - one harness per tracker
+            # Default: one harness per tracker
             for pos in block.tracker_positions:
-                if pos.template:
-                    string_count = len(pos.strings)
-                    if string_count not in harness_counts:
-                        harness_counts[string_count] = 0
-                    harness_counts[string_count] += 1
+                string_count = len(pos.strings)
+                key = f"{string_count}string_default"
+                if key not in harness_info:
+                    harness_info[key] = {
+                        'count': 0,
+                        'string_count': string_count,
+                        'harness': None
+                    }
+                harness_info[key]['count'] += 1
         
-        return harness_counts
+        return harness_info
     
     def generate_summary_data(self, quantities: Dict[str, Dict[str, Any]]) -> pd.DataFrame:
         """
@@ -1118,6 +1207,8 @@ class BOMGenerator:
             string_segments_neg = []
             whip_segments_pos = []
             whip_segments_neg = []
+            extender_segments_pos = []
+            extender_segments_neg = []
             
             for route_id, route in cable_routes.items():
                 # Skip routes with less than 2 points
@@ -1136,23 +1227,35 @@ class BOMGenerator:
                 
                 # Categorize by route type and polarity
                 if "pos_src" in route_id or "pos_node" in route_id or "pos_string" in route_id:
-                    string_segments_pos.append(segment_length_feet)
+                    string_segments_pos.append({
+                        'length': segment_length_feet,
+                        'route_id': route_id
+                    })
                 elif "neg_src" in route_id or "neg_node" in route_id or "neg_string" in route_id:
-                    string_segments_neg.append(segment_length_feet)
+                    string_segments_neg.append({
+                        'length': segment_length_feet,
+                        'route_id': route_id
+                    })
                 elif "pos_dev" in route_id or "pos_main" in route_id or "whip_pos" in route_id or "pos_whip" in route_id:
                     # Add underground routing component if enabled
                     if hasattr(block, 'underground_routing') and block.underground_routing:
                         underground_addition_m = 2 * (block.pile_reveal_m + block.trench_depth_m)
                         underground_addition_ft = underground_addition_m * 3.28084
                         segment_length_feet += underground_addition_ft
-                    whip_segments_pos.append(segment_length_feet)
+                    whip_segments_pos.append({
+                        'length': segment_length_feet,
+                        'route_id': route_id
+                    })
                 elif "neg_dev" in route_id or "neg_main" in route_id or "whip_neg" in route_id or "neg_whip" in route_id:
                     # Add underground routing component if enabled
                     if hasattr(block, 'underground_routing') and block.underground_routing:
                         underground_addition_m = 2 * (block.pile_reveal_m + block.trench_depth_m)
                         underground_addition_ft = underground_addition_m * 3.28084
                         segment_length_feet += underground_addition_ft
-                    whip_segments_neg.append(segment_length_feet)
+                    whip_segments_neg.append({
+                        'length': segment_length_feet,
+                        'route_id': route_id
+                    })
             
             # Process string segments only for HOMERUN wiring
             if block.wiring_config.wiring_type == WiringType.HOMERUN:
@@ -1174,13 +1277,13 @@ class BOMGenerator:
                 whip_segments_by_size_neg = {}
                 
                 # Analyze each segment to determine its cable size
-                for segment in whip_segments_pos:
+                for segment in extender_segments_pos:
                     # Determine which harness this segment belongs to based on its route
-                    cable_size = self._get_cable_size_for_segment(block, segment, 'whip')
+                    cable_size = self._get_cable_size_for_segment(block, segment, 'extender')
                     
-                    if cable_size not in whip_segments_by_size_pos:
-                        whip_segments_by_size_pos[cable_size] = []
-                    whip_segments_by_size_pos[cable_size].append(segment)
+                    if cable_size not in extender_segments_by_size_pos:
+                        extender_segments_by_size_pos[cable_size] = []
+                    extender_segments_by_size_pos[cable_size].append(segment)
                 
                 for segment in whip_segments_neg:
                     cable_size = self._get_cable_size_for_segment(block, segment, 'whip')
@@ -1231,9 +1334,15 @@ class BOMGenerator:
                 
                 # Categorize extender routes
                 if "pos_extender" in route_id:
-                    extender_segments_pos.append(segment_length_feet)
+                    extender_segments_pos.append({
+                        'length': segment_length_feet,
+                        'route_id': route_id
+                    })
                 elif "neg_extender" in route_id:
-                    extender_segments_neg.append(segment_length_feet)
+                    extender_segments_neg.append({
+                        'length': segment_length_feet,
+                        'route_id': route_id
+                    })
 
             # Process extender segments - handle harness-specific cable sizes
             if block.wiring_config.wiring_type == WiringType.HARNESS and hasattr(block.wiring_config, 'harness_groupings'):
@@ -1549,21 +1658,30 @@ class BOMGenerator:
             print(f"Error getting fuse part number: {e}")
             return f"FUSE-{fuse_rating_amps}A-ERROR"
 
-    def _add_segment_analysis(self, quantities, segments, cable_size, cable_type_name, round_to=5):
+    def _add_segment_analysis(self, block_quantities, segments, cable_size, cable_type_name, round_to=5):
         """Add individual cable segments to BOM"""
         
         if not segments:
             return
+        
+        # Convert segments to lengths only for processing
+        segment_lengths = []
+        for segment in segments:
+            if isinstance(segment, dict) and 'length' in segment:
+                segment_lengths.append(segment['length'])
+            else:
+                # Backward compatibility - segment is already a float
+                segment_lengths.append(segment)
             
         # Add waste factor
-        segments = [s * self.CABLE_WASTE_FACTOR for s in segments]
+        segment_lengths = [s * self.CABLE_WASTE_FACTOR for s in segment_lengths]
         
         # Always use 5ft increment for whip cables, otherwise use the passed-in increment
         actual_increment = 5 if "Whip Cable" in cable_type_name else round_to
         
         # Round up to nearest increment, with minimum of 10ft
         rounded_segments = []
-        for s in segments:
+        for s in segment_lengths:
             rounded_length = actual_increment * ((s + actual_increment - 0.1) // actual_increment + 1)
             # Ensure minimum length of 10ft
             rounded_length = max(10, rounded_length)
@@ -1596,7 +1714,7 @@ class BOMGenerator:
             else:
                 description = f"{int(length)}ft {cable_type_name} Segment ({cable_size})"
 
-            quantities[segment_key] = {
+            block_quantities[segment_key] = {
                 'description': description,
                 'quantity': count,
                 'unit': 'segments',

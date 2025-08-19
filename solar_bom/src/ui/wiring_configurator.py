@@ -710,7 +710,8 @@ class WiringConfigurator(tk.Toplevel):
         combo.event_generate('<Button-1>')  
 
     def update_harness_cable_size(self, harness_key, cable_type, new_size):
-        """Update cable size for a specific harness group"""        
+        """Update cable size for a specific harness group"""
+        
         # Parse the harness key
         parts = harness_key.split('_')
         string_count = int(parts[0])
@@ -728,8 +729,7 @@ class WiringConfigurator(tk.Toplevel):
                 actual_string_count = len(harness.string_indices)
                 
                 # Update all harnesses with matching string count
-                if actual_string_count == string_count:
-                    
+                if actual_string_count == string_count:                    
                     if cable_type == 'string':
                         harness.string_cable_size = new_size
                     elif cable_type == 'harness':
@@ -1158,7 +1158,6 @@ class WiringConfigurator(tk.Toplevel):
         
     def apply_configuration(self):
         """Apply the current wiring configuration to the block"""
-        print("\n=== APPLYING WIRING CONFIGURATION ===")
         if not self.block:
             tk.messagebox.showerror("Error", "No block selected")
             self.destroy()
