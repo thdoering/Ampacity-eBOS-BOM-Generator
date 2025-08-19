@@ -1309,13 +1309,13 @@ class BOMGenerator:
                 whip_segments_by_size_neg = {}
                 
                 # Analyze each segment to determine its cable size
-                for segment in extender_segments_pos:
+                for segment in whip_segments_pos:
                     # Determine which harness this segment belongs to based on its route
-                    cable_size = self._get_cable_size_for_segment(block, segment, 'extender')
+                    cable_size = self._get_cable_size_for_segment(block, segment, 'whip')
                     
-                    if cable_size not in extender_segments_by_size_pos:
-                        extender_segments_by_size_pos[cable_size] = []
-                    extender_segments_by_size_pos[cable_size].append(segment)
+                    if cable_size not in whip_segments_by_size_pos:
+                        whip_segments_by_size_pos[cable_size] = []
+                    whip_segments_by_size_pos[cable_size].append(segment)
                 
                 for segment in whip_segments_neg:
                     cable_size = self._get_cable_size_for_segment(block, segment, 'whip')
