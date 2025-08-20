@@ -10,8 +10,6 @@ from typing import Dict, Optional
 # NEC Table 310.15(B)(16) - Ampacity for 90°C rated cables (THWN-2, XHHW-2)
 # Standard sizes used in solar installations
 CABLE_AMPACITY_90C = {
-    "14 AWG": 25,
-    "12 AWG": 30,
     "10 AWG": 40,
     "8 AWG": 55,
     "6 AWG": 75,
@@ -24,7 +22,7 @@ CABLE_AMPACITY_90C = {
 
 # Order of cable sizes for iteration (smallest to largest)
 CABLE_SIZE_ORDER = [
-    "14 AWG", "12 AWG", "10 AWG", "8 AWG", "6 AWG", 
+    "10 AWG", "8 AWG", "6 AWG", 
     "4 AWG", "2 AWG", "1/0 AWG", "2/0 AWG", "4/0 AWG"
 ]
 

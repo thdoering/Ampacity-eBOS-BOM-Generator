@@ -270,8 +270,6 @@ def get_ampacity_for_wire_gauge(wire_gauge: str, temperature_rating: int = 90) -
     """
     # NEC Table 310.15(B)(16) values for common wire sizes (90°C column)
     ampacity_table = {
-        "14 AWG": 25,
-        "12 AWG": 30,
         "10 AWG": 40,
         "8 AWG": 55,
         "6 AWG": 75,

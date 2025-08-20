@@ -16,9 +16,7 @@ class CollapsibleFrame(ttk.Frame):
         
         self.is_collapsed = start_collapsed
         self.harness_tree_items = {}  # Maps tree item IDs to harness keys
-        self.AWG_SIZES = {
-            "14 AWG": 14,
-            "12 AWG": 12, 
+        self.AWG_SIZES = { 
             "10 AWG": 10,
             "8 AWG": 8,
             "6 AWG": 6,
@@ -85,8 +83,6 @@ class WiringConfigurator(tk.Toplevel):
 
     # AWG to mm² conversion - Extended with more sizes
     AWG_SIZES: ClassVar[Dict[str, float]] = {
-        "14 AWG": 3.31,
-        "12 AWG": 3.31,
         "10 AWG": 5.26,
         "8 AWG": 8.37,
         "6 AWG": 13.30,
