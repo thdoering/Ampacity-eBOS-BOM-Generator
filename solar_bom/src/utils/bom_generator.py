@@ -559,11 +559,8 @@ class BOMGenerator:
         summary_data = sorted(summary_data, key=sort_key)
 
         # Add part numbers to summary data
-        print(f"\nDEBUG: Adding part numbers to {len(summary_data)} items")
         for item in summary_data:
-            print(f"DEBUG: Processing item: {item['Component Type']}")
             item['Part Number'] = self.get_component_part_number(item)
-            print(f"DEBUG: Got part number: {item['Part Number']}")
 
         # Add part numbers to summary data
         for item in summary_data:
@@ -588,10 +585,7 @@ class BOMGenerator:
         """Get part number for a component based on its type and properties"""
         component_type = item.get('Component Type', '')
         description = item.get('Description', '')
-        
-        print(f"\nDEBUG: get_component_part_number called for: {component_type}")
-        print(f"DEBUG: Description: {description}")
-        
+                
         if 'Harness' in component_type:                
             # Extract info from description to find harness part number
             polarity = 'positive' if 'Positive' in description else 'negative'
@@ -638,7 +632,6 @@ class BOMGenerator:
                     part_number = self.find_matching_harness_part_number(
                         num_strings, polarity, string_spacing_ft, trunk_cable_size
                     )
-                    print(f"DEBUG: Got harness part number from find_matching: {part_number}")
                     return part_number
             
             return "N/A"
@@ -1557,7 +1550,6 @@ class BOMGenerator:
     def find_matching_harness_part_number(self, num_strings, polarity, calculated_spacing_ft, trunk_cable_size=None):
         """Find matching harness part number from library"""
         try:
-            print(f"\nDEBUG: Looking for harness - strings: {num_strings}, polarity: {polarity}, spacing: {calculated_spacing_ft}ft, trunk: {trunk_cable_size}")
             matches = []
             
             # Available harness spacing options based on your library
@@ -1573,29 +1565,21 @@ class BOMGenerator:
             
             if target_spacing is None:
                 target_spacing = max(available_spacings)  # Use largest if calculated is bigger than all
-                print(f"DEBUG: Calculated spacing: {calculated_spacing_ft}, using target: {target_spacing}")
             
             # Search for matching harnesses
             for part_number, spec in self.harness_library.items():
                 # Skip comment entries
                 if part_number.startswith('_comment_'):
                     continue
-                
-                # Debug print
-                if spec.get('num_strings') == num_strings and spec.get('polarity') == polarity:
-                    print(f"DEBUG: Checking {part_number} - spacing: {spec.get('string_spacing_ft')}, trunk: {spec.get('trunk_cable_size', spec.get('trunk_wire_gauge'))}")
                     
                 # Check basic criteria
                 if (spec.get('num_strings') == num_strings and 
                     spec.get('polarity') == polarity and
                     abs(spec.get('string_spacing_ft', 0) - target_spacing) < 0.1):
-                    
-                    print(f"DEBUG: Potential match {part_number}, checking trunk size")
-                    
+                                        
                     # If trunk cable size is specified, filter by it
                     if trunk_cable_size:
                         spec_trunk_size = spec.get('trunk_cable_size', spec.get('trunk_wire_gauge'))
-                        print(f"DEBUG: Spec trunk: {spec_trunk_size} vs requested: {trunk_cable_size}")
                         if spec_trunk_size != trunk_cable_size:
                             continue
                             
@@ -1603,14 +1587,11 @@ class BOMGenerator:
             
             if matches:
                 if len(matches) == 1:
-                    print(f"DEBUG: Returning single match: {matches[0]}")
                     return matches[0]
                 else:
                     result = " or ".join(sorted(matches))
-                    print(f"DEBUG: Returning multiple matches: {result}")
                     return result
             else:
-                print(f"DEBUG: No matches found, returning N/A")
                 return "N/A"
                 
         except Exception as e:
