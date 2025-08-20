@@ -119,7 +119,7 @@ class WiringConfigurator(tk.Toplevel):
         
         # Set up window properties
         self.title("Wiring Configuration")
-        self.geometry("1400x1000")
+        self.geometry("1800x1000")
         self.minsize(1000, 600)
         
         # Initialize UI
@@ -402,7 +402,7 @@ class WiringConfigurator(tk.Toplevel):
         self.harness_cable_tree.heading('Extender Cable', text='Extender Cable')
         self.harness_cable_tree.heading('Whip Cable', text='Whip Cable')
         self.harness_cable_tree.heading('Fuse Size', text='Fuse Size')
-        self.harness_cable_tree.heading('Recommended', text='Recommended')
+        self.harness_cable_tree.heading('Recommended', text='Recommended Whip')
         
         # Scrollbar
         scrollbar = ttk.Scrollbar(table_frame, orient='vertical', command=self.harness_cable_tree.yview)
@@ -495,8 +495,8 @@ class WiringConfigurator(tk.Toplevel):
                     default_fuse = self.calculate_recommended_fuse_size(list(range(string_count)))
                     fuse_size = f"{default_fuse}A ({string_count}x)"
             
-            # Calculate recommended size
-            recommended = self.calculate_recommended_harness_size(string_count)
+            # Calculate recommended size for whip
+            recommended = self.calculate_recommended_whip_size(string_count)
             
             # Determine tags
             tags = []
@@ -507,8 +507,8 @@ class WiringConfigurator(tk.Toplevel):
             ]):
                 tags.append('edited')
             
-            # Check if undersized
-            if self.is_cable_undersized(harness_size, string_count):
+            # Check if whip is undersized compared to recommended
+            if self.is_cable_undersized(whip_size, string_count):
                 tags.append('undersized')
             
             # Format label
@@ -522,8 +522,8 @@ class WiringConfigurator(tk.Toplevel):
             # Store harness reference in dictionary
             self.harness_tree_items[item] = key
 
-    def calculate_recommended_harness_size(self, string_count):
-        """Calculate recommended cable size for harness based on string count"""
+    def calculate_recommended_whip_size(self, string_count):
+        """Calculate recommended cable size for whip based on string count"""
         # Get module Isc from block's tracker template
         if not self.block or not self.block.tracker_template or not self.block.tracker_template.module_spec:
             return "8 AWG"
@@ -532,9 +532,9 @@ class WiringConfigurator(tk.Toplevel):
         module_isc = self.block.tracker_template.module_spec.isc
         total_current = string_count * module_isc * 1.25
         
-        # Use the cable sizing utility
-        from ..utils.cable_sizing import calculate_harness_cable_size
-        return calculate_harness_cable_size(string_count, module_isc, 1.25)
+        # Use the cable sizing utility - whip carries same current as harness
+        from ..utils.cable_sizing import calculate_whip_cable_size
+        return calculate_whip_cable_size(string_count, module_isc, 1.25)
 
     def is_cable_undersized(self, cable_size, string_count):
         """Check if cable size is undersized for the given string count"""
