@@ -930,7 +930,7 @@ class WiringConfigurator(tk.Toplevel):
         constraint_frame = ttk.Frame(whip_controls_frame)
         constraint_frame.grid(row=1, column=0, columnspan=2, padx=0, pady=2, sticky=(tk.W, tk.E))
         
-        self.snap_5ft_var = tk.BooleanVar(value=False)
+        self.snap_5ft_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(constraint_frame, text="Snap to 5ft increments", 
                     variable=self.snap_5ft_var).grid(row=0, column=0, padx=5, sticky=tk.W)
         
