@@ -131,7 +131,11 @@ class BlockConfigurator(ttk.Frame):
         ttk.Button(btn_frame, text="New Block", command=self.create_new_block).grid(row=0, column=0, padx=2)
         ttk.Button(btn_frame, text="Delete Block", command=self.delete_block).grid(row=0, column=1, padx=2)
         ttk.Button(btn_frame, text="Copy Block", command=self.copy_block).grid(row=0, column=2, padx=2)
-
+        
+        # Add Clear All Trackers button on a new row
+        ttk.Button(btn_frame, text="Clear All Trackers", command=self.clear_all_trackers).grid(
+            row=1, column=0, columnspan=3, padx=2, pady=(5, 0), sticky=(tk.W, tk.E))
+        
         # Device Placement Mode
         placement_frame = ttk.LabelFrame(list_frame, text="Device Placement Mode")
         placement_frame.grid(row=3, column=0, padx=5, pady=5, sticky=(tk.W, tk.E))
@@ -1787,6 +1791,38 @@ class BlockConfigurator(ttk.Frame):
 
         # Notify blocks changed
         self._notify_blocks_changed()
+
+    def clear_all_trackers(self):
+        """Clear all trackers from the current block"""
+        if not self.current_block:
+            messagebox.showinfo("Info", "No block selected")
+            return
+        
+        block = self.blocks[self.current_block]
+        
+        if not block.tracker_positions:
+            messagebox.showinfo("Info", "No trackers to clear")
+            return
+        
+        # Count trackers for confirmation message
+        tracker_count = len(block.tracker_positions)
+        
+        # Confirm deletion
+        if messagebox.askyesno("Clear All Trackers", 
+                            f"Are you sure you want to remove all {tracker_count} trackers from this block?\n\nThis action cannot be undone."):
+            # Clear all tracker positions
+            block.tracker_positions.clear()
+            
+            # Clear selection
+            self.selected_tracker = None
+            
+            # Redraw the block
+            self.draw_block()
+            
+            # Notify blocks changed
+            self._notify_blocks_changed()
+            
+            messagebox.showinfo("Success", f"Cleared {tracker_count} trackers from block {self.current_block}")
 
     def select_tracker(self, x, y):
         """Select tracker at given coordinates"""
