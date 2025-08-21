@@ -133,9 +133,25 @@ class DeviceConfigurator(ttk.Frame):
         ttk.Button(button_frame, text="Export Configuration", 
                   command=self.export_configuration).pack(side=tk.LEFT, padx=5)
         
+        # Expand/Collapse All buttons
+        ttk.Button(button_frame, text="Collapse All", 
+                command=self.collapse_all).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Expand All", 
+                command=self.expand_all).pack(side=tk.LEFT, padx=5)
+        
         # Warning label
         self.warning_label = ttk.Label(button_frame, text="", foreground='red')
         self.warning_label.pack(side=tk.RIGHT, padx=5)
+
+    def collapse_all(self):
+        """Collapse all combiner boxes in the tree"""
+        for item in self.tree.get_children():
+            self.tree.item(item, open=False)
+
+    def expand_all(self):
+        """Expand all combiner boxes in the tree"""
+        for item in self.tree.get_children():
+            self.tree.item(item, open=True)
     
     def load_project(self, project):
         """Load a project and generate device configurations"""
@@ -247,14 +263,18 @@ class DeviceConfigurator(ttk.Frame):
                         for h_idx, harness in enumerate(harness_list):
                             harness_id = f"H{h_idx+1:02d}"
                             
+                            # Get whip cable size - first check harness-specific, then fall back to block default
+                            whip_size = getattr(harness, 'whip_cable_size', '')
+                            if not whip_size:
+                                whip_size = block.wiring_config.whip_cable_size if block.wiring_config else "8 AWG"
+                            
                             connection = HarnessConnection(
                                 block_id=block_id,
                                 tracker_id=tracker_id,
                                 harness_id=harness_id,
                                 num_strings=len(harness.string_indices),
                                 module_isc=module_isc,
-                                actual_cable_size=getattr(harness, 'cable_size', 
-                                                        block.wiring_config.harness_cable_size)
+                                actual_cable_size=whip_size
                             )
                             
                             combiner_config.connections.append(connection)
@@ -266,7 +286,7 @@ class DeviceConfigurator(ttk.Frame):
                             harness_id="H01",
                             num_strings=strings_in_tracker,
                             module_isc=module_isc,
-                            actual_cable_size=block.wiring_config.harness_cable_size
+                            actual_cable_size=block.wiring_config.whip_cable_size if block.wiring_config else "8 AWG"
                         )
                         
                         combiner_config.connections.append(connection)
@@ -282,7 +302,7 @@ class DeviceConfigurator(ttk.Frame):
                             harness_id="H01",
                             num_strings=tracker_pos.template.strings_per_tracker,
                             module_isc=module_isc,
-                            actual_cable_size=block.wiring_config.harness_cable_size if block.wiring_config else "8 AWG"
+                            actual_cable_size=block.wiring_config.whip_cable_size if block.wiring_config else "8 AWG"
                         )
                         
                         combiner_config.connections.append(connection)
