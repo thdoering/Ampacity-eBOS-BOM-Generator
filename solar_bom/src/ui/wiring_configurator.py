@@ -426,6 +426,12 @@ class WiringConfigurator(tk.Toplevel):
         self.harness_cable_menu.add_separator()
         self.harness_cable_menu.add_command(label="Delete Harness", command=self.delete_selected_harness)
 
+        # Add Delete All Harnesses button below the table
+        button_frame = ttk.Frame(table_frame)
+        button_frame.grid(row=2, column=0, columnspan=2, padx=5, pady=(5, 0), sticky=(tk.W, tk.E))
+        ttk.Button(button_frame, text="Delete All Harnesses", 
+                command=self.delete_all_harnesses).pack(side=tk.LEFT, padx=5)
+
     def update_harness_cable_table(self):
         """Update the harness cable configuration table"""
         # Clear existing items
@@ -801,25 +807,39 @@ class WiringConfigurator(tk.Toplevel):
         if not messagebox.askyesno("Delete Harness", "Are you sure you want to delete the selected harness?"):
             return
         
+        # Collect all harnesses to delete with their details
+        harnesses_to_delete = []
         for item in selected:
-            harness_key = self.harness_tree_items.get(item)
+            harness_key = self.harness_tree_items.get(item)            
             if not harness_key:
                 continue
                 
             # Parse the harness key
             parts = harness_key.split('_')
-            string_count = int(parts[0])
-            harness_idx = int(parts[2])
+            actual_string_count = int(parts[0])  # Number of strings IN the harness
+            global_harness_idx = int(parts[2])   # Global index across all trackers
             
-            # Delete the harness
-            if (string_count in self.block.wiring_config.harness_groupings and
-                harness_idx < len(self.block.wiring_config.harness_groupings[string_count])):
+            # Build a list of ALL harnesses with this actual string count
+            all_matching_harnesses = []
+            for tracker_string_count, harness_list in self.block.wiring_config.harness_groupings.items():
+                for harness in harness_list:
+                    if len(harness.string_indices) == actual_string_count:
+                        all_matching_harnesses.append((tracker_string_count, harness.string_indices))
+                        
+            # Find the harness at the global index
+            if global_harness_idx < len(all_matching_harnesses):
+                tracker_string_count, string_indices = all_matching_harnesses[global_harness_idx]
+                harnesses_to_delete.append((tracker_string_count, string_indices))
                 
-                del self.block.wiring_config.harness_groupings[string_count][harness_idx]
-                
-                # If no harnesses left, remove the string count entry
-                if not self.block.wiring_config.harness_groupings[string_count]:
-                    del self.block.wiring_config.harness_groupings[string_count]
+        # Now delete harnesses by matching their string_indices
+        for tracker_string_count, target_string_indices in harnesses_to_delete:
+            if tracker_string_count in self.block.wiring_config.harness_groupings:
+                original_list = self.block.wiring_config.harness_groupings[tracker_string_count]                
+                new_list = [h for h in original_list if h.string_indices != target_string_indices]                
+                if new_list:
+                    self.block.wiring_config.harness_groupings[tracker_string_count] = new_list
+                else:
+                    del self.block.wiring_config.harness_groupings[tracker_string_count]
         
         # Update display - force complete refresh
         self.harness_cable_tree.delete(*self.harness_cable_tree.get_children())
@@ -828,6 +848,35 @@ class WiringConfigurator(tk.Toplevel):
         self.draw_wiring_layout()
         self.notify_wiring_changed()
 
+    def delete_all_harnesses(self):
+        """Delete all harnesses from the configuration"""
+        if not hasattr(self.block.wiring_config, 'harness_groupings') or not self.block.wiring_config.harness_groupings:
+            messagebox.showinfo("Info", "No harnesses to delete")
+            return
+        
+        # Count total harnesses
+        total_harnesses = sum(len(harness_list) for harness_list in self.block.wiring_config.harness_groupings.values())
+        
+        # Confirm deletion
+        if not messagebox.askyesno("Delete All Harnesses", 
+                                f"Are you sure you want to delete all {total_harnesses} harnesses?\n\nThis action cannot be undone."):
+            return
+        
+        # Clear all harness groupings
+        self.block.wiring_config.harness_groupings.clear()
+        
+        # Clear edited cells tracking
+        self.harness_cable_edited_cells.clear()
+        
+        # Update display
+        self.harness_cable_tree.delete(*self.harness_cable_tree.get_children())
+        self.harness_tree_items.clear()
+        self.update_harness_cable_table()
+        self.draw_wiring_layout()
+        self.notify_wiring_changed()
+        
+        messagebox.showinfo("Success", f"Deleted all {total_harnesses} harnesses")
+        
     def setup_routing_controls(self, controls_frame):
         """Set up remaining routing controls section (whip controls moved to bottom)"""
         # This method now intentionally left minimal since whip controls moved to canvas area

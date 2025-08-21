@@ -277,8 +277,6 @@ class BOMManager(ttk.Frame):
                 
             # Get part number from the DataFrame (already calculated by BOM generator)
             part_number = row.get('Part Number', 'N/A')
-            print(f"DEBUG: Row data: {row}")
-            print(f"DEBUG: Component Type: {row['Component Type']}, Part Number: {part_number}")
 
             # Check if this is a 1-string harness
             is_1_string_harness = '1-String Harness' in row['Component Type']
