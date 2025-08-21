@@ -8,7 +8,6 @@ from .inverter_manager import InverterManager
 from pathlib import Path
 import json
 from ..models.module import ModuleSpec, ModuleType, ModuleOrientation
-from ..utils.undo_manager import UndoManager
 from copy import deepcopy
 
 class BlockConfigurator(ttk.Frame):
@@ -45,13 +44,6 @@ class BlockConfigurator(ttk.Frame):
         self.on_blocks_changed = None  # Callback for when blocks change
         self.on_autosave = on_autosave
         self.device_placement_mode = tk.StringVar(value="row_center")  # Default to row center
-
-        # Initialize undo manager
-        self.undo_manager = UndoManager()
-        self.undo_manager.set_callbacks(
-            get_state=self._get_current_state,
-            set_state=self._restore_from_state
-        )
         
         # First set up the UI
         self.setup_ui()
@@ -358,17 +350,6 @@ class BlockConfigurator(ttk.Frame):
         self.canvas = tk.Canvas(canvas_frame, width=1000, height=800, bg='white')
         self.canvas.grid(row=0, column=0, padx=5, pady=5)
 
-        # Add undo/redo buttons
-        button_frame = ttk.Frame(canvas_frame)
-        button_frame.grid(row=1, column=0, pady=5)
-        
-        ttk.Button(button_frame, text="Undo", command=self.undo).grid(row=0, column=0, padx=2)
-        ttk.Button(button_frame, text="Redo", command=self.redo).grid(row=0, column=1, padx=2)
-
-        # Bind keyboard shortcuts
-        self.canvas.bind('<Control-z>', self.undo)
-        self.canvas.bind('<Control-y>', self.redo)
-
         # Add mouse wheel binding for zoom
         self.canvas.bind('<MouseWheel>', self.on_mouse_wheel)  # Windows
         self.canvas.bind('<Button-4>', self.on_mouse_wheel)    # Linux scroll up
@@ -571,10 +552,7 @@ class BlockConfigurator(ttk.Frame):
             if not new_blocks_mapping:
                 messagebox.showwarning("Warning", "No blocks to copy")
                 return
-            
-            # Save state for undo
-            self._push_state("Batch copy blocks")
-            
+                        
             successful_copies = []
             skipped_copies = []
             
@@ -641,10 +619,7 @@ class BlockConfigurator(ttk.Frame):
         if messagebox.askyesno("Confirm Batch Delete", 
                             f"Delete {len(selected_blocks)} blocks?\n\n" + 
                             "\n".join(selected_blocks[:10]) + 
-                            ("\n..." if len(selected_blocks) > 10 else "")):
-            # Save state for undo
-            self._push_state("Batch delete blocks")
-            
+                            ("\n..." if len(selected_blocks) > 10 else "")):            
             # Delete each block
             for block_id in selected_blocks:
                 if block_id in self.blocks:
@@ -855,9 +830,6 @@ class BlockConfigurator(ttk.Frame):
             self.block_listbox.selection_set(tk.END)
             self.on_block_select()
             
-            # Save initial empty state
-            self._push_state("Create block")
-
             # Track this as the most recent block
             self.most_recent_block = block_id
 
@@ -976,10 +948,7 @@ class BlockConfigurator(ttk.Frame):
             block.device_type = new_device_type
             block.num_inputs = int(self.num_inputs_var.get())
             block.max_current_per_input = float(self.max_current_per_input_var.get())
-            
-            # Save state for undo
-            self._push_state("Update device configuration")
-            
+                        
         except ValueError:
             # Revert to current values if invalid input
             self.device_type_var.set(block.device_type.value)
@@ -1517,9 +1486,6 @@ class BlockConfigurator(ttk.Frame):
         if not can_place:
             messagebox.showwarning("Module Inconsistency", error_msg)
             return
-
-        # Save state before adding tracker
-        self._push_state("Before place tracker")
         
         # Create new TrackerPosition
         pos = TrackerPosition(x=x_m, y=y_m, rotation=0.0, template=self.drag_template)
@@ -1804,10 +1770,7 @@ class BlockConfigurator(ttk.Frame):
             return
         
         block = self.blocks[self.current_block]
-        
-        # Save state before deletion
-        self._push_state("Before delete tracker")
-        
+                
         # Find and remove the selected tracker
         positions_to_remove = []
         for i, pos in enumerate(block.tracker_positions):
@@ -1958,259 +1921,6 @@ class BlockConfigurator(ttk.Frame):
 
         return module_width, total_height  # width, height
     
-    def _restore_state(self, state):
-        """Restore blocks from state"""
-        if self.current_block:
-            self._restore_from_state(state)
-            self.draw_block()
-
-    def _push_state(self, description: str):
-        """Push current state to undo manager"""
-        if self.current_block:
-            self.undo_manager.push_state(description)
-
-    def undo(self, event=None):
-        """Handle undo command"""
-        try:
-            description = self.undo_manager.undo()
-            if description:
-                # Validate that current_block still exists
-                if self.current_block and self.current_block not in self.blocks:
-                    print(f"Warning: Current block '{self.current_block}' not found after undo")
-                    self.current_block = None
-                    self.clear_config_display()
-                    return
-                self.draw_block()
-        except Exception as e:
-            print(f"Error during undo: {str(e)}")
-            messagebox.showerror("Undo Error", f"Failed to undo: {str(e)}")
-            # Try to recover by clearing current selection
-            self.current_block = None
-            self.clear_config_display()
-
-    def redo(self, event=None):
-        """Handle redo command"""
-        try:
-            description = self.undo_manager.redo()
-            if description:
-                # Validate that current_block still exists
-                if self.current_block and self.current_block not in self.blocks:
-                    print(f"Warning: Current block '{self.current_block}' not found after redo")
-                    self.current_block = None
-                    self.clear_config_display()
-                    return
-                self.draw_block()
-        except Exception as e:
-            print(f"Error during redo: {str(e)}")
-            messagebox.showerror("Redo Error", f"Failed to redo: {str(e)}")
-            # Try to recover by clearing current selection
-            self.current_block = None
-            self.clear_config_display()
-
-    def _get_current_state(self):
-        """Get a deep copy of current block state"""
-        if not self.current_block:
-            return {}
-        
-        current_state = {}
-        for id, block in self.blocks.items():
-            positions = []
-            for pos in block.tracker_positions:
-                positions.append({
-                    'x': pos.x,
-                    'y': pos.y,
-                    'rotation': pos.rotation,
-                    'template_name': pos.template.template_name if pos.template else None,
-                    'strings': [
-                        {
-                            'index': string.index,
-                            'positive_source_x': string.positive_source_x,
-                            'positive_source_y': string.positive_source_y,
-                            'negative_source_x': string.negative_source_x,
-                            'negative_source_y': string.negative_source_y,
-                            'num_modules': string.num_modules
-                        }
-                        for string in pos.strings
-                    ]
-                })
-                
-            current_state[id] = {
-                'block_id': block.block_id,
-                'width_m': block.width_m,
-                'height_m': block.height_m,
-                'row_spacing_m': block.row_spacing_m,
-                'ns_spacing_m': block.ns_spacing_m,
-                'gcr': block.gcr,
-                'description': block.description,
-                'tracker_positions': positions,
-                'inverter_name': f"{block.inverter.manufacturer} {block.inverter.model}" if block.inverter else None,
-                'template_name': block.tracker_template.template_name if block.tracker_template else None,
-                'device_spacing_m': block.device_spacing_m,
-                'device_type': block.device_type.value,
-                'num_inputs': block.num_inputs,
-                'max_current_per_input': block.max_current_per_input,
-                'underground_routing': getattr(block, 'underground_routing', False),
-                'pile_reveal_m': getattr(block, 'pile_reveal_m', 1.5),
-                'trench_depth_m': getattr(block, 'trench_depth_m', 0.91)
-            }
-            
-            # Add wiring configuration if exists
-            if block.wiring_config:
-                # Serialize the wiring config
-                wiring_config_data = {
-                    'wiring_type': block.wiring_config.wiring_type.value,
-                    'positive_collection_points': [
-                        {
-                            'x': point.x,
-                            'y': point.y,
-                            'connected_strings': point.connected_strings,
-                            'current_rating': point.current_rating
-                        }
-                        for point in block.wiring_config.positive_collection_points
-                    ],
-                    'negative_collection_points': [
-                        {
-                            'x': point.x,
-                            'y': point.y,
-                            'connected_strings': point.connected_strings,
-                            'current_rating': point.current_rating
-                        }
-                        for point in block.wiring_config.negative_collection_points
-                    ],
-                    'strings_per_collection': block.wiring_config.strings_per_collection,
-                    'cable_routes': block.wiring_config.cable_routes,
-                    'string_cable_size': getattr(block.wiring_config, 'string_cable_size', "10 AWG"),
-                    'harness_cable_size': getattr(block.wiring_config, 'harness_cable_size', "8 AWG"),
-                    'whip_cable_size': getattr(block.wiring_config, 'whip_cable_size', "8 AWG")
-                }
-                current_state[id]['wiring_config_data'] = wiring_config_data
-                
-        return current_state
-
-    def _restore_from_state(self, state):
-        """Restore block state from saved state"""
-        if not state:
-            self.blocks = {}
-            return
-            
-        self.blocks = {}
-        for id, block_data in state.items():
-            # Get template and inverter from saved names
-            template = next((t for t in self.tracker_templates.values() 
-                            if t.template_name == block_data['template_name']), None)
-            inverter = next((inv for name, inv in self.inverters.items() 
-                            if f"{inv.manufacturer} {inv.model}" == block_data['inverter_name']), None)
-            
-            # Get row spacing value and convert feet to meters
-            try:
-                row_spacing_ft = float(self.row_spacing_var.get())
-                row_spacing_m = self.ft_to_m(row_spacing_ft)
-                initial_device_x = row_spacing_m / 2
-            except ValueError:
-                row_spacing_m = 6.0  # Default to 6m if invalid input
-                initial_device_x = row_spacing_m / 2
-
-            block = BlockConfig(
-                block_id=block_data['block_id'],
-                inverter=inverter,
-                tracker_template=template,
-                width_m=block_data['width_m'],
-                height_m=block_data['height_m'],
-                row_spacing_m=block_data['row_spacing_m'],
-                ns_spacing_m=block_data['ns_spacing_m'],
-                gcr=block_data['gcr'],
-                description=block_data['description'],
-                device_spacing_m=block_data.get('device_spacing_m', 1.83),  # 6ft default
-                device_type=DeviceType(block_data.get('device_type', DeviceType.STRING_INVERTER.value)),
-                num_inputs=block_data.get('num_inputs', 20),
-                max_current_per_input=block_data.get('max_current_per_input', 20.0),
-                device_x=initial_device_x,
-                device_y=0.0,
-                underground_routing=block_data.get('underground_routing', False),
-                pile_reveal_m=block_data.get('pile_reveal_m', 1.5),
-                trench_depth_m=block_data.get('trench_depth_m', 0.91)
-            )
-            
-            # Clear existing tracker positions
-            block.tracker_positions = []
-            
-            # Import necessary classes
-            from ..models.tracker import TrackerPosition, StringPosition
-            
-            # Restore tracker positions
-            for pos_data in block_data['tracker_positions']:
-                template = next((t for t in self.tracker_templates.values() 
-                            if t.template_name == pos_data['template_name']), None)
-                if template:
-                    pos = TrackerPosition(
-                        x=pos_data['x'],
-                        y=pos_data['y'],
-                        rotation=pos_data['rotation'],
-                        template=template
-                    )
-                    
-                    # Restore string data if available
-                    if 'strings' in pos_data:
-                        for string_data in pos_data['strings']:
-                            string = StringPosition(
-                                index=string_data['index'],
-                                positive_source_x=string_data['positive_source_x'],
-                                positive_source_y=string_data['positive_source_y'],
-                                negative_source_x=string_data['negative_source_x'],
-                                negative_source_y=string_data['negative_source_y'],
-                                num_modules=string_data['num_modules']
-                            )
-                            pos.strings.append(string)
-                    else:
-                        # Fallback to calculation if string data not available
-                        # Pass project reference for wiring mode
-                        if hasattr(self, 'project'):
-                            pos._project_ref = self.project
-                        pos.calculate_string_positions()
-                        
-                    block.tracker_positions.append(pos)
-            
-            # Restore wiring configuration if available
-            if 'wiring_config_data' in block_data:
-                wiring_data = block_data['wiring_config_data']
-                
-                # Create collection points
-                positive_points = [
-                    CollectionPoint(
-                        x=point['x'],
-                        y=point['y'],
-                        connected_strings=point['connected_strings'],
-                        current_rating=point['current_rating']
-                    )
-                    for point in wiring_data['positive_collection_points']
-                ]
-                
-                negative_points = [
-                    CollectionPoint(
-                        x=point['x'],
-                        y=point['y'],
-                        connected_strings=point['connected_strings'],
-                        current_rating=point['current_rating']
-                    )
-                    for point in wiring_data['negative_collection_points']
-                ]
-                
-                # Create wiring config with cable sizes
-                block.wiring_config = WiringConfig(
-                    wiring_type=WiringType(wiring_data['wiring_type']),
-                    positive_collection_points=positive_points,
-                    negative_collection_points=negative_points,
-                    strings_per_collection=wiring_data['strings_per_collection'],
-                    cable_routes=wiring_data['cable_routes'],
-                    string_cable_size=wiring_data.get('string_cable_size', "10 AWG"),
-                    harness_cable_size=wiring_data.get('harness_cable_size', "8 AWG"),
-                    whip_cable_size=wiring_data.get('whip_cable_size', "8 AWG")
-                )
-            
-            self.blocks[id] = block
-            
-        self.draw_block()
-
     def get_device_coordinates(self, block_height_m):
         """Calculate device coordinates based on placement"""
         device_height_m = 0.91  # 3ft in meters
@@ -2371,10 +2081,7 @@ class BlockConfigurator(ttk.Frame):
         if not hasattr(self, 'block_creation_order'):
             self.block_creation_order = []
         self.block_creation_order.append(new_id)
-        
-        # Save state for undo
-        self._push_state("Copy block")
-        
+                
         # Update listbox with sorted blocks
         self.update_block_listbox()
         
@@ -2421,10 +2128,7 @@ class BlockConfigurator(ttk.Frame):
         if new_id in self.blocks and new_id != self.current_block:
             messagebox.showerror("Error", f"Block ID '{new_id}' already exists")
             return
-        
-        # Save state for undo
-        self._push_state("Before rename block")
-        
+                
         # Get the current block
         block = self.blocks[self.current_block]
         old_id = self.current_block
@@ -2918,10 +2622,7 @@ class BlockConfigurator(ttk.Frame):
         else:
             message = "Apply above ground routing to all blocks?"
         
-        if messagebox.askyesno("Apply to All Blocks", message):
-            # Save state for undo
-            self._push_state("Apply underground routing to all blocks")
-            
+        if messagebox.askyesno("Apply to All Blocks", message):            
             # Apply settings to all blocks
             for block_id, block in self.blocks.items():
                 block.underground_routing = underground_routing

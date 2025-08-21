@@ -133,7 +133,6 @@ class TrackerTemplate:
   - Mouse wheel zoom with smooth scaling
   - Middle/right mouse button panning
   - Dynamic redrawing with scale preservation
-  - Undo/redo system for all block modifications
 - Block management features:
   - Create new blocks
   - Delete blocks
@@ -674,16 +673,6 @@ class ProjectMetadata:
 - Support for multiple file types and validation
 - Backup and recovery mechanisms
 
-### 3.4 State Management
-
-- Undo/redo system for block configurations with descriptive actions
-- State preservation for project loading/saving
-- Deep state copying to prevent reference issues
-- Error recovery for file operations
-- Consistent state validation
-- Configuration persistence across sessions
-- Real-time state synchronization between UI components
-
 ## 4. User Interface Requirements
 
 - Python-based GUI framework (Tkinter)
@@ -694,7 +683,6 @@ class ProjectMetadata:
 - Real-time validation feedback with visual indicators
 - 2D layout visualization with professional rendering
 - Error messaging for invalid configurations
-- Undo/redo functionality with descriptive actions
 - Advanced pan and zoom controls in layout visualizations:
   - Mouse wheel zoom with smooth scaling
   - Middle/right mouse button panning
@@ -807,26 +795,7 @@ class MPPTChannel:
     num_string_inputs: int
 ```
 
-### 5.12 State Management
-```python
-class UndoState:
-    state: Any
-    description: str
-
-class UndoManager:
-    undo_stack: List[UndoState]
-    redo_stack: List[UndoState]
-    max_states: int
-    
-    # Methods for state management
-    push_state(description: str)
-    undo() -> Optional[str]
-    redo() -> Optional[str]
-    can_undo() -> bool
-    can_redo() -> bool
-```
-
-### 5.13 Harness Group
+### 5.12 Harness Group
 ```python
 class HarnessGroup:
     string_indices: List[int]  # Indices of strings in this harness
@@ -955,7 +924,6 @@ solar_bom/
 │       ├── __init__.py
 │       ├── pan_parser.py          # .pan file parsing
 │       ├── file_handlers.py       # File operations
-│       ├── undo_manager.py        # Undo/redo state management
 │       ├── calculations.py        # Shared calculations/validations
 │       ├── project_manager.py     # Project operations management
 │       └── bom_generator.py       # BOM generation utilities
@@ -1058,16 +1026,7 @@ solar_bom/
 
 ## 11. Implementation Best Practices
 
-### 11.1 State Management
-- Save state before any block modification
-- Maintain separate undo/redo stacks per block
-- Clear redo stack when new action is performed
-- Limit undo history to prevent memory issues
-- Provide clear descriptions for undo/redo actions
-- Deep copy state to prevent reference issues
-- Preserve wiring configuration state in undo/redo operations
-
-### 11.2 Coordinate Systems
+### 11.1 Coordinate Systems
 - Store all positions in meters
 - Convert between pixels and meters using scale factor
 - Account for pan offset in all coordinate calculations
@@ -1075,7 +1034,7 @@ solar_bom/
 - Validate positions against block boundaries
 - Support both imperial and metric unit display
 
-### 11.3 Performance Considerations
+### 11.2 Performance Considerations
 - Limit canvas redraws to necessary updates
 - Use canvas tags for grouped elements
 - Implement efficient pan and zoom operations
@@ -1084,7 +1043,7 @@ solar_bom/
 - Optimize large layout rendering
 - Implement progressive loading for complex projects
 
-### 11.4 File Operations
+### 11.3 File Operations
 - Validate file paths before operations
 - Handle file exceptions gracefully
 - Create directories as needed
@@ -1093,7 +1052,7 @@ solar_bom/
 - Use proper JSON formatting for configuration files
 - Implement backup and recovery mechanisms
 
-### 11.5 Electrical Calculations
+### 11.4 Electrical Calculations
 - Implement voltage drop calculations based on industry standards
 - Calculate conductor ampacity per NEC guidelines
 - Apply temperature corrections to calculations
