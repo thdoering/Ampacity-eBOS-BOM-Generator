@@ -469,9 +469,17 @@ class BlockConfig:
                     harness_list = []
                     
                     for harness_data in harness_list_data:
+                        # Migration: If cable_size is not in harness_data (old project), 
+                        # use block-level defaults
+                        if 'cable_size' not in harness_data or not harness_data.get('cable_size'):
+                            # Use block-level harness cable size as default
+                            default_cable_size = wiring_data.get('harness_cable_size', "8 AWG")
+                        else:
+                            default_cable_size = harness_data.get('cable_size', "8 AWG")
+                        
                         harness = HarnessGroup(
                             string_indices=harness_data['string_indices'],
-                            cable_size=harness_data.get('cable_size', "8 AWG"),
+                            cable_size=default_cable_size,
                             string_cable_size=harness_data.get('string_cable_size', ""),
                             extender_cable_size=harness_data.get('extender_cable_size', ""),
                             whip_cable_size=harness_data.get('whip_cable_size', ""),

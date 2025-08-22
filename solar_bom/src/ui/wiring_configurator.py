@@ -426,11 +426,95 @@ class WiringConfigurator(tk.Toplevel):
         self.harness_cable_menu.add_separator()
         self.harness_cable_menu.add_command(label="Delete Harness", command=self.delete_selected_harness)
 
-        # Add Delete All Harnesses button below the table
+        # Add buttons below the table
         button_frame = ttk.Frame(table_frame)
         button_frame.grid(row=2, column=0, columnspan=2, padx=5, pady=(5, 0), sticky=(tk.W, tk.E))
         ttk.Button(button_frame, text="Delete All Harnesses", 
                 command=self.delete_all_harnesses).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Apply Recommended Sizes", 
+                command=self.apply_recommended_sizes).pack(side=tk.LEFT, padx=5)
+        
+    def apply_recommended_sizes(self):
+        """Apply recommended cable sizes to all harness groups"""
+        if not self.block or not self.block.wiring_config:
+            return
+            
+        if not hasattr(self.block.wiring_config, 'harness_groupings') or not self.block.wiring_config.harness_groupings:
+            messagebox.showinfo("Info", "No harness groups configured")
+            return
+        
+        # Get module Isc for calculations
+        if not self.block.tracker_template or not self.block.tracker_template.module_spec:
+            messagebox.showerror("Error", "Module information not available")
+            return
+        
+        module_isc = self.block.tracker_template.module_spec.isc
+        
+        # Import cable sizing utilities
+        from ..utils.cable_sizing import calculate_all_cable_sizes
+        
+        # Build preview of changes
+        changes = []
+        for string_count, harness_list in self.block.wiring_config.harness_groupings.items():
+            for harness_idx, harness in enumerate(harness_list):
+                num_strings = len(harness.string_indices)
+                
+                # Calculate recommended sizes
+                recommended = calculate_all_cable_sizes(num_strings, module_isc)
+                
+                # Check what would change
+                current = {
+                    'string': harness.string_cable_size or self.block.wiring_config.string_cable_size,
+                    'harness': harness.cable_size,
+                    'extender': harness.extender_cable_size or self.block.wiring_config.extender_cable_size,
+                    'whip': harness.whip_cable_size or self.block.wiring_config.whip_cable_size
+                }
+                
+                changed_items = []
+                for cable_type in ['string', 'harness', 'extender', 'whip']:
+                    if current[cable_type] != recommended[cable_type]:
+                        changed_items.append(f"{cable_type}: {current[cable_type]} → {recommended[cable_type]}")
+                
+                if changed_items:
+                    changes.append(f"{num_strings}-string harnesses:\n  " + "\n  ".join(changed_items))
+        
+        if not changes:
+            messagebox.showinfo("Info", "All harnesses already have recommended sizes")
+            return
+        
+        # Show preview and confirm
+        message = "The following changes will be applied:\n\n" + "\n\n".join(changes)
+        if not messagebox.askyesno("Apply Recommended Sizes", message):
+            return
+        
+        # Apply the changes
+        for string_count, harness_list in self.block.wiring_config.harness_groupings.items():
+            for harness_idx, harness in enumerate(harness_list):
+                num_strings = len(harness.string_indices)
+                
+                # Calculate and apply recommended sizes
+                recommended = calculate_all_cable_sizes(num_strings, module_isc)
+                
+                harness.string_cable_size = recommended['string']
+                harness.cable_size = recommended['harness']
+                harness.extender_cable_size = recommended['extender']
+                harness.whip_cable_size = recommended['whip']
+                
+                # Mark cells as edited
+                actual_string_count = len(harness.string_indices)
+                harness_key = f"{actual_string_count}_string_{harness_idx}"
+                
+                self.harness_cable_edited_cells.add(f"{harness_key}_string")
+                self.harness_cable_edited_cells.add(f"{harness_key}_harness")
+                self.harness_cable_edited_cells.add(f"{harness_key}_extender")
+                self.harness_cable_edited_cells.add(f"{harness_key}_whip")
+        
+        # Refresh display
+        self.update_harness_cable_table()
+        self.draw_wiring_layout()
+        self.notify_wiring_changed()
+        
+        messagebox.showinfo("Success", "Recommended cable sizes applied successfully")
 
     def update_harness_cable_table(self):
         """Update the harness cable configuration table"""
@@ -1057,6 +1141,33 @@ class WiringConfigurator(tk.Toplevel):
                                 if hasattr(harness, 'whip_cable_size') and harness.whip_cable_size:
                                     self.harness_cable_edited_cells.add(f"{harness_key}_whip")
 
+                # Migration logic: If harness groups exist but lack cable sizes, copy from block-level
+                if hasattr(self.block.wiring_config, 'harness_groupings'):
+                    migrated_any = False
+                    for string_count, harness_list in self.block.wiring_config.harness_groupings.items():
+                        for harness_idx, harness in enumerate(harness_list):
+                            # Check if this harness needs migration (has no cable_size attribute or is empty)
+                            if not hasattr(harness, 'cable_size') or not harness.cable_size:
+                                # Migrate from block-level defaults
+                                harness.cable_size = self.block.wiring_config.harness_cable_size or "8 AWG"
+                                migrated_any = True
+                            
+                            # Ensure all attributes exist (for old projects)
+                            if not hasattr(harness, 'string_cable_size'):
+                                harness.string_cable_size = ""
+                            if not hasattr(harness, 'extender_cable_size'):
+                                harness.extender_cable_size = ""
+                            if not hasattr(harness, 'whip_cable_size'):
+                                harness.whip_cable_size = ""
+                            if not hasattr(harness, 'fuse_rating_amps'):
+                                # Calculate default fuse rating
+                                harness.fuse_rating_amps = self.calculate_recommended_fuse_size(harness.string_indices)
+                            if not hasattr(harness, 'use_fuse'):
+                                harness.use_fuse = len(harness.string_indices) > 1
+                    
+                    if migrated_any:
+                        print("Migrated cable sizes from block-level to harness-level")
+
     def draw_wiring_layout(self):
         """Draw block layout with wiring visualization"""
         # Ensure all tracker positions have project reference for wiring mode
@@ -1240,6 +1351,33 @@ class WiringConfigurator(tk.Toplevel):
         
         # Get existing custom settings
         custom_whip_points, harness_groupings = self.get_existing_custom_settings()
+
+        # Handle case where there are no custom harness groupings (default single harness)
+        if wiring_type == WiringType.HARNESS and not harness_groupings:
+            # Create default harness groupings based on tracker configurations
+            harness_groupings = {}
+            
+            # Group trackers by string count
+            tracker_groups = {}
+            for pos in self.block.tracker_positions:
+                string_count = len(pos.strings)
+                if string_count not in tracker_groups:
+                    tracker_groups[string_count] = []
+                tracker_groups[string_count].append(pos)
+            
+            # Create default single harness for each string count
+            for string_count, positions in tracker_groups.items():
+                harness_groupings[string_count] = [
+                    HarnessGroup(
+                        string_indices=list(range(string_count)),
+                        cable_size=self.harness_cable_size_var.get(),
+                        string_cable_size="",  # Use block default
+                        extender_cable_size="",  # Use block default
+                        whip_cable_size="",  # Use block default
+                        fuse_rating_amps=self.calculate_recommended_fuse_size(list(range(string_count))),
+                        use_fuse=string_count > 1
+                    )
+                ]
         
         # If we have existing harness groupings with custom cable sizes, preserve them
         if harness_groupings and hasattr(self.block.wiring_config, 'harness_groupings'):
@@ -1335,7 +1473,31 @@ class WiringConfigurator(tk.Toplevel):
 
     def validate_configuration(self):
         """Validate the wiring configuration"""
-        return True  # Add specific validation logic if needed
+        # Validate that all harnesses have cable sizes defined
+        if self.wiring_type_var.get() == WiringType.HARNESS.value:
+            if hasattr(self.block, 'wiring_config') and hasattr(self.block.wiring_config, 'harness_groupings'):
+                for string_count, harness_list in self.block.wiring_config.harness_groupings.items():
+                    for harness_idx, harness in enumerate(harness_list):
+                        if not harness.cable_size:
+                            messagebox.showerror("Validation Error", 
+                                f"Harness {harness_idx + 1} for {string_count}-string trackers is missing cable size configuration. "
+                                "Please configure all cable sizes before saving.")
+                            return False
+                        
+                        # Also validate that cable sizes are valid AWG sizes
+                        for cable_type, cable_size in [
+                            ('harness', harness.cable_size),
+                            ('string', harness.string_cable_size),
+                            ('extender', harness.extender_cable_size),
+                            ('whip', harness.whip_cable_size)
+                        ]:
+                            if cable_size and cable_size not in self.AWG_SIZES:
+                                messagebox.showerror("Validation Error", 
+                                    f"Invalid {cable_type} cable size '{cable_size}' for {string_count}-string harnesses. "
+                                    "Please select a valid AWG size.")
+                                return False
+        
+        return True  # All validations passed
 
     def perform_final_checks(self):
         """Perform final validation checks and notify parent"""
@@ -2664,24 +2826,66 @@ class WiringConfigurator(tk.Toplevel):
         if not hasattr(self, 'wire_warnings'):
             self.wire_warnings = {}
 
+    def create_default_harness_groupings(self):
+        """Create default harness groupings when switching to harness mode with no existing configuration"""
+        if not self.block or not self.block.wiring_config:
+            return
+            
+        # Group trackers by string count
+        tracker_groups = {}
+        for pos in self.block.tracker_positions:
+            string_count = len(pos.strings)
+            if string_count not in tracker_groups:
+                tracker_groups[string_count] = []
+            tracker_groups[string_count].append(pos)
+        
+        # Create default single harness for each string count
+        self.block.wiring_config.harness_groupings = {}
+        for string_count, positions in tracker_groups.items():
+            self.block.wiring_config.harness_groupings[string_count] = [
+                HarnessGroup(
+                    string_indices=list(range(string_count)),
+                    cable_size=self.harness_cable_size_var.get(),
+                    string_cable_size="",  # Use block default
+                    extender_cable_size="",  # Use block default
+                    whip_cable_size="",  # Use block default
+                    fuse_rating_amps=self.calculate_recommended_fuse_size(list(range(string_count))),
+                    use_fuse=string_count > 1
+                )
+            ]
+        
+        # Update the display
+        self.update_harness_cable_table()
+
     def update_ui_for_wiring_type(self):
-        """Update UI elements based on selected wiring type"""
-        is_harness = self.wiring_type_var.get() == WiringType.HARNESS.value
-        if is_harness:
+        """Update UI based on selected wiring type"""
+        wiring_type = WiringType(self.wiring_type_var.get())
+        
+        if wiring_type == WiringType.HARNESS:
+            # Hide string homerun specific UI elements
+            if hasattr(self, 'cable_collapsible'):
+                self.cable_collapsible.grid_remove()
+            
+            # Show harness specific UI elements
             self.harness_frame.grid()
             self.extender_frame.grid()
             self.harness_collapsible.grid()
             
-            # Hide Default Cable Sizes section in harness mode
-            if hasattr(self, 'cable_collapsible'):
-                self.cable_collapsible.grid_remove()
-            
-            # Show harness cable configuration table
+            # Show harness cable table
             if hasattr(self, 'cable_table_collapsible'):
                 self.cable_table_collapsible.grid()
                 self.update_harness_cable_table()
                 
             self.populate_string_count_combobox()
+            
+            # Ensure harness groupings exist
+            if self.block and self.block.wiring_config:
+                if not hasattr(self.block.wiring_config, 'harness_groupings'):
+                    self.block.wiring_config.harness_groupings = {}
+                
+                # If no harness groupings exist, create defaults
+                if not self.block.wiring_config.harness_groupings:
+                    self.create_default_harness_groupings()
 
         else:
             self.harness_frame.grid_remove()
@@ -2698,6 +2902,15 @@ class WiringConfigurator(tk.Toplevel):
 
     def populate_string_count_combobox(self):
         """Populate the string count combobox with available tracker configurations"""
+        # Handle case with no trackers
+        if not self.block or not self.block.tracker_positions:
+            self.string_count_combobox['values'] = []
+            self.tracker_count_label.config(text="No trackers configured")
+            # Clear string checkboxes
+            for widget in self.string_check_frame.winfo_children():
+                widget.destroy()
+            return
+            
         # Count trackers by string count
         tracker_counts = {}
         for pos in self.block.tracker_positions:
@@ -2721,7 +2934,9 @@ class WiringConfigurator(tk.Toplevel):
         if items:
             self.string_count_combobox.current(0)
             self.on_string_count_selected()
-
+        else:
+            self.tracker_count_label.config(text="No trackers configured")
+            
     def on_string_count_selected(self, event=None):
         """Handle string count selection from combobox"""
         if not self.string_count_var.get() or not hasattr(self, 'string_count_mapping'):
@@ -2817,10 +3032,10 @@ class WiringConfigurator(tk.Toplevel):
         # Create new harness with default cable sizes
         new_harness = HarnessGroup(
             string_indices=selected_indices,
-            cable_size="10 AWG",  # Default harness trunk size
-            string_cable_size="10 AWG",  # Default string cable size
-            extender_cable_size="8 AWG",  # Default extender size
-            whip_cable_size="8 AWG",  # Default whip size
+            cable_size=self.harness_cable_size_var.get(),  # Use current block default
+            string_cable_size="",  # Empty = use block default
+            extender_cable_size="",  # Empty = use block default
+            whip_cable_size="",  # Empty = use block default
             fuse_rating_amps=recommended_fuse,
             use_fuse=len(selected_indices) > 1  # Only use fuses for 2+ strings
         )
