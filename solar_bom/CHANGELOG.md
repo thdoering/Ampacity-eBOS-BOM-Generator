@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2025-08-22
+
+### Added
+- **Block List Sorting**: Added sorting functionality for better organization of block lists
+- **Harness-Specific Cable Sizes**: Enhanced wiring configurator with harness-specific cable sizing for more accurate material requirements
+- **Clear All Trackers Button**: Added convenient button to clear all tracker placements from blocks at once
+
+### Enhanced
+- Improved user workflow with better block management controls
+- More precise cable sizing calculations for procurement accuracy
+
 ## [2.1.0] - 2025-07-17
 
 ### Added

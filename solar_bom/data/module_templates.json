@@ -307,6 +307,26 @@
       "bifaciality_factor": null,
       "default_orientation": "Portrait",
       "cells_per_module": 72
+    },
+    "JAM72D40 615W": {
+      "manufacturer": "JA Solar",
+      "model": "JAM72D40 615W",
+      "type": "Bifacial",
+      "length_mm": 2382.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 620.0,
+      "vmp": 39.96,
+      "imp": 15.39,
+      "voc": 48.3,
+      "isc": 16.1,
+      "max_system_voltage": 1500,
+      "efficiency": null,
+      "temperature_coefficient": null,
+      "bifaciality_factor": null,
+      "default_orientation": "Portrait",
+      "cells_per_module": 72
     }
   },
   "First Solar": {

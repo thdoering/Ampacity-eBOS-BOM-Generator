@@ -1212,6 +1212,87 @@
         "isc": 16.13,
         "max_system_voltage": 1500
       }
+    },
+    "NXT-81-615W": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 27,
+      "strings_per_tracker": 3,
+      "module_spacing_m": 0.01,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 2,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 2,
+      "motor_split_north": 14,
+      "motor_split_south": 13,
+      "module_spec": {
+        "manufacturer": "JA Solar",
+        "model": "JAM72D40 615W",
+        "type": "Bifacial",
+        "length_mm": 2382.0,
+        "width_mm": 1134.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 620.0,
+        "vmp": 39.96,
+        "imp": 15.39,
+        "voc": 48.3,
+        "isc": 16.1,
+        "max_system_voltage": 1500
+      }
+    },
+    "NXT-54-615W": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 27,
+      "strings_per_tracker": 2,
+      "module_spacing_m": 0.01,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 2,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 2,
+      "motor_split_north": 14,
+      "motor_split_south": 13,
+      "module_spec": {
+        "manufacturer": "JA Solar",
+        "model": "JAM72D40 615W",
+        "type": "Bifacial",
+        "length_mm": 2382.0,
+        "width_mm": 1134.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 620.0,
+        "vmp": 39.96,
+        "imp": 15.39,
+        "voc": 48.3,
+        "isc": 16.1,
+        "max_system_voltage": 1500
+      }
+    },
+    "NXT-27-615W": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 27,
+      "strings_per_tracker": 1,
+      "module_spacing_m": 0.01,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 1,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 1,
+      "motor_split_north": 14,
+      "motor_split_south": 13,
+      "module_spec": {
+        "manufacturer": "JA Solar",
+        "model": "JAM72D40 615W",
+        "type": "Bifacial",
+        "length_mm": 2382.0,
+        "width_mm": 1134.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 620.0,
+        "vmp": 39.96,
+        "imp": 15.39,
+        "voc": 48.3,
+        "isc": 16.1,
+        "max_system_voltage": 1500
+      }
     }
   },
   "First Solar": {
