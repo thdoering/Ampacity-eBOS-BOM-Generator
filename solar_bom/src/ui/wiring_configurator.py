@@ -1318,6 +1318,15 @@ class WiringConfigurator(tk.Toplevel):
             tk.messagebox.showerror("Error", "No block selected")
             self.destroy()
             return
+        
+        # Check if conceptual routing is selected and prevent application
+        if self.routing_mode_var.get() == "conceptual":
+            tk.messagebox.showerror("Cannot Apply Configuration", 
+                                    "Wiring configuration cannot be applied when using conceptual routing.\n\n"
+                                    "Please switch to 'Realistic Routing' mode to apply the configuration.\n\n"
+                                    "Conceptual routing is for visualization only and does not provide "
+                                    "accurate cable lengths for BOM calculations.")
+            return
             
         try:
             # Create wiring configuration
