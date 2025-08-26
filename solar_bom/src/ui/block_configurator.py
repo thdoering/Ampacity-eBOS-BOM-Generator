@@ -2432,6 +2432,34 @@ class BlockConfigurator(ttk.Frame):
                 
             row_spacing_m = self.ft_to_m(row_spacing_ft)
             
+            # Check if trackers are already placed and row spacing is changing
+            if self.current_block and self.current_block in self.blocks:
+                block = self.blocks[self.current_block]
+                if block.tracker_positions and abs(block.row_spacing_m - row_spacing_m) > 0.01:  # Allow small rounding differences
+                    # Warn user about changing row spacing with existing trackers
+                    response = messagebox.askyesnocancel(
+                        "Row Spacing Change Warning",
+                        f"Changing row spacing from {self.m_to_ft(block.row_spacing_m):.1f}ft to {row_spacing_ft:.1f}ft "
+                        f"with {len(block.tracker_positions)} trackers already placed may result in an inconsistent layout.\n\n"
+                        "• Yes: Clear all trackers and apply new spacing\n"
+                        "• No: Keep trackers and apply new spacing (may look incorrect)\n"
+                        "• Cancel: Keep current row spacing"
+                    )
+                    
+                    if response is None:  # Cancel
+                        # Reset the input to current value
+                        self.updating_ui = True
+                        self.row_spacing_var.set(f"{self.m_to_ft(block.row_spacing_m):.1f}")
+                        self.updating_ui = False
+                        return
+                    elif response:  # Yes - clear trackers
+                        # Clear all tracker positions for this block
+                        block.tracker_positions.clear()
+                        self.draw_block()
+                        messagebox.showinfo("Trackers Cleared", 
+                            "All trackers have been cleared. You can now place trackers with the new row spacing.")
+                    # If No, continue with the spacing change
+            
             # Get module length from templates
             module_length_m, error = self.get_module_length_from_templates()
             if error:
@@ -2490,6 +2518,35 @@ class BlockConfigurator(ttk.Frame):
             # Calculate row spacing
             row_spacing_m = module_length_m / gcr
             row_spacing_ft = self.m_to_ft(row_spacing_m)
+            
+            # Check if trackers are already placed and row spacing is changing
+            if self.current_block and self.current_block in self.blocks:
+                block = self.blocks[self.current_block]
+                if block.tracker_positions and abs(block.row_spacing_m - row_spacing_m) > 0.01:  # Allow small rounding differences
+                    # Warn user about changing row spacing with existing trackers
+                    response = messagebox.askyesnocancel(
+                        "Row Spacing Change Warning",
+                        f"Changing row spacing from {self.m_to_ft(block.row_spacing_m):.1f}ft to {row_spacing_ft:.1f}ft "
+                        f"with {len(block.tracker_positions)} trackers already placed may result in an inconsistent layout.\n\n"
+                        "• Yes: Clear all trackers and apply new spacing\n"
+                        "• No: Keep trackers and apply new spacing (may look incorrect)\n"
+                        "• Cancel: Keep current GCR/spacing"
+                    )
+                    
+                    if response is None:  # Cancel
+                        # Reset the input to current value
+                        self.updating_ui = True
+                        current_gcr = module_length_m / block.row_spacing_m
+                        self.gcr_var.set(f"{current_gcr:.3f}")
+                        self.updating_ui = False
+                        return
+                    elif response:  # Yes - clear trackers
+                        # Clear all tracker positions for this block
+                        block.tracker_positions.clear()
+                        self.draw_block()
+                        messagebox.showinfo("Trackers Cleared", 
+                            "All trackers have been cleared. You can now place trackers with the new row spacing.")
+                    # If No, continue with the spacing change
             
             # Update row spacing field
             self.updating_ui = True
