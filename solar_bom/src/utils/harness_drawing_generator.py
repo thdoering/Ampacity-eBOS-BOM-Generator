@@ -51,12 +51,27 @@ class HarnessDrawingGenerator:
         """Load the harness library from JSON file"""
         try:
             with open(self.harness_library_path, 'r') as f:
-                return json.load(f)
+                data = json.load(f)
+                
+            # Filter out comment entries
+            filtered_library = {}
+            for key, value in data.items():
+                # Skip any keys that start with underscore (comment convention)
+                if key.startswith('_'):
+                    continue
+                # Only include entries that are dictionaries (valid harness specs)
+                if isinstance(value, dict):
+                    filtered_library[key] = value
+                        
+            return filtered_library
         except FileNotFoundError:
             print(f"Warning: Harness library file not found at {self.harness_library_path}")
             return {}
         except json.JSONDecodeError:
             print(f"Warning: Invalid JSON in harness library file {self.harness_library_path}")
+            return {}
+        except Exception as e:
+            print(f"Warning: Failed to load harness library: {str(e)}")
             return {}
     
     def generate_harness_drawing(self, part_number: str, output_dir: str = 'harness_drawings') -> bool:
@@ -119,10 +134,12 @@ class HarnessDrawingGenerator:
         # Trunk stops at second-to-last string (no T-connector on last string)
         harness_end_x = harness_start_x + ((num_strings - 2) * string_spacing_px) if num_strings > 1 else harness_start_x
         
-        # Get wire thicknesses
+        # Get wire thicknesses - use defaults if not specified
+        trunk_gauge = harness_spec.get('trunk_wire_gauge', '8 AWG')
+        drop_gauge = harness_spec.get('drop_wire_gauge', '10 AWG')
         trunk_color = self.pos_color if polarity == 'positive' else self.neg_color
-        trunk_thickness = self.wire_thickness.get(harness_spec['trunk_wire_gauge'], 4)
-        drop_thickness = self.wire_thickness.get(harness_spec['drop_wire_gauge'], 3)
+        trunk_thickness = self.wire_thickness.get(trunk_gauge, 4)
+        drop_thickness = self.wire_thickness.get(drop_gauge, 3)
         
         # Draw main trunk line - stops at second-to-last string
         if num_strings > 1:
@@ -284,24 +301,24 @@ class HarnessDrawingGenerator:
                      fill=self.dim_color, font=self.dim_font)
     
     def draw_wire_gauge_labels(self, draw: ImageDraw, harness_spec: Dict[str, Any], 
-                             start_x: int, end_x: int, trunk_y: int):
+                         start_x: int, end_x: int, trunk_y: int):
         """Draw wire gauge labels on trunk and drops"""
-        drop_gauge = harness_spec['drop_wire_gauge']
-        trunk_gauge = harness_spec['trunk_wire_gauge']
+        drop_gauge = harness_spec.get('drop_wire_gauge', '10 AWG')
+        trunk_gauge = harness_spec.get('trunk_wire_gauge', '8 AWG')
         
         # Label trunk wire gauge ABOVE the trunk line
         trunk_center_x = (start_x + end_x) // 2
         bbox = draw.textbbox((0, 0), trunk_gauge, font=self.label_font)
         text_width = bbox[2] - bbox[0]
         draw.text((trunk_center_x - text_width//2, trunk_y - 35), trunk_gauge, 
-                 fill=self.line_color, font=self.label_font)
+                fill=self.line_color, font=self.label_font)
         
         # Label drop wire gauge (on first drop)
         drop_x = start_x
         bbox = draw.textbbox((0, 0), drop_gauge, font=self.label_font)
         text_width = bbox[2] - bbox[0]
         draw.text((drop_x - text_width - 15, trunk_y + 50), drop_gauge, 
-                 fill=self.line_color, font=self.label_font)
+                fill=self.line_color, font=self.label_font)
     
     def draw_fuse_indicators(self, draw: ImageDraw, start_x: int, trunk_y: int, 
                            spacing_px: int, num_strings: int, fuse_rating: str):
@@ -336,23 +353,23 @@ class HarnessDrawingGenerator:
         
         # Table title
         draw.text((table_start_x, table_start_y - 30), "SPECIFICATIONS", 
-                 fill=self.line_color, font=self.title_font)
+                fill=self.line_color, font=self.title_font)
         
-        # Table data
+        # Table data - handle missing fields gracefully
         specs = [
-            ("Part Number:", harness_spec['part_number']),
-            ("ATPI Part Number:", harness_spec['atpi_part_number']),
-            ("Description:", harness_spec['description']),
-            ("Number of Strings:", str(harness_spec['num_strings'])),
-            ("Polarity:", harness_spec['polarity'].title()),
-            ("String Spacing:", f"{harness_spec['string_spacing_ft']}'"),
-            ("Drop Wire Gauge:", harness_spec['drop_wire_gauge']),
-            ("Trunk Wire Gauge:", harness_spec['trunk_wire_gauge']),
-            ("Connector Type:", harness_spec['connector_type']),
+            ("Part Number:", harness_spec.get('part_number', 'N/A')),
+            ("ATPI Part Number:", harness_spec.get('atpi_part_number', 'N/A')),
+            ("Description:", harness_spec.get('description', 'N/A')),
+            ("Number of Strings:", str(harness_spec.get('num_strings', 'N/A'))),
+            ("Polarity:", harness_spec.get('polarity', 'N/A').title() if harness_spec.get('polarity') else 'N/A'),
+            ("String Spacing:", f"{harness_spec.get('string_spacing_ft', 'N/A')}'"),
+            ("Drop Wire Gauge:", harness_spec.get('drop_wire_gauge', '10 AWG')),
+            ("Trunk Wire Gauge:", harness_spec.get('trunk_wire_gauge', '8 AWG')),
+            ("Connector Type:", harness_spec.get('connector_type', 'MC4')),
         ]
         
         if harness_spec.get('fused', False):
-            specs.append(("Fuse Rating:", harness_spec.get('fuse_rating', 'N/A')))
+            specs.append(("Fuse Rating:", harness_spec.get('fuse_rating', '15A')))
         
         # Draw table rows
         row_height = 20
@@ -364,20 +381,20 @@ class HarnessDrawingGenerator:
             # Draw row background (alternating)
             if i % 2 == 0:
                 draw.rectangle([table_start_x, y_pos - 2, 
-                              table_start_x + table_width, y_pos + row_height - 2],
-                             fill=(245, 245, 245))
+                            table_start_x + table_width, y_pos + row_height - 2],
+                            fill=(245, 245, 245))
             
             # Draw text
             draw.text((table_start_x + 10, y_pos), label, 
-                     fill=self.line_color, font=self.table_font)
-            draw.text((table_start_x + col1_width, y_pos), value, 
-                     fill=self.line_color, font=self.table_font)
+                    fill=self.line_color, font=self.table_font)
+            draw.text((table_start_x + col1_width, y_pos), str(value), 
+                    fill=self.line_color, font=self.table_font)
         
         # Draw table border
         table_height = len(specs) * row_height
         draw.rectangle([table_start_x, table_start_y - 2, 
-                       table_start_x + table_width, table_start_y + table_height - 2],
-                     outline=self.line_color, width=1)
+                    table_start_x + table_width, table_start_y + table_height - 2],
+                    outline=self.line_color, width=1)
     
     def draw_title_block(self, draw: ImageDraw, harness_spec: Dict[str, Any]):
         """Draw title block with part number and polarity"""
@@ -410,5 +427,9 @@ class HarnessDrawingGenerator:
     
     def get_available_harnesses(self) -> Dict[str, str]:
         """Get list of available harnesses with descriptions"""
-        return {part_num: spec['description'] 
-                for part_num, spec in self.harness_library.items()}
+        available = {}
+        for part_num, spec in self.harness_library.items():
+            # Double-check that spec is a dictionary
+            if isinstance(spec, dict):
+                available[part_num] = spec.get('description', 'No description')
+        return available

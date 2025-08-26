@@ -15,6 +15,13 @@ class HarnessCatalogDialog(tk.Toplevel):
         # Initialize the drawing generator
         try:
             self.generator = HarnessDrawingGenerator()
+            # The generator already filters comments, so just check if empty
+            if not self.generator.harness_library:
+                messagebox.showwarning("Empty Library", 
+                                    "No harnesses found in library.\n\n"
+                                    "Please use the Harness Designer to create harness templates.")
+                self.destroy()
+                return
             self.available_harnesses = self.generator.get_available_harnesses()
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load harness library: {str(e)}")
@@ -163,8 +170,16 @@ class HarnessCatalogDialog(tk.Toplevel):
         """Populate the treeview with harness data"""
         self.selected_harnesses = set()
         
-        # Sort harnesses by category then part number
-        sorted_harnesses = sorted(self.generator.harness_library.items(), 
+        # Filter and sort harnesses by category then part number
+        valid_harnesses = []
+        for part_number, spec in self.generator.harness_library.items():
+            # Skip comment entries and non-dictionary values
+            if part_number.startswith('*comment*') or not isinstance(spec, dict):
+                continue
+            valid_harnesses.append((part_number, spec))
+        
+        # Sort by category then part number
+        sorted_harnesses = sorted(valid_harnesses, 
                                 key=lambda x: (x[1].get('category', ''), x[0]))
         
         for part_number, spec in sorted_harnesses:
@@ -176,10 +191,6 @@ class HarnessCatalogDialog(tk.Toplevel):
                 spec.get('polarity', '').title(),
                 f"{spec.get('string_spacing_ft', '')}'"
             )
-            
-            item_id = self.harness_tree.insert('', 'end', values=values, tags=('unchecked',))
-            # Store part number for easy retrieval
-            self.harness_tree.set(item_id, 'part_number', part_number)
     
     def on_tree_click(self, event):
         """Handle tree click events"""

@@ -3845,5 +3845,142 @@
         "max_system_voltage": 1500
       }
     }
+  },
+  "Elite Plus": {
+    "NXT-78-385": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 26,
+      "strings_per_tracker": 3,
+      "module_spacing_m": 0.01,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 2,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 2,
+      "motor_split_north": 14,
+      "motor_split_south": 12,
+      "module_spec": {
+        "manufacturer": "Elite Plus",
+        "model": "ET-M672BH385TW 385",
+        "type": "Bifacial",
+        "length_mm": 2008.0,
+        "width_mm": 1002.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 385.0,
+        "vmp": 39.5,
+        "imp": 9.76,
+        "voc": 48.1,
+        "isc": 10.08,
+        "max_system_voltage": 1500
+      }
+    },
+    "NXT-26-385-S": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 26,
+      "strings_per_tracker": 1,
+      "module_spacing_m": 0.01,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 1,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 1,
+      "motor_split_north": 14,
+      "motor_split_south": 12,
+      "module_spec": {
+        "manufacturer": "Elite Plus",
+        "model": "ET-M672BH385TW 385",
+        "type": "Bifacial",
+        "length_mm": 2008.0,
+        "width_mm": 1002.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 385.0,
+        "vmp": 39.5,
+        "imp": 9.76,
+        "voc": 48.1,
+        "isc": 10.08,
+        "max_system_voltage": 1500
+      }
+    },
+    "NXT-26-385-N": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 26,
+      "strings_per_tracker": 1,
+      "module_spacing_m": 0.01,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 0,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 1,
+      "motor_split_north": 14,
+      "motor_split_south": 12,
+      "module_spec": {
+        "manufacturer": "Elite Plus",
+        "model": "ET-M672BH385TW 385",
+        "type": "Bifacial",
+        "length_mm": 2008.0,
+        "width_mm": 1002.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 385.0,
+        "vmp": 39.5,
+        "imp": 9.76,
+        "voc": 48.1,
+        "isc": 10.08,
+        "max_system_voltage": 1500
+      }
+    },
+    "NXT-52-385-S": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 26,
+      "strings_per_tracker": 2,
+      "module_spacing_m": 0.01,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 2,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 2,
+      "motor_split_north": 14,
+      "motor_split_south": 12,
+      "module_spec": {
+        "manufacturer": "Elite Plus",
+        "model": "ET-M672BH385TW 385",
+        "type": "Bifacial",
+        "length_mm": 2008.0,
+        "width_mm": 1002.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 385.0,
+        "vmp": 39.5,
+        "imp": 9.76,
+        "voc": 48.1,
+        "isc": 10.08,
+        "max_system_voltage": 1500
+      }
+    },
+    "NXT-52-385-M": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 26,
+      "strings_per_tracker": 2,
+      "module_spacing_m": 0.01,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 1,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 2,
+      "motor_split_north": 14,
+      "motor_split_south": 12,
+      "module_spec": {
+        "manufacturer": "Elite Plus",
+        "model": "ET-M672BH385TW 385",
+        "type": "Bifacial",
+        "length_mm": 2008.0,
+        "width_mm": 1002.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 385.0,
+        "vmp": 39.5,
+        "imp": 9.76,
+        "voc": 48.1,
+        "isc": 10.08,
+        "max_system_voltage": 1500
+      }
+    }
   }
 }

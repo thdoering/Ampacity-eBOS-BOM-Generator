@@ -42,14 +42,22 @@ class HarnessDesigner(tk.Toplevel):
             
             if Path(self.harness_library_path).exists():
                 with open(self.harness_library_path, 'r') as f:
-                    return json.load(f)
+                    data = json.load(f)
+                    
+                    # Filter out comment entries (keys starting with underscore)
+                    filtered_library = {}
+                    for key, value in data.items():
+                        if not key.startswith('_') and isinstance(value, dict):
+                            filtered_library[key] = value
+                            
+                    return filtered_library
             else:
-                # Create empty library if file doesn't exist
+                # Create empty library file if it doesn't exist
                 return {}
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load harness library: {str(e)}")
             return {}
-    
+        
     def save_harness_library(self):
         """Save harness library to JSON file"""
         try:
@@ -371,8 +379,16 @@ Fuse Configuration:
         """Update the template listbox"""
         self.template_listbox.delete(0, tk.END)
         
-        # Sort templates by category then part number
-        sorted_templates = sorted(self.harness_library.items(), 
+        # Filter out comment entries and sort templates
+        valid_templates = []
+        for part_number, spec in self.harness_library.items():
+            # Skip comment entries and non-dictionary values
+            if part_number.startswith('*comment*') or not isinstance(spec, dict):
+                continue
+            valid_templates.append((part_number, spec))
+        
+        # Sort by category then part number
+        sorted_templates = sorted(valid_templates, 
                                 key=lambda x: (x[1].get('category', ''), x[0]))
         
         for part_number, spec in sorted_templates:
