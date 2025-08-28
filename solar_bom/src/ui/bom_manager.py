@@ -3,7 +3,6 @@ from tkinter import ttk, filedialog, messagebox
 from typing import Dict, List, Any, Optional, Callable
 import pandas as pd
 import os
-
 from ..models.block import BlockConfig
 from ..utils.bom_generator import BOMGenerator
 from .harness_catalog_dialog import HarnessCatalogDialog
@@ -87,6 +86,13 @@ class BOMManager(ttk.Frame):
         # BOM Action Frame
         bom_frame = ttk.LabelFrame(left_column, text="BOM Generation", padding="5")
         bom_frame.grid(row=1, column=0, padx=5, pady=5, sticky=(tk.W, tk.E))
+
+        # SLD Generator button
+        ttk.Button(
+            bom_frame, 
+            text="Single Line Diagram", 
+            command=self.open_sld_editor
+        ).grid(row=3, column=0, padx=5, pady=5)
         
         # Export button
         ttk.Button(
@@ -193,6 +199,28 @@ class BOMManager(ttk.Frame):
             text="Select None", 
             command=self.select_none_items
         ).grid(row=0, column=2, padx=5)
+
+    def open_sld_editor(self):
+        """Open the SLD Editor window"""
+        from .sld_editor import SLDEditor
+        
+        # Get selected blocks
+        selected_blocks = {block_id: self.blocks[block_id] 
+                          for block_id in self.selected_blocks 
+                          if block_id in self.blocks}
+        
+        if not selected_blocks:
+            messagebox.showwarning("No Blocks Selected", 
+                                  "Please select at least one block to generate SLD")
+            return
+        
+        # Get the main app's current project
+        current_project = None
+        if self.main_app and hasattr(self.main_app, 'current_project'):
+            current_project = self.main_app.current_project
+        
+        # Open SLD Editor window
+        sld_window = SLDEditor(self, selected_blocks, current_project)
     
     def set_blocks(self, blocks: Dict[str, BlockConfig]):
         """

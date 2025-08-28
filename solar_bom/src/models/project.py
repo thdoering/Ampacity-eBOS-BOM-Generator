@@ -34,6 +34,8 @@ class Project:
     wiring_mode: str = "daisy_chain"  # Default to daisy chain
     # Device configurations (combiner boxes, etc.)
     device_configs: Dict[str, dict] = field(default_factory=dict)
+    # Single Line Diagram configuration
+    sld_diagram: Optional[dict] = None  # Stores SLDDiagram as dict
     
     def update_modified_date(self):
         """Update the last modified date"""
@@ -57,7 +59,8 @@ class Project:
             'default_row_spacing_m': self.default_row_spacing_m,
             'enabled_templates': self.enabled_templates,
             'wiring_mode': self.wiring_mode,
-            'device_configs': self.device_configs
+            'device_configs': self.device_configs,
+            'sld_diagram': self.sld_diagram
         }
     
     @classmethod
@@ -81,7 +84,8 @@ class Project:
             default_row_spacing_m=data.get('default_row_spacing', 6.0),
             enabled_templates=data.get('enabled_templates', []),
             wiring_mode=data.get('wiring_mode', 'daisy_chain'),
-            device_configs=data.get('device_configs', {})
+            device_configs=data.get('device_configs', {}),
+            sld_diagram=data.get('sld_diagram', None)
         )
     
     def save(self, projects_dir: str = 'projects') -> bool:
