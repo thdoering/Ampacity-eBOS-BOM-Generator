@@ -13,6 +13,7 @@ from ..models.sld import (
     SLDDiagram, SLDElement, SLDConnection, SLDAnnotation,
     SLDElementType, ConnectionPortType, ConnectionPort
 )
+from ..utils.sld_symbols import ANSISymbols
 
 
 class SLDEditor(tk.Toplevel):
@@ -382,51 +383,120 @@ class SLDEditor(tk.Toplevel):
     
     def generate_sld_from_blocks(self):
         """Generate SLD diagram from blocks"""
-        # This will be implemented in Card #4 (Project Data Parser)
         if not self.blocks:
             self.status_label.configure(text="No blocks available")
             return
         
-        # For now, create a placeholder
-        self.status_label.configure(text="SLD generation will be implemented in Card #4")
-        
-        # Create sample elements for testing
+        # Clear canvas
         self.canvas.delete("all")
         self.draw_grid()
         
-        # Draw sample PV block
-        self.canvas.create_rectangle(
-            100, 200, 250, 300,
-            fill="#4A90E2",
-            outline="#2C5282",
-            width=2,
-            tags=("element", "pv_block", "Block_A")
+        # For now, create sample elements using the new symbol library
+        self.status_label.configure(text="Drawing ANSI symbols - Parser in Card #4")
+        
+        # Draw sample PV block using ANSI symbols
+        pv_result = ANSISymbols.draw_symbol(
+            self.canvas,
+            symbol_type='pv_array',
+            x=100,
+            y=200,
+            width=150,
+            height=100,
+            label="Block A\n2.5 MW",
+            element_id="Block_A",
+            show_ports=True  # Show connection points for testing
         )
-        self.canvas.create_text(
-            175, 250,
-            text="Block A\n2.5 MW",
-            fill="white",
-            font=("Arial", 10, "bold"),
-            tags=("label", "Block_A_label")
-        )
+        
+        # Store element reference
+        self.sld_elements["Block_A"] = pv_result
         
         # Draw sample inverter
-        self.canvas.create_rectangle(
-            800, 200, 950, 300,
-            fill="#E24A4A",
-            outline="#822C2C",
-            width=2,
-            tags=("element", "inverter", "INV_01")
-        )
-        self.canvas.create_text(
-            875, 250,
-            text="INV-01\n2500 kVA",
-            fill="white",
-            font=("Arial", 10, "bold"),
-            tags=("label", "INV_01_label")
+        inv_result = ANSISymbols.draw_symbol(
+            self.canvas,
+            symbol_type='inverter',
+            x=800,
+            y=200,
+            width=150,
+            height=100,
+            label="INV-01\n2500 kVA",
+            element_id="INV_01",
+            show_ports=True
         )
         
+        self.sld_elements["INV_01"] = inv_result
+        
+        # Draw sample combiner box
+        cb_result = ANSISymbols.draw_symbol(
+            self.canvas,
+            symbol_type='combiner',
+            x=450,
+            y=220,
+            width=80,
+            height=80,
+            label="CB-01",
+            element_id="CB_01",
+            show_ports=True
+        )
+        
+        self.sld_elements["CB_01"] = cb_result
+        
+        # Draw a test connection line between PV and combiner
+        if "Block_A" in self.sld_elements and "CB_01" in self.sld_elements:
+            # Get connection points
+            pv_pos_point = self.sld_elements["Block_A"]['connection_points']['dc_positive']
+            cb_input_point = self.sld_elements["CB_01"]['connection_points']['input_1']
+            
+            # Draw connection line (will be improved in Card #8)
+            self.canvas.create_line(
+                pv_pos_point[0], pv_pos_point[1],
+                cb_input_point[0], cb_input_point[1],
+                fill='red',
+                width=3,
+                tags=('connection', 'dc_positive'),
+                smooth=False
+            )
+        
         self.update_status_counts()
+        self.status_label.configure(text="ANSI symbols drawn - Ready")
+
+    def create_symbol_palette(self, parent):
+        """Create a palette of available symbols"""
+        palette_frame = ttk.LabelFrame(parent, text="Symbols", padding="5")
+        palette_frame.grid(row=0, column=1, sticky=(tk.N, tk.S), padx=(5, 0))
+        
+        # Create small canvas for each symbol type
+        symbols = ANSISymbols.get_available_symbols()
+        
+        for i, symbol_type in enumerate(symbols):
+            # Create label
+            ttk.Label(palette_frame, text=symbol_type.replace('_', ' ').title()).grid(
+                row=i*2, column=0, pady=(5, 0)
+            )
+            
+            # Create mini canvas for preview
+            mini_canvas = tk.Canvas(
+                palette_frame,
+                width=80,
+                height=60,
+                bg='white',
+                relief=tk.RAISED,
+                borderwidth=1
+            )
+            mini_canvas.grid(row=i*2+1, column=0, padx=5, pady=2)
+            
+            # Draw mini symbol
+            ANSISymbols.draw_symbol(
+                mini_canvas,
+                symbol_type=symbol_type,
+                x=5,
+                y=5,
+                width=70,
+                height=50,
+                label=""
+            )
+            
+            # Make draggable (implement in future cards)
+            mini_canvas.bind("<Button-1>", lambda e, st=symbol_type: self.start_symbol_drag(st))
     
     def update_status_counts(self):
         """Update the status bar counts"""
