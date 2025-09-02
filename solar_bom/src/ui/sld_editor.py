@@ -391,73 +391,570 @@ class SLDEditor(tk.Toplevel):
         self.canvas.delete("all")
         self.draw_grid()
         
-        # For now, create sample elements using the new symbol library
-        self.status_label.configure(text="Drawing ANSI symbols - Parser in Card #4")
-        
-        # Draw sample PV block using ANSI symbols
-        pv_result = ANSISymbols.draw_symbol(
-            self.canvas,
-            symbol_type='pv_array',
-            x=100,
-            y=200,
-            width=150,
-            height=100,
-            label="Block A\n2.5 MW",
-            element_id="Block_A",
-            show_ports=True  # Show connection points for testing
+        # Create SLD diagram
+        self.sld_diagram = SLDDiagram(
+            project_id=self.project.metadata.name if self.project else "unnamed",
+            diagram_name=f"SLD - {self.project.metadata.name if self.project else 'New'}"
         )
         
-        # Store element reference
-        self.sld_elements["Block_A"] = pv_result
+        # Parse blocks into SLD elements
+        self.parse_blocks_to_sld()
         
-        # Draw sample inverter
-        inv_result = ANSISymbols.draw_symbol(
-            self.canvas,
-            symbol_type='inverter',
-            x=800,
-            y=200,
-            width=150,
-            height=100,
-            label="INV-01\n2500 kVA",
-            element_id="INV_01",
-            show_ports=True
-        )
+        # Auto-layout the elements
+        self.sld_diagram.auto_layout()
         
-        self.sld_elements["INV_01"] = inv_result
-        
-        # Draw sample combiner box
-        cb_result = ANSISymbols.draw_symbol(
-            self.canvas,
-            symbol_type='combiner',
-            x=450,
-            y=220,
-            width=80,
-            height=80,
-            label="CB-01",
-            element_id="CB_01",
-            show_ports=True
-        )
-        
-        self.sld_elements["CB_01"] = cb_result
-        
-        # Draw a test connection line between PV and combiner
-        if "Block_A" in self.sld_elements and "CB_01" in self.sld_elements:
-            # Get connection points
-            pv_pos_point = self.sld_elements["Block_A"]['connection_points']['dc_positive']
-            cb_input_point = self.sld_elements["CB_01"]['connection_points']['input_1']
-            
-            # Draw connection line (will be improved in Card #8)
-            self.canvas.create_line(
-                pv_pos_point[0], pv_pos_point[1],
-                cb_input_point[0], cb_input_point[1],
-                fill='red',
-                width=3,
-                tags=('connection', 'dc_positive'),
-                smooth=False
-            )
+        # Render the diagram
+        self.render_sld_diagram()
         
         self.update_status_counts()
-        self.status_label.configure(text="ANSI symbols drawn - Ready")
+        self.status_label.configure(text="SLD generated from blocks")
+    
+    def parse_blocks_to_sld(self):
+        """Parse block configurations into SLD elements at string level"""
+        if not self.sld_diagram:
+            return
+        
+        # Track inverters and combiners to avoid duplicates
+        inverters_added = {}  # inverter_id -> element
+        combiners_added = {}  # combiner_id -> element
+        
+        # Sort blocks for consistent ordering
+        from ..utils.calculations import natural_sort_key
+        sorted_block_ids = sorted(self.blocks.keys(), key=natural_sort_key)
+        
+        for block_id in sorted_block_ids:
+            block = self.blocks[block_id]
+            
+            # Determine if using combiner boxes or direct to inverter
+            using_combiners = (hasattr(block, 'device_type') and 
+                              str(block.device_type) == "DeviceType.COMBINER_BOX")
+            
+            # Get harness groupings if available
+            harness_groups = []
+            if block.wiring_config and hasattr(block.wiring_config, 'harness_groupings'):
+                # Organize by harness groups
+                for string_count, groups in block.wiring_config.harness_groupings.items():
+                    for group in groups:
+                        harness_groups.append({
+                            'string_indices': group.string_indices,
+                            'string_count': len(group.string_indices),
+                            'cable_size': group.cable_size,
+                            'fuse_rating': group.fuse_rating_amps
+                        })
+            
+            if not harness_groups:
+                # No harness groups defined - create default groups per tracker
+                if hasattr(block, 'tracker_positions'):
+                    for tracker_idx, tracker_pos in enumerate(block.tracker_positions):
+                        if hasattr(tracker_pos, 'strings'):
+                            string_indices = [s.index for s in tracker_pos.strings]
+                            harness_groups.append({
+                                'string_indices': string_indices,
+                                'string_count': len(string_indices),
+                                'cable_size': '10 AWG',
+                                'fuse_rating': 15
+                            })
+            
+            # Create string group elements (one per harness or tracker)
+            string_elements = []
+            for group_idx, group in enumerate(harness_groups):
+                # Calculate power for this string group
+                strings_in_group = group['string_count']
+                
+                # Get module info if available
+                module_power_w = 550  # Default
+                modules_per_string = 30  # Default
+                
+                if hasattr(block, 'tracker_template') and block.tracker_template:
+                    modules_per_string = block.tracker_template.modules_per_string
+                    if block.tracker_template.module_spec:
+                        module_power_w = block.tracker_template.module_spec.wattage
+                
+                group_power_kw = (strings_in_group * modules_per_string * module_power_w) / 1000
+                
+                # Create string group element
+                string_element = SLDElement(
+                    element_id=f"STRINGS_{block_id}_G{group_idx+1}",
+                    element_type=SLDElementType.PV_BLOCK,
+                    x=50 + (group_idx * 100),  # Will be repositioned by auto-layout
+                    y=50 + (group_idx * 50),
+                    width=120,
+                    height=80,
+                    label=f"{strings_in_group} String{'s' if strings_in_group > 1 else ''}\n{group_power_kw:.1f} kW",
+                    source_block_id=block_id,
+                    power_kw=group_power_kw
+                )
+                
+                # Add properties
+                string_element.properties['string_count'] = strings_in_group
+                string_element.properties['harness_size'] = group['cable_size']
+                string_element.properties['fuse_rating'] = group['fuse_rating']
+                
+                # Add connection ports
+                string_element.ports.append(ConnectionPort(
+                    port_id="dc_positive",
+                    port_type=ConnectionPortType.DC_POSITIVE,
+                    side="right",
+                    offset=0.3,
+                    max_current=strings_in_group * 10  # Assuming ~10A per string
+                ))
+                string_element.ports.append(ConnectionPort(
+                    port_id="dc_negative",
+                    port_type=ConnectionPortType.DC_NEGATIVE,
+                    side="right",
+                    offset=0.7,
+                    max_current=strings_in_group * 10
+                ))
+                
+                self.sld_diagram.add_element(string_element)
+                string_elements.append(string_element)
+            
+            # Create combiner boxes if needed
+            if using_combiners:
+                # Determine number of combiners needed
+                total_inputs_needed = len(string_elements)
+                inputs_per_combiner = block.num_inputs if hasattr(block, 'num_inputs') else 12
+                num_combiners = (total_inputs_needed + inputs_per_combiner - 1) // inputs_per_combiner
+                
+                combiner_elements = []
+                for cb_idx in range(num_combiners):
+                    cb_id = f"CB_{block_id}_{cb_idx+1}"
+                    
+                    # Check if already added
+                    if cb_id not in combiners_added:
+                        cb_element = SLDElement(
+                            element_id=cb_id,
+                            element_type=SLDElementType.COMBINER_BOX,
+                            x=400 + (cb_idx * 100),
+                            y=200 + (cb_idx * 100),
+                            width=100,
+                            height=100,
+                            label=f"CB-{block_id}-{cb_idx+1}\n{inputs_per_combiner} inputs",
+                            source_block_id=block_id
+                        )
+                        
+                        # Add input ports based on actual inputs
+                        inputs_for_this_cb = min(inputs_per_combiner, total_inputs_needed - cb_idx * inputs_per_combiner)
+                        for i in range(inputs_for_this_cb):
+                            cb_element.ports.append(ConnectionPort(
+                                port_id=f"input_{i+1}_pos",
+                                port_type=ConnectionPortType.DC_POSITIVE,
+                                side="left",
+                                offset=(i + 1) / (inputs_for_this_cb + 1)
+                            ))
+                        
+                        # Add output ports
+                        cb_element.ports.append(ConnectionPort(
+                            port_id="output_positive",
+                            port_type=ConnectionPortType.DC_POSITIVE,
+                            side="right",
+                            offset=0.35
+                        ))
+                        cb_element.ports.append(ConnectionPort(
+                            port_id="output_negative",
+                            port_type=ConnectionPortType.DC_NEGATIVE,
+                            side="right",
+                            offset=0.65
+                        ))
+                        
+                        self.sld_diagram.add_element(cb_element)
+                        combiners_added[cb_id] = cb_element
+                        combiner_elements.append(cb_element)
+                
+                # Connect strings to combiners
+                for idx, string_elem in enumerate(string_elements):
+                    # Determine which combiner this string connects to
+                    cb_idx = idx // inputs_per_combiner
+                    if cb_idx < len(combiner_elements):
+                        cb_elem = combiner_elements[cb_idx]
+                        input_idx = (idx % inputs_per_combiner) + 1
+                        
+                        # Create connection
+                        connection = SLDConnection(
+                            connection_id=f"CONN_{string_elem.element_id}_to_{cb_elem.element_id}",
+                            from_element=string_elem.element_id,
+                            from_port="dc_positive",
+                            to_element=cb_elem.element_id,
+                            to_port=f"input_{input_idx}_pos",
+                            cable_type="DC",
+                            cable_size=string_elem.properties.get('harness_size', '10 AWG'),
+                            color="#DC143C"  # Red for positive
+                        )
+                        self.sld_diagram.add_connection(connection)
+            
+            # Add inverter if assigned
+            if block.inverter:
+                inv_key = f"{block.inverter.manufacturer}_{block.inverter.model}"
+                
+                if inv_key not in inverters_added:
+                    inverter = block.inverter
+                    
+                    # Create inverter element
+                    inv_element = SLDElement(
+                        element_id=f"INV_{inverter.model.replace(' ', '_')}",
+                        element_type=SLDElementType.INVERTER,
+                        x=800,
+                        y=300,
+                        width=180,
+                        height=120,
+                        label=f"{inverter.manufacturer}\n{inverter.model}\n{inverter.max_ac_power_w/1000:.0f} kW",
+                        source_inverter_id=inv_key,
+                        power_kw=inverter.max_ac_power_w / 1000
+                    )
+                    
+                    # Add MPPT input ports based on inverter config
+                    if hasattr(inverter, 'mppt_channels'):
+                        num_mppts = len(inverter.mppt_channels)
+                        for mppt_idx in range(num_mppts):
+                            # Each MPPT might have multiple string inputs
+                            inv_element.ports.append(ConnectionPort(
+                                port_id=f"mppt_{mppt_idx+1}_pos",
+                                port_type=ConnectionPortType.DC_POSITIVE,
+                                side="left",
+                                offset=(mppt_idx + 1) / (num_mppts + 1)
+                            ))
+                    else:
+                        # Default DC inputs
+                        inv_element.ports.append(ConnectionPort(
+                            port_id="dc_positive_in",
+                            port_type=ConnectionPortType.DC_POSITIVE,
+                            side="left",
+                            offset=0.3
+                        ))
+                        inv_element.ports.append(ConnectionPort(
+                            port_id="dc_negative_in",
+                            port_type=ConnectionPortType.DC_NEGATIVE,
+                            side="left",
+                            offset=0.7
+                        ))
+                    
+                    # AC outputs
+                    inv_element.ports.append(ConnectionPort(
+                        port_id="ac_l1",
+                        port_type=ConnectionPortType.AC_L1,
+                        side="right",
+                        offset=0.25
+                    ))
+                    inv_element.ports.append(ConnectionPort(
+                        port_id="ac_l2",
+                        port_type=ConnectionPortType.AC_L2,
+                        side="right",
+                        offset=0.5
+                    ))
+                    inv_element.ports.append(ConnectionPort(
+                        port_id="ac_l3",
+                        port_type=ConnectionPortType.AC_L3,
+                        side="right",
+                        offset=0.75
+                    ))
+                    
+                    self.sld_diagram.add_element(inv_element)
+                    inverters_added[inv_key] = inv_element
+                
+                # Connect combiners (or strings directly) to inverter
+                if using_combiners and combiner_elements:
+                    # Connect each combiner to inverter
+                    for idx, cb_elem in enumerate(combiner_elements):
+                        inv_elem = inverters_added[inv_key]
+                        
+                        # Determine which MPPT input to use
+                        if hasattr(block.inverter, 'mppt_channels'):
+                            mppt_idx = idx % len(block.inverter.mppt_channels)
+                            port_name = f"mppt_{mppt_idx+1}_pos"
+                        else:
+                            port_name = "dc_positive_in"
+                        
+                        connection = SLDConnection(
+                            connection_id=f"CONN_{cb_elem.element_id}_to_{inv_elem.element_id}",
+                            from_element=cb_elem.element_id,
+                            from_port="output_positive",
+                            to_element=inv_elem.element_id,
+                            to_port=port_name,
+                            cable_type="DC",
+                            cable_size="4/0 AWG",  # Larger cable for combiner output
+                            color="#8B0000"  # Dark red for higher current
+                        )
+                        self.sld_diagram.add_connection(connection)
+                else:
+                    # Direct string to inverter connections
+                    inv_elem = inverters_added[inv_key]
+                    for idx, string_elem in enumerate(string_elements):
+                        # Determine which MPPT input
+                        if hasattr(block.inverter, 'mppt_channels'):
+                            mppt_idx = idx % len(block.inverter.mppt_channels)
+                            port_name = f"mppt_{mppt_idx+1}_pos"
+                        else:
+                            port_name = "dc_positive_in"
+                        
+                        connection = SLDConnection(
+                            connection_id=f"CONN_{string_elem.element_id}_to_{inv_elem.element_id}",
+                            from_element=string_elem.element_id,
+                            from_port="dc_positive",
+                            to_element=inv_elem.element_id,
+                            to_port=port_name,
+                            cable_type="DC",
+                            cable_size=string_elem.properties.get('harness_size', '10 AWG'),
+                            color="#DC143C"
+                        )
+                        self.sld_diagram.add_connection(connection)
+    
+    def create_block_to_inverter_connections(self, pv_element, inv_element, block):
+        """Create connections between PV block and inverter"""
+        # Positive connection
+        pos_connection = SLDConnection(
+            connection_id=f"CONN_{pv_element.element_id}_to_{inv_element.element_id}_pos",
+            from_element=pv_element.element_id,
+            from_port="dc_positive",
+            to_element=inv_element.element_id,
+            to_port="dc_positive_in",
+            cable_type="DC",
+            cable_size=block.wiring_config.string_cable_size if block.wiring_config else "10 AWG",
+            voltage=pv_element.voltage_dc,
+            current=pv_element.current_dc
+        )
+        self.sld_diagram.add_connection(pos_connection)
+        
+        # Negative connection
+        neg_connection = SLDConnection(
+            connection_id=f"CONN_{pv_element.element_id}_to_{inv_element.element_id}_neg",
+            from_element=pv_element.element_id,
+            from_port="dc_negative",
+            to_element=inv_element.element_id,
+            to_port="dc_negative_in",
+            cable_type="DC",
+            cable_size=block.wiring_config.string_cable_size if block.wiring_config else "10 AWG",
+            voltage=pv_element.voltage_dc,
+            current=pv_element.current_dc
+        )
+        self.sld_diagram.add_connection(neg_connection)
+    
+    def create_pv_to_combiner_connection(self, pv_element, cb_element):
+        """Create connection from PV to combiner box"""
+        connection = SLDConnection(
+            connection_id=f"CONN_{pv_element.element_id}_to_{cb_element.element_id}",
+            from_element=pv_element.element_id,
+            from_port="dc_positive",
+            to_element=cb_element.element_id,
+            to_port="input_1",
+            cable_type="DC",
+            cable_size="10 AWG"
+        )
+        self.sld_diagram.add_connection(connection)
+    
+    def render_sld_diagram(self):
+        """Render the SLD diagram on canvas"""
+        if not self.sld_diagram:
+            return
+        
+        # Clear existing elements
+        self.canvas.delete("element")
+        self.canvas.delete("connection")
+        self.canvas.delete("label")
+        self.sld_elements.clear()
+        
+        # Draw connections first (so they appear behind elements)
+        for connection in self.sld_diagram.connections:
+            self.draw_connection(connection)
+        
+        # Draw elements
+        for element in self.sld_diagram.elements:
+            self.draw_element(element)
+        
+        # Draw annotations
+        for annotation in self.sld_diagram.annotations:
+            self.draw_annotation(annotation)
+    
+    def draw_element(self, element: SLDElement):
+        """Draw an SLD element on canvas"""
+        # Check if this is a string element
+        if element.element_id.startswith('STRINGS_'):
+            # Draw as a string symbol
+            string_count = element.properties.get('string_count', 1)
+            
+            # Simple label - don't show full module details
+            result = ANSISymbols.draw_string_symbol(
+                self.canvas,
+                x=element.x,
+                y=element.y,
+                num_modules=30,  # Default, should get from tracker template
+                string_label="",  # No label for now - keeps it clean
+                element_id=element.element_id
+            )
+            
+            # Create simple label text
+            if string_count > 1:
+                label_text = f"{string_count} strings"
+            else:
+                label_text = "1 string"
+            
+            # Add power on same line
+            if element.power_kw:
+                label_text += f" • {element.power_kw:.1f} kW"
+            
+            # Position label based on ACTUAL bounds of the drawn symbol
+            if 'bounds' in result:
+                # Get the actual bounds of what was drawn
+                x1, y1, x2, y2 = result['bounds']
+                # Center the label horizontally based on actual bounds
+                label_x = (x1 + x2) / 2
+                label_y = y2 + 10
+            else:
+                # Fallback to element position
+                label_x = element.x + 40
+                label_y = element.y + 25
+            
+            # Create the label with the element_id tag so it moves with the element
+            label_id = self.canvas.create_text(
+                label_x, label_y,
+                text=label_text,
+                fill='black',
+                font=('Arial', 8),
+                anchor='n',
+                tags=[element.element_id, 'label', f'{element.element_id}_label'],
+                width=0  # Explicitly set width to 0 to prevent wrapping
+            )
+            
+            # Add label to the result
+            if 'items' in result:
+                result['items']['text'].append(label_id)
+                result['items']['all'].append(label_id)
+            
+            # Store reference
+            self.sld_elements[element.element_id] = result
+            
+        else:
+            # Use existing symbol drawing for other types
+            symbol_type_map = {
+                SLDElementType.PV_BLOCK: 'pv_array',
+                SLDElementType.INVERTER: 'inverter',
+                SLDElementType.COMBINER_BOX: 'combiner'
+            }
+            
+            symbol_type = symbol_type_map.get(element.element_type, 'pv_array')
+            
+            # Draw using ANSI symbols
+            result = ANSISymbols.draw_symbol(
+                self.canvas,
+                symbol_type=symbol_type,
+                x=element.x,
+                y=element.y,
+                width=element.width,
+                height=element.height,
+                label=element.label,
+                element_id=element.element_id,
+                fill=element.color,
+                outline=element.stroke_color,
+                outline_width=element.stroke_width,
+                show_ports=False
+            )
+            
+            # Store reference
+            self.sld_elements[element.element_id] = result
+    
+    def draw_connection(self, connection: SLDConnection):
+        """Draw a connection between elements with improved visibility"""
+        from_element = self.sld_diagram.get_element(connection.from_element)
+        to_element = self.sld_diagram.get_element(connection.to_element)
+        
+        if not from_element or not to_element:
+            return
+        
+        # Get port positions
+        from_pos = from_element.get_port_position(connection.from_port)
+        to_pos = to_element.get_port_position(connection.to_port)
+        
+        if not from_pos or not to_pos:
+            return
+        
+        # Calculate orthogonal path with better routing
+        path_points = self.calculate_better_orthogonal_path(from_pos, to_pos)
+        
+        # Flatten path points for canvas
+        points = []
+        for point in path_points:
+            points.extend(point)
+        
+        # Determine line style based on connection type
+        if 'positive' in connection.from_port or 'positive' in connection.to_port:
+            color = '#DC143C'  # Red for positive
+            dash_pattern = None  # Solid line
+        elif 'negative' in connection.from_port or 'negative' in connection.to_port:
+            color = '#0000CD'  # Blue for negative  
+            dash_pattern = (5, 3)  # Dashed line
+        else:
+            color = '#808080'  # Gray for other
+            dash_pattern = (2, 2)  # Dotted line
+        
+        # Draw line with appropriate style
+        if len(points) >= 4:
+            line_id = self.canvas.create_line(
+                *points,
+                fill=color,
+                width=connection.stroke_width,
+                tags=('connection', connection.connection_id),
+                smooth=False,
+                dash=dash_pattern,
+                arrow=tk.LAST,  # Add arrowhead at destination
+                arrowshape=(12, 15, 5)  # Arrowhead shape
+            )
+            connection.canvas_items.append(line_id)
+            
+            # Add label on the connection
+            mid_idx = len(path_points) // 2
+            mid_point = path_points[mid_idx]
+            
+            label_text = connection.cable_size
+            if connection.current:
+                label_text += f"\n{connection.current:.1f}A"
+            
+            label_id = self.canvas.create_text(
+                mid_point[0], mid_point[1] - 10,
+                text=label_text,
+                fill='black',
+                font=('Arial', 8),
+                tags=('connection_label', f'{connection.connection_id}_label'),
+                anchor='s'
+            )
+            connection.canvas_items.append(label_id)
+    
+    def calculate_better_orthogonal_path(self, from_pos, to_pos):
+        """Calculate a better orthogonal path that avoids overlapping"""
+        path = [from_pos]
+        
+        # Add offset from connection point to avoid overlapping with symbol
+        offset = 30
+        from_x, from_y = from_pos
+        to_x, to_y = to_pos
+        
+        # First move away from the source symbol
+        path.append((from_x + offset, from_y))
+        
+        # Then route to destination
+        if abs(to_y - from_y) > 20:  # Vertical routing needed
+            path.append((from_x + offset, to_y))
+        
+        # Finally connect to destination
+        path.append((to_x - offset, to_y))
+        path.append(to_pos)
+        
+        return path
+    
+    def draw_annotation(self, annotation: SLDAnnotation):
+        """Draw a text annotation"""
+        if not annotation.visible:
+            return
+        
+        text_id = self.canvas.create_text(
+            annotation.x,
+            annotation.y,
+            text=annotation.text,
+            fill=annotation.color,
+            font=(annotation.font_family, int(annotation.font_size)),
+            anchor=annotation.anchor,
+            angle=annotation.rotation,
+            tags=('annotation', annotation.annotation_id)
+        )
+        annotation.canvas_item_id = text_id
 
     def create_symbol_palette(self, parent):
         """Create a palette of available symbols"""
@@ -523,20 +1020,35 @@ class SLDEditor(tk.Toplevel):
             item = self.canvas.find_closest(canvas_x, canvas_y)
             if item:
                 tags = self.canvas.gettags(item)
-                if "element" in tags:
-                    # Start dragging
+                
+                # Find the element ID from tags
+                element_id = None
+                for tag in tags:
+                    if tag.startswith(('PV_', 'INV_', 'CB_', 'STRINGS_')):
+                        element_id = tag
+                        break
+                
+                if element_id and element_id in self.sld_elements:
+                    # Start dragging this entire element
                     self.dragging = True
                     self.drag_data["x"] = canvas_x
                     self.drag_data["y"] = canvas_y
-                    self.drag_data["item"] = item[0]
+                    self.drag_data["element_id"] = element_id
                     
-                    # Highlight selection
-                    self.canvas.itemconfig(item[0], width=3)
-                    self.selected_element = item[0]
+                    # Highlight ONLY shape items, not text!
+                    element_data = self.sld_elements[element_id]
+                    if 'items' in element_data and 'shapes' in element_data['items']:
+                        # Only highlight shapes (rectangles, lines, etc.)
+                        for item_id in element_data['items']['shapes']:
+                            # Only set width for non-text items
+                            if self.canvas.type(item_id) != 'text':
+                                self.canvas.itemconfig(item_id, width=3)
+                    
+                    self.selected_element = element_id
     
     def on_canvas_drag(self, event):
         """Handle canvas drag"""
-        if self.dragging and self.drag_data["item"]:
+        if self.dragging and self.drag_data["element_id"]:
             canvas_x = self.canvas.canvasx(event.x)
             canvas_y = self.canvas.canvasy(event.y)
             
@@ -544,14 +1056,13 @@ class SLDEditor(tk.Toplevel):
             dx = canvas_x - self.drag_data["x"]
             dy = canvas_y - self.drag_data["y"]
             
-            # Move the element and its label
-            item_tags = self.canvas.gettags(self.drag_data["item"])
-            for tag in item_tags:
-                if tag not in ["element", "current"]:
-                    # Move element
-                    self.canvas.move(tag, dx, dy)
-                    # Move associated label
-                    self.canvas.move(f"{tag}_label", dx, dy)
+            element_id = self.drag_data["element_id"]
+            
+            # Move all items with the element_id tag
+            if element_id in self.sld_elements:
+                items_to_move = self.canvas.find_withtag(element_id)
+                for item_id in items_to_move:
+                    self.canvas.move(item_id, dx, dy)
             
             # Update drag position
             self.drag_data["x"] = canvas_x
@@ -559,32 +1070,62 @@ class SLDEditor(tk.Toplevel):
     
     def on_canvas_release(self, event):
         """Handle canvas mouse release"""
-        if self.dragging:
-            # Snap to grid if enabled
-            if self.grid_visible and self.drag_data["item"]:
-                coords = self.canvas.bbox(self.drag_data["item"])
-                if coords:
-                    # Calculate snap position
-                    x1, y1, x2, y2 = coords
-                    grid_snap = self.grid_size * self.zoom_level
-                    
-                    snapped_x = round(x1 / grid_snap) * grid_snap
-                    snapped_y = round(y1 / grid_snap) * grid_snap
-                    
-                    # Calculate offset
-                    dx = snapped_x - x1
-                    dy = snapped_y - y1
-                    
-                    # Apply snap
-                    item_tags = self.canvas.gettags(self.drag_data["item"])
-                    for tag in item_tags:
-                        if tag not in ["element", "current"]:
-                            self.canvas.move(tag, dx, dy)
-                            self.canvas.move(f"{tag}_label", dx, dy)
+        if self.dragging and self.drag_data["element_id"]:
+            element_id = self.drag_data["element_id"]
             
+            # Snap to grid if enabled
+            if self.grid_visible:
+                if element_id in self.sld_elements:
+                    element_data = self.sld_elements[element_id]
+                    
+                    # Get bounding box of all items
+                    all_items = element_data['items']['all']
+                    if all_items:
+                        bbox = self.canvas.bbox(all_items[0])
+                        for item_id in all_items[1:]:
+                            item_bbox = self.canvas.bbox(item_id)
+                            if item_bbox:
+                                bbox = (
+                                    min(bbox[0], item_bbox[0]),
+                                    min(bbox[1], item_bbox[1]),
+                                    max(bbox[2], item_bbox[2]),
+                                    max(bbox[3], item_bbox[3])
+                                )
+                        
+                        if bbox:
+                            # Calculate snap position
+                            grid_snap = self.grid_size * self.zoom_level
+                            snapped_x = round(bbox[0] / grid_snap) * grid_snap
+                            snapped_y = round(bbox[1] / grid_snap) * grid_snap
+                            
+                            # Calculate offset
+                            dx = snapped_x - bbox[0]
+                            dy = snapped_y - bbox[1]
+                            
+                            # Apply snap to all items
+                            for item_id in all_items:
+                                self.canvas.move(item_id, dx, dy)
+                    
+                    # Update the SLD diagram element position
+                    if self.sld_diagram:
+                        elem = self.sld_diagram.get_element(element_id)
+                        if elem and bbox:
+                            elem.x = bbox[0]
+                            elem.y = bbox[1]
+            
+            # Reset drag state
             self.dragging = False
             self.drag_data = {"x": 0, "y": 0, "item": None, "element_id": None}
-    
+            
+            # Remove highlight - ONLY from shapes, not text!
+            if self.selected_element and self.selected_element in self.sld_elements:
+                element_data = self.sld_elements[self.selected_element]
+                if 'items' in element_data and 'shapes' in element_data['items']:
+                    for item_id in element_data['items']['shapes']:
+                        # Only reset width for non-text items
+                        if self.canvas.type(item_id) != 'text':
+                            self.canvas.itemconfig(item_id, width=2)
+
     def on_canvas_right_click(self, event):
         """Handle right-click for context menu"""
         # This will be implemented in Card #10

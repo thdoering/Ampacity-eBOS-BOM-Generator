@@ -556,3 +556,162 @@ class ANSISymbols:
         """
         colors = cls.COLORS.get(symbol_type, cls.COLORS['pv_array'])
         return colors.get(color_type, '#000000')
+    
+    @classmethod
+    def draw_string_symbol(cls, canvas: tk.Canvas, x: float, y: float, 
+                          num_modules: int, string_label: str = "",
+                          element_id: str = "", **kwargs) -> Dict[str, Any]:
+        """
+        Draw a string of PV modules connected in series
+        """
+        # Module dimensions (small rectangles)
+        module_width = 8
+        module_height = 15
+        module_spacing = 2
+        
+        # Calculate how many modules to show (max 6 for space)
+        modules_to_show = min(num_modules, 6)
+        
+        # Tags for the element - element_id should be in all tags
+        tags = [element_id, 'element', 'string'] if element_id else ['element', 'string']
+        
+        items = {
+            'shapes': [],
+            'text': [],
+            'all': []
+        }
+        
+        # Draw modules
+        current_x = x
+        for i in range(modules_to_show):
+            # Draw module rectangle
+            rect_id = canvas.create_rectangle(
+                current_x, y,
+                current_x + module_width, y + module_height,
+                fill='#4A90E2',
+                outline='#2C5282',
+                width=1,
+                tags=tags
+            )
+            items['shapes'].append(rect_id)
+            
+            # Draw connection line to next module (except for last)
+            if i < modules_to_show - 1:
+                line_id = canvas.create_line(
+                    current_x + module_width, y + module_height/2,
+                    current_x + module_width + module_spacing, y + module_height/2,
+                    fill='#2C5282',
+                    width=2,
+                    tags=tags
+                )
+                items['shapes'].append(line_id)
+            
+            current_x += module_width + module_spacing
+        
+        # If there are more modules than shown, add "..." indicator
+        if num_modules > modules_to_show:
+            dots_id = canvas.create_text(
+                current_x + 5, y + module_height/2,
+                text="...",
+                fill='#2C5282',
+                font=('Arial', 10, 'bold'),
+                tags=tags
+            )
+            items['text'].append(dots_id)
+            current_x += 20
+            
+            # Draw last module
+            rect_id = canvas.create_rectangle(
+                current_x, y,
+                current_x + module_width, y + module_height,
+                fill='#4A90E2',
+                outline='#2C5282',
+                width=1,
+                tags=tags
+            )
+            items['shapes'].append(rect_id)
+            current_x += module_width
+        
+        # Calculate total width
+        total_width = current_x - x
+        
+        # NO VERTICAL TEXT - Only draw a simple label below if provided
+        total_height = module_height + 5
+        
+        # Draw positive and negative terminals
+        # Positive (left side)
+        pos_x = x - 10
+        pos_y = y + module_height/2
+        pos_circle = canvas.create_oval(
+            pos_x - 3, pos_y - 3,
+            pos_x + 3, pos_y + 3,
+            fill='red',
+            outline='darkred',
+            tags=tags
+        )
+        items['shapes'].append(pos_circle)
+        
+        pos_line = canvas.create_line(
+            pos_x + 3, pos_y,
+            x, pos_y,
+            fill='red',
+            width=2,
+            tags=tags
+        )
+        items['shapes'].append(pos_line)
+        
+        # Add + symbol
+        plus_id = canvas.create_text(
+            pos_x, pos_y - 8,
+            text="+",
+            fill='red',
+            font=('Arial', 8, 'bold'),
+            tags=tags
+        )
+        items['text'].append(plus_id)
+        
+        # Negative (right side)
+        neg_x = current_x + 10
+        neg_y = y + module_height/2
+        neg_circle = canvas.create_oval(
+            neg_x - 3, neg_y - 3,
+            neg_x + 3, neg_y + 3,
+            fill='blue',
+            outline='darkblue',
+            tags=tags
+        )
+        items['shapes'].append(neg_circle)
+        
+        neg_line = canvas.create_line(
+            current_x, neg_y,
+            neg_x - 3, neg_y,
+            fill='blue',
+            width=2,
+            tags=tags
+        )
+        items['shapes'].append(neg_line)
+        
+        # Add - symbol
+        minus_id = canvas.create_text(
+            neg_x, neg_y - 8,
+            text="−",
+            fill='blue',
+            font=('Arial', 10, 'bold'),
+            tags=tags
+        )
+        items['text'].append(minus_id)
+        
+        # Collect all items
+        items['all'] = items['shapes'] + items['text']
+        
+        # Connection points
+        connection_points = {
+            'dc_positive': (pos_x - 5, pos_y),
+            'dc_negative': (neg_x + 5, neg_y)
+        }
+        
+        return {
+            'items': items,
+            'connection_points': connection_points,
+            'bounds': (pos_x - 10, y - 10, neg_x + 10, y + total_height)
+        }
