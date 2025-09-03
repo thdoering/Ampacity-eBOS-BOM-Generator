@@ -62,10 +62,6 @@ class SLDEditor(tk.Toplevel):
         # Generate initial SLD from blocks
         self.generate_sld_from_blocks()
         
-        # Make window modal
-        self.transient(parent)
-        self.grab_set()
-        
         # Handle window closing
         self.protocol("WM_DELETE_WINDOW", self.on_close)
     
@@ -529,7 +525,7 @@ class SLDEditor(tk.Toplevel):
                             y=200 + (cb_idx * 100),
                             width=100,
                             height=100,
-                            label=f"CB-{block_id}-{cb_idx+1}\n{inputs_per_combiner} inputs",
+                            label=f"{block_id}\n{inputs_per_combiner} inputs",
                             source_block_id=block_id
                         )
                         
@@ -763,61 +759,87 @@ class SLDEditor(tk.Toplevel):
         # Draw annotations
         for annotation in self.sld_diagram.annotations:
             self.draw_annotation(annotation)
+        
+        # Update scroll region to encompass all drawn items
+        self.update_scroll_region()
+
+    def update_scroll_region(self):
+        """Update canvas scroll region to encompass all items"""
+        # Get bounding box of all items
+        bbox = self.canvas.bbox("all")
+        if bbox:
+            # Add some padding around the content
+            padding = 50
+            x1, y1, x2, y2 = bbox
+            x1 -= padding
+            y1 -= padding
+            x2 += padding
+            y2 += padding
+            
+            # Ensure minimum size
+            min_width = 2400
+            min_height = 1600
+            if (x2 - x1) < min_width:
+                x2 = x1 + min_width
+            if (y2 - y1) < min_height:
+                y2 = y1 + min_height
+            
+            # Update scroll region
+            self.canvas.configure(scrollregion=(x1, y1, x2, y2))
     
     def draw_element(self, element: SLDElement):
         """Draw an SLD element on canvas"""
         # Check if this is a string element
         if element.element_id.startswith('STRINGS_'):
-            # Draw as a string symbol
-            string_count = element.properties.get('string_count', 1)
-            
-            # Simple label - don't show full module details
-            result = ANSISymbols.draw_string_symbol(
+            # Draw technical-style string symbol
+            result = ANSISymbols.draw_technical_string(
                 self.canvas,
                 x=element.x,
                 y=element.y,
-                num_modules=30,  # Default, should get from tracker template
-                string_label="",  # No label for now - keeps it clean
-                element_id=element.element_id
+                width=100,
+                height=40,
+                element_id=element.element_id,
+                fill='#FFFFFF',
+                outline='#000000',
+                outline_width=1
             )
             
-            # Create simple label text
-            if string_count > 1:
-                label_text = f"{string_count} strings"
-            else:
-                label_text = "1 string"
+            # Store reference
+            self.sld_elements[element.element_id] = result
             
-            # Add power on same line
-            if element.power_kw:
-                label_text += f" • {element.power_kw:.1f} kW"
+        elif element.element_type == SLDElementType.COMBINER_BOX:
+            # Draw technical-style combiner
+            num_inputs = element.properties.get('num_inputs', 12)
             
-            # Position label based on ACTUAL bounds of the drawn symbol
-            if 'bounds' in result:
-                # Get the actual bounds of what was drawn
-                x1, y1, x2, y2 = result['bounds']
-                # Center the label horizontally based on actual bounds
-                label_x = (x1 + x2) / 2
-                label_y = y2 + 10
-            else:
-                # Fallback to element position
-                label_x = element.x + 40
-                label_y = element.y + 25
-            
-            # Create the label with the element_id tag so it moves with the element
-            label_id = self.canvas.create_text(
-                label_x, label_y,
-                text=label_text,
-                fill='black',
-                font=('Arial', 8),
-                anchor='n',
-                tags=[element.element_id, 'label', f'{element.element_id}_label'],
-                width=0  # Explicitly set width to 0 to prevent wrapping
+            result = ANSISymbols.draw_technical_combiner(
+                self.canvas,
+                x=element.x,
+                y=element.y,
+                width=150,
+                height=max(120, num_inputs * 12),  # Scale height with inputs
+                num_inputs=num_inputs,
+                element_id=element.element_id,
+                label=element.label,
+                fill='#FFFFFF',
+                outline='#000000',
+                outline_width=2
             )
             
-            # Add label to the result
-            if 'items' in result:
+            # Add label text
+            label_lines = element.label.split('\n')
+            label_y = element.y - 20
+            for line in label_lines:
+                label_id = self.canvas.create_text(
+                    element.x + 75, label_y,
+                    text=line,
+                    fill='black',
+                    font=('Arial', 9, 'bold'),
+                    anchor='n',
+                    tags=[element.element_id, 'label', f'{element.element_id}_label']
+                )
                 result['items']['text'].append(label_id)
                 result['items']['all'].append(label_id)
+                label_y += 15
             
             # Store reference
             self.sld_elements[element.element_id] = result
@@ -867,49 +889,38 @@ class SLDEditor(tk.Toplevel):
             return
         
         # Calculate orthogonal path with better routing
-        path_points = self.calculate_better_orthogonal_path(from_pos, to_pos)
+        path_points = self.calculate_better_orthogonal_path(
+            from_pos, to_pos, 
+            from_element, to_element,
+            connection.from_port, connection.to_port
+        )
         
         # Flatten path points for canvas
         points = []
         for point in path_points:
             points.extend(point)
         
-        # Determine line style based on connection type
-        if 'positive' in connection.from_port or 'positive' in connection.to_port:
-            color = '#DC143C'  # Red for positive
-            dash_pattern = None  # Solid line
-        elif 'negative' in connection.from_port or 'negative' in connection.to_port:
-            color = '#0000CD'  # Blue for negative  
-            dash_pattern = (5, 3)  # Dashed line
-        else:
-            color = '#808080'  # Gray for other
-            dash_pattern = (2, 2)  # Dotted line
+        # Simple red line for all connections
+        color = '#FF0000'  # Red
         
-        # Draw line with appropriate style
+        # Draw line
         if len(points) >= 4:
             line_id = self.canvas.create_line(
                 *points,
                 fill=color,
-                width=connection.stroke_width,
+                width=2,
                 tags=('connection', connection.connection_id),
-                smooth=False,
-                dash=dash_pattern,
-                arrow=tk.LAST,  # Add arrowhead at destination
-                arrowshape=(12, 15, 5)  # Arrowhead shape
+                smooth=False
             )
             connection.canvas_items.append(line_id)
             
-            # Add label on the connection
+            # Add cable size label
             mid_idx = len(path_points) // 2
             mid_point = path_points[mid_idx]
             
-            label_text = connection.cable_size
-            if connection.current:
-                label_text += f"\n{connection.current:.1f}A"
-            
             label_id = self.canvas.create_text(
-                mid_point[0], mid_point[1] - 10,
-                text=label_text,
+                mid_point[0], mid_point[1] - 5,
+                text=connection.cable_size,
                 fill='black',
                 font=('Arial', 8),
                 tags=('connection_label', f'{connection.connection_id}_label'),
@@ -917,25 +928,58 @@ class SLDEditor(tk.Toplevel):
             )
             connection.canvas_items.append(label_id)
     
-    def calculate_better_orthogonal_path(self, from_pos, to_pos):
-        """Calculate a better orthogonal path that avoids overlapping"""
-        path = [from_pos]
+    def calculate_better_orthogonal_path(self, from_pos, to_pos, from_element=None, to_element=None, from_port=None, to_port=None):
+        """Calculate a better orthogonal path with only horizontal and vertical segments"""
+        path = []
         
-        # Add offset from connection point to avoid overlapping with symbol
-        offset = 30
         from_x, from_y = from_pos
         to_x, to_y = to_pos
         
-        # First move away from the source symbol
-        path.append((from_x + offset, from_y))
+        # Determine port sides for better routing
+        from_side = 'right'  # default
+        to_side = 'left'    # default
         
-        # Then route to destination
-        if abs(to_y - from_y) > 20:  # Vertical routing needed
-            path.append((from_x + offset, to_y))
+        if from_element and from_port:
+            port = from_element.get_port(from_port)
+            if port:
+                from_side = port.side
         
-        # Finally connect to destination
-        path.append((to_x - offset, to_y))
-        path.append(to_pos)
+        if to_element and to_port:
+            port = to_element.get_port(to_port)
+            if port:
+                to_side = port.side
+        
+        # Start at source
+        path.append(from_pos)
+        
+        # Standard routing: go right from source, then route to destination
+        h_offset = 30  # Horizontal offset from elements
+        
+        if from_side == 'right' and to_side == 'left':
+            # Most common case: left-to-right flow
+            if to_x > from_x + h_offset * 2:
+                # Enough space for direct routing
+                mid_x = (from_x + to_x) / 2
+                
+                # Go right from source
+                path.append((mid_x, from_y))
+                # Go vertically to align with destination
+                path.append((mid_x, to_y))
+                # Go to destination
+                path.append(to_pos)
+            else:
+                # Need to route around
+                path.append((from_x + h_offset, from_y))
+                path.append((from_x + h_offset, to_y))
+                path.append(to_pos)
+        else:
+            # Generic orthogonal routing
+            # Move horizontally first
+            if abs(to_x - from_x) > 5:
+                path.append((to_x, from_y))
+            
+            # Then move vertically
+            path.append(to_pos)
         
         return path
     
@@ -1064,10 +1108,43 @@ class SLDEditor(tk.Toplevel):
                 for item_id in items_to_move:
                     self.canvas.move(item_id, dx, dy)
             
+            # Update the SLD element's position in real-time
+            sld_element = self.sld_diagram.get_element(element_id)
+            if sld_element:
+                sld_element.x += dx / self.zoom_level
+                sld_element.y += dy / self.zoom_level
+                
+                # Redraw all connections for this element
+                self.redraw_element_connections(element_id)
+            
             # Update drag position
             self.drag_data["x"] = canvas_x
             self.drag_data["y"] = canvas_y
-    
+
+    def redraw_element_connections(self, element_id):
+        """Redraw all connections for a specific element"""
+        if not self.sld_diagram:
+            return
+        
+        # Find all connections involving this element
+        connections_to_redraw = []
+        for connection in self.sld_diagram.connections:
+            if connection.from_element == element_id or connection.to_element == element_id:
+                connections_to_redraw.append(connection)
+        
+        # Delete old connection lines from canvas
+        for connection in connections_to_redraw:
+            for item_id in connection.canvas_items:
+                self.canvas.delete(item_id)
+            connection.canvas_items.clear()
+        
+        # Redraw the connections
+        for connection in connections_to_redraw:
+            self.draw_connection(connection)
+        
+        # Update scroll region in case element moved outside current bounds
+        self.update_scroll_region()
+        
     def on_canvas_release(self, event):
         """Handle canvas mouse release"""
         if self.dragging and self.drag_data["element_id"]:
@@ -1110,8 +1187,11 @@ class SLDEditor(tk.Toplevel):
                     if self.sld_diagram:
                         elem = self.sld_diagram.get_element(element_id)
                         if elem and bbox:
-                            elem.x = bbox[0]
-                            elem.y = bbox[1]
+                            elem.x = bbox[0] / self.zoom_level
+                            elem.y = bbox[1] / self.zoom_level
+                            
+                            # Final redraw of connections to ensure they're properly positioned
+                            self.redraw_element_connections(element_id)
             
             # Reset drag state
             self.dragging = False

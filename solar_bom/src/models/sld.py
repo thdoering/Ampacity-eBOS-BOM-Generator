@@ -450,10 +450,11 @@ class SLDDiagram:
         return True, "Connection valid"
     
     def auto_layout(self) -> None:
-        """Automatically position elements in their respective zones"""
+        """Automatically position elements based on their connections"""
         # Separate elements by type
         pv_blocks = []
         inverters = []
+        combiners = []
         other_devices = []
         
         for element in self.elements:
@@ -461,57 +462,83 @@ class SLDDiagram:
                 pv_blocks.append(element)
             elif element.element_type == SLDElementType.INVERTER:
                 inverters.append(element)
+            elif element.element_type == SLDElementType.COMBINER_BOX:
+                combiners.append(element)
             else:
                 other_devices.append(element)
         
-        # Layout PV blocks in left zone
-        y_spacing = 100
-        current_y = 50
-        
-        for element in pv_blocks:
-            element.x = self.pv_zone_x_start + 50
-            element.y = current_y
-            current_y += element.height + y_spacing
-        
-        # Layout inverters in right zone
-        current_y = 50
+        # First, position inverters in the right zone
+        inverter_y_spacing = 150
+        current_y = 100
         for element in inverters:
             element.x = self.inverter_zone_x_start + 50
             element.y = current_y
-            current_y += element.height + y_spacing
+            current_y += element.height + inverter_y_spacing
         
-        # Layout other devices in center zone
-        current_y = 50
-        for element in other_devices:
-            element.x = self.device_zone_x_start + 50
-            element.y = current_y
-            current_y += element.height + y_spacing
-    
-    def to_dict(self) -> dict:
-        """Convert to dictionary for serialization"""
-        return {
-            'project_id': self.project_id,
-            'diagram_name': self.diagram_name,
-            'elements': [e.to_dict() for e in self.elements],
-            'connections': [c.to_dict() for c in self.connections],
-            'annotations': [a.to_dict() for a in self.annotations],
-            'canvas_width': self.canvas_width,
-            'canvas_height': self.canvas_height,
-            'grid_size': self.grid_size,
-            'grid_visible': self.grid_visible,
-            'zoom_level': self.zoom_level,
-            'pan_x': self.pan_x,
-            'pan_y': self.pan_y,
-            'pv_zone_x_start': self.pv_zone_x_start,
-            'pv_zone_x_end': self.pv_zone_x_end,
-            'device_zone_x_start': self.device_zone_x_start,
-            'device_zone_x_end': self.device_zone_x_end,
-            'inverter_zone_x_start': self.inverter_zone_x_start,
-            'inverter_zone_x_end': self.inverter_zone_x_end,
-            'created_date': self.created_date,
-            'modified_date': self.modified_date,
-            'version': self.version
-        }
+        # Position combiner boxes in center zone
+        if combiners:
+            combiner_y_spacing = 120
+            current_y = 100
+            for element in combiners:
+                element.x = self.device_zone_x_start + 50
+                element.y = current_y
+                current_y += element.height + combiner_y_spacing
+        
+        # Now position PV blocks (strings) relative to their downstream connections
+        if pv_blocks:
+            # Build a map of which strings connect to which downstream device
+            string_to_downstream = {}
+            for connection in self.connections:
+                # Find connections from PV blocks
+                from_elem = self.get_element(connection.from_element)
+                to_elem = self.get_element(connection.to_element)
+                
+                if from_elem and to_elem:
+                    if from_elem.element_type == SLDElementType.PV_BLOCK:
+                        # String connecting to combiner or inverter
+                        string_to_downstream[from_elem.element_id] = to_elem
+            
+            # Group strings by their downstream device
+            downstream_groups = {}
+            unconnected_strings = []
+            
+            for pv_elem in pv_blocks:
+                if pv_elem.element_id in string_to_downstream:
+                    downstream = string_to_downstream[pv_elem.element_id]
+                    if downstream.element_id not in downstream_groups:
+                        downstream_groups[downstream.element_id] = []
+                    downstream_groups[downstream.element_id].append(pv_elem)
+                else:
+                    unconnected_strings.append(pv_elem)
+            
+            # Position each group of strings near their downstream device
+            for downstream_id, string_group in downstream_groups.items():
+                downstream_elem = self.get_element(downstream_id)
+                if downstream_elem:
+                    # Calculate starting Y position centered on downstream device
+                    group_height = len(string_group) * 80 + (len(string_group) - 1) * 15
+                    start_y = downstream_elem.y + (downstream_elem.height / 2) - (group_height / 2)
+                    
+                    # Position strings vertically aligned with their downstream device
+                    for i, string_elem in enumerate(string_group):
+                        string_elem.x = self.pv_zone_x_start + 50
+                        string_elem.y = start_y + i * (string_elem.height + 15)  # 15px spacing between strings
+            
+            # Position any unconnected strings at the top
+            if unconnected_strings:
+                current_y = 50
+                for string_elem in unconnected_strings:
+                    string_elem.x = self.pv_zone_x_start + 50
+                    string_elem.y = current_y
+                    current_y += string_elem.height + 30
+        
+        # Position other devices
+        if other_devices:
+            current_y = 400
+            for element in other_devices:
+                element.x = self.device_zone_x_start + 50
+                element.y = current_y
+                current_y += element.height + 80
     
     @classmethod
     def from_dict(cls, data: dict) -> 'SLDDiagram':

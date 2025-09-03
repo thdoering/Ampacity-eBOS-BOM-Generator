@@ -418,6 +418,328 @@ class ANSISymbols:
         return items
     
     @classmethod
+    def draw_technical_string(cls, canvas: tk.Canvas, x: float, y: float,
+                            width: float = 100, height: float = 20,
+                            element_id: str = "", **kwargs) -> Dict[str, Any]:
+        """
+        Draw simple technical-style string symbol (rectangle with triangle pointing right)
+        Triangle and rectangle share an edge
+        """
+        tags = ['element', 'string', element_id] if element_id else ['element', 'string']
+        items = {'shapes': [], 'text': [], 'ports': [], 'all': []}
+        
+        # Simple black outline, no fill
+        outline = '#000000'
+        outline_width = 1
+        
+        # Draw main rectangle (no fill)
+        rect_id = canvas.create_rectangle(
+            x + 20, y, x + width, y + height,
+            fill='',
+            outline=outline,
+            width=outline_width,
+            tags=tags
+        )
+        items['shapes'].append(rect_id)
+        
+        # Draw triangle on left - shares right edge with rectangle's left edge
+        triangle_points = [
+            x*1.5, y + height/2,    # Right point (tip of triangle)
+            x + 20, y,            # Top left (connects to rectangle corner)
+            x + 20, y + height    # Bottom left (connects to rectangle corner)
+        ]
+        
+        triangle_id = canvas.create_polygon(
+            triangle_points,
+            fill='',
+            outline=outline,
+            width=outline_width,
+            tags=tags
+        )
+        items['shapes'].append(triangle_id)
+        
+        items['all'] = items['shapes'] + items['text'] + items['ports']
+        
+        return {
+            'items': items,
+            'bounds': (x, y, x + width, y + height),
+            'connection_points': {
+                'dc_out': (x + width, y + height/2)  # Right side center
+            }
+        }
+
+    @classmethod
+    def draw_technical_combiner(cls, canvas: tk.Canvas, x: float, y: float,
+                            width: float = 120, height: float = 150,
+                            num_inputs: int = 12, element_id: str = "",
+                            **kwargs) -> Dict[str, Any]:
+        """
+        Draw technical-style combiner box with fuses and disconnect switch
+        """
+        tags = ['element', 'combiner', element_id] if element_id else ['element', 'combiner']
+        items = {'shapes': [], 'text': [], 'ports': [], 'all': []}
+        
+        # Simple black outline
+        outline = '#000000'
+        outline_width = 1
+        
+        # Draw main rectangle
+        rect_id = canvas.create_rectangle(
+            x, y, x + width, y + height,
+            fill='',
+            outline=outline,
+            width=outline_width,
+            tags=tags
+        )
+        items['shapes'].append(rect_id)
+        
+        # Draw fuses (show first 3, then dots, then last one if many)
+        fuse_width = 20
+        fuse_height = 10
+        fuse_x = x + 15  # Offset from left edge
+        
+        connection_points = {}
+        
+        # Determine how many fuses to actually draw
+        if num_inputs <= 4:
+            # Draw all fuses
+            fuse_spacing = (height - 40) / num_inputs
+            for i in range(num_inputs):
+                fuse_y = y + 20 + i * fuse_spacing
+                cls._draw_fuse(canvas, fuse_x, fuse_y, fuse_width, fuse_height, tags, items)
+                # Connection points should be at the BOX EDGE, not the fuse
+                connection_points[f'input_{i+1}'] = (x, fuse_y)  # Changed from (fuse_x, fuse_y + fuse_height/2)
+        else:
+            # Draw first 2 fuses
+            fuse_spacing = 25
+            for i in range(2):
+                fuse_y = y + 20 + i * fuse_spacing
+                cls._draw_fuse(canvas, fuse_x, fuse_y, fuse_width, fuse_height, tags, items)
+                # Connection points should be at the BOX EDGE, not the fuse
+                connection_points[f'input_{i+1}'] = (x, fuse_y)  # Changed from (fuse_x, fuse_y + fuse_height/2)
+            
+            # Draw ellipsis (three dots)
+            ellipsis_y = y + 20 + 2.5 * fuse_spacing
+            for i in range(3):
+                dot_id = canvas.create_oval(
+                    fuse_x + fuse_width/2 - 1, ellipsis_y + i * 5,
+                    fuse_x + fuse_width/2 + 1, ellipsis_y + i * 5 + 2,
+                    fill=outline,
+                    outline=outline,
+                    tags=tags
+                )
+                items['shapes'].append(dot_id)
+            
+            # Draw last fuse
+            last_fuse_y = y + height - 30
+            cls._draw_fuse(canvas, fuse_x, last_fuse_y, fuse_width, fuse_height, tags, items)
+            # Connection point at the LEFT EDGE OF THE FUSE (inside the box)
+            connection_points[f'input_{num_inputs}'] = (fuse_x, last_fuse_y + fuse_height/2)
+            
+            # Add connection points for the fuses we didn't draw (for routing)
+            # These would be spread evenly in the middle section
+            middle_start_y = y + 20 + 2 * fuse_spacing
+            middle_end_y = last_fuse_y
+            middle_spacing = (middle_end_y - middle_start_y) / (num_inputs - 3)
+            for i in range(2, num_inputs - 1):
+                fuse_y = middle_start_y + (i - 2) * middle_spacing
+                # Connection points should be at the BOX EDGE, not the fuse
+                connection_points[f'input_{i+1}'] = (x, fuse_y)  # Changed from (fuse_x, fuse_y + fuse_height/2)
+        
+        # Draw combining lines (from fuses to central bus)
+        bus_x = x + 50
+        bus_top_y = y + 20
+        bus_bottom_y = y + height - 20
+        
+        # Vertical bus line
+        bus_line = canvas.create_line(
+            bus_x, bus_top_y,
+            bus_x, bus_bottom_y,
+            fill=outline,
+            width=2,
+            tags=tags
+        )
+        items['shapes'].append(bus_line)
+        
+        # Draw horizontal lines from each visible fuse to the bus
+        if num_inputs <= 4:
+            fuse_spacing = (height - 40) / num_inputs
+            for i in range(num_inputs):
+                fuse_y = y + 20 + i * fuse_spacing + fuse_height/2
+                line = canvas.create_line(
+                    fuse_x + fuse_width, fuse_y,
+                    bus_x, fuse_y,
+                    fill=outline,
+                    width=1,
+                    tags=tags
+                )
+                items['shapes'].append(line)
+        else:
+            # Lines from visible fuses only
+            for i in range(2):
+                fuse_y = y + 20 + i * 25 + fuse_height/2
+                line = canvas.create_line(
+                    fuse_x + fuse_width, fuse_y,
+                    bus_x, fuse_y,
+                    fill=outline,
+                    width=1,
+                    tags=tags
+                )
+                items['shapes'].append(line)
+            
+            # Line from last fuse
+            last_fuse_y = y + height - 30 + fuse_height/2
+            line = canvas.create_line(
+                fuse_x + fuse_width, last_fuse_y,
+                bus_x, last_fuse_y,
+                fill=outline,
+                width=1,
+                tags=tags
+            )
+            items['shapes'].append(line)
+
+        # After drawing the fuses, add red lines from box edge to fuses
+        if num_inputs <= 4:
+            # Draw red lines for all fuses
+            fuse_spacing = (height - 40) / num_inputs
+            for i in range(num_inputs):
+                fuse_y = y + 20 + i * fuse_spacing + fuse_height/2
+                # Red line from box edge to fuse
+                line = canvas.create_line(
+                    x, fuse_y,
+                    fuse_x, fuse_y,
+                    fill='#FF0000',  # Red
+                    width=2,
+                    tags=tags
+                )
+                items['shapes'].append(line)
+        else:
+            # Draw red lines for visible fuses only
+            # First 2 fuses
+            for i in range(2):
+                fuse_y = y + 20 + i * 25 + fuse_height/2
+                line = canvas.create_line(
+                    x, fuse_y,
+                    fuse_x, fuse_y,
+                    fill='#FF0000',  # Red
+                    width=2,
+                    tags=tags
+                )
+                items['shapes'].append(line)
+            
+            # Last fuse
+            last_fuse_y = y + height - 30 + fuse_height/2
+            line = canvas.create_line(
+                x, last_fuse_y,
+                fuse_x, last_fuse_y,
+                fill='#FF0000',  # Red
+                width=2,
+                tags=tags
+            )
+            items['shapes'].append(line)
+        
+        # Draw disconnect/switch on output
+        switch_x = x + width - 35
+        switch_y = y + height/2 - 10
+        cls._draw_disconnect_switch(canvas, switch_x, switch_y, 25, 20, tags, items)
+        
+        # Horizontal line from bus to switch
+        bus_to_switch = canvas.create_line(
+            bus_x, y + height/2,
+            switch_x, switch_y + 10,
+            fill=outline,
+            width=2,
+            tags=tags
+        )
+        items['shapes'].append(bus_to_switch)
+        
+        # Output line from switch
+        output_line = canvas.create_line(
+            switch_x + 25, switch_y + 10,
+            x + width, switch_y + 10,
+            fill=outline,
+            width=2,
+            tags=tags
+        )
+        items['shapes'].append(output_line)
+        
+        connection_points['output'] = (x + width, switch_y + 10)
+        
+        items['all'] = items['shapes'] + items['text'] + items['ports']
+        
+        return {
+            'items': items,
+            'bounds': (x, y, x + width, y + height),
+            'connection_points': connection_points
+        }
+
+    @classmethod
+    def _draw_fuse(cls, canvas, x, y, width, height, tags, items):
+        """Draw a fuse symbol (rectangle with vertical lines inside on the sides)"""
+        # Outer rectangle
+        fuse_rect = canvas.create_rectangle(
+            x, y, x + width, y + height,
+            fill='',
+            outline='#000000',
+            width=1,
+            tags=tags
+        )
+        items['shapes'].append(fuse_rect)
+        
+        # Left vertical line inside
+        left_line = canvas.create_line(
+            x + 3, y,
+            x + 3, y + height,
+            fill='#000000',
+            width=1,
+            tags=tags
+        )
+        items['shapes'].append(left_line)
+        
+        # Right vertical line inside
+        right_line = canvas.create_line(
+            x + width - 3, y,
+            x + width - 3, y + height,
+            fill='#000000',
+            width=1,
+            tags=tags
+        )
+        items['shapes'].append(right_line)
+
+    @classmethod
+    def _draw_disconnect_switch(cls, canvas, x, y, width, height, tags, items):
+        """Draw a disconnect switch symbol"""
+        # Fixed contact (left)
+        fixed_contact = canvas.create_line(
+            x, y + height/2,
+            x + 5, y + height/2,
+            fill='#000000',
+            width=2,
+            tags=tags
+        )
+        items['shapes'].append(fixed_contact)
+        
+        # Moving contact (diagonal line showing switch)
+        moving_contact = canvas.create_line(
+            x + 5, y + height/2,
+            x + width - 5, y + 2,  # Angled up to show "open" position
+            fill='#000000',
+            width=2,
+            tags=tags
+        )
+        items['shapes'].append(moving_contact)
+        
+        # Fixed contact (right)
+        fixed_contact_right = canvas.create_line(
+            x + width - 5, y + height/2,
+            x + width, y + height/2,
+            fill='#000000',
+            width=2,
+            tags=tags
+        )
+        items['shapes'].append(fixed_contact_right)
+    
+    @classmethod
     def _draw_transformer(cls, canvas: tk.Canvas, x: float, y: float, 
                          width: float, height: float, fill: str, 
                          outline: str, outline_width: int, tags: List[str]) -> List[int]:
