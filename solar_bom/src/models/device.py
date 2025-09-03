@@ -10,7 +10,7 @@ class HarnessConnection:
     harness_id: str  # e.g., "H01", "H02"
     num_strings: int
     module_isc: float
-    nec_factor: float = 1.25
+    nec_factor: float = 1.56
     
     # Wiring config reference
     actual_cable_size: str = "8 AWG"  # From wiring config
@@ -88,7 +88,7 @@ class CombinerBoxConfig:
         """Calculate total current and breaker size"""
         if self.connections:
             sum_current = sum(conn.harness_current for conn in self.connections)
-            self.total_input_current = sum_current * 1.25  # Additional NEC factor
+            self.total_input_current = sum_current * 1.56  # Additional NEC factor
             self.calculated_breaker_size = self._calculate_breaker_size()
         else:
             self.total_input_current = 0

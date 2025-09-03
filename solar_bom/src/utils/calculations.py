@@ -256,7 +256,7 @@ def wire_harness_compatibility(
 
 def calculate_nec_current(isc: float) -> float:
     """Calculate NEC-compliant current (125% of Isc)"""
-    return isc * 1.25
+    return isc * 1.56
     
 def calculate_conductor_required_ampacity(isc: float) -> float:
     """Calculate required conductor ampacity per NEC (156.25% of Isc)"""
@@ -320,7 +320,7 @@ def validate_input_current(
             - float: Utilization percentage
     """
     # Apply NEC 125% safety factor
-    design_current = input_current * 1.25
+    design_current = input_current * 1.56
     utilization = (design_current / max_input_current) * 100
     
     if design_current > max_input_current:
@@ -345,7 +345,7 @@ def validate_mppt_channel(
             - float: Utilization percentage
     """
     # Apply NEC 125% safety factor
-    design_current = channel_current * 1.25
+    design_current = channel_current * 1.56
     utilization = (design_current / max_channel_current) * 100
     
     if design_current > max_channel_current:
@@ -403,14 +403,14 @@ def calculate_breaker_size(current_amps: float) -> int:
             return size
     return STANDARD_BREAKER_SIZES[-1]
 
-def validate_cable_for_current(cable_size: str, current: float, nec_factor: float = 1.25) -> bool:
+def validate_cable_for_current(cable_size: str, current: float, nec_factor: float = 1.56) -> bool:
     """
     Validate if a cable size is adequate for the given current.
     
     Args:
         cable_size: AWG cable size string
         current: Current in amperes
-        nec_factor: NEC safety factor (default 1.25)
+        nec_factor: NEC safety factor (default 1.56)
         
     Returns:
         bool: True if cable is adequately sized
@@ -422,14 +422,14 @@ def validate_cable_for_current(cable_size: str, current: float, nec_factor: floa
     nec_current = current * nec_factor
     return nec_current <= ampacity
 
-def get_cable_load_percentage(cable_size: str, current: float, nec_factor: float = 1.25) -> float:
+def get_cable_load_percentage(cable_size: str, current: float, nec_factor: float = 1.56) -> float:
     """
     Calculate the load percentage for a cable.
     
     Args:
         cable_size: AWG cable size string
         current: Current in amperes
-        nec_factor: NEC safety factor (default 1.25)
+        nec_factor: NEC safety factor (default 1.56)
         
     Returns:
         float: Load percentage (0-100+)

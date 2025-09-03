@@ -26,7 +26,7 @@ CABLE_SIZE_ORDER = [
     "4 AWG", "2 AWG", "1/0 AWG", "2/0 AWG", "4/0 AWG"
 ]
 
-def calculate_string_cable_size(module_isc: float, nec_factor: float = 1.25) -> str:
+def calculate_string_cable_size(module_isc: float, nec_factor: float = 1.56) -> str:
     """
     Calculate required cable size for a single string connection.
     
@@ -35,7 +35,7 @@ def calculate_string_cable_size(module_isc: float, nec_factor: float = 1.25) -> 
     
     Args:
         module_isc: Module short circuit current in amperes
-        nec_factor: NEC safety factor (default 1.25 for continuous current)
+        nec_factor: NEC safety factor (default 1.56 for continuous current)
         
     Returns:
         str: Recommended AWG cable size
@@ -51,7 +51,7 @@ def calculate_string_cable_size(module_isc: float, nec_factor: float = 1.25) -> 
     # If current exceeds all standard sizes, return largest
     return "4/0 AWG"
 
-def calculate_harness_cable_size(num_strings: int, module_isc: float, nec_factor: float = 1.25) -> str:
+def calculate_harness_cable_size(num_strings: int, module_isc: float, nec_factor: float = 1.56) -> str:
     """
     Calculate required cable size for harness cables.
     
@@ -61,7 +61,7 @@ def calculate_harness_cable_size(num_strings: int, module_isc: float, nec_factor
     Args:
         num_strings: Number of strings combined in the harness
         module_isc: Module short circuit current in amperes
-        nec_factor: NEC safety factor (default 1.25 for continuous current)
+        nec_factor: NEC safety factor (default 1.56 for continuous current)
         
     Returns:
         str: Recommended AWG cable size
@@ -76,7 +76,7 @@ def calculate_harness_cable_size(num_strings: int, module_isc: float, nec_factor
     
     return "4/0 AWG"
 
-def calculate_extender_cable_size(num_strings: int, module_isc: float, nec_factor: float = 1.25) -> str:
+def calculate_extender_cable_size(num_strings: int, module_isc: float, nec_factor: float = 1.56) -> str:
     """
     Calculate required cable size for extender cables.
     
@@ -86,7 +86,7 @@ def calculate_extender_cable_size(num_strings: int, module_isc: float, nec_facto
     Args:
         num_strings: Number of strings in the harness assembly
         module_isc: Module short circuit current in amperes
-        nec_factor: NEC safety factor (default 1.25 for continuous current)
+        nec_factor: NEC safety factor (default 1.56 for continuous current)
         
     Returns:
         str: Recommended AWG cable size
@@ -94,7 +94,7 @@ def calculate_extender_cable_size(num_strings: int, module_isc: float, nec_facto
     # Extender carries same current as harness
     return calculate_harness_cable_size(num_strings, module_isc, nec_factor)
 
-def calculate_whip_cable_size(num_strings: int, module_isc: float, nec_factor: float = 1.25) -> str:
+def calculate_whip_cable_size(num_strings: int, module_isc: float, nec_factor: float = 1.56) -> str:
     """
     Calculate required cable size for whip cables.
     
@@ -105,7 +105,7 @@ def calculate_whip_cable_size(num_strings: int, module_isc: float, nec_factor: f
     Args:
         num_strings: Number of strings in the harness assembly
         module_isc: Module short circuit current in amperes
-        nec_factor: NEC safety factor (default 1.25 for continuous current)
+        nec_factor: NEC safety factor (default 1.56 for continuous current)
         
     Returns:
         str: Recommended AWG cable size
@@ -113,7 +113,7 @@ def calculate_whip_cable_size(num_strings: int, module_isc: float, nec_factor: f
     # Whip carries same current as harness and extender
     return calculate_harness_cable_size(num_strings, module_isc, nec_factor)
 
-def calculate_all_cable_sizes(num_strings: int, module_isc: float, nec_factor: float = 1.25) -> Dict[str, str]:
+def calculate_all_cable_sizes(num_strings: int, module_isc: float, nec_factor: float = 1.56) -> Dict[str, str]:
     """
     Calculate recommended cable sizes for all components of a harness assembly.
     
@@ -123,7 +123,7 @@ def calculate_all_cable_sizes(num_strings: int, module_isc: float, nec_factor: f
     Args:
         num_strings: Number of strings in the harness assembly
         module_isc: Module short circuit current in amperes
-        nec_factor: NEC safety factor (default 1.25 for continuous current)
+        nec_factor: NEC safety factor (default 1.56 for continuous current)
         
     Returns:
         Dict containing recommended sizes for each cable type:
@@ -151,14 +151,14 @@ def get_cable_ampacity(cable_size: str) -> float:
     """
     return CABLE_AMPACITY_90C.get(cable_size, 0)
 
-def validate_cable_size_for_current(cable_size: str, current: float, nec_factor: float = 1.25) -> bool:
+def validate_cable_size_for_current(cable_size: str, current: float, nec_factor: float = 1.56) -> bool:
     """
     Validate if a cable size is adequate for the given current.
     
     Args:
         cable_size: AWG cable size string
         current: Base current in amperes (before NEC factor)
-        nec_factor: NEC safety factor (default 1.25)
+        nec_factor: NEC safety factor (default 1.56)
         
     Returns:
         bool: True if cable size is adequate, False otherwise
