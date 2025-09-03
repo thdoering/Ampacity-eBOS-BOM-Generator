@@ -435,7 +435,7 @@ class ANSISymbols:
         # Draw main rectangle (no fill)
         rect_id = canvas.create_rectangle(
             x + 20, y, x + width, y + height,
-            fill='',
+            fill='white',
             outline=outline,
             width=outline_width,
             tags=tags
@@ -486,7 +486,7 @@ class ANSISymbols:
         # Draw main rectangle
         rect_id = canvas.create_rectangle(
             x, y, x + width, y + height,
-            fill='',
+            fill='white',
             outline=outline,
             width=outline_width,
             tags=tags

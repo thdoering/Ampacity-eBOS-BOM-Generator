@@ -1079,14 +1079,8 @@ class SLDEditor(tk.Toplevel):
                     self.drag_data["y"] = canvas_y
                     self.drag_data["element_id"] = element_id
                     
-                    # Highlight ONLY shape items, not text!
+                    # Store selected element without changing visual appearance
                     element_data = self.sld_elements[element_id]
-                    if 'items' in element_data and 'shapes' in element_data['items']:
-                        # Only highlight shapes (rectangles, lines, etc.)
-                        for item_id in element_data['items']['shapes']:
-                            # Only set width for non-text items
-                            if self.canvas.type(item_id) != 'text':
-                                self.canvas.itemconfig(item_id, width=3)
                     
                     self.selected_element = element_id
     
@@ -1196,15 +1190,6 @@ class SLDEditor(tk.Toplevel):
             # Reset drag state
             self.dragging = False
             self.drag_data = {"x": 0, "y": 0, "item": None, "element_id": None}
-            
-            # Remove highlight - ONLY from shapes, not text!
-            if self.selected_element and self.selected_element in self.sld_elements:
-                element_data = self.sld_elements[self.selected_element]
-                if 'items' in element_data and 'shapes' in element_data['items']:
-                    for item_id in element_data['items']['shapes']:
-                        # Only reset width for non-text items
-                        if self.canvas.type(item_id) != 'text':
-                            self.canvas.itemconfig(item_id, width=2)
 
     def on_canvas_right_click(self, event):
         """Handle right-click for context menu"""
@@ -1347,8 +1332,6 @@ class SLDEditor(tk.Toplevel):
     def select_all(self):
         """Select all elements"""
         elements = self.canvas.find_withtag("element")
-        for elem in elements:
-            self.canvas.itemconfig(elem, width=3)
         self.selected_items = list(elements)
         self.status_label.configure(text=f"Selected {len(elements)} elements")
     
