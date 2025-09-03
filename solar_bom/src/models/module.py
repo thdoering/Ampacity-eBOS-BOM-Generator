@@ -38,7 +38,9 @@ class ModuleSpec:
     
     # Optional specifications
     efficiency: Optional[float] = None
-    temperature_coefficient: Optional[float] = None
+    temperature_coefficient_pmax: Optional[float] = None  # %/°C
+    temperature_coefficient_voc: Optional[float] = None   # %/°C  
+    temperature_coefficient_isc: Optional[float] = None   # %/°C
     bifaciality_factor: Optional[float] = None
     
     # Default mounting configuration

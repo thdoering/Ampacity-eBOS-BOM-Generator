@@ -24,6 +24,12 @@ def parse_pan_file(content: str) -> ModuleSpec:
         params = _parse_pan_file(content)
         
         # Create and return a ModuleSpec object
+        # Handle backward compatibility for temperature coefficient
+        temp_coeff_pmax = params.get('temperature_coefficient_pmax')
+        if temp_coeff_pmax is None:
+            # Fall back to old single temperature_coefficient field
+            temp_coeff_pmax = params.get('temperature_coefficient')
+            
         return ModuleSpec(
             manufacturer=params['manufacturer'],
             model=params['model'],
@@ -39,7 +45,9 @@ def parse_pan_file(content: str) -> ModuleSpec:
             isc=params['isc'],
             max_system_voltage=params['max_system_voltage'],
             efficiency=params['efficiency'],
-            temperature_coefficient=params['temperature_coefficient']
+            temperature_coefficient_pmax=temp_coeff_pmax,
+            temperature_coefficient_voc=params.get('temperature_coefficient_voc'),
+            temperature_coefficient_isc=params.get('temperature_coefficient_isc')
         )
     except ValueError as e:
         raise ValueError(f"Failed to parse PAN file: {str(e)}")

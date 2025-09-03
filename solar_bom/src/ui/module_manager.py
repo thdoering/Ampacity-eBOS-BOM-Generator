@@ -104,12 +104,51 @@ class ModuleManager(ttk.Frame):
         self.isc_var = tk.StringVar()
         ttk.Entry(elec_frame, textvariable=self.isc_var).grid(row=4, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         
+        # Temperature Coefficients
+        temp_frame = ttk.LabelFrame(editor_frame, text="Temperature Coefficients (%/°C)", padding="5")
+        temp_frame.grid(row=5, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
+        
+        ttk.Label(temp_frame, text="Pmax (%/°C):").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
+        self.temp_coeff_pmax_var = tk.StringVar()
+        ttk.Entry(temp_frame, textvariable=self.temp_coeff_pmax_var).grid(row=0, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        
+        ttk.Label(temp_frame, text="Voc (%/°C):").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
+        self.temp_coeff_voc_var = tk.StringVar()
+        ttk.Entry(temp_frame, textvariable=self.temp_coeff_voc_var).grid(row=1, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        
+        ttk.Label(temp_frame, text="Isc (%/°C):").grid(row=2, column=0, padx=5, pady=2, sticky=tk.W)
+        self.temp_coeff_isc_var = tk.StringVar()
+        ttk.Entry(temp_frame, textvariable=self.temp_coeff_isc_var).grid(row=2, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        
         # Save button
-        ttk.Button(editor_frame, text="Save Module", command=self.save_module).grid(row=5, column=0, columnspan=2, pady=10)
+        ttk.Button(editor_frame, text="Save Module", command=self.save_module).grid(row=6, column=0, columnspan=2, pady=10)
         
     def create_module_spec(self) -> Optional[ModuleSpec]:
         """Create ModuleSpec from current UI values"""
         try:
+            # Get temperature coefficients if provided
+            temp_coeff_pmax = None
+            temp_coeff_voc = None
+            temp_coeff_isc = None
+            
+            if self.temp_coeff_pmax_var.get():
+                try:
+                    temp_coeff_pmax = float(self.temp_coeff_pmax_var.get())
+                except ValueError:
+                    pass
+                    
+            if self.temp_coeff_voc_var.get():
+                try:
+                    temp_coeff_voc = float(self.temp_coeff_voc_var.get())
+                except ValueError:
+                    pass
+                    
+            if self.temp_coeff_isc_var.get():
+                try:
+                    temp_coeff_isc = float(self.temp_coeff_isc_var.get())
+                except ValueError:
+                    pass
+            
             return ModuleSpec(
                 manufacturer=self.manufacturer_var.get(),
                 model=self.model_var.get(),
@@ -123,7 +162,10 @@ class ModuleManager(ttk.Frame):
                 imp=float(self.imp_var.get()),
                 voc=float(self.voc_var.get()),
                 isc=float(self.isc_var.get()),
-                max_system_voltage=1500  # Default
+                max_system_voltage=1500,  # Default
+                temperature_coefficient_pmax=temp_coeff_pmax,
+                temperature_coefficient_voc=temp_coeff_voc,
+                temperature_coefficient_isc=temp_coeff_isc
             )
         except (ValueError, TypeError) as e:
             messagebox.showerror("Error", str(e))
@@ -150,8 +192,15 @@ class ModuleManager(ttk.Frame):
                     for manufacturer, models in data.items():
                         for model, module_data in models.items():
                             module_key = f"{manufacturer} {model}"
+                            # Handle backward compatibility for temperature coefficients
+                            module_params = {k: v for k, v in module_data.items() if k != 'type' and k != 'default_orientation' and k != 'temperature_coefficient'}
+                            
+                            # If old temperature_coefficient exists and new ones don't, use it for Pmax
+                            if 'temperature_coefficient' in module_data and 'temperature_coefficient_pmax' not in module_data:
+                                module_params['temperature_coefficient_pmax'] = module_data['temperature_coefficient']
+                            
                             self.modules[module_key] = ModuleSpec(
-                                **{k: v for k, v in module_data.items() if k != 'type' and k != 'default_orientation'},
+                                **module_params,
                                 type=ModuleType(module_data['type']),
                                 default_orientation=ModuleOrientation(module_data.get('default_orientation', ModuleOrientation.PORTRAIT.value))
                             )
@@ -332,6 +381,22 @@ class ModuleManager(ttk.Frame):
             self.imp_var.set(str(module.imp))
             self.voc_var.set(str(module.voc))
             self.isc_var.set(str(module.isc))
+            
+            # Set temperature coefficients if available
+            if hasattr(module, 'temperature_coefficient_pmax') and module.temperature_coefficient_pmax is not None:
+                self.temp_coeff_pmax_var.set(str(module.temperature_coefficient_pmax))
+            else:
+                self.temp_coeff_pmax_var.set("")
+                
+            if hasattr(module, 'temperature_coefficient_voc') and module.temperature_coefficient_voc is not None:
+                self.temp_coeff_voc_var.set(str(module.temperature_coefficient_voc))
+            else:
+                self.temp_coeff_voc_var.set("")
+                
+            if hasattr(module, 'temperature_coefficient_isc') and module.temperature_coefficient_isc is not None:
+                self.temp_coeff_isc_var.set(str(module.temperature_coefficient_isc))
+            else:
+                self.temp_coeff_isc_var.set("")
 
             # Call the callback if provided
             if self.on_module_selected:
