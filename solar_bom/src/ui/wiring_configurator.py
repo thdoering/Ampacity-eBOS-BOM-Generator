@@ -618,13 +618,13 @@ class WiringConfigurator(tk.Toplevel):
         if not self.block or not self.block.tracker_template or not self.block.tracker_template.module_spec:
             return "8 AWG"
         
-        # Calculate current: num_strings × module_Isc × 1.25 (NEC factor)
+        # Calculate current: num_strings × module_Isc × 1.56 (NEC double 125% factor)
         module_isc = self.block.tracker_template.module_spec.isc
-        total_current = string_count * module_isc * 1.25
+        total_current = string_count * module_isc * 1.56
         
         # Use the cable sizing utility - whip carries same current as harness
         from ..utils.cable_sizing import calculate_whip_cable_size
-        return calculate_whip_cable_size(string_count, module_isc, 1.25)
+        return calculate_whip_cable_size(string_count, module_isc, 1.56)
 
     def is_cable_undersized(self, cable_size, string_count):
         """Check if cable size is undersized for the given string count"""

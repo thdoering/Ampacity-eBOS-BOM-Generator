@@ -788,6 +788,60 @@
         "isc": 14.35,
         "max_system_voltage": 1500
       }
+    },
+    "NXT-84-540 W": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 28,
+      "strings_per_tracker": 3,
+      "module_spacing_m": 0.01,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 0,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 2,
+      "motor_split_north": 14,
+      "motor_split_south": 14,
+      "module_spec": {
+        "manufacturer": "ZnShine",
+        "model": "ZXM7-UHLDD144-540",
+        "type": "Mono PERC",
+        "length_mm": 2278.0,
+        "width_mm": 1134.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 540.0,
+        "vmp": 41.5,
+        "imp": 13.02,
+        "voc": 49.8,
+        "isc": 13.77,
+        "max_system_voltage": 1500
+      }
+    },
+    "NXT-56-540 W": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 28,
+      "strings_per_tracker": 2,
+      "module_spacing_m": 0.01,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 0,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 2,
+      "motor_split_north": 14,
+      "motor_split_south": 14,
+      "module_spec": {
+        "manufacturer": "ZnShine",
+        "model": "ZXM7-UHLDD144-540",
+        "type": "Mono PERC",
+        "length_mm": 2278.0,
+        "width_mm": 1134.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 540.0,
+        "vmp": 41.5,
+        "imp": 13.02,
+        "voc": 49.8,
+        "isc": 13.77,
+        "max_system_voltage": 1500
+      }
     }
   },
   "VSUN": {
