@@ -2978,8 +2978,30 @@ class WiringConfigurator(tk.Toplevel):
             row = i % 8
             check.grid(row=row, column=column, sticky=tk.W, padx=5, pady=2)
         
+        # Add Select All / Deselect All buttons below all checkboxes
+        button_frame = ttk.Frame(self.string_check_frame)
+        # Calculate position: place below the last row of checkboxes
+        num_rows = min(8, string_count)  # Maximum 8 rows per column
+        num_columns = (string_count - 1) // 8 + 1
+        button_frame.grid(row=num_rows, column=0, columnspan=num_columns, pady=(10, 5), sticky=tk.W)
+        
+        ttk.Button(button_frame, text="Select All", 
+                  command=self.select_all_strings).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Deselect All", 
+                  command=self.deselect_all_strings).pack(side=tk.LEFT, padx=5)
+        
         # Update harness display
         self.update_harness_display(string_count)
+
+    def select_all_strings(self):
+        """Select all string checkboxes"""
+        for var in self.string_vars:
+            var.set(True)
+    
+    def deselect_all_strings(self):
+        """Deselect all string checkboxes"""
+        for var in self.string_vars:
+            var.set(False)
 
     def update_harness_display(self, string_count):
         """Update the harness cable table after harness changes"""
