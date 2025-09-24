@@ -244,29 +244,6 @@ class BOMGenerator:
                 else:
                     # Multiple sizes - this will be handled in segment analysis
                     whip_cable_size = None
-                    
-                # Only add whip cables if we have a single size for all harnesses
-                if whip_cable_size:
-                    # Split whip cable by polarity
-                    if 'whip_cable_positive' in cable_lengths:
-                        whip_length_feet = round(cable_lengths['whip_cable_positive'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
-
-                        block_quantities[f'Positive Whip Cable ({whip_cable_size})'] = {
-                            'description': self.get_whip_description_format(whip_cable_size).format(length="TOTAL"),
-                            'quantity': whip_length_feet,
-                            'unit': 'feet',
-                            'category': 'eBOS'
-                        }
-                
-                    if 'whip_cable_negative' in cable_lengths:
-                        whip_length_feet = round(cable_lengths['whip_cable_negative'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
-
-                        block_quantities[f'Negative Whip Cable ({whip_cable_size})'] = {
-                            'description': self.get_whip_description_format(whip_cable_size).format(length="TOTAL"),
-                            'quantity': whip_length_feet,
-                            'unit': 'feet',
-                            'category': 'eBOS'
-                        }
                         
             else:  # HARNESS configuration
                 # Add harnesses by number of strings they connect - split by polarity
@@ -344,29 +321,6 @@ class BOMGenerator:
                 else:
                     # Multiple sizes - this will be handled in segment analysis
                     whip_cable_size = None
-                
-                # Only add whip cables if we have a single size for all harnesses
-                if whip_cable_size:
-                    # Split whip cable by polarity
-                    if 'whip_cable_positive' in cable_lengths:
-                        whip_length_feet = round(cable_lengths['whip_cable_positive'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
-
-                        block_quantities[f'Positive Whip Cable ({whip_cable_size})'] = {
-                            'description': self.get_whip_description_format(whip_cable_size).format(length="TOTAL"),
-                            'quantity': whip_length_feet,
-                            'unit': 'feet',
-                            'category': 'eBOS'
-                        }
-                
-                    if 'whip_cable_negative' in cable_lengths:
-                        whip_length_feet = round(cable_lengths['whip_cable_negative'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
-
-                        block_quantities[f'Negative Whip Cable ({whip_cable_size})'] = {
-                            'description': self.get_whip_description_format(whip_cable_size).format(length="TOTAL"),
-                            'quantity': whip_length_feet,
-                            'unit': 'feet',
-                            'category': 'eBOS'
-                        }
 
                 # Get extender cable size - check if we have harness-specific sizes
                 extender_cable_sizes = {}  # Change to dict to track which harnesses use which size
@@ -386,30 +340,6 @@ class BOMGenerator:
                 else:
                     # Multiple sizes - this will be handled in segment analysis
                     extender_cable_size = None
-
-                # Only add extender cables if we have a single size for all harnesses
-                if extender_cable_size:
-                    # Split extender cable by polarity
-                    if 'extender_cable_positive' in cable_lengths:
-                        extender_length_feet = round(cable_lengths['extender_cable_positive'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
-
-                        block_quantities[f'Positive Extender Cable ({extender_cable_size})'] = {
-                            'description': self.get_extender_description_format(extender_cable_size).format(length="TOTAL"),
-                            'quantity': extender_length_feet,
-                            'unit': 'feet',
-                            'category': 'Extender Cables'
-                        }
-
-                    if 'extender_cable_negative' in cable_lengths:
-                        extender_length_feet = round(cable_lengths['extender_cable_negative'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
-
-                        block_quantities[f'Negative Extender Cable ({extender_cable_size})'] = {
-                            'description': self.get_extender_description_format(extender_cable_size).format(length="TOTAL"),
-                            'quantity': extender_length_feet,
-                            'unit': 'feet',
-                            'category': 'Extender Cables'
-                        }
-                # else: Multiple cable sizes will be handled in segment analysis
             
             quantities[block_id] = block_quantities
         
@@ -723,6 +653,14 @@ class BOMGenerator:
         """
         detailed_data = []
         
+        # Calculate strings per block
+        strings_per_block = {}
+        for block_id, block in self.blocks.items():
+            total_strings = 0
+            for pos in block.tracker_positions:
+                total_strings += len(pos.strings)
+            strings_per_block[block_id] = total_strings
+        
         for block_id, block_quantities in quantities.items():
             for component_type, details in block_quantities.items():
                 description = details['description']
@@ -736,6 +674,7 @@ class BOMGenerator:
                     
                 item_data = {
                     'Block': block_id,
+                    'Strings': strings_per_block.get(block_id, 0),
                     'Category': category,
                     'Component Type': component_type,
                     'Description': description,
@@ -747,11 +686,21 @@ class BOMGenerator:
                 item_data['Part Number'] = self.get_component_part_number(item_data)
 
                 detailed_data.append(item_data)
+
         
         # Sort by block ID, category, and component type
         detailed_data = sorted(detailed_data, key=lambda x: (x['Block'], x['Category'], x['Component Type']))
-        
-        return pd.DataFrame(detailed_data)
+
+        # Create DataFrame and ensure column order
+        df = pd.DataFrame(detailed_data)
+        if not df.empty:
+            # Define the column order with Strings after Block
+            column_order = ['Block', 'Strings', 'Category', 'Component Type', 'Description', 'Quantity', 'Unit', 'Part Number']
+            # Only reorder columns that exist
+            existing_columns = [col for col in column_order if col in df.columns]
+            df = df[existing_columns]
+
+        return df
 
 
     def export_bom_to_excel_with_preview_data(self, filepath: str, project_info: Optional[Dict[str, Any]] = None, 
@@ -1321,12 +1270,12 @@ class BOMGenerator:
                 for cable_size, segments in whip_segments_by_size_pos.items():
                     self._add_segment_analysis(block_quantities, segments, 
                                             cable_size, f"Positive Whip Cable ({cable_size})", 1)
-                    self.calculate_totals_from_segments(block_quantities, cable_size, f"Positive Whip Cable")
-                
+                    self.calculate_totals_from_segments(block_quantities, cable_size, f"Positive Whip Cable ({cable_size})")
+
                 for cable_size, segments in whip_segments_by_size_neg.items():
                     self._add_segment_analysis(block_quantities, segments, 
                                             cable_size, f"Negative Whip Cable ({cable_size})", 1)
-                    self.calculate_totals_from_segments(block_quantities, cable_size, f"Negative Whip Cable")
+                    self.calculate_totals_from_segments(block_quantities, cable_size, f"Negative Whip Cable ({cable_size})")
             else:
                 # Non-harness or single cable size - process normally
                 whip_size = getattr(block.wiring_config, 'whip_cable_size', "8 AWG")
@@ -1395,12 +1344,12 @@ class BOMGenerator:
                 for cable_size, segments in extender_segments_by_size_pos.items():
                     self._add_segment_analysis(block_quantities, segments, 
                                             cable_size, f"Positive Extender Cable ({cable_size})", 5)
-                    self.calculate_totals_from_segments(block_quantities, cable_size, f"Positive Extender Cable")
-                
+                    self.calculate_totals_from_segments(block_quantities, cable_size, f"Positive Extender Cable ({cable_size})")
+
                 for cable_size, segments in extender_segments_by_size_neg.items():
                     self._add_segment_analysis(block_quantities, segments, 
                                             cable_size, f"Negative Extender Cable ({cable_size})", 5)
-                    self.calculate_totals_from_segments(block_quantities, cable_size, f"Negative Extender Cable")
+                    self.calculate_totals_from_segments(block_quantities, cable_size, f"Negative Extender Cable ({cable_size})")
             else:
                 # Non-harness or single cable size - process normally
                 extender_size = getattr(block.wiring_config, 'extender_cable_size', "8 AWG")
