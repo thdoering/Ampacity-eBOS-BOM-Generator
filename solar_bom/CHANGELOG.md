@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2025-10-06
+
+### Added
+- **SLD Generator**: Implemented Single Line Diagram data model and canvas integration in BOM Manager
+- **ANSI Symbol Library**: Added comprehensive ANSI symbol library for professional electrical diagrams
+- **Thermal Parameters**: Added thermal parameter inputs to module specification page for accurate performance calculations
+- **Wiring Bulk Selection**: Added select all/deselect all buttons in wiring configurator for easier configuration
+
+### Changed
+- **NEC Safety Factor**: Updated NEC safety factor to 1.56 across all relevant electrical calculations for code compliance
+- **Row Spacing Lock**: Row spacing is now locked once trackers are placed to prevent layout inconsistencies
+- **Wiring Mode Restriction**: Removed conceptual routing option - only realistic routing is now available for more accurate installations
+- **SLD Drawing Elements**: Enhanced drawing elements and symbols in SLD generator for better diagram quality
+
+### Fixed
+- **Harness Drawing Generator**: Resolved multiple bugs in harness drawing generation
+- **SLD Dragging**: Fixed dragging behavior issues in SLD generator canvas
+- **Cable Totals**: Corrected bug that was doubling cable length totals in BOM calculations
+
+### Notes
+- Projects with conceptual wiring configurations will need to be reconfigured using realistic routing
+- NEC safety factor change may affect cable sizing in existing projects - review electrical calculations
+
 ## [2.2.0] - 2025-08-22
 
 ### Added
