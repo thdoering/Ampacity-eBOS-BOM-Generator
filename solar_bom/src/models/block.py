@@ -69,8 +69,6 @@ class BlockConfig:
     device_y: float = 0.0  # Y coordinate of device in meters
     device_spacing_m: float = 1.83  # 6ft in meters default
     device_type: DeviceType = DeviceType.STRING_INVERTER  # Default device type
-    num_inputs: int = 20  # Default number of inputs
-    max_current_per_input: float = 20.0  # Default max current per input in amps
     block_realistic_routes: Dict[str, List[tuple[float, float]]] = field(default_factory=dict)
     underground_routing: bool = False
     pile_reveal_m: float = 1.5
@@ -298,8 +296,6 @@ class BlockConfig:
             'device_y': self.device_y,
             'device_spacing_m': self.device_spacing_m,
             'device_type': self.device_type.value,
-            'num_inputs': self.num_inputs,
-            'max_current_per_input': self.max_current_per_input,
             'underground_routing': self.underground_routing,
             'pile_reveal_m': self.pile_reveal_m,
             'trench_depth_m': self.trench_depth_m
@@ -400,8 +396,6 @@ class BlockConfig:
             device_y=data.get('device_y', 0.0),
             device_spacing_m=data.get('device_spacing_m', 1.83),
             device_type=DeviceType(data.get('device_type', DeviceType.STRING_INVERTER.value)),
-            num_inputs=data.get('num_inputs', 20),
-            max_current_per_input=data.get('max_current_per_input', 20.0),
             underground_routing=data.get('underground_routing', False),
             pile_reveal_m=data.get('pile_reveal_m', 1.5),
             trench_depth_m=data.get('trench_depth_m', 0.91)

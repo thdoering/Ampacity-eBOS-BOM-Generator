@@ -509,7 +509,7 @@ class SLDEditor(tk.Toplevel):
             if using_combiners:
                 # Determine number of combiners needed
                 total_inputs_needed = len(string_elements)
-                inputs_per_combiner = block.num_inputs if hasattr(block, 'num_inputs') else 12
+                inputs_per_combiner = 12  # Default combiner box inputs
                 num_combiners = (total_inputs_needed + inputs_per_combiner - 1) // inputs_per_combiner
                 
                 combiner_elements = []

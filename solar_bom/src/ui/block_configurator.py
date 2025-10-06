@@ -199,44 +199,18 @@ class BlockConfigurator(ttk.Frame):
         device_type_combo['values'] = [t.value for t in DeviceType]
         device_type_combo.grid(row=0, column=1, columnspan=2, padx=5, pady=2, sticky=(tk.W, tk.E))
 
-        # Number of Inputs
-        ttk.Label(device_frame, text="Number of Inputs:").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
-        self.num_inputs_var = tk.StringVar(value="20")
-        num_inputs_spinbox = ttk.Spinbox(
-            device_frame,
-            from_=8,
-            to=40,
-            textvariable=self.num_inputs_var,
-            increment=1,
-            width=10
-        )
-        num_inputs_spinbox.grid(row=1, column=1, padx=5, pady=2, sticky=tk.W)
-
-        # Max Current per Input
-        ttk.Label(device_frame, text="Max Current per Input (A):").grid(row=2, column=0, padx=5, pady=2, sticky=tk.W)
-        self.max_current_per_input_var = tk.StringVar(value="20")
-        max_current_spinbox = ttk.Spinbox(
-            device_frame,
-            from_=15,
-            to=60,
-            textvariable=self.max_current_per_input_var,
-            increment=1,
-            width=10
-        )
-        max_current_spinbox.grid(row=2, column=1, padx=5, pady=2, sticky=tk.W)
-
         # Device Spacing
-        ttk.Label(device_frame, text="Device Spacing (ft):").grid(row=5, column=0, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(device_frame, text="Device Spacing (ft):").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
         self.device_spacing_var = tk.StringVar(value="6.0")
         device_spacing_entry = ttk.Entry(device_frame, textvariable=self.device_spacing_var)
-        device_spacing_entry.grid(row=5, column=1, padx=5, pady=2, sticky=tk.W)
+        device_spacing_entry.grid(row=1, column=1, padx=5, pady=2, sticky=tk.W)
         self.device_spacing_meters_label = ttk.Label(device_frame, text="(1.83m)")
-        self.device_spacing_meters_label.grid(row=5, column=2, padx=5, pady=2, sticky=tk.W)
+        self.device_spacing_meters_label.grid(row=1, column=2, padx=5, pady=2, sticky=tk.W)
 
         # Selected Inverter
-        ttk.Label(device_frame, text="Selected Inverter:").grid(row=6, column=0, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(device_frame, text="Selected Inverter:").grid(row=2, column=0, padx=5, pady=2, sticky=tk.W)
         self.inverter_label = ttk.Label(device_frame, text="None")
-        self.inverter_label.grid(row=6, column=1, padx=5, pady=2, sticky=tk.W)
+        self.inverter_label.grid(row=2, column=1, padx=5, pady=2, sticky=tk.W)
         # Change this line in the UI setup:
         self.inverter_select_button = ttk.Button(device_frame, text="Select Inverter", command=self.select_inverter)
         self.inverter_select_button.grid(row=6, column=2, padx=5, pady=2)
@@ -390,8 +364,6 @@ class BlockConfigurator(ttk.Frame):
 
         # Add traces for device configuration changes
         self.device_type_var.trace('w', self.on_device_config_change)
-        self.num_inputs_var.trace('w', self.on_device_config_change)  
-        self.max_current_per_input_var.trace('w', self.on_device_config_change)
 
         # Add trace for device type to show/hide inverter frame
         self.device_type_var.trace('w', lambda *args: self.toggle_inverter_frame())
@@ -802,8 +774,6 @@ class BlockConfigurator(ttk.Frame):
                 device_x=initial_device_x,
                 device_y=0.0,
                 device_type=DeviceType(self.device_type_var.get()),
-                num_inputs=int(self.num_inputs_var.get()),
-                max_current_per_input=float(self.max_current_per_input_var.get()),
                 underground_routing=False,
                 pile_reveal_m=1.5,
                 trench_depth_m=0.91
@@ -915,8 +885,6 @@ class BlockConfigurator(ttk.Frame):
             if hasattr(self, 'device_type_var') and self.device_type_var:
                 self.updating_ui = True
                 self.device_type_var.set(block.device_type.value)
-                self.num_inputs_var.set(str(block.num_inputs))
-                self.max_current_per_input_var.set(str(block.max_current_per_input))
                 self.updating_ui = False
             
             # Update inverter display
@@ -950,14 +918,10 @@ class BlockConfigurator(ttk.Frame):
             
             # Update block with new values
             block.device_type = new_device_type
-            block.num_inputs = int(self.num_inputs_var.get())
-            block.max_current_per_input = float(self.max_current_per_input_var.get())
                         
         except ValueError:
             # Revert to current values if invalid input
             self.device_type_var.set(block.device_type.value)
-            self.num_inputs_var.set(str(block.num_inputs))
-            self.max_current_per_input_var.set(str(block.max_current_per_input))
     
     def check_device_type_consistency(self, new_device_type):
         """Check if all blocks have the same device type"""
