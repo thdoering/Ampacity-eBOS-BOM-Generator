@@ -122,26 +122,30 @@ class TrackerTemplateCreator(ttk.Frame):
         ttk.Entry(editor_frame, textvariable=self.spacing_var).grid(row=5, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         
         # Motor Gap
-        ttk.Label(editor_frame, text="Motor Gap (m):").grid(row=6, column=0, padx=5, pady=2, sticky=tk.W)
+        self.motor_gap_label = ttk.Label(editor_frame, text="Motor Gap (m):")
+        self.motor_gap_label.grid(row=6, column=0, padx=5, pady=2, sticky=tk.W)
         self.motor_gap_var = tk.StringVar(value="1.0")
-        ttk.Entry(editor_frame, textvariable=self.motor_gap_var).grid(row=6, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        self.motor_gap_entry = ttk.Entry(editor_frame, textvariable=self.motor_gap_var)
+        self.motor_gap_entry.grid(row=6, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
 
         # Motor Placement Type
         ttk.Label(editor_frame, text="Motor Placement:").grid(row=7, column=0, padx=5, pady=2, sticky=tk.W)
         self.motor_placement_var = tk.StringVar(value="between_strings")
-        placement_combo = ttk.Combobox(editor_frame, textvariable=self.motor_placement_var, 
-                                     values=["between_strings", "middle_of_string"], state="readonly")
+        placement_combo = ttk.Combobox(editor_frame, textvariable=self.motor_placement_var,
+                                     values=["between_strings", "middle_of_string", "no_motor"], state="readonly")
         placement_combo.grid(row=7, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
 
         # Motor Position (Between Strings)
-        ttk.Label(editor_frame, text="Motor After String:").grid(row=8, column=0, padx=5, pady=2, sticky=tk.W)
+        self.motor_position_label = ttk.Label(editor_frame, text="Motor After String:")
+        self.motor_position_label.grid(row=8, column=0, padx=5, pady=2, sticky=tk.W)
         self.motor_position_var = tk.StringVar(value="2")  # Default to middle-ish
         self.motor_position_spinbox = ttk.Spinbox(editor_frame, from_=0, to=1, textvariable=self.motor_position_var,
             increment=1, validate='all', validatecommand=(self.register(lambda val: val.isdigit() or val == ""), '%P'))
         self.motor_position_spinbox.grid(row=8, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
-        
+
         # Motor String Index (Middle of String)
-        ttk.Label(editor_frame, text="Motor in String:").grid(row=9, column=0, padx=5, pady=2, sticky=tk.W)
+        self.motor_string_label = ttk.Label(editor_frame, text="Motor in String:")
+        self.motor_string_label.grid(row=9, column=0, padx=5, pady=2, sticky=tk.W)
         self.motor_string_var = tk.StringVar(value="2")
         self.motor_string_spinbox = ttk.Spinbox(editor_frame, from_=1, to=2, textvariable=self.motor_string_var,
             increment=1, validate='all', validatecommand=(self.register(lambda val: val.isdigit() or val == ""), '%P'))
@@ -248,17 +252,36 @@ class TrackerTemplateCreator(ttk.Frame):
     def update_motor_placement_visibility(self, *args):
         """Show/hide motor placement controls based on selected type"""
         placement_type = self.motor_placement_var.get()
-        
-        if placement_type == "between_strings":
+
+        if placement_type == "no_motor":
+            # Hide all motor controls
+            self.motor_gap_label.grid_remove()
+            self.motor_gap_entry.grid_remove()
+            self.motor_position_label.grid_remove()
+            self.motor_position_spinbox.grid_remove()
+            self.motor_string_label.grid_remove()
+            self.motor_string_spinbox.grid_remove()
+            self.split_frame.grid_remove()
+        elif placement_type == "between_strings":
+            # Show motor gap
+            self.motor_gap_label.grid()
+            self.motor_gap_entry.grid()
             # Show between strings controls
+            self.motor_position_label.grid()
             self.motor_position_spinbox.grid()
             # Hide middle of string controls
+            self.motor_string_label.grid_remove()
             self.motor_string_spinbox.grid_remove()
             self.split_frame.grid_remove()
         else:  # middle_of_string
-            # Hide between strings controls  
+            # Show motor gap
+            self.motor_gap_label.grid()
+            self.motor_gap_entry.grid()
+            # Hide between strings controls
+            self.motor_position_label.grid_remove()
             self.motor_position_spinbox.grid_remove()
             # Show middle of string controls
+            self.motor_string_label.grid()
             self.motor_string_spinbox.grid()
             self.split_frame.grid()
 
@@ -788,7 +811,35 @@ class TrackerTemplateCreator(ttk.Frame):
             module_width = template.module_spec.width_mm / 1000
 
         # Calculate layout based on motor placement type
-        if template.motor_placement_type == "middle_of_string":
+        if template.motor_placement_type == "no_motor":
+            # Calculate total height for no motor placement
+            total_modules = template.strings_per_tracker * template.modules_per_string
+            total_height = (total_modules * module_height) + \
+                        ((total_modules - 1) * template.module_spacing_m)
+
+            scale = min(280 / module_width, 580 / total_height)
+            x_center = (300 - module_width * scale) / 2
+
+            # Draw torque tube
+            self.canvas.create_line(
+                x_center + module_width * scale / 2, 10,
+                x_center + module_width * scale / 2, 10 + total_height * scale,
+                fill="brown", width=3, tags="torque_tube"
+            )
+
+            # Draw all strings without motor gap
+            current_y = 10
+            for string_idx in range(template.strings_per_tracker):
+                for i in range(template.modules_per_string):
+                    y_pos = current_y + (i * (module_height + template.module_spacing_m)) * scale
+                    self.canvas.create_rectangle(
+                        x_center, y_pos,
+                        x_center + module_width * scale, y_pos + module_height * scale,
+                        fill="lightblue", outline="blue", tags=f"module_string_{string_idx}"
+                    )
+
+                current_y += (template.modules_per_string * (module_height + template.module_spacing_m)) * scale
+        elif template.motor_placement_type == "middle_of_string":
             # Calculate total height for middle_of_string placement
             total_modules = template.strings_per_tracker * template.modules_per_string
             total_height = (total_modules * module_height) + \

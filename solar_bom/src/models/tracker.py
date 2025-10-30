@@ -72,25 +72,60 @@ class TrackerPosition:
                             (modules_per_string - 1) * self.template.module_spacing_m)
 
         # Handle different motor placement types
-        if self.template.motor_placement_type == "middle_of_string":
+        if self.template.motor_placement_type == "no_motor":
+            # No motor - all strings are sequential with no gap
+            current_y = 0
+
+            for i in range(self.template.strings_per_tracker):
+                y_start = current_y
+                y_end = current_y + single_string_height
+                current_y = y_end
+
+                # Get wiring mode from project if available
+                wiring_mode = 'daisy_chain'  # default
+                if hasattr(self, '_project_ref') and hasattr(self._project_ref, 'wiring_mode'):
+                    wiring_mode = self._project_ref.wiring_mode
+
+                if wiring_mode == 'leapfrog':
+                    # In leapfrog mode, both positive and negative connect at top
+                    string = StringPosition(
+                        index=i,
+                        positive_source_x=0,  # Left side of torque tube
+                        positive_source_y=y_start,  # Top of string
+                        negative_source_x=module_width,  # Right side of torque tube
+                        negative_source_y=y_start,  # Also at top of string
+                        num_modules=modules_per_string
+                    )
+                else:
+                    # Daisy-chain mode (default)
+                    string = StringPosition(
+                        index=i,
+                        positive_source_x=0,  # Left side of torque tube
+                        positive_source_y=y_start,  # Top of string
+                        negative_source_x=module_width,  # Right side of torque tube
+                        negative_source_y=y_end,  # Bottom of string (for daisy-chain)
+                        num_modules=modules_per_string
+                    )
+                self.strings.append(string)
+        elif self.template.motor_placement_type == "middle_of_string":
             # Motor is in the middle of a specific string
             current_y = 0
-            
+
             for i in range(self.template.strings_per_tracker):
                 if i + 1 == self.template.motor_string_index:  # This string has the motor (1-based index)
                     # Calculate split string dimensions
                     north_modules = self.template.motor_split_north
                     south_modules = self.template.motor_split_south
-                    
-                    north_height = (north_modules * module_height + 
+
+                    north_height = (north_modules * module_height +
                                 (north_modules - 1) * self.template.module_spacing_m)
-                    south_height = (south_modules * module_height + 
+                    south_height = (south_modules * module_height +
                                 (south_modules - 1) * self.template.module_spacing_m)
-                    
+
                     # This string spans from current_y to current_y + north_height + gap + south_height
                     y_start = current_y
                     y_end = current_y + north_height + self.template.motor_gap_m + south_height
-                    
+
                     # Move current_y for next string
                     current_y = y_end
                 else:
@@ -98,12 +133,12 @@ class TrackerPosition:
                     y_start = current_y
                     y_end = current_y + single_string_height
                     current_y = y_end
-                
+
                 # Get wiring mode from project if available
                 wiring_mode = 'daisy_chain'  # default
                 if hasattr(self, '_project_ref') and hasattr(self._project_ref, 'wiring_mode'):
                     wiring_mode = self._project_ref.wiring_mode
-                
+
                 if wiring_mode == 'leapfrog':
                     # In leapfrog mode, both positive and negative connect at top
                     string = StringPosition(
@@ -136,11 +171,11 @@ class TrackerPosition:
                     # Last string goes below motor gap
                     y_start = (i * single_string_height) + self.template.motor_gap_m
                     y_end = y_start + single_string_height
-                
+
                 wiring_mode = 'daisy_chain'  # default
                 if hasattr(self, '_project_ref') and hasattr(self._project_ref, 'wiring_mode'):
                     wiring_mode = self._project_ref.wiring_mode
-                
+
                 if wiring_mode == 'leapfrog':
                     # In leapfrog mode, both positive and negative connect at top
                     string = StringPosition(
@@ -206,8 +241,8 @@ class TrackerTemplate:
             raise ValueError("Motor position must be between 0 and strings_per_tracker")
             
         # Validate new motor placement fields
-        if self.motor_placement_type not in ["between_strings", "middle_of_string"]:
-            raise ValueError("Motor placement type must be 'between_strings' or 'middle_of_string'")
+        if self.motor_placement_type not in ["between_strings", "middle_of_string", "no_motor"]:
+            raise ValueError("Motor placement type must be 'between_strings', 'middle_of_string', or 'no_motor'")
             
         if self.motor_placement_type == "middle_of_string":
             if self.motor_string_index < 1 or self.motor_string_index > self.strings_per_tracker:
@@ -264,7 +299,10 @@ class TrackerTemplate:
             total_width = module_width
         
         # Calculate total length based on motor placement type
-        if self.motor_placement_type == "middle_of_string":
+        if self.motor_placement_type == "no_motor":
+            # No motor gap at all
+            total_length = single_string_length * self.strings_per_tracker
+        elif self.motor_placement_type == "middle_of_string":
             # Motor is in the middle of a specific string
             # All strings have same length, but one string has a motor gap in it
             total_length = single_string_length * self.strings_per_tracker + self.motor_gap_m
