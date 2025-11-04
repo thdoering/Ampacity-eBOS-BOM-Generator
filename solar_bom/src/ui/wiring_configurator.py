@@ -252,8 +252,16 @@ class WiringConfigurator(tk.Toplevel):
 
     def setup_cable_specifications(self, controls_frame):
         """Set up cable specifications section"""
-        # Create collapsible frame
-        cable_collapsible = CollapsibleFrame(controls_frame, text="Default Cable Sizes", start_collapsed=True)
+        # Create collapsible frame - expand by default for string homerun
+        # Check if block has existing config, otherwise check current wiring type
+        start_collapsed = True
+        if self.block and self.block.wiring_config:
+            start_collapsed = self.block.wiring_config.wiring_type != WiringType.HOMERUN
+        else:
+            # Check current selection (will be set in setup_wiring_type_selection)
+            start_collapsed = hasattr(self, 'wiring_type_var') and self.wiring_type_var.get() != WiringType.HOMERUN.value
+        
+        cable_collapsible = CollapsibleFrame(controls_frame, text="Default Cable Sizes", start_collapsed=start_collapsed)
         cable_collapsible.grid(row=2, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
         
         # Store reference for visibility control
@@ -299,7 +307,12 @@ class WiringConfigurator(tk.Toplevel):
         self.whip_frame = ttk.Frame(cable_frame)
         self.whip_frame.grid(row=4, column=0, columnspan=2, padx=0, pady=5, sticky=(tk.W, tk.E))
         ttk.Label(self.whip_frame, text="Whip Cable Size:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
-        self.whip_cable_size_var = tk.StringVar(value="8 AWG")
+        # Check block's actual wiring type for initial default
+        default_whip_size = "8 AWG"
+        if self.block and self.block.wiring_config:
+            if self.block.wiring_config.wiring_type == WiringType.HOMERUN:
+                default_whip_size = "10 AWG"
+        self.whip_cable_size_var = tk.StringVar(value=default_whip_size)
         whip_cable_combo = ttk.Combobox(self.whip_frame, textvariable=self.whip_cable_size_var, state='readonly', width=10)
         whip_cable_combo['values'] = list(self.AWG_SIZES.keys())
         whip_cable_combo.grid(row=0, column=1, padx=5, pady=2)
@@ -1094,6 +1107,9 @@ class WiringConfigurator(tk.Toplevel):
     def load_existing_configuration(self):
         """Load existing configuration if available"""
         if self.block.wiring_config:
+            # Track original wiring type to detect changes
+            self._original_wiring_type = self.block.wiring_config.wiring_type
+            
             # Set wiring type
             self.wiring_type_var.set(self.block.wiring_config.wiring_type.value)
             
@@ -1104,8 +1120,15 @@ class WiringConfigurator(tk.Toplevel):
             if hasattr(self.block.wiring_config, 'harness_cable_size'):
                 self.harness_cable_size_var.set(self.block.wiring_config.harness_cable_size)
 
-            if hasattr(self.block.wiring_config, 'whip_cable_size'):
+            if hasattr(self.block.wiring_config, 'whip_cable_size') and self.block.wiring_config.whip_cable_size:
+                # Use the saved value
                 self.whip_cable_size_var.set(self.block.wiring_config.whip_cable_size)
+            else:
+                # No saved value or empty string - use appropriate default for wiring type
+                if self.block.wiring_config.wiring_type == WiringType.HOMERUN:
+                    self.whip_cable_size_var.set("10 AWG")
+                else:
+                    self.whip_cable_size_var.set("8 AWG")
 
             if hasattr(self.block.wiring_config, 'extender_cable_size'):
                 self.extender_cable_size_var.set(self.block.wiring_config.extender_cable_size)
@@ -1274,7 +1297,21 @@ class WiringConfigurator(tk.Toplevel):
 
     def on_wiring_type_change(self, event=None):
         """Handle wiring type selection change"""
+        # When switching wiring types, always update whip cable if it's at the wrong default
+        current_whip = self.whip_cable_size_var.get()
+        new_wiring_type = self.wiring_type_var.get()
+        
+        if new_wiring_type == WiringType.HOMERUN.value:
+            # Switching to string homerun - if using harness default, switch to homerun default
+            if current_whip == "8 AWG":
+                self.whip_cable_size_var.set("10 AWG")
+        else:
+            # Switching to harness - if using homerun default, switch to harness default  
+            if current_whip == "10 AWG":
+                self.whip_cable_size_var.set("8 AWG")
+        
         self.update_ui_for_wiring_type()
+        self.draw_wiring_layout()
     
     def on_wiring_mode_change(self):
         """Handle wiring mode change"""
@@ -1313,19 +1350,8 @@ class WiringConfigurator(tk.Toplevel):
             self.draw_wiring_layout()
         
     def apply_configuration(self):
-        """Apply the current wiring configuration to the block"""
+        """Apply the current wiring configuration"""
         if not self.block:
-            tk.messagebox.showerror("Error", "No block selected")
-            self.destroy()
-            return
-        
-        # Check if conceptual routing is selected and prevent application
-        if self.routing_mode_var.get() == "conceptual":
-            tk.messagebox.showerror("Cannot Apply Configuration", 
-                                    "Wiring configuration cannot be applied when using conceptual routing.\n\n"
-                                    "Please switch to 'Realistic Routing' mode to apply the configuration.\n\n"
-                                    "Conceptual routing is for visualization only and does not provide "
-                                    "accurate cable lengths for BOM calculations.")
             return
             
         try:
@@ -1336,9 +1362,39 @@ class WiringConfigurator(tk.Toplevel):
             if not self.validate_configuration():
                 return
             
-            # Store configuration and notify success
+            # Store configuration
             self.block.wiring_config = wiring_config
-            tk.messagebox.showinfo("Success", "Wiring configuration applied successfully")
+            
+            # Check if wiring type changed from what was there before
+            wiring_type_changed = False
+            if hasattr(self, '_original_wiring_type'):
+                wiring_type_changed = (self._original_wiring_type != wiring_config.wiring_type)
+            
+            # Ask if user wants to apply to all blocks
+            if self.project and wiring_type_changed:
+                result = tk.messagebox.askyesno(
+                    "Apply to All Blocks?",
+                    f"Would you like to apply this {wiring_config.wiring_type.value} configuration to all blocks in the project?\n\n"
+                    f"This will update the wiring type and cable sizes for all blocks."
+                )
+                
+                if result:
+                    blocks_updated = self.apply_to_all_blocks()
+                    if blocks_updated > 0:
+                        tk.messagebox.showinfo(
+                            "Configuration Applied",
+                            f"Wiring configuration applied to {blocks_updated} other blocks.\n\n"
+                            f"Total blocks with {wiring_config.wiring_type.value}: {blocks_updated + 1}"
+                        )
+                        # Notify parent to refresh
+                        if self.parent_notify_blocks_changed:
+                            self.parent_notify_blocks_changed()
+                    else:
+                        tk.messagebox.showinfo("Success", "Wiring configuration applied to current block only.")
+                else:
+                    tk.messagebox.showinfo("Success", "Wiring configuration applied to current block only.")
+            else:
+                tk.messagebox.showinfo("Success", "Wiring configuration applied successfully")
             
             # Check MPPT capacity and notify parent
             self.perform_final_checks()
@@ -1347,6 +1403,94 @@ class WiringConfigurator(tk.Toplevel):
             import traceback
             traceback.print_exc()
             tk.messagebox.showerror("Error", f"Failed to apply wiring configuration: {str(e)}")
+
+    def apply_to_all_blocks(self):
+        """Apply current wiring configuration to all blocks in the project"""
+        # Get the parent's blocks (BlockConfigurator)
+        if not hasattr(self.parent, 'blocks'):
+            return 0
+            
+        current_config = self.create_wiring_configuration()
+        
+        # Apply to all blocks in the parent's blocks dictionary
+        blocks_updated = 0
+        for block_id, block in self.parent.blocks.items():
+            if block_id != self.block.block_id:
+                # Build collection points for this specific block based on its trackers
+                positive_points = []
+                negative_points = []
+                strings_per_collection = {}
+                
+                # Process each tracker position in this block
+                for idx, pos in enumerate(block.tracker_positions):
+                    if not pos.template:
+                        continue
+                    
+                    # Get tracker dimensions using the proper method
+                    tracker_length, tracker_width = pos.template.get_physical_dimensions()
+                    
+                    # Calculate whip points for this tracker (use defaults for new config)
+                    # For string homerun, each tracker gets its own collection point
+                    tracker_center_x = pos.x + tracker_width / 2
+                    tracker_center_y = pos.y + tracker_length / 2
+                    
+                    # Default positions offset from tracker center
+                    pos_whip = (tracker_center_x - 2, tracker_center_y)
+                    neg_whip = (tracker_center_x + 2, tracker_center_y)
+                    
+                    # Add collection points
+                    if pos_whip:
+                        collection_point = CollectionPoint(
+                            x=pos_whip[0],
+                            y=pos_whip[1],
+                            connected_strings=[s.index for s in pos.strings],
+                            current_rating=30.0  # Default rating
+                        )
+                        positive_points.append(collection_point)
+                        strings_per_collection[len(positive_points) - 1] = len(pos.strings)
+                    
+                    if neg_whip:
+                        collection_point = CollectionPoint(
+                            x=neg_whip[0],
+                            y=neg_whip[1],
+                            connected_strings=[s.index for s in pos.strings],
+                            current_rating=30.0  # Default rating
+                        )
+                        negative_points.append(collection_point)
+                
+                # Create new wiring config for this block with its own collection points
+                new_wiring_config = WiringConfig(
+                    wiring_type=current_config.wiring_type,
+                    positive_collection_points=positive_points,
+                    negative_collection_points=negative_points,
+                    strings_per_collection=strings_per_collection,
+                    cable_routes={},  # Will be calculated when the block is viewed
+                    realistic_cable_routes={},
+                    string_cable_size=current_config.string_cable_size,
+                    harness_cable_size=current_config.harness_cable_size,
+                    whip_cable_size=current_config.whip_cable_size,
+                    extender_cable_size=current_config.extender_cable_size,
+                    custom_whip_points={},
+                    harness_groupings={},
+                    routing_mode=current_config.routing_mode
+                )
+                
+                # Update the block's wiring config
+                block.wiring_config = new_wiring_config
+                blocks_updated += 1
+        
+        # Notify parent to refresh display
+        if self.parent_notify_blocks_changed:
+            self.parent_notify_blocks_changed()
+        
+        # Trigger autosave if available
+        if hasattr(self.parent, 'on_autosave') and self.parent.on_autosave:
+            try:
+                self.parent.on_autosave()
+            except Exception as e:
+                print(f"Autosave failed: {str(e)}")
+        
+        return blocks_updated
 
     def create_wiring_configuration(self):
         """Create the WiringConfig instance from current settings"""
@@ -2901,9 +3045,10 @@ class WiringConfigurator(tk.Toplevel):
             self.extender_frame.grid_remove()
             self.harness_collapsible.grid_remove()
             
-            # Show Default Cable Sizes section in string homerun mode
+            # Show Default Cable Sizes section in string homerun mode and expand it
             if hasattr(self, 'cable_collapsible'):
                 self.cable_collapsible.grid()
+                self.cable_collapsible.expand()  # Ensure it's expanded for string homerun
             
             # Hide harness cable configuration table
             if hasattr(self, 'cable_table_collapsible'):

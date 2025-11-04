@@ -331,9 +331,9 @@
       "isc": 13.99,
       "max_system_voltage": 1500,
       "efficiency": null,
-      "temperature_coefficient_pmax": null,
-      "temperature_coefficient_voc": null,
-      "temperature_coefficient_isc": null,
+      "temperature_coefficient_pmax": -0.29,
+      "temperature_coefficient_voc": -0.25,
+      "temperature_coefficient_isc": 0.045,
       "bifaciality_factor": null,
       "default_orientation": "Portrait",
       "cells_per_module": 72

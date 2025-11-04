@@ -2059,7 +2059,7 @@ class BlockConfigurator(ttk.Frame):
         # Create a deep copy of the block to avoid shared references
         from copy import deepcopy
         new_block = deepcopy(source_block)
-        
+
         # Update the ID
         new_block.block_id = new_id
 
