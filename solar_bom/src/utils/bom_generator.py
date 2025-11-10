@@ -702,6 +702,49 @@ class BOMGenerator:
 
         return df
 
+    def generate_block_allocation_data(self) -> pd.DataFrame:
+        """
+        Generate block allocation data showing strings per block
+        
+        Returns:
+            DataFrame with block allocation information
+        """
+        allocation_data = []
+        
+        for block_id, block in self.blocks.items():
+            # Count total strings in this block
+            total_strings = 0
+            tracker_count = len(block.tracker_positions)
+            
+            # Count strings by tracker configuration
+            tracker_configs = {}
+            for pos in block.tracker_positions:
+                string_count = len(pos.strings)
+                total_strings += string_count
+                
+                # Track configuration counts
+                config_key = f"{string_count}-String"
+                if config_key not in tracker_configs:
+                    tracker_configs[config_key] = 0
+                tracker_configs[config_key] += 1
+            
+            # Create tracker breakdown string
+            tracker_breakdown = ", ".join([
+                f"{count} x {config}" for config, count in sorted(tracker_configs.items())
+            ])
+            
+            allocation_data.append({
+                'Block ID': block_id,
+                'Total Strings': total_strings,
+                'Number of Trackers': tracker_count,
+                'Tracker Configuration': tracker_breakdown,
+                'Wiring Type': block.wiring_config.wiring_type.value if block.wiring_config else 'Not Configured'
+            })
+        
+        # Sort by block ID
+        allocation_data = sorted(allocation_data, key=lambda x: x['Block ID'])
+        
+        return pd.DataFrame(allocation_data)
 
     def export_bom_to_excel_with_preview_data(self, filepath: str, project_info: Optional[Dict[str, Any]] = None, 
                                           preview_data: List[Dict] = None) -> bool:
@@ -784,6 +827,10 @@ class BOMGenerator:
                 # Generate combiner box data
                 combiner_data = self.generate_combiner_box_data(device_configs)
                 combiner_data.to_excel(writer, sheet_name='Combiner Boxes', index=False)
+
+            # Generate and add Block Allocation sheet
+            block_allocation_data = self.generate_block_allocation_data()
+            block_allocation_data.to_excel(writer, sheet_name='Block Allocation', index=False)
             
             # Format the sheets (same as original method)
             workbook = writer.book
@@ -857,6 +904,10 @@ class BOMGenerator:
             # Format combiner box sheet if it exists
             if 'Combiner Boxes' in workbook.sheetnames and combiner_box_count > 0:
                 self._format_combiner_sheet(workbook['Combiner Boxes'], combiner_data)
+
+            # Format block allocation sheet
+            if 'Block Allocation' in workbook.sheetnames:
+                self._format_block_allocation_sheet(workbook['Block Allocation'], block_allocation_data)
             
             # Add filter
             summary_sheet.auto_filter.ref = f"A13:F{13 + len(summary_data)}"
@@ -1936,3 +1987,84 @@ class BOMGenerator:
             
             # Set column width for note
             worksheet.column_dimensions[get_column_letter(note_col)].width = 40
+
+    def _format_block_allocation_sheet(self, worksheet, data: pd.DataFrame):
+        """
+        Format the Block Allocation sheet with proper styling
+        
+        Args:
+            worksheet: openpyxl worksheet
+            data: DataFrame with block allocation data
+        """
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+        
+        # Define styles
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+        centered_alignment = Alignment(horizontal='center')
+        border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+        
+        # Format headers
+        for col_idx in range(1, len(data.columns) + 1):
+            cell = worksheet.cell(row=1, column=col_idx)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = centered_alignment
+            cell.border = border
+        
+        # Format data rows
+        for row_idx in range(2, len(data) + 2):
+            for col_idx in range(1, len(data.columns) + 1):
+                cell = worksheet.cell(row=row_idx, column=col_idx)
+                cell.border = border
+                
+                # Center align numeric columns
+                if col_idx in [2, 3]:  # Total Strings and Number of Trackers columns
+                    cell.alignment = centered_alignment
+        
+        # Add summary row
+        summary_row = len(data) + 3
+        worksheet.cell(row=summary_row, column=1, value="TOTAL").font = Font(bold=True)
+        
+        # Calculate totals
+        total_strings = data['Total Strings'].sum() if 'Total Strings' in data.columns else 0
+        total_trackers = data['Number of Trackers'].sum() if 'Number of Trackers' in data.columns else 0
+        
+        worksheet.cell(row=summary_row, column=2, value=total_strings).font = Font(bold=True)
+        worksheet.cell(row=summary_row, column=2).alignment = centered_alignment
+        worksheet.cell(row=summary_row, column=3, value=total_trackers).font = Font(bold=True)
+        worksheet.cell(row=summary_row, column=3).alignment = centered_alignment
+        
+        # Apply borders to summary row
+        for col_idx in range(1, len(data.columns) + 1):
+            cell = worksheet.cell(row=summary_row, column=col_idx)
+            cell.border = Border(
+                left=Side(style='thin'),
+                right=Side(style='thin'),
+                top=Side(style='double'),
+                bottom=Side(style='thin')
+            )
+        
+        # Auto-fit columns
+        for col_idx in range(1, len(data.columns) + 1):
+            column_letter = get_column_letter(col_idx)
+            max_length = 0
+            
+            # Check header
+            column = worksheet[column_letter]
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            
+            # Set width with some padding
+            adjusted_width = min(max_length + 2, 50)
+            worksheet.column_dimensions[column_letter].width = adjusted_width
