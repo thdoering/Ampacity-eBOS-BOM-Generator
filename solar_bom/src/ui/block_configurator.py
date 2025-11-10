@@ -878,7 +878,7 @@ class BlockConfigurator(ttk.Frame):
             if hasattr(block, 'row_spacing_m'):
                 self.updating_ui = True
                 feet_value = self.m_to_ft(block.row_spacing_m)
-                self.row_spacing_var.set(str(round(feet_value, 1)))
+                self.row_spacing_var.set(f"{feet_value:.3f}")
                 self.updating_ui = False
             
             # Update device configuration
@@ -2403,7 +2403,7 @@ class BlockConfigurator(ttk.Frame):
                     # Warn user about changing row spacing with existing trackers
                     response = messagebox.askyesnocancel(
                         "Row Spacing Change Warning",
-                        f"Changing row spacing from {self.m_to_ft(block.row_spacing_m):.1f}ft to {row_spacing_ft:.1f}ft "
+                        f"Changing row spacing from {self.m_to_ft(block.row_spacing_m):.3f}ft to {row_spacing_ft:.3f}ft "
                         f"with {len(block.tracker_positions)} trackers already placed may result in an inconsistent layout.\n\n"
                         "• Yes: Clear all trackers and apply new spacing\n"
                         "• No: Keep trackers and apply new spacing (may look incorrect)\n"
@@ -2413,7 +2413,7 @@ class BlockConfigurator(ttk.Frame):
                     if response is None:  # Cancel
                         # Reset the input to current value
                         self.updating_ui = True
-                        self.row_spacing_var.set(f"{self.m_to_ft(block.row_spacing_m):.1f}")
+                        self.row_spacing_var.set(f"{self.m_to_ft(block.row_spacing_m):.3f}")
                         self.updating_ui = False
                         return
                     elif response:  # Yes - clear trackers
@@ -2490,7 +2490,7 @@ class BlockConfigurator(ttk.Frame):
                     # Warn user about changing row spacing with existing trackers
                     response = messagebox.askyesnocancel(
                         "Row Spacing Change Warning",
-                        f"Changing row spacing from {self.m_to_ft(block.row_spacing_m):.1f}ft to {row_spacing_ft:.1f}ft "
+                        f"Changing row spacing from {self.m_to_ft(block.row_spacing_m):.3f}ft to {row_spacing_ft:.3f}ft "
                         f"with {len(block.tracker_positions)} trackers already placed may result in an inconsistent layout.\n\n"
                         "• Yes: Clear all trackers and apply new spacing\n"
                         "• No: Keep trackers and apply new spacing (may look incorrect)\n"
@@ -2514,7 +2514,7 @@ class BlockConfigurator(ttk.Frame):
             
             # Update row spacing field
             self.updating_ui = True
-            self.row_spacing_var.set(f"{row_spacing_ft:.1f}")
+            self.row_spacing_var.set(f"{row_spacing_ft:.3f}")
             self.updating_ui = False
             
             # Update current block if selected
