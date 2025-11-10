@@ -803,7 +803,7 @@ class BOMGenerator:
             writer = pd.ExcelWriter(filepath, engine='openpyxl')
             
             # Write summary data
-            summary_data.to_excel(writer, sheet_name='BOM Summary', index=False, startrow=13)  # Start after project info
+            summary_data.to_excel(writer, sheet_name='BOM Summary', index=False, startrow=15)  # Start after project info
             
             # Write detailed data  
             detailed_data.to_excel(writer, sheet_name='Block Details', index=False)
@@ -892,13 +892,32 @@ class BOMGenerator:
                     summary_sheet.cell(row=row, column=4, value=value)
                     row += 1
 
-            # Add section header for BOM
+            # Add disclaimer note
             row = 12
+            summary_sheet.merge_cells(f'A{row}:F{row+1}')  # Merge cells A12:F13
+            disclaimer_cell = summary_sheet.cell(row=row, column=1, 
+                value="Preliminary cable sizes - to be reviewed by Electrical Engineer of Record before ordering")
+            disclaimer_cell.font = Font(bold=True, color="FF0000", size=11)  # Red bold text
+            disclaimer_cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+            
+            # Add border around merged cells
+            for row_num in range(12, 14):  # Rows 12 and 13
+                for col_num in range(1, 7):  # Columns A through F
+                    cell = summary_sheet.cell(row=row_num, column=col_num)
+                    cell.border = Border(
+                        left=Side(style='thin'),
+                        right=Side(style='thin'),
+                        top=Side(style='thin'),
+                        bottom=Side(style='thin')
+                    )
+            
+            # Add section header for BOM
+            row = 14
             summary_sheet.merge_cells(f'A{row}:E{row}')
             summary_sheet.cell(row=row, column=1, value="Bill of Materials").font = Font(bold=True, size=14)
             
             # Format sheets
-            self._format_excel_sheet(workbook['BOM Summary'], summary_data, start_row=13)
+            self._format_excel_sheet(workbook['BOM Summary'], summary_data, start_row=15)
             self._format_excel_sheet(workbook['Block Details'], detailed_data)
             
             # Format combiner box sheet if it exists
@@ -910,7 +929,7 @@ class BOMGenerator:
                 self._format_block_allocation_sheet(workbook['Block Allocation'], block_allocation_data)
             
             # Add filter
-            summary_sheet.auto_filter.ref = f"A13:F{13 + len(summary_data)}"
+            summary_sheet.auto_filter.ref = f"A15:F{15 + len(summary_data)}"
             
             # Save and open
             writer.close()
@@ -1097,17 +1116,36 @@ class BOMGenerator:
             for cell in row:
                 cell.border = border
         
-        # Auto-adjust column width
+        # Auto-adjust column width with maximum constraints
         for column in worksheet.columns:
             max_length = 0
             column_name = get_column_letter(column[0].column)
+            
+            # Calculate the maximum content length in this column
             for cell in column:
                 try:
-                    if len(str(cell.value)) > max_length:
-                        max_length = len(str(cell.value))
+                    cell_value = str(cell.value) if cell.value is not None else ""
+                    if len(cell_value) > max_length:
+                        max_length = len(cell_value)
                 except:
                     pass
-            adjusted_width = (max_length + 2)
+            
+            # Apply width with constraints
+            adjusted_width = max_length + 2
+            
+            # Set maximum widths for specific columns
+            if column_name == 'A':  # Category column
+                adjusted_width = min(adjusted_width, 25)  # Max width of 25 for column A
+            elif column_name == 'B':  # Component Type column  
+                adjusted_width = min(adjusted_width, 35)  # Max width of 35 for column B
+            elif column_name == 'D':  # Description column
+                adjusted_width = min(adjusted_width, 50)  # Max width of 50 for description
+            else:
+                adjusted_width = min(adjusted_width, 30)  # General max width for other columns
+            
+            # Also set a minimum width
+            adjusted_width = max(adjusted_width, 10)  # Minimum width of 10
+            
             worksheet.column_dimensions[column_name].width = adjusted_width
 
     def generate_project_info(self) -> Dict[str, Any]:
