@@ -34,6 +34,8 @@ class TrackerTemplateCreator(ttk.Frame):
         self.update_module_display()
         # Force an immediate preview update with the new module dimensions
         self.canvas.after_idle(self.update_preview)
+        # Auto-generate template name with new module wattage
+        self.auto_generate_template_name()
         
     def setup_ui(self):
         """Create and arrange UI components"""
@@ -90,66 +92,74 @@ class TrackerTemplateCreator(ttk.Frame):
         self.current_module_label = ttk.Label(editor_frame, text="No module selected")
         self.current_module_label.grid(row=0, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
 
+        # Tracker Manufacturer
+        ttk.Label(editor_frame, text="Tracker Manufacturer:").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
+        self.manufacturer_var = tk.StringVar(value="NXT")
+        manufacturer_combo = ttk.Combobox(editor_frame, textvariable=self.manufacturer_var, 
+                                         values=["ATI", "NXT"], state="readonly")
+        manufacturer_combo.grid(row=1, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        
         # Template Name
-        ttk.Label(editor_frame, text="Template Name:").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(editor_frame, text="Template Name:").grid(row=2, column=0, padx=5, pady=2, sticky=tk.W)
         self.name_var = tk.StringVar()
-        ttk.Entry(editor_frame, textvariable=self.name_var).grid(row=1, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        self.name_entry = ttk.Entry(editor_frame, textvariable=self.name_var)
+        self.name_entry.grid(row=2, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         
         # Module Orientation
-        ttk.Label(editor_frame, text="Module Orientation:").grid(row=2, column=0, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(editor_frame, text="Module Orientation:").grid(row=3, column=0, padx=5, pady=2, sticky=tk.W)
         self.orientation_var = tk.StringVar(value=ModuleOrientation.PORTRAIT.value)
         orientation_combo = ttk.Combobox(editor_frame, textvariable=self.orientation_var)
         orientation_combo['values'] = [o.value for o in ModuleOrientation]
-        orientation_combo.grid(row=2, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        orientation_combo.grid(row=3, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         
         # Modules per String
-        ttk.Label(editor_frame, text="Modules per String:").grid(row=3, column=0, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(editor_frame, text="Modules per String:").grid(row=4, column=0, padx=5, pady=2, sticky=tk.W)
         self.modules_string_var = tk.StringVar(value="28")
         ttk.Spinbox(editor_frame, from_=1, to=100, textvariable=self.modules_string_var, 
             increment=1, validate='all', validatecommand=(self.register(lambda val: val.isdigit() or val == ""), '%P')
-            ).grid(row=3, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+            ).grid(row=4, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         
         # Strings per Tracker
-        ttk.Label(editor_frame, text="Strings per Tracker:").grid(row=4, column=0, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(editor_frame, text="Strings per Tracker:").grid(row=5, column=0, padx=5, pady=2, sticky=tk.W)
         self.strings_tracker_var = tk.StringVar(value="2")
         ttk.Spinbox(editor_frame, from_=1, to=20, textvariable=self.strings_tracker_var,
             increment=1, validate='all', validatecommand=(self.register(lambda val: val.isdigit() or val == ""), '%P')
-            ).grid(row=4, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+            ).grid(row=5, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         
         # Module Spacing
-        ttk.Label(editor_frame, text="Module Spacing (m):").grid(row=5, column=0, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(editor_frame, text="Module Spacing (m):").grid(row=6, column=0, padx=5, pady=2, sticky=tk.W)
         self.spacing_var = tk.StringVar(value="0.01")
-        ttk.Entry(editor_frame, textvariable=self.spacing_var).grid(row=5, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        ttk.Entry(editor_frame, textvariable=self.spacing_var).grid(row=6, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         
         # Motor Gap
-        ttk.Label(editor_frame, text="Motor Gap (m):").grid(row=6, column=0, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(editor_frame, text="Motor Gap (m):").grid(row=7, column=0, padx=5, pady=2, sticky=tk.W)
         self.motor_gap_var = tk.StringVar(value="1.0")
-        ttk.Entry(editor_frame, textvariable=self.motor_gap_var).grid(row=6, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        ttk.Entry(editor_frame, textvariable=self.motor_gap_var).grid(row=7, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
 
         # Motor Placement Type
-        ttk.Label(editor_frame, text="Motor Placement:").grid(row=7, column=0, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(editor_frame, text="Motor Placement:").grid(row=8, column=0, padx=5, pady=2, sticky=tk.W)
         self.motor_placement_var = tk.StringVar(value="between_strings")
         placement_combo = ttk.Combobox(editor_frame, textvariable=self.motor_placement_var, 
                                      values=["between_strings", "middle_of_string"], state="readonly")
-        placement_combo.grid(row=7, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        placement_combo.grid(row=8, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
 
         # Motor Position (Between Strings)
-        ttk.Label(editor_frame, text="Motor After String:").grid(row=8, column=0, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(editor_frame, text="Motor After String:").grid(row=9, column=0, padx=5, pady=2, sticky=tk.W)
         self.motor_position_var = tk.StringVar(value="2")  # Default to middle-ish
         self.motor_position_spinbox = ttk.Spinbox(editor_frame, from_=0, to=1, textvariable=self.motor_position_var,
             increment=1, validate='all', validatecommand=(self.register(lambda val: val.isdigit() or val == ""), '%P'))
-        self.motor_position_spinbox.grid(row=8, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        self.motor_position_spinbox.grid(row=9, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         
         # Motor String Index (Middle of String)
-        ttk.Label(editor_frame, text="Motor in String:").grid(row=9, column=0, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(editor_frame, text="Motor in String:").grid(row=10, column=0, padx=5, pady=2, sticky=tk.W)
         self.motor_string_var = tk.StringVar(value="2")
         self.motor_string_spinbox = ttk.Spinbox(editor_frame, from_=1, to=2, textvariable=self.motor_string_var,
             increment=1, validate='all', validatecommand=(self.register(lambda val: val.isdigit() or val == ""), '%P'))
-        self.motor_string_spinbox.grid(row=9, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        self.motor_string_spinbox.grid(row=10, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         
         # Motor Split Controls (Middle of String)
         self.split_frame = ttk.Frame(editor_frame)
-        self.split_frame.grid(row=10, column=0, columnspan=2, padx=5, pady=2, sticky=(tk.W, tk.E))
+        self.split_frame.grid(row=11, column=0, columnspan=2, padx=5, pady=2, sticky=(tk.W, tk.E))
         ttk.Label(self.split_frame, text="Split (North/South):").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
         
         self.motor_split_north_var = tk.StringVar(value="14")
@@ -170,24 +180,32 @@ class TrackerTemplateCreator(ttk.Frame):
         self.south_label.grid(row=0, column=2, padx=2)
 
         # Total Modules Display
-        ttk.Label(editor_frame, text="Modules per Tracker:").grid(row=11, column=0, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(editor_frame, text="Modules per Tracker:").grid(row=12, column=0, padx=5, pady=2, sticky=tk.W)
         self.total_modules_label = ttk.Label(editor_frame, text="--")
         try:
             modules = int(self.modules_string_var.get()) * int(self.strings_tracker_var.get())
             self.total_modules_label.config(text=str(modules))
         except ValueError:
             self.total_modules_label.config(text="--")
-        self.total_modules_label.grid(row=11, column=1, padx=5, pady=2, sticky=tk.W)
+        self.total_modules_label.grid(row=12, column=1, padx=5, pady=2, sticky=tk.W)
         
         # Calculated Dimensions Display
         dims_frame = ttk.LabelFrame(editor_frame, text="Tracker Dimensions", padding="5")
-        dims_frame.grid(row=12, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
+        dims_frame.grid(row=13, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
         
         self.length_label = ttk.Label(dims_frame, text="Length: --")
         self.length_label.grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
         
         self.width_label = ttk.Label(dims_frame, text="Width: --")
         self.width_label.grid(row=0, column=1, padx=5, pady=2, sticky=tk.W)
+
+        # Bind auto-generation of template name
+        self.manufacturer_var.trace('w', self.auto_generate_template_name)
+        self.modules_string_var.trace('w', self.auto_generate_template_name)
+        self.strings_tracker_var.trace('w', self.auto_generate_template_name)
+        self.motor_placement_var.trace('w', self.auto_generate_template_name)
+        self.motor_position_var.trace('w', self.auto_generate_template_name)
+        self.motor_split_north_var.trace('w', self.auto_generate_template_name)
 
         # Update total modules calculation when inputs change
         def update_total_modules(*args):
@@ -201,7 +219,7 @@ class TrackerTemplateCreator(ttk.Frame):
         self.strings_tracker_var.trace('w', update_total_modules)
         
         # Save Button
-        ttk.Button(editor_frame, text="Save Template", command=self.save_template).grid(row=13, column=0, columnspan=2, pady=10)
+        ttk.Button(editor_frame, text="Save Template", command=self.save_template).grid(row=14, column=0, columnspan=2, pady=10)
         
         # Preview Canvas - Right column
         preview_frame = ttk.LabelFrame(main_container, text="Preview", padding="5")
@@ -291,7 +309,40 @@ class TrackerTemplateCreator(ttk.Frame):
             # Update north spinbox range
             self.north_spinbox.config(to=modules_per_string)
         except ValueError:
-            self.south_label.config(text="--")  
+            self.south_label.config(text="--")
+
+    def auto_generate_template_name(self, *args):
+        """Auto-generate template name based on current settings"""
+        try:
+            manufacturer = self.manufacturer_var.get()
+            total_modules = int(self.modules_string_var.get()) * int(self.strings_tracker_var.get())
+            
+            # Get module wattage if available
+            if self._module_spec:
+                wattage = self._module_spec.wattage
+            else:
+                wattage = 550  # Default wattage
+            
+            # Determine north/south split based on motor placement
+            if self.motor_placement_var.get() == "middle_of_string":
+                north_modules = int(self.motor_split_north_var.get()) * int(self.strings_tracker_var.get())
+                south_modules = int(self.motor_split_south_var.get()) * int(self.strings_tracker_var.get())
+            else:
+                # For between_strings placement, calculate based on motor position
+                motor_pos = int(self.motor_position_var.get())
+                strings_per_tracker = int(self.strings_tracker_var.get())
+                modules_per_string = int(self.modules_string_var.get())
+                
+                north_modules = motor_pos * modules_per_string
+                south_modules = (strings_per_tracker - motor_pos) * modules_per_string
+            
+            # Generate the template name
+            template_name = f"{manufacturer}-{total_modules}-{int(wattage)}W-{north_modules}/M/{south_modules}"
+            self.name_var.set(template_name)
+            
+        except (ValueError, AttributeError):
+            # If any values are invalid, don't update
+            pass
 
     def update_module_display(self):
         """Update the current module display and related calculations"""
@@ -625,6 +676,15 @@ class TrackerTemplateCreator(ttk.Frame):
         template_data = self.templates[template_key]
         
         self.name_var.set(template_key.split(' - ', 1)[-1] if ' - ' in template_key else template_key)
+        # Try to extract manufacturer from template name
+        template_name = template_key.split(' - ', 1)[-1] if ' - ' in template_key else template_key
+        if template_name.startswith("ATI-"):
+            self.manufacturer_var.set("ATI")
+        elif template_name.startswith("NXT-"):
+            self.manufacturer_var.set("NXT")
+        else:
+            # Default to NXT if not recognized
+            self.manufacturer_var.set("NXT")
         self.orientation_var.set(template_data["module_orientation"])
         self.modules_string_var.set(str(template_data["modules_per_string"]))
         self.strings_tracker_var.set(str(template_data["strings_per_tracker"]))
