@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2025-11-13
+
+### Added
+- **README.txt File**: Included download instructions and "What's New" documentation with executable
+- **Block Allocation Tab**: Added dedicated block allocation tab to Excel BOM export for better project organization
+- **Combiner Box Information**: Enhanced BOM to include detailed combiner box specifications
+- **Cable Sizing Note**: Added preliminary cable sizes disclaimer to Excel BOM exports
+
+### Changed
+- **Row Spacing Precision**: Increased row spacing precision to 3 decimal points (from 1) for more accurate layouts
+- **Tracker Template Auto-population**: Template names now automatically populate when selected
+- **Whip Connection Points**: Positive and negative whip points now align at the same location for cleaner installations
+- **Block Configurator Interface**: Removed irrelevant input fields for streamlined configuration
+
+### Enhanced
+- Improved Excel BOM organization with better tab structure
+- Cleaner block configuration workflow with focused inputs
+- More precise project layout capabilities
+```
+
 ## [2.3.0] - 2025-10-06
 
 ### Added

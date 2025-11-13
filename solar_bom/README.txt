@@ -18,30 +18,26 @@ INSTALLATION INSTRUCTIONS
 
 This is our internal tool - these warnings are normal for unsigned applications.
 
-
-WHAT'S NEW IN VERSION 2.3.0 (October 6, 2025)
+WHAT'S NEW IN VERSION 2.4.0 (November 13, 2025)
 ----------------------------------------------
 
 NEW FEATURES:
-- SLD Generator: Create Single Line Diagrams directly in the BOM Manager
-- ANSI Symbol Library: Professional electrical diagram symbols included
-- Thermal Parameters: Added thermal inputs to module specifications
-- Select All/Deselect All: Bulk selection buttons in wiring configurator
+- Block Allocation Tab: New Excel BOM tab showing block assignments
+- Combiner Box Details: BOM now includes complete combiner box information
+- README Documentation: Download instructions included with every release
 
 IMPROVEMENTS:
-- Updated NEC safety factor to 1.56 for all electrical calculations
-- Row spacing now locks after trackers are placed (prevents layout errors)
-- Realistic wiring routing only (conceptual mode removed)
-- Enhanced SLD drawing elements and canvas functionality
+- Row spacing now supports 3 decimal point precision (improved accuracy)
+- Tracker template names auto-populate when selected
+- Positive and negative whip points aligned to same location
+- Streamlined block configurator with irrelevant inputs removed
+- Cable sizing disclaimer added to Excel BOM exports
 
-BUG FIXES:
-- Fixed harness drawing generator bugs
-- Fixed SLD dragging behavior issues  
-- Corrected cable totals doubling bug in BOM calculations
-
-IMPORTANT NOTES:
-- Projects with conceptual wiring will need reconfiguration using realistic routing
-- NEC safety factor change may affect cable sizing - review existing projects
+PREVIOUS VERSION HIGHLIGHTS (v2.3.0):
+- SLD Generator with ANSI symbol library
+- Thermal parameters for modules
+- NEC safety factor updated to 1.56
+- Select all/deselect all in wiring configurator
 
 
 SUPPORT
