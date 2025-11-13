@@ -139,6 +139,24 @@ class DeviceConfigurator(ttk.Frame):
         ttk.Button(button_frame, text="Expand All", 
                 command=self.expand_all).pack(side=tk.LEFT, padx=5)
         
+        ttk.Button(button_frame, text="Expand All", 
+                command=self.expand_all).pack(side=tk.LEFT, padx=5)
+        
+        # Add separator and whips control
+        ttk.Separator(button_frame, orient='vertical').pack(side=tk.LEFT, padx=10, fill=tk.Y)
+        
+        # Add whips control
+        ttk.Label(button_frame, text="Combiner Whips:").pack(side=tk.LEFT, padx=5)
+        
+        self.use_whips_var = tk.BooleanVar(value=True)  # Default to using whips
+        whips_check = ttk.Checkbutton(
+            button_frame,
+            text="Use 3ft Whips",
+            variable=self.use_whips_var,
+            command=self.on_whips_changed
+        )
+        whips_check.pack(side=tk.LEFT, padx=5)
+        
         # Warning label
         self.warning_label = ttk.Label(button_frame, text="", foreground='red')
         self.warning_label.pack(side=tk.RIGHT, padx=5)
@@ -152,6 +170,21 @@ class DeviceConfigurator(ttk.Frame):
         """Expand all combiner boxes in the tree"""
         for item in self.tree.get_children():
             self.tree.item(item, open=True)
+
+    def on_whips_changed(self):
+        """Handle whips checkbox change"""
+        use_whips = self.use_whips_var.get()
+        
+        # Update all combiner configs
+        for combiner_id, config in self.combiner_configs.items():
+            config.use_whips = use_whips
+            config.whip_length_ft = 3 if use_whips else 0
+        
+        # Save to project
+        self.save_configuration_to_project()
+        
+        # Refresh display (optional - whips don't show in the main tree)
+        # self.refresh_display()
     
     def load_project(self, project):
         """Load a project and generate device configurations"""
@@ -192,6 +225,15 @@ class DeviceConfigurator(ttk.Frame):
                 config.breaker_manually_set = saved_config.get('breaker_manually_set', False)
                 if config.breaker_manually_set:
                     self.edited_cells.add(f"{combiner_id}_breaker")
+
+            # Update whips settings
+            if 'use_whips' in saved_config:
+                config.use_whips = saved_config.get('use_whips', True)
+                config.whip_length_ft = saved_config.get('whip_length_ft', 3)
+                
+                # Update UI checkbox if it exists
+                if hasattr(self, 'use_whips_var'):
+                    self.use_whips_var.set(config.use_whips)
             
             # Update connections
             saved_connections = saved_config.get('connections', [])
@@ -232,7 +274,9 @@ class DeviceConfigurator(ttk.Frame):
             combiner_config = CombinerBoxConfig(
                 combiner_id=combiner_id,
                 block_id=block_id,
-                connections=[]
+                connections=[],
+                use_whips=True,  # Default to using whips
+                whip_length_ft=3  # Default 3ft whips
             )
             
             # Get module Isc
@@ -309,8 +353,18 @@ class DeviceConfigurator(ttk.Frame):
             
             # Recalculate totals
             combiner_config.calculate_totals()
+                       
+            # Apply fuse uniformity rule - all fuses should be the max required
+            if combiner_config.connections:
+                max_fuse = max(conn.calculated_fuse_size for conn in combiner_config.connections)
+                for conn in combiner_config.connections:
+                    conn.calculated_fuse_size = max_fuse
+                    # Reset user override if it's less than the new max
+                    if conn.user_fuse_size and conn.user_fuse_size < max_fuse:
+                        conn.user_fuse_size = None
+                        conn.fuse_manually_set = False
             
-            # Store config
+            # Add to configurations
             self.combiner_configs[combiner_id] = combiner_config
     
     def refresh_display(self):
@@ -648,7 +702,9 @@ class DeviceConfigurator(ttk.Frame):
                 'calculated_breaker_size': config.calculated_breaker_size,
                 'user_breaker_size': config.user_breaker_size,
                 'breaker_manually_set': config.breaker_manually_set,
-                'total_input_current': config.total_input_current
+                'total_input_current': config.total_input_current,
+                'use_whips': getattr(config, 'use_whips', True),
+                'whip_length_ft': getattr(config, 'whip_length_ft', 3)
             }
         
         # Save to project

@@ -29,6 +29,8 @@ class BOMGenerator:
         # Load library json files
         self.harness_library = self.load_harness_library()
         self.fuse_library = self.load_fuse_library()
+        self.combiner_box_fuse_library = self.load_combiner_box_fuse_library()
+        self.combiner_box_library = self.load_combiner_box_library()
         self.extender_library = self.load_extender_library()
         self.whip_library = self.load_whip_library()
 
@@ -761,10 +763,51 @@ class BOMGenerator:
         """
         writer = None
         try:
+            # Count combiner boxes first (moved up from later in the code)
+            combiner_box_count = self.count_combiner_boxes()
+            
+            # Get device configurations if available
+            device_configs = {}
+            combiner_bom_items = []  # Store combiner BOM items once
+            if combiner_box_count > 0:
+                # Try to get device configurations from the UI if available
+                if hasattr(self, 'parent') and hasattr(self.parent, 'device_configurator'):
+                    device_configurator = self.parent.device_configurator
+                    if hasattr(device_configurator, 'combiner_configs'):
+                        device_configs = device_configurator.combiner_configs
+                        # Generate combiner BOM items ONCE
+                        combiner_bom_items = self.generate_combiner_box_bom(device_configs)
+                # Try to get device configurations from the UI if available
+                if hasattr(self, 'parent') and hasattr(self.parent, 'device_configurator'):
+                    device_configurator = self.parent.device_configurator
+                    if hasattr(device_configurator, 'combiner_configs'):
+                        device_configs = device_configurator.combiner_configs
+            
             # Use preview data if provided
             if preview_data:
-                # Convert preview data to DataFrame
                 summary_data = pd.DataFrame(preview_data)
+                
+                # Add combiner box BOM items to summary if they exist
+                if combiner_bom_items:  # Use the already generated items
+                    # Check if combiner box items are already in the preview data
+                    # If they are, don't add them again
+                    existing_part_numbers = set()
+                    if 'Part Number' in summary_data.columns:
+                        existing_part_numbers = set(summary_data['Part Number'].dropna())
+                    
+                    # Filter out items that are already in the summary
+                    new_items = []
+                    for item in combiner_bom_items:
+                        if item['Part Number'] not in existing_part_numbers:
+                            new_items.append(item)
+                    
+                    if new_items:
+                        # Convert to dataframe with proper columns
+                        cb_bom_df = pd.DataFrame(new_items)
+                        cb_bom_df = cb_bom_df[['Category', 'Component Type', 'Part Number', 'Description', 'Quantity', 'Unit']]
+                        
+                        # Append to summary data
+                        summary_data = pd.concat([summary_data, cb_bom_df], ignore_index=True)
                 
                 # Add Category column (infer from component type)
                 def get_category(component_type):
@@ -812,21 +855,137 @@ class BOMGenerator:
             self._add_harness_cable_info_to_block_details(writer, detailed_data)
 
             # Add combiner box sheet if there are any combiner boxes
-            combiner_box_count = self.count_combiner_boxes()
+            # (combiner_box_count and device_configs already defined above)
             if combiner_box_count > 0:
-                # Check if device configurator has combiner configs
-                from ..ui.device_configurator import DeviceConfigurator
-                device_configs = {}
-                
-                # Try to get device configurations from the UI if available
-                if hasattr(self, 'parent') and hasattr(self.parent, 'device_configurator'):
-                    device_configurator = self.parent.device_configurator
-                    if hasattr(device_configurator, 'combiner_configs'):
-                        device_configs = device_configurator.combiner_configs
-                
+
                 # Generate combiner box data
                 combiner_data = self.generate_combiner_box_data(device_configs)
-                combiner_data.to_excel(writer, sheet_name='Combiner Boxes', index=False)
+                
+                # Create the Combiner Boxes sheet manually without pandas formatting
+                workbook = writer.book
+                if 'Combiner Boxes' in workbook.sheetnames:
+                    worksheet = workbook['Combiner Boxes']
+                else:
+                    worksheet = workbook.create_sheet('Combiner Boxes')
+                    writer.sheets['Combiner Boxes'] = worksheet
+                
+                # Define border style
+                thin_border = Border(
+                    left=Side(style='thin'),
+                    right=Side(style='thin'),
+                    top=Side(style='thin'),
+                    bottom=Side(style='thin')
+                )
+                
+                current_row = 1
+                
+                # Write BOM if it exists
+                if combiner_bom_items:
+                    # Add BOM section header
+                    cell = worksheet.cell(row=current_row, column=1, value="Combiner Box BOM")
+                    cell.font = Font(bold=True, size=14)
+                    current_row += 1
+                    
+                    # Add BOM headers with custom layout
+                    # Category (A), Component Type (B), Part Number (C), Description (D-I merged), Quantity (J), Unit (K)
+                    headers_config = [
+                        ('Category', 1, 1),  # Column A
+                        ('Component Type', 2, 1),  # Column B
+                        ('Part Number', 3, 1),  # Column C
+                        ('Description', 4, 6),  # Columns D-I (6 columns)
+                        ('Quantity', 10, 1),  # Column J
+                        ('Unit', 11, 1),  # Column K
+                    ]
+                    
+                    for header, start_col, col_span in headers_config:
+                        if col_span > 1:
+                            # Merge cells for Description
+                            worksheet.merge_cells(start_row=current_row, start_column=start_col, 
+                                                end_row=current_row, end_column=start_col + col_span - 1)
+                        cell = worksheet.cell(row=current_row, column=start_col, value=header)
+                        cell.font = Font(bold=True)
+                        cell.fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+                        cell.alignment = Alignment(horizontal='center', vertical='center')
+                        # Add borders to all cells in the merge
+                        for col in range(start_col, start_col + col_span):
+                            worksheet.cell(row=current_row, column=col).border = thin_border
+                    current_row += 1
+                    
+                    # Write BOM data with custom layout
+                    for _, row_data in pd.DataFrame(combiner_bom_items).iterrows():
+                        # Category (A)
+                        cell = worksheet.cell(row=current_row, column=1, value=row_data.get('Category', ''))
+                        cell.border = thin_border
+                        cell.alignment = Alignment(horizontal='center', vertical='center')
+                        
+                        # Component Type (B)
+                        cell = worksheet.cell(row=current_row, column=2, value=row_data.get('Component Type', ''))
+                        cell.border = thin_border
+                        cell.alignment = Alignment(horizontal='center', vertical='center')
+                        
+                        # Part Number (C)
+                        cell = worksheet.cell(row=current_row, column=3, value=row_data.get('Part Number', ''))
+                        cell.border = thin_border
+                        cell.alignment = Alignment(horizontal='center', vertical='center')
+                        
+                        # Description (D-I merged)
+                        worksheet.merge_cells(start_row=current_row, start_column=4, 
+                                            end_row=current_row, end_column=9)
+                        cell = worksheet.cell(row=current_row, column=4, value=row_data.get('Description', ''))
+                        cell.alignment = Alignment(horizontal='left', vertical='center')  # Left align description
+                        # Add borders to all cells in the merge
+                        for col in range(4, 10):
+                            worksheet.cell(row=current_row, column=col).border = thin_border
+                        
+                        # Quantity (J)
+                        cell = worksheet.cell(row=current_row, column=10, value=row_data.get('Quantity', ''))
+                        cell.border = thin_border
+                        cell.alignment = Alignment(horizontal='center', vertical='center')
+                        
+                        # Unit (K)
+                        cell = worksheet.cell(row=current_row, column=11, value=row_data.get('Unit', ''))
+                        cell.border = thin_border
+                        cell.alignment = Alignment(horizontal='center', vertical='center')
+                        
+                        current_row += 1
+                    
+                    # Add spacing
+                    current_row += 2
+                    
+                    # Add configuration details header
+                    cell = worksheet.cell(row=current_row, column=1, value="Combiner Box Configuration Details")
+                    cell.font = Font(bold=True, size=14)
+                    current_row += 1
+                
+                # Write configuration details
+                if not combiner_data.empty:
+                    # Add headers
+                    for col, header in enumerate(combiner_data.columns, 1):
+                        cell = worksheet.cell(row=current_row, column=col, value=header)
+                        cell.font = Font(bold=True)
+                        cell.fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+                        cell.border = thin_border
+                        cell.alignment = Alignment(horizontal='center', vertical='center')
+                    current_row += 1
+                    
+                    # Write data
+                    for _, row_data in combiner_data.iterrows():
+                        for col, value in enumerate(row_data, 1):
+                            cell = worksheet.cell(row=current_row, column=col, value=value)
+                            if value is not None and value != '':
+                                cell.border = thin_border
+                                cell.alignment = Alignment(horizontal='center', vertical='center')
+                        current_row += 1
+                
+                # Auto-adjust column widths
+                for column in worksheet.columns:
+                    max_length = 0
+                    column_letter = column[0].column_letter
+                    for cell in column:
+                        if cell.value:
+                            max_length = max(max_length, len(str(cell.value)))
+                    adjusted_width = min(max_length + 2, 50)
+                    worksheet.column_dimensions[column_letter].width = adjusted_width
 
             # Generate and add Block Allocation sheet
             block_allocation_data = self.generate_block_allocation_data()
@@ -919,10 +1078,6 @@ class BOMGenerator:
             # Format sheets
             self._format_excel_sheet(workbook['BOM Summary'], summary_data, start_row=15)
             self._format_excel_sheet(workbook['Block Details'], detailed_data)
-            
-            # Format combiner box sheet if it exists
-            if 'Combiner Boxes' in workbook.sheetnames and combiner_box_count > 0:
-                self._format_combiner_sheet(workbook['Combiner Boxes'], combiner_data)
 
             # Format block allocation sheet
             if 'Block Allocation' in workbook.sheetnames:
@@ -1899,6 +2054,170 @@ class BOMGenerator:
             print(f"Error loading fuse library: {e}")
             return {}
         
+    def load_combiner_box_fuse_library(self):
+        """Load combiner box fuse library from JSON file"""
+        try:
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            project_root = os.path.dirname(os.path.dirname(current_dir))
+            library_path = os.path.join(project_root, 'data', 'combiner_box_fuse_library.json')
+            
+            with open(library_path, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error loading combiner box fuse library: {e}")
+            return {}
+    
+    def load_combiner_box_library(self):
+        """Load combiner box library from JSON file"""
+        try:
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            project_root = os.path.dirname(os.path.dirname(current_dir))
+            library_path = os.path.join(project_root, 'data', 'combiner_box_library.json')
+            
+            with open(library_path, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error loading combiner box library: {e}")
+            return {}
+        
+    def get_combiner_box_part_number(self, num_inputs: int, max_fuse_size: int, breaker_size: int, use_whips: bool) -> str:
+        """
+        Generate combiner box part number based on specifications
+        
+        Returns part number or 'CUSTOM' if not in standard library
+        """
+        # Determine input capacity (14 for High Amp, 30 for Standard Amp)
+        if num_inputs <= 14:
+            input_indicator = 14
+        elif num_inputs <= 30:
+            input_indicator = 30
+        else:
+            return "CUSTOM"  # Over 30 inputs
+        
+        # Determine fuse holder rating
+        if max_fuse_size <= 20:
+            fuse_indicator = 20
+        elif max_fuse_size <= 32:
+            fuse_indicator = 25
+        else:
+            fuse_indicator = 32  # 32 and above
+            
+        # Check if fuse size exceeds 65A (max in our library)
+        if max_fuse_size > 65:
+            return "CUSTOM"
+        
+        # Determine breaker size (round up to standard size)
+        standard_breakers = [400, 500, 600]
+        breaker_indicator = None
+        for std_breaker in standard_breakers:
+            if breaker_size <= std_breaker:
+                breaker_indicator = std_breaker
+                break
+        
+        if breaker_indicator is None:
+            return "CUSTOM"  # Breaker over 600A
+        
+        # Determine whips
+        whip_indicator = 2 if use_whips else 0
+        
+        # Generate part number
+        part_number = f"CB-{input_indicator}-{fuse_indicator}-{breaker_indicator}-{whip_indicator}"
+        
+        # Check if it exists in library
+        if part_number not in self.combiner_box_library:
+            return "CUSTOM"
+        
+        return part_number
+    
+    def get_combiner_box_fuse_part_number(self, fuse_size: int) -> str:
+        """Get combiner box fuse part number for given amperage"""
+        part_number = f"CB-F-{fuse_size}"
+        
+        # Check if it exists in library
+        if part_number not in self.combiner_box_fuse_library:
+            return "CUSTOM"
+        
+        return part_number 
+
+    def generate_combiner_box_bom(self, device_configs: Dict[str, 'CombinerBoxConfig']) -> List[Dict]:
+        """
+        Generate BOM data for combiner boxes and their fuses
+        
+        Returns list of BOM items with part numbers and quantities
+        """
+        bom_items = []
+        
+        if not device_configs:
+            return bom_items
+        
+        # Simple dictionaries to track totals by part number
+        combiner_totals = {}  # part_number -> quantity
+        fuse_totals = {}      # part_number -> quantity
+        
+        for combiner_id, config in device_configs.items():
+            if not config.connections:
+                continue
+            
+            # Get max fuse size (uniform across all connections due to uniformity rule)
+            max_fuse = max(conn.get_display_fuse_size() for conn in config.connections)
+            
+            # Get number of inputs
+            num_inputs = len(config.connections)
+            
+            # Get breaker size
+            breaker_size = config.get_display_breaker_size()
+            
+            # Get whips setting (default to True if not set)
+            use_whips = getattr(config, 'use_whips', True)
+            
+            # Generate part numbers
+            cb_part_number = self.get_combiner_box_part_number(
+                num_inputs, max_fuse, breaker_size, use_whips
+            )
+            fuse_part_number = self.get_combiner_box_fuse_part_number(max_fuse)
+                        
+            # Simply add to totals
+            combiner_totals[cb_part_number] = combiner_totals.get(cb_part_number, 0) + 1
+            fuse_totals[fuse_part_number] = fuse_totals.get(fuse_part_number, 0) + num_inputs
+        
+        # Create BOM items for combiner boxes
+        for cb_part, quantity in combiner_totals.items():
+            cb_description = "Combiner Box"
+            if cb_part in self.combiner_box_library:
+                cb_description = self.combiner_box_library[cb_part].get('description', cb_description)
+            elif cb_part == "CUSTOM":
+                cb_description = "CUSTOM Combiner Box"
+            
+            bom_items.append({
+                'Category': 'Electrical',
+                'Component Type': 'Combiner Box',
+                'Part Number': cb_part,
+                'Description': cb_description,
+                'Quantity': quantity,
+                'Unit': 'each',
+                'Custom': cb_part == "CUSTOM"
+            })
+        
+        # Create BOM items for fuses
+        for fuse_part, quantity in fuse_totals.items():
+            fuse_description = "Combiner Box Fuse"
+            if fuse_part in self.combiner_box_fuse_library:
+                fuse_description = self.combiner_box_fuse_library[fuse_part].get('description', fuse_description)
+            elif fuse_part == "CUSTOM":
+                fuse_description = "CUSTOM Combiner Box Fuse"
+            
+            bom_items.append({
+                'Category': 'Electrical',
+                'Component Type': 'Combiner Box Fuse',
+                'Part Number': fuse_part,
+                'Description': fuse_description,
+                'Quantity': quantity,
+                'Unit': 'each',
+                'Custom': fuse_part == "CUSTOM"
+            })
+        
+        return bom_items
+        
     def generate_combiner_box_data(self, device_configs: Dict[str, 'CombinerBoxConfig']) -> pd.DataFrame:
         """
         Generate combiner box configuration data for Excel export
@@ -2025,6 +2344,17 @@ class BOMGenerator:
             
             # Set column width for note
             worksheet.column_dimensions[get_column_letter(note_col)].width = 40
+
+            # Highlight CUSTOM items in yellow
+            yellow_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+            
+            # Check for BOM section and highlight CUSTOM items
+            for row in worksheet.iter_rows(min_row=2):  # Skip header
+                part_number_cell = row[2] if len(row) > 2 else None  # Part Number is column C (index 2)
+                if part_number_cell and part_number_cell.value == "CUSTOM":
+                    for cell in row:
+                        if cell.value is not None:
+                            cell.fill = yellow_fill
 
     def _format_block_allocation_sheet(self, worksheet, data: pd.DataFrame):
         """

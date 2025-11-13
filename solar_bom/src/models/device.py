@@ -33,13 +33,13 @@ class HarnessConnection:
     
     def _calculate_fuse_size(self) -> int:
         """Calculate required fuse size based on harness current"""
-        # Standard fuse sizes
-        FUSE_SIZES = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 80, 90]
+        # Use combiner box fuse sizes (not inline harness fuses)
+        from ..utils.calculations import COMBINER_BOX_FUSE_SIZES
         
-        for size in FUSE_SIZES:
+        for size in COMBINER_BOX_FUSE_SIZES:
             if size >= self.harness_current:
                 return size
-        return 90  # Max standard size
+        return 65  # Max standard combiner box fuse size
     
     def _calculate_cable_size(self) -> str:
         """Calculate required cable size based on harness current"""
@@ -71,7 +71,11 @@ class CombinerBoxConfig:
     """Configuration for a single combiner box"""
     combiner_id: str  # e.g., "CB-01"
     block_id: str
-    connections: List[HarnessConnection] = field(default_factory=list)
+    connections: List[HarnessConnection]
+    
+    # Add these new fields below the existing ones
+    use_whips: bool = True  # Default to using whips
+    whip_length_ft: int = 3  # Default whip length
     
     # Calculated values
     total_input_current: float = field(init=False)
@@ -106,3 +110,4 @@ class CombinerBoxConfig:
     def get_display_breaker_size(self) -> int:
         """Get breaker size to display (user override or calculated)"""
         return self.user_breaker_size if self.user_breaker_size else self.calculated_breaker_size
+    

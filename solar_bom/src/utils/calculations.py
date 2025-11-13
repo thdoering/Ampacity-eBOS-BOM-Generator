@@ -386,6 +386,9 @@ def calculate_harness_inputs_required(
 # Standard fuse sizes in amps
 STANDARD_FUSE_SIZES = [5, 10, 15, 20, 25, 30, 32, 35, 40, 45, 50, 60, 70, 80, 90]
 
+# Combiner box fuse sizes (different from inline harness fuses)
+COMBINER_BOX_FUSE_SIZES = [10, 12, 15, 20, 25, 30, 32, 35, 40, 45, 50, 55, 60, 65]
+
 # Standard breaker sizes in amps
 STANDARD_BREAKER_SIZES = [100, 125, 150, 175, 200, 225, 250, 275, 300, 320, 325, 350, 400, 450, 500, 600, 700, 800]
 
