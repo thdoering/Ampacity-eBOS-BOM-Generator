@@ -1840,9 +1840,6 @@ class WiringConfigurator(tk.Toplevel):
         tracker_dims = pos.template.get_physical_dimensions()
         tracker_height = tracker_dims[0]
         tracker_width = tracker_dims[1]
-
-        # Calculate centerline X position
-        tracker_center_x = pos.x + (tracker_width / 2)
         
         # Get tracker Y boundaries
         tracker_north_y = pos.y
@@ -1886,8 +1883,7 @@ class WiringConfigurator(tk.Toplevel):
         else:
             x = pos.x + tracker_width + horizontal_offset  # Right side
         
-        # For centerline positioning (both positive and negative on centerline)
-        return (tracker_center_x, y)
+        return (x, y)
 
     def get_line_thickness_for_wire(self, wire_gauge: str) -> float:
         """
@@ -2549,9 +2545,15 @@ class WiringConfigurator(tk.Toplevel):
         tracker_length = dims[0]
         tracker_width = dims[1]
         tracker_center_x = pos.x + (tracker_width / 2)
-
-        # Place both whip points exactly on the centerline
-        whip_x = tracker_center_x  # Both positive and negative on centerline
+        
+        # IMPORTANT: Use EXACT same offsets as harness drawing
+        pos_offset = -0.5  # Same as harness offset
+        neg_offset = 0.5   # Same as harness offset
+        
+        if polarity == 'positive':
+            whip_x = tracker_center_x + pos_offset  # Align with positive harness
+        else:
+            whip_x = tracker_center_x + neg_offset  # Align with negative harness
         
         # Get tracker Y boundaries
         tracker_north_y = pos.y
@@ -2747,11 +2749,8 @@ class WiringConfigurator(tk.Toplevel):
     def get_string_source_to_harness_route(self, source_point, harness_point, routing_mode):
         """Get route from string source to harness collection point"""
         if routing_mode == "realistic":
-            # Realistic: Follow actual centerline then horizontal to harness point
-            # This should use the actual tracker centerline position
-            # You may need to pass 'pos' as a parameter to get accurate centerline
-            tracker_width = 3.0  # Or get from pos.template if available
-            tracker_center_x = pos.x + (tracker_width / 2) if hasattr(self, 'pos') else (source_point[0] + harness_point[0]) / 2
+            # Realistic: Follow centerline then horizontal to harness point
+            tracker_center_x = (source_point[0] + harness_point[0]) / 2  # Approximate centerline
             return [
                 source_point,
                 (tracker_center_x, source_point[1]),
