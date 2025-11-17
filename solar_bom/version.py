@@ -1,7 +1,7 @@
 # Version information
 VERSION_MAJOR = 2
 VERSION_MINOR = 4
-VERSION_PATCH = 0
+VERSION_PATCH = 1
 
 # Get version string
 def get_version():

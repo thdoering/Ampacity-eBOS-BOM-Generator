@@ -18,7 +18,7 @@ INSTALLATION INSTRUCTIONS
 
 This is our internal tool - these warnings are normal for unsigned applications.
 
-WHAT'S NEW IN VERSION 2.4.0 (November 13, 2025)
+WHAT'S NEW IN VERSION 2.4.1 (November 13, 2025)
 ----------------------------------------------
 
 NEW FEATURES:
@@ -29,7 +29,6 @@ NEW FEATURES:
 IMPROVEMENTS:
 - Row spacing now supports 3 decimal point precision (improved accuracy)
 - Tracker template names auto-populate when selected
-- Positive and negative whip points aligned to same location
 - Streamlined block configurator with irrelevant inputs removed
 - Cable sizing disclaimer added to Excel BOM exports
 
