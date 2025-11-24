@@ -205,6 +205,7 @@ class TrackerTemplateCreator(ttk.Frame):
         self.strings_tracker_var.trace('w', self.auto_generate_template_name)
         self.motor_placement_var.trace('w', self.auto_generate_template_name)
         self.motor_position_var.trace('w', self.auto_generate_template_name)
+        self.motor_string_var.trace('w', self.auto_generate_template_name)
         self.motor_split_north_var.trace('w', self.auto_generate_template_name)
 
         # Update total modules calculation when inputs change
@@ -325,8 +326,21 @@ class TrackerTemplateCreator(ttk.Frame):
             
             # Determine north/south split based on motor placement
             if self.motor_placement_var.get() == "middle_of_string":
-                north_modules = int(self.motor_split_north_var.get()) * int(self.strings_tracker_var.get())
-                south_modules = int(self.motor_split_south_var.get()) * int(self.strings_tracker_var.get())
+                motor_string_idx = int(self.motor_string_var.get())
+                strings_per_tracker = int(self.strings_tracker_var.get())
+                modules_per_string = int(self.modules_string_var.get())
+                split_north = int(self.motor_split_north_var.get())
+                split_south = int(self.motor_split_south_var.get())
+                
+                # Calculate total modules north of motor:
+                # - Complete strings before the motor string
+                # - Plus the north split of the motor string
+                north_modules = (motor_string_idx - 1) * modules_per_string + split_north
+                
+                # Calculate total modules south of motor:
+                # - South split of the motor string
+                # - Plus all complete strings after the motor string
+                south_modules = split_south + (strings_per_tracker - motor_string_idx) * modules_per_string
             else:
                 # For between_strings placement, calculate based on motor position
                 motor_pos = int(self.motor_position_var.get())
