@@ -517,8 +517,10 @@ class BOMGenerator:
         """Get part number for a component based on its type and properties"""
         component_type = item.get('Component Type', '')
         description = item.get('Description', '')
+        
                 
-        if 'Harness' in component_type:                
+        if 'Harness' in component_type:
+            
             # Extract info from description to find harness part number
             polarity = 'positive' if 'Positive' in description else 'negative'
             
@@ -545,9 +547,9 @@ class BOMGenerator:
                 first_block = next(iter(self.blocks.values()))
                 
                 # Extract trunk cable size from description (e.g., "10AWG Drops w/8AWG Trunk")
-                trunk_match = re.search(r'w/(\d+AWG)\s+Trunk', description)
+                trunk_match = re.search(r'w/(\d+)\s*AWG\s+Trunk', description)
                 if trunk_match:
-                    trunk_cable_size = trunk_match.group(1).replace('AWG', ' AWG')  # Add space if missing
+                    trunk_cable_size = f"{trunk_match.group(1)} AWG"
                 else:
                     # Fall back to block default
                     trunk_cable_size = getattr(first_block.wiring_config, 'harness_cable_size', '8 AWG')
@@ -564,8 +566,14 @@ class BOMGenerator:
                     part_number = self.find_matching_harness_part_number(
                         num_strings, polarity, string_spacing_ft, trunk_cable_size
                     )
+                    
+                    # If no match found and trunk size is non-standard, return CUSTOM
+                    if part_number == "N/A":
+                        standard_trunk_sizes = ["8 AWG", "10 AWG"]
+                        if trunk_cable_size not in standard_trunk_sizes:
+                            return "CUSTOM"
+                    
                     return part_number
-            
             return "N/A"
         
         elif 'Fuse' in component_type:
@@ -584,7 +592,6 @@ class BOMGenerator:
                 return self.get_extender_segment_part_number_from_item(item)
             elif 'String Cable' in component_type:
                 return self.get_extender_segment_part_number_from_item(item)
-        
         return "N/A"
     
     def get_whip_segment_part_number_from_item(self, item):

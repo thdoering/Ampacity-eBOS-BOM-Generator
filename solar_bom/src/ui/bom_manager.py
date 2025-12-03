@@ -658,6 +658,13 @@ class BOMManager(ttk.Frame):
             
             # Extract harness info from component type
             component_type = row['Component Type']
+            description = row.get('Description', '')
+
+            print(f"\n{'='*60}")
+            print(f"DEBUG get_harness_part_number:")
+            print(f"  Component Type: {component_type}")
+            print(f"  Description: {description}")
+            print(f"  Full row: {row}")
 
             # Determine polarity and string count from component type
             polarity = 'positive' if 'Positive' in component_type else 'negative'
@@ -666,16 +673,21 @@ class BOMManager(ttk.Frame):
             import re
             string_match = re.search(r'(\d+)-String', component_type)
             if not string_match:
+                print(f"  ERROR: No string count found in component type")
                 return "N/A"
             
             num_strings = int(string_match.group(1))
+            print(f"  Extracted num_strings: {num_strings}")
+            print(f"  Extracted polarity: {polarity}")
             
             # Get module specs from the first block to calculate spacing
             if not selected_blocks:
+                print(f"  ERROR: No selected blocks")
                 return "N/A"
                 
             first_block = next(iter(selected_blocks.values()))
             if not first_block.tracker_template or not first_block.tracker_template.module_spec:
+                print(f"  ERROR: No tracker template or module spec")
                 return "N/A"
             
             module_spec = first_block.tracker_template.module_spec
@@ -686,19 +698,35 @@ class BOMManager(ttk.Frame):
             string_spacing_ft = bom_generator.calculate_string_spacing_ft(
                 modules_per_string, module_spec.width_mm, module_spacing_m
             )
+            print(f"  Calculated string_spacing_ft: {string_spacing_ft}")
             
-            # Get trunk cable size from wiring config
-            trunk_cable_size = getattr(first_block.wiring_config, 'harness_cable_size', '8 AWG')
+            # Try to extract trunk cable size from description first (e.g., "10 AWG Drops w/6 AWG Trunk")
+            # This handles harness-specific trunk sizes that differ from block default
+            trunk_match = re.search(r'w/(\d+)\s*AWG\s+Trunk', description)
+            print(f"  Trunk regex match on description: {trunk_match}")
+            if trunk_match:
+                trunk_cable_size = f"{trunk_match.group(1)} AWG"
+                print(f"  Extracted trunk_cable_size from description: {trunk_cable_size}")
+            else:
+                # Fall back to block-level default
+                trunk_cable_size = getattr(first_block.wiring_config, 'harness_cable_size', '8 AWG')
+                print(f"  Using block-level default trunk_cable_size: {trunk_cable_size}")
+
+            print(f"  Final trunk_cable_size for lookup: {trunk_cable_size}")
 
             # Find matching harness
             part_number = bom_generator.find_matching_harness_part_number(
                 num_strings, polarity, string_spacing_ft, trunk_cable_size
             )
-            print(f"DEBUG: BOM Manager got harness part number: {part_number}")
+            print(f"  Result part_number: {part_number}")
+            print(f"{'='*60}\n")
+            
             return part_number
             
         except Exception as e:
             print(f"Error getting harness part number: {e}")
+            import traceback
+            traceback.print_exc()
             return "N/A"
 
     def get_fuse_part_number(self, row):
