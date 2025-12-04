@@ -7,6 +7,7 @@ from ..models.block import BlockConfig
 from ..utils.bom_generator import BOMGenerator
 from .harness_catalog_dialog import HarnessCatalogDialog
 from .harness_designer import HarnessDesigner
+from .pricing_manager import PricingManager
 
 def clean_filename(filename: str) -> str:
     """Clean filename by removing/replacing special characters"""
@@ -114,6 +115,13 @@ class BOMManager(ttk.Frame):
             text="Generate Harness Drawings", 
             command=self.generate_harness_drawings
         ).grid(row=2, column=0, padx=5, pady=5)
+
+        # Pricing manager button
+        ttk.Button(
+            bom_frame, 
+            text="Manage Pricing", 
+            command=self.open_pricing_manager
+        ).grid(row=4, column=0, padx=5, pady=5)
         
         # Right side - BOM Preview
         right_column = ttk.Frame(main_container)
@@ -126,7 +134,7 @@ class BOMManager(ttk.Frame):
         # Create treeview for BOM preview with checkbox and part number columns
         self.preview_tree = ttk.Treeview(
             preview_frame, 
-            columns=('include', 'component', 'part_number', 'description', 'quantity', 'unit'),
+            columns=('include', 'component', 'part_number', 'description', 'quantity', 'unit', 'unit_price', 'extended_price'),
             show='headings',
             height=25  # Make it much taller
         )
@@ -140,9 +148,11 @@ class BOMManager(ttk.Frame):
         self.preview_tree.column('include', width=60, anchor='center')
         self.preview_tree.column('component', width=180)
         self.preview_tree.column('part_number', width=150, anchor='center')
-        self.preview_tree.column('description', width=300)  # Wider for better readability
-        self.preview_tree.column('quantity', width=100, anchor='center')
-        self.preview_tree.column('unit', width=80, anchor='center')
+        self.preview_tree.column('description', width=250)
+        self.preview_tree.column('quantity', width=80, anchor='center')
+        self.preview_tree.column('unit', width=60, anchor='center')
+        self.preview_tree.column('unit_price', width=80, anchor='e')
+        self.preview_tree.column('extended_price', width=100, anchor='e')
 
         # Add headings
         self.preview_tree.heading('include', text="Include")
@@ -151,6 +161,8 @@ class BOMManager(ttk.Frame):
         self.preview_tree.heading('description', text="Description")
         self.preview_tree.heading('quantity', text="Quantity")
         self.preview_tree.heading('unit', text="Unit")
+        self.preview_tree.heading('unit_price', text="Unit Price")
+        self.preview_tree.heading('extended_price', text="Ext. Price")
 
         # Bind click events for checkbox functionality
         self.preview_tree.bind('<Button-1>', self.on_tree_click)
@@ -294,6 +306,37 @@ class BOMManager(ttk.Frame):
         quantities = bom_generator.calculate_cable_quantities()
         summary_data = bom_generator.generate_summary_data(quantities)
         
+        # Add combiner box items if device configurator has configs
+        if hasattr(self, 'main_app') and hasattr(self.main_app, 'device_configurator'):
+            device_configurator = self.main_app.device_configurator
+            if hasattr(device_configurator, 'combiner_configs') and device_configurator.combiner_configs:
+                combiner_bom_items = bom_generator.generate_combiner_box_bom(device_configurator.combiner_configs)
+                if combiner_bom_items:
+                    # Get pricing lookup for combiner items
+                    from ..utils.pricing_lookup import get_pricing_lookup
+                    pricing = get_pricing_lookup()
+                    
+                    # Add pricing to combiner items
+                    for item in combiner_bom_items:
+                        unit_price = pricing.get_price(item['Part Number'])
+                        if unit_price is not None:
+                            item['Unit Price'] = unit_price
+                            item['Extended Price'] = round(unit_price * item['Quantity'], 2)
+                        else:
+                            item['Unit Price'] = None
+                            item['Extended Price'] = None
+                    
+                    # Convert to DataFrame and append
+                    combiner_df = pd.DataFrame(combiner_bom_items)
+                    # Ensure both DataFrames have the same columns to avoid FutureWarning
+                    for col in summary_data.columns:
+                        if col not in combiner_df.columns:
+                            combiner_df[col] = None
+                    for col in combiner_df.columns:
+                        if col not in summary_data.columns:
+                            summary_data[col] = None
+                    summary_data = pd.concat([summary_data, combiner_df], ignore_index=True)
+        
         # Add summary data to preview
         for _, row in summary_data.iterrows():
             # Format quantity based on unit
@@ -313,6 +356,12 @@ class BOMManager(ttk.Frame):
             default_checked = '☐' if is_1_string_harness else '☑'
             default_tag = 'unchecked' if is_1_string_harness else 'checked'
 
+            # Format prices
+            unit_price = row.get('Unit Price', None)
+            extended_price = row.get('Extended Price', None)
+            unit_price_str = f"${unit_price:.2f}" if unit_price is not None else ""
+            extended_price_str = f"${extended_price:.2f}" if extended_price is not None else ""
+
             item = self.preview_tree.insert(
                 '', 'end',
                 values=(
@@ -321,7 +370,9 @@ class BOMManager(ttk.Frame):
                     part_number,
                     row['Description'],
                     quantity_str,
-                    row['Unit']
+                    row['Unit'],
+                    unit_price_str,
+                    extended_price_str
                 ),
                 tags=(default_tag,)
             )
@@ -560,12 +611,34 @@ class BOMManager(ttk.Frame):
                 except (ValueError, IndexError):
                     quantity = 0
                 
+                # Parse unit price (remove $ and convert to float)
+                unit_price = None
+                try:
+                    if len(values) > 6 and values[6]:
+                        price_str = str(values[6]).replace('$', '').strip()
+                        if price_str:
+                            unit_price = float(price_str)
+                except (ValueError, IndexError):
+                    pass
+                
+                # Parse extended price (remove $ and convert to float)
+                extended_price = None
+                try:
+                    if len(values) > 7 and values[7]:
+                        price_str = str(values[7]).replace('$', '').strip()
+                        if price_str:
+                            extended_price = float(price_str)
+                except (ValueError, IndexError):
+                    pass
+                
                 preview_data.append({
                     'Component Type': values[1],
                     'Part Number': values[2], 
                     'Description': values[3],
                     'Quantity': quantity,
-                    'Unit': values[5]
+                    'Unit': values[5],
+                    'Unit Price': unit_price,
+                    'Extended Price': extended_price
                 })
         
         return preview_data
@@ -854,6 +927,13 @@ class BOMManager(ttk.Frame):
             # Designer handles everything internally
         except Exception as e:
             messagebox.showerror("Error", f"Failed to open harness designer: {str(e)}")
+
+    def open_pricing_manager(self):
+        """Open pricing manager dialog"""
+        try:
+            PricingManager(self)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to open pricing manager: {str(e)}")
 
     def generate_harness_drawings(self):
         """Open harness catalog dialog for generating drawings"""

@@ -8,6 +8,7 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from ..models.device import HarnessConnection, CombinerBoxConfig
 import re
+from .pricing_lookup import get_pricing_lookup
 
 
 class BOMGenerator:
@@ -461,13 +462,15 @@ class BOMGenerator:
         summary_data = []
         for (component_type, description, unit, category), quantity in component_totals.items():
             summary_data.append({
-                'Category': category,
-                'Component Type': component_type,
-                'Part Number': '',
-                'Description': description,
-                'Quantity': round(quantity, 1) if unit == 'feet' else int(quantity),
-                'Unit': unit
-            })
+            'Category': category,
+            'Component Type': component_type,
+            'Part Number': '',
+            'Description': description,
+            'Quantity': round(quantity, 1) if unit == 'feet' else int(quantity),
+            'Unit': unit,
+            'Unit Price': None,
+            'Extended Price': None
+        })
         
         # Sort by category then component type, with numerical sorting for segments
         def sort_key(item):
@@ -490,26 +493,26 @@ class BOMGenerator:
 
         summary_data = sorted(summary_data, key=sort_key)
 
-        # Add part numbers to summary data
+        # Add part numbers and prices to summary data
+        pricing = get_pricing_lookup()
         for item in summary_data:
             item['Part Number'] = self.get_component_part_number(item)
-
-        # Add part numbers to summary data
-        for item in summary_data:
-            item['Part Number'] = self.get_component_part_number(item)
+            
+            # Look up price
+            unit_price = pricing.get_price(item['Part Number'])
+            if unit_price is not None:
+                item['Unit Price'] = unit_price
+                item['Extended Price'] = round(unit_price * item['Quantity'], 2)
 
         # Create DataFrame with specific column order
         df = pd.DataFrame(summary_data)
         if not df.empty:
-            # Reorder columns to put Part Number after Component Type
-            columns = list(df.columns)
-            if 'Part Number' in columns and 'Component Type' in columns:
-                # Remove Part Number from its current position
-                columns.remove('Part Number')
-                # Insert it after Component Type
-                ct_index = columns.index('Component Type')
-                columns.insert(ct_index + 1, 'Part Number')
-                df = df[columns]
+            # Define desired column order
+            desired_order = ['Category', 'Component Type', 'Part Number', 'Description', 
+                           'Quantity', 'Unit', 'Unit Price', 'Extended Price']
+            # Only include columns that exist
+            columns = [col for col in desired_order if col in df.columns]
+            df = df[columns]
 
         return df
     
@@ -834,8 +837,10 @@ class BOMGenerator:
                 summary_data['Category'] = summary_data['Component Type'].apply(get_category)
                 
                 # Reorder columns to match expected format
-                column_order = ['Category', 'Component Type', 'Part Number', 'Description', 'Quantity', 'Unit']
-                summary_data = summary_data[column_order]
+                column_order = ['Category', 'Component Type', 'Part Number', 'Description', 'Quantity', 'Unit', 'Unit Price', 'Extended Price']
+                # Only include columns that exist in the data
+                existing_columns = [col for col in column_order if col in summary_data.columns]
+                summary_data = summary_data[existing_columns]
             else:
                 # Fall back to original method
                 quantities = self.calculate_cable_quantities()
@@ -854,6 +859,25 @@ class BOMGenerator:
             
             # Write summary data
             summary_data.to_excel(writer, sheet_name='BOM Summary', index=False, startrow=15)  # Start after project info
+            
+            # Add total row if Extended Price column exists
+            if 'Extended Price' in summary_data.columns:
+                summary_sheet = writer.sheets['BOM Summary']
+                total_row = 15 + len(summary_data) + 2  # +1 for header, +1 to go after last data row
+                
+                # Find the Extended Price column index
+                ext_price_col = list(summary_data.columns).index('Extended Price') + 1  # +1 for 1-based Excel
+                
+                # Add "Total:" label in the column before Extended Price
+                label_cell = summary_sheet.cell(row=total_row, column=ext_price_col - 1, value="Total:")
+                label_cell.font = Font(bold=True)
+                label_cell.alignment = Alignment(horizontal='right')
+                
+                # Calculate and add the total
+                total_extended = summary_data['Extended Price'].dropna().sum()
+                total_cell = summary_sheet.cell(row=total_row, column=ext_price_col, value=total_extended)
+                total_cell.font = Font(bold=True)
+                total_cell.number_format = '"$"#,##0.00'
             
             # Write detailed data  
             detailed_data.to_excel(writer, sheet_name='Block Details', index=False)
@@ -1090,8 +1114,10 @@ class BOMGenerator:
             if 'Block Allocation' in workbook.sheetnames:
                 self._format_block_allocation_sheet(workbook['Block Allocation'], block_allocation_data)
             
-            # Add filter
-            summary_sheet.auto_filter.ref = f"A15:F{15 + len(summary_data)}"
+            # Add filter - use the actual number of columns
+            num_cols = len(summary_data.columns)
+            last_col_letter = get_column_letter(num_cols)
+            summary_sheet.auto_filter.ref = f"A15:{last_col_letter}{15 + len(summary_data)}"
             
             # Save and open
             writer.close()
@@ -1309,6 +1335,23 @@ class BOMGenerator:
             adjusted_width = max(adjusted_width, 10)  # Minimum width of 10
             
             worksheet.column_dimensions[column_name].width = adjusted_width
+        
+        # Format price columns as currency
+        if 'Unit Price' in data.columns:
+            unit_price_col = list(data.columns).index('Unit Price') + 1
+            for row_num in range(start_row + 1, start_row + len(data) + 2):
+                cell = worksheet.cell(row=row_num, column=unit_price_col)
+                if cell.value is not None:
+                    cell.number_format = '"$"#,##0.00'
+                cell.alignment = Alignment(horizontal='right')
+        
+        if 'Extended Price' in data.columns:
+            ext_price_col = list(data.columns).index('Extended Price') + 1
+            for row_num in range(start_row + 1, start_row + len(data) + 2):
+                cell = worksheet.cell(row=row_num, column=ext_price_col)
+                if cell.value is not None:
+                    cell.number_format = '"$"#,##0.00'
+                cell.alignment = Alignment(horizontal='right')
 
     def generate_project_info(self) -> Dict[str, Any]:
         """
@@ -1806,7 +1849,7 @@ class BOMGenerator:
             target_length = max(10, target_length)  # Remove the max 300 clamp
             
             # If over 300ft, return custom part number with wire gauge and polarity
-            if target_length > 300:
+            if target_length > 600:
                 polarity_code = 'P' if polarity == 'positive' else 'N'
                 awg_size = wire_gauge.split()[0]  # Extract just the number from "8 AWG"
                 return f"EXT-{awg_size}-{polarity_code}-{target_length}-CUSTOM"
@@ -1835,7 +1878,7 @@ class BOMGenerator:
             target_length = max(10, target_length)  # Remove the max 300 clamp
 
             # If over 300ft, return custom part number with wire gauge and polarity
-            if target_length > 300:
+            if target_length > 600:
                 polarity_code = 'P' if polarity == 'positive' else 'N'
                 awg_size = wire_gauge.split()[0]  # Extract just the number from "8 AWG"
                 return f"WHI-{awg_size}-{polarity_code}-{target_length}-CUSTOM"
