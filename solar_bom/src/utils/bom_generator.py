@@ -745,9 +745,15 @@ class BOMGenerator:
                 f"{count} x {config}" for config, count in sorted(tracker_configs.items())
             ])
             
+            # Get module wattage
+            module_wattage = 'N/A'
+            if block.tracker_template and block.tracker_template.module_spec:
+                module_wattage = f"{block.tracker_template.module_spec.wattage}W"
+            
             allocation_data.append({
                 'Block ID': block_id,
                 'Total Strings': total_strings,
+                'Module Wattage': module_wattage,
                 'Number of Trackers': tracker_count,
                 'Tracker Configuration': tracker_breakdown,
                 'Wiring Type': block.wiring_config.wiring_type.value if block.wiring_config else 'Not Configured'
@@ -2443,7 +2449,7 @@ class BOMGenerator:
                 cell.border = border
                 
                 # Center align numeric columns
-                if col_idx in [2, 3]:  # Total Strings and Number of Trackers columns
+                if col_idx in [2, 4]:  # Total Strings and Number of Trackers columns
                     cell.alignment = centered_alignment
         
         # Add summary row
@@ -2456,8 +2462,8 @@ class BOMGenerator:
         
         worksheet.cell(row=summary_row, column=2, value=total_strings).font = Font(bold=True)
         worksheet.cell(row=summary_row, column=2).alignment = centered_alignment
-        worksheet.cell(row=summary_row, column=3, value=total_trackers).font = Font(bold=True)
-        worksheet.cell(row=summary_row, column=3).alignment = centered_alignment
+        worksheet.cell(row=summary_row, column=4, value=total_trackers).font = Font(bold=True)
+        worksheet.cell(row=summary_row, column=4).alignment = centered_alignment
         
         # Apply borders to summary row
         for col_idx in range(1, len(data.columns) + 1):
