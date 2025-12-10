@@ -3113,10 +3113,17 @@ class WiringConfigurator(tk.Toplevel):
         
         # Create string checkboxes in columns of 8
         self.string_vars = []
+        self.string_checkboxes = []  # Store checkbox references for shift+click
+        self.last_clicked_string_index = None  # Reset on new selection
+        
         for i in range(string_count):
             var = tk.BooleanVar(value=False)
             self.string_vars.append(var)
             check = ttk.Checkbutton(self.string_check_frame, text=f"String {i+1}", variable=var)
+            self.string_checkboxes.append(check)
+            
+            # Bind click event for shift+click range selection
+            check.bind('<Button-1>', lambda e, idx=i: self.on_string_checkbox_click(e, idx))
             
             # Calculate column and row: new column every 8 strings
             column = i // 8
@@ -3137,6 +3144,25 @@ class WiringConfigurator(tk.Toplevel):
         
         # Update harness display
         self.update_harness_display(string_count)
+
+    def on_string_checkbox_click(self, event, index):
+        """Handle checkbox click with shift+click range selection support"""
+        # Check if Shift key is held
+        if event.state & 0x1:  # Shift key modifier
+            if self.last_clicked_string_index is not None:
+                # Determine range
+                start = min(self.last_clicked_string_index, index)
+                end = max(self.last_clicked_string_index, index)
+                
+                # Set all checkboxes in range to True
+                for i in range(start, end + 1):
+                    self.string_vars[i].set(True)
+                
+                # Prevent the default toggle behavior since we handled it
+                return "break"
+        
+        # Update last clicked index
+        self.last_clicked_string_index = index
 
     def select_all_strings(self):
         """Select all string checkboxes"""
