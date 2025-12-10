@@ -44,6 +44,7 @@ class BlockConfigurator(ttk.Frame):
         self.on_blocks_changed = None  # Callback for when blocks change
         self.on_autosave = on_autosave
         self.device_placement_mode = tk.StringVar(value="row_center")  # Default to row center
+        self.tree_item_to_template = {}  # Mapping from tree item IDs to template keys
         
         # First set up the UI
         self.setup_ui()
@@ -288,13 +289,19 @@ class BlockConfigurator(ttk.Frame):
         templates_frame = ttk.LabelFrame(config_frame, text="Tracker Templates", padding="5")
         templates_frame.grid(row=3, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
 
-        # Create Treeview for hierarchical template display
-        self.template_tree = ttk.Treeview(templates_frame, height=8)
+        # Create Treeview for hierarchical template display with checkbox column
+        self.template_tree = ttk.Treeview(templates_frame, columns=('enabled',), height=8)
         self.template_tree.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
 
         # Configure tree columns
         self.template_tree.heading('#0', text='Templates')
-        self.template_tree.column('#0', width=350)
+        self.template_tree.column('#0', width=300)
+        self.template_tree.heading('enabled', text='Enabled')
+        self.template_tree.column('enabled', width=50, anchor='center')
+        
+        # Configure checkbox styles
+        self.template_tree.tag_configure('checked', foreground='black')
+        self.template_tree.tag_configure('unchecked', foreground='gray')
 
         # Add scrollbar for tree
         template_scrollbar = ttk.Scrollbar(templates_frame, orient=tk.VERTICAL, command=self.template_tree.yview)
@@ -303,6 +310,8 @@ class BlockConfigurator(ttk.Frame):
 
         # Bind selection event
         self.template_tree.bind('<<TreeviewSelect>>', self.on_template_select)
+        # Bind click for checkbox toggling
+        self.template_tree.bind('<Button-1>', self.on_template_tree_click)
 
         # Add current values display
         self.current_frame = ttk.Frame(templates_frame)
@@ -694,17 +703,23 @@ class BlockConfigurator(ttk.Frame):
         
     def create_new_block(self):
         """Create a new block configuration"""
-        # Determine the block ID based on existing blocks
+        # Determine the source block for inheriting settings
+        # Priority: 1) Currently selected block, 2) Last block in sorted list, 3) None
+        source_block_id = None
         if not self.blocks:
             # No existing blocks, start with default
             block_id = "Block_1"
         else:
-            # Follow the pattern of the most recently created block
-            if self.most_recent_block and self.most_recent_block in self.blocks:
-                pattern_source = self.most_recent_block
+            # Determine source block for pattern and settings
+            if self.current_block and self.current_block in self.blocks:
+                # Use currently selected block
+                source_block_id = self.current_block
             else:
-                # No recent block, use any existing block as fallback
-                pattern_source = list(self.blocks.keys())[0]
+                # Use last block in sorted list
+                sorted_blocks = sorted(self.blocks.keys())
+                source_block_id = sorted_blocks[-1] if sorted_blocks else None
+            
+            pattern_source = source_block_id if source_block_id else list(self.blocks.keys())[0]
             
             import re
             match = re.match(r'(.*?)(\d+)$', pattern_source)
@@ -745,9 +760,13 @@ class BlockConfigurator(ttk.Frame):
                 template_key = values[0]
                 selected_template = self.tracker_templates.get(template_key)
             
-            # Get row spacing from project if available
+            # Get row spacing - inherit from source block, or use project default
             row_spacing_m = 6.0  # Default fallback
-            if self.current_project and hasattr(self.current_project, 'default_row_spacing_m'):
+            if source_block_id and source_block_id in self.blocks:
+                # Inherit from source block
+                row_spacing_m = self.blocks[source_block_id].row_spacing_m
+            elif self.current_project and hasattr(self.current_project, 'default_row_spacing_m'):
+                # Fall back to project default
                 row_spacing_m = self.current_project.default_row_spacing_m
                     
             # Calculate device position based on row spacing    
@@ -779,9 +798,12 @@ class BlockConfigurator(ttk.Frame):
                 trench_depth_m=0.91
             )
             
-            # Add to blocks dictionary
-            self.blocks[block_id] = block
-
+            # Inherit enabled_templates from the source block
+            if source_block_id and source_block_id in self.blocks:
+                source_block = self.blocks[source_block_id]
+                if hasattr(source_block, 'enabled_templates') and source_block.enabled_templates:
+                    block.enabled_templates = list(source_block.enabled_templates)  # Copy the list
+            
             # Add to blocks dictionary
             self.blocks[block_id] = block
 
@@ -892,6 +914,12 @@ class BlockConfigurator(ttk.Frame):
                 self.inverter_label.config(text=f"{block.inverter.manufacturer} {block.inverter.model}")
             else:
                 self.inverter_label.config(text="No inverter selected")
+            
+            # Sync enabled_templates with any placed trackers
+            self.sync_enabled_templates_with_placed_trackers(block)
+            
+            # Update template tree checkboxes for this block
+            self.update_template_list()
             
             # Redraw canvas with current block
             self.draw_block()
@@ -1361,15 +1389,37 @@ class BlockConfigurator(ttk.Frame):
 
     def on_canvas_click(self, event):
         """Handle canvas click for tracker placement"""
-        if not self.current_block or not self.drag_template:
+        if not self.current_block:
             return
-            
+        
         # Give canvas keyboard focus when clicked
         self.canvas.focus_set()
 
         # First check if we're clicking on an existing tracker
         if self.select_tracker(event.x, event.y):
             return
+        
+        # Need a template selected to place new trackers
+        if not self.drag_template:
+            return
+        
+        # Check if the selected template is enabled for this block
+        block = self.blocks.get(self.current_block)
+        if block:
+            # Find the template key for the current drag_template
+            template_key = None
+            for key, tmpl in self.tracker_templates.items():
+                if tmpl.template_name == self.drag_template.template_name:
+                    template_key = key
+                    break
+            
+            if template_key and template_key not in block.enabled_templates:
+                messagebox.showinfo(
+                    "Template Not Enabled",
+                    f"Please enable this template for the block first.\n\n"
+                    f"Click the checkbox next to the template name in the list to enable it."
+                )
+                return
             
         self.dragging = True
         self.drag_start = (event.x, event.y)
@@ -1602,13 +1652,13 @@ class BlockConfigurator(ttk.Frame):
             
         item = selection[0]
         
-        # Check if this is a template (has values) or parent node
-        values = self.template_tree.item(item, 'values')
-        if not values:
+        # Check if this is a template (in our mapping) or parent node
+        if item not in self.tree_item_to_template:
             # This is a parent node (manufacturer, model, or string size), not a template
+            self.drag_template = None
             return
             
-        template_key = values[0]
+        template_key = self.tree_item_to_template[item]
         self.drag_template = self.tracker_templates.get(template_key)
 
         # Update the current labels
@@ -1619,20 +1669,174 @@ class BlockConfigurator(ttk.Frame):
             self.blocks[self.current_block].tracker_template = self.drag_template
             self._notify_blocks_changed()
 
+    def on_template_tree_click(self, event):
+        """Handle click on template tree - check if clicking on checkbox column"""
+        # Identify the region clicked
+        region = self.template_tree.identify_region(event.x, event.y)
+        column = self.template_tree.identify_column(event.x)
+        
+        # Check if clicked on the 'enabled' column (#1)
+        if column == '#1':
+            item = self.template_tree.identify_row(event.y)
+            if item and item in self.tree_item_to_template:
+                self.toggle_block_template_enabled(item)
+                return "break"  # Prevent default selection behavior
+    
+    def toggle_block_template_enabled(self, item):
+        """Toggle the enabled state of a template for the current block"""
+        if not self.current_block:
+            messagebox.showinfo("No Block Selected", "Please select a block first.")
+            return
+        
+        block = self.blocks.get(self.current_block)
+        if not block:
+            return
+        
+        template_key = self.tree_item_to_template.get(item)
+        if not template_key:
+            return
+        
+        template = self.tracker_templates.get(template_key)
+        if not template:
+            return
+        
+        is_currently_enabled = template_key in block.enabled_templates
+        
+        if is_currently_enabled:
+            # Trying to disable - check if trackers of this type are placed
+            trackers_using_template = [
+                pos for pos in block.tracker_positions 
+                if pos.template and pos.template.template_name == template.template_name
+            ]
+            
+            if trackers_using_template:
+                messagebox.showwarning(
+                    "Cannot Disable Template",
+                    f"This block has {len(trackers_using_template)} tracker(s) using this template.\n\n"
+                    "Please remove those trackers first before disabling the template."
+                )
+                return
+            
+            # Safe to disable
+            block.enabled_templates.remove(template_key)
+        else:
+            # Trying to enable - check module consistency
+            can_enable, error_msg = self.check_module_consistency_for_enable(template_key)
+            if not can_enable:
+                messagebox.showwarning("Module Type Mismatch", error_msg)
+                return
+            
+            # Safe to enable
+            block.enabled_templates.append(template_key)
+        
+        # Update the tree display
+        self.update_template_checkbox_display()
+        
+        # Notify changes
+        self._notify_blocks_changed()
+        if self.on_autosave:
+            self.on_autosave()
+    
+    def check_module_consistency_for_enable(self, template_key):
+        """Check if enabling a template would cause module inconsistency in the block"""
+        if not self.current_block:
+            return False, "No block selected"
+        
+        block = self.blocks.get(self.current_block)
+        if not block:
+            return False, "Block not found"
+        
+        new_template = self.tracker_templates.get(template_key)
+        if not new_template or not new_template.module_spec:
+            return False, "Template has no module specification"
+        
+        new_module_length = new_template.module_spec.length_mm
+        
+        # Check against already enabled templates
+        for enabled_key in block.enabled_templates:
+            enabled_template = self.tracker_templates.get(enabled_key)
+            if enabled_template and enabled_template.module_spec:
+                existing_length = enabled_template.module_spec.length_mm
+                if abs(existing_length - new_module_length) > 1:  # Allow 1mm tolerance
+                    new_length_ft = new_module_length / 304.8
+                    existing_length_ft = existing_length / 304.8
+                    return False, (
+                        f"Cannot enable this template.\n\n"
+                        f"This template uses modules with length {new_length_ft:.2f}ft, "
+                        f"but the block already has templates enabled with length {existing_length_ft:.2f}ft.\n\n"
+                        f"All templates in a block must use the same module type."
+                    )
+        
+        return True, None
+    
+    def update_template_checkbox_display(self):
+        """Update checkbox display for all templates based on current block's enabled_templates"""
+        if not self.current_block:
+            return
+        
+        block = self.blocks.get(self.current_block)
+        if not block:
+            return
+        
+        for item, template_key in self.tree_item_to_template.items():
+            try:
+                is_enabled = template_key in block.enabled_templates
+                checkbox = '☑' if is_enabled else '☐'
+                tag = 'checked' if is_enabled else 'unchecked'
+                self.template_tree.item(item, values=(checkbox,), tags=(tag,))
+            except tk.TclError:
+                # Item may have been deleted
+                pass
+
+    def sync_enabled_templates_with_placed_trackers(self, block):
+        """Ensure any templates with placed trackers are in the block's enabled_templates list"""
+        if not block:
+            return
+        
+        templates_changed = False
+        
+        for pos in block.tracker_positions:
+            if pos.template:
+                # Find the template key for this template
+                template_key = None
+                for key, tmpl in self.tracker_templates.items():
+                    if tmpl.template_name == pos.template.template_name:
+                        template_key = key
+                        break
+                
+                if template_key and template_key not in block.enabled_templates:
+                    # Check module consistency before auto-enabling
+                    can_enable, _ = self.check_module_consistency_for_enable(template_key)
+                    if can_enable or not block.enabled_templates:
+                        # Auto-enable this template since it has placed trackers
+                        block.enabled_templates.append(template_key)
+                        templates_changed = True
+        
+        if templates_changed:
+            self._notify_blocks_changed()
+
     def update_template_list(self):
         """Update the template tree view with enabled templates only"""
         # Clear existing items
         for item in self.template_tree.get_children():
             self.template_tree.delete(item)
         
+        # Clear the item-to-template mapping
+        self.tree_item_to_template = {}
+        
         # Check if we have any enabled templates
         if not self.tracker_templates:
             # Show message when no templates are enabled
             message = "No templates enabled for this project.\nGo to Tracker Creator to enable templates."
-            self.template_tree.insert('', 'end', text=message, values=(), tags=('message',))
+            self.template_tree.insert('', 'end', text=message, values=('',), tags=('message',))
             # Configure message style
             self.template_tree.tag_configure('message', foreground='gray', font=('TkDefaultFont', 9, 'italic'))
             return
+        
+        # Get current block's enabled templates (if a block is selected)
+        block_enabled_templates = []
+        if self.current_block and self.current_block in self.blocks:
+            block_enabled_templates = self.blocks[self.current_block].enabled_templates
         
         # Group templates hierarchically
         hierarchy = {}
@@ -1666,7 +1870,7 @@ class BlockConfigurator(ttk.Frame):
         # Add items to tree hierarchically
         for manufacturer in sorted(hierarchy.keys()):
             # Add manufacturer node
-            manufacturer_node = self.template_tree.insert('', 'end', text=manufacturer, open=True)
+            manufacturer_node = self.template_tree.insert('', 'end', text=manufacturer, values=('',), open=True)
             
             for model in sorted(hierarchy[manufacturer].keys()):
                 # Add model node with wattage if available
@@ -1678,17 +1882,32 @@ class BlockConfigurator(ttk.Frame):
                         break
                 
                 model_text = f"{model} - {wattage}W" if wattage else model
-                model_node = self.template_tree.insert(manufacturer_node, 'end', text=model_text, open=True)
+                model_node = self.template_tree.insert(manufacturer_node, 'end', text=model_text, values=('',), open=True)
                 
                 for string_size in sorted(hierarchy[manufacturer][model].keys()):
                     # Add string size node
                     string_size_text = f"{string_size} modules per string"
-                    string_size_node = self.template_tree.insert(model_node, 'end', text=string_size_text, open=True)
+                    string_size_node = self.template_tree.insert(model_node, 'end', text=string_size_text, values=('',), open=True)
                     
-                    # Add templates under string size
+                    # Add templates under string size with checkbox
                     templates_list = hierarchy[manufacturer][model][string_size]
                     for template_name, template_key, template in sorted(templates_list, key=lambda x: x[0]):
-                        self.template_tree.insert(string_size_node, 'end', text=template_name, values=(template_key,))
+                        # Determine checkbox state based on block's enabled_templates
+                        is_enabled = template_key in block_enabled_templates
+                        checkbox = '☑' if is_enabled else '☐'
+                        tag = 'checked' if is_enabled else 'unchecked'
+                        
+                        # Insert template with checkbox
+                        item = self.template_tree.insert(
+                            string_size_node, 'end', 
+                            text=template_name, 
+                            values=(checkbox,),
+                            tags=(tag,)
+                        )
+                        
+                        # Store mapping from tree item to template key
+                        self.tree_item_to_template[item] = template_key
+
 
     def m_to_ft(self, meters):
         return meters * 3.28084
@@ -2071,6 +2290,13 @@ class BlockConfigurator(ttk.Frame):
         if not hasattr(new_block, 'trench_depth_m'):
             new_block.trench_depth_m = 0.91
         
+        # Ensure enabled_templates is copied (for backward compatibility)
+        if not hasattr(new_block, 'enabled_templates'):
+            new_block.enabled_templates = []
+        elif hasattr(source_block, 'enabled_templates'):
+            # Ensure it's a new list, not a reference
+            new_block.enabled_templates = list(source_block.enabled_templates)
+        
         # Add to blocks dictionary
         self.blocks[new_id] = new_block
 
@@ -2357,27 +2583,39 @@ class BlockConfigurator(ttk.Frame):
                     break
 
     def get_module_length_from_templates(self):
-        """Get module length from available templates and check for consistency"""
+        """Get module length from block's enabled templates and check for consistency"""
         if not self.tracker_templates:
             return None, "No tracker templates available"
         
-        # Get all unique module lengths from available templates
+        # Get the current block's enabled templates
+        if not self.current_block or self.current_block not in self.blocks:
+            return None, "No block selected"
+        
+        block = self.blocks[self.current_block]
+        
+        # If no templates enabled for this block, return None
+        if not block.enabled_templates:
+            return None, "No templates enabled for this block"
+        
+        # Get all unique module lengths from block's enabled templates only
         module_lengths = set()
-        for template in self.tracker_templates.values():
-            if template.module_spec and template.module_spec.length_mm:
+        for template_key in block.enabled_templates:
+            template = self.tracker_templates.get(template_key)
+            if template and template.module_spec and template.module_spec.length_mm:
                 module_lengths.add(template.module_spec.length_mm)
         
         if not module_lengths:
-            return None, "No module specifications found in templates"
+            return None, "No module specifications found in enabled templates"
         
         if len(module_lengths) > 1:
-            # Multiple different module lengths - warn user
+            # Multiple different module lengths - this shouldn't happen with our validation
+            # but handle it gracefully
             lengths_ft = [f"{length/304.8:.2f}ft" for length in module_lengths]
-            warning_msg = f"Warning: Templates have different module lengths: {', '.join(lengths_ft)}"
+            warning_msg = f"Warning: Block has templates with different module lengths: {', '.join(lengths_ft)}"
             messagebox.showwarning("Module Length Inconsistency", warning_msg)
-            return None, "Inconsistent module lengths in templates"
+            return None, "Inconsistent module lengths in block's enabled templates"
         
-        # All templates have the same module length
+        # All enabled templates have the same module length
         module_length_mm = list(module_lengths)[0]
         return module_length_mm / 1000, None  # Convert to meters
     

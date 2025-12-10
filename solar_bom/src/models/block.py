@@ -78,6 +78,7 @@ class BlockConfig:
     description: Optional[str] = None
     tracker_positions: List[TrackerPosition] = field(default_factory=list)
     wiring_config: Optional[WiringConfig] = None
+    enabled_templates: List[str] = field(default_factory=list)  # Block-level enabled template keys
     
     def validate(self) -> bool:
         """
@@ -312,6 +313,9 @@ class BlockConfig:
         elif self.tracker_template:
             data['tracker_template_name'] = self.tracker_template.template_name
         
+        # Add enabled templates
+        data['enabled_templates'] = self.enabled_templates
+
         # Add wiring config if exists
         if self.wiring_config:
             wiring_data = {
@@ -398,7 +402,8 @@ class BlockConfig:
             device_type=DeviceType(data.get('device_type', DeviceType.STRING_INVERTER.value)),
             underground_routing=data.get('underground_routing', False),
             pile_reveal_m=data.get('pile_reveal_m', 1.5),
-            trench_depth_m=data.get('trench_depth_m', 0.91)
+            trench_depth_m=data.get('trench_depth_m', 0.91),
+            enabled_templates=data.get('enabled_templates', [])
         )
         
         # Load tracker positions
