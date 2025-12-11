@@ -32,7 +32,13 @@ class BlockConfigurator(ttk.Frame):
         self.dragging = False
         self.drag_template = None
         self.drag_start = None
-        self.selected_tracker = None  # Store currently selected tracker
+        self.selected_trackers = set()  # Store currently selected trackers as set of (x, y) tuples
+        self.box_selecting = False  # Flag for box selection mode
+        self.box_select_start = None  # Starting point for box selection
+        self.selection_box_id = None  # Canvas item ID for selection box rectangle
+        self.moving_trackers = False  # Flag for tracker move mode
+        self.move_start_m = None  # Starting position in meters for move operation
+        self.move_original_positions = {}  # Original positions of trackers being moved {(x,y): (orig_x, orig_y)}
         self.grid_lines = []  # Store grid line IDs for cleanup 
         self.scale_factor = 10.0  # Starting scale (10 pixels per meter)
         self.pan_x = 0  # Pan offset in pixels
@@ -1395,8 +1401,29 @@ class BlockConfigurator(ttk.Frame):
         # Give canvas keyboard focus when clicked
         self.canvas.focus_set()
 
+        # Check modifier keys
+        ctrl_pressed = event.state & 0x4  # Ctrl key modifier
+        shift_pressed = event.state & 0x1  # Shift key modifier
+        
+        # Check if clicking on an already-selected tracker (to start move)
+        clicked_selected = self.get_selected_tracker_at(event.x, event.y)
+        if clicked_selected and not ctrl_pressed and not shift_pressed:
+            # Start move operation
+            self.start_tracker_move(event)
+            return
+        
         # First check if we're clicking on an existing tracker
-        if self.select_tracker(event.x, event.y):
+        if self.select_tracker(event.x, event.y, add_to_selection=ctrl_pressed):
+            return
+        
+        # If Shift is held and clicking on empty space, start box selection
+        if shift_pressed:
+            self.box_selecting = True
+            self.box_select_start = (event.x, event.y)
+            # Clear previous selection unless Ctrl is also held
+            if not ctrl_pressed:
+                self.selected_trackers.clear()
+                self.draw_block()
             return
         
         # Need a template selected to place new trackers
@@ -1440,7 +1467,27 @@ class BlockConfigurator(ttk.Frame):
         self.draw_tracker(x, y, self.drag_template, 'drag_preview')
 
     def on_canvas_drag(self, event):
-        """Handle canvas drag for tracker movement"""
+        """Handle canvas drag for tracker movement or box selection"""
+        # Handle box selection
+        if self.box_selecting and self.box_select_start:
+            # Delete old selection box
+            if self.selection_box_id:
+                self.canvas.delete(self.selection_box_id)
+            
+            # Draw new selection box
+            x1, y1 = self.box_select_start
+            self.selection_box_id = self.canvas.create_rectangle(
+                x1, y1, event.x, event.y,
+                outline='blue', width=2, dash=(4, 4),
+                tags='selection_box'
+            )
+            return
+        
+        # Handle moving selected trackers
+        if self.moving_trackers and self.move_start_m:
+            self.update_tracker_move_preview(event)
+            return
+        
         if not self.dragging:
             return
         
@@ -1463,7 +1510,17 @@ class BlockConfigurator(ttk.Frame):
         self.draw_tracker(x, y, self.drag_template, 'drag_preview')
 
     def on_canvas_release(self, event):
-        """Handle canvas release for tracker placement"""
+        """Handle canvas release for tracker placement or box selection"""
+        # Handle box selection completion
+        if self.box_selecting:
+            self.complete_box_selection(event)
+            return
+        
+        # Handle move completion
+        if self.moving_trackers:
+            self.complete_tracker_move(event)
+            return
+        
         if not self.dragging or not self.current_block or not self.drag_template:
             return
                                 
@@ -1952,24 +2009,26 @@ class BlockConfigurator(ttk.Frame):
             self.updating_ui = False
 
     def delete_selected_tracker(self, event=None):
-        """Delete the currently selected tracker"""
-        if not self.current_block or not self.selected_tracker:
+        """Delete the currently selected tracker(s)"""
+        if not self.current_block or not self.selected_trackers:
             return
         
         block = self.blocks[self.current_block]
                 
-        # Find and remove the selected tracker
+        # Find and remove all selected trackers
         positions_to_remove = []
         for i, pos in enumerate(block.tracker_positions):
-            if (abs(pos.x - self.selected_tracker[0]) < 0.01 and 
-                abs(pos.y - self.selected_tracker[1]) < 0.01):
-                positions_to_remove.append(i)
+            for sel_x, sel_y in self.selected_trackers:
+                if (abs(pos.x - sel_x) < 0.01 and 
+                    abs(pos.y - sel_y) < 0.01):
+                    positions_to_remove.append(i)
+                    break
         
         # Remove from highest index to lowest to avoid shifting issues
         for i in sorted(positions_to_remove, reverse=True):
             block.tracker_positions.pop(i)
         
-        self.selected_tracker = None
+        self.selected_trackers.clear()
         self.draw_block()
 
         # Notify blocks changed
@@ -1997,7 +2056,7 @@ class BlockConfigurator(ttk.Frame):
             block.tracker_positions.clear()
             
             # Clear selection
-            self.selected_tracker = None
+            self.selected_trackers.clear()
             
             # Redraw the block
             self.draw_block()
@@ -2007,8 +2066,13 @@ class BlockConfigurator(ttk.Frame):
             
             messagebox.showinfo("Success", f"Cleared {tracker_count} trackers from block {self.current_block}")
 
-    def select_tracker(self, x, y):
-        """Select tracker at given coordinates"""
+    def select_tracker(self, x, y, add_to_selection=False):
+        """Select tracker at given coordinates
+        
+        Args:
+            x, y: Canvas coordinates
+            add_to_selection: If True, add/remove from selection (Ctrl+click behavior)
+        """
         if not self.current_block:
             return False
 
@@ -2020,31 +2084,313 @@ class BlockConfigurator(ttk.Frame):
         y_m = (y - 10 - self.pan_y) / scale
         
         # Check if click is within any tracker
+        clicked_tracker = None
         for pos in block.tracker_positions:
             tracker_width, tracker_height = self.calculate_tracker_dimensions(pos.template)
             # Add some padding to make selection easier (0.2m padding)
             if (pos.x - 0.2 <= x_m <= pos.x + tracker_width + 0.2 and 
                 pos.y - 0.2 <= y_m <= pos.y + tracker_height + 0.2):
-                self.selected_tracker = (pos.x, pos.y)
-                self.draw_block()
-                    
-                # Draw highlight rectangle with calculated dimensions
-                x_canvas = 10 + pos.x * scale + self.pan_x
-                y_canvas = 10 + pos.y * scale + self.pan_y
-                # Create filled selection rectangle with transparency
-                self.canvas.create_rectangle(
-                    x_canvas - 2, y_canvas - 2,
-                    x_canvas + tracker_width * scale + 2,
-                    y_canvas + tracker_height * scale + 2,
-                    outline='red', width=2,
-                    fill='red', stipple='gray50',  # This creates a semi-transparent effect
-                    tags='selection'
-                )
-                return True
+                clicked_tracker = (pos.x, pos.y)
+                break
         
-        self.selected_tracker = None
+        if clicked_tracker:
+            if add_to_selection:
+                # Toggle selection for Ctrl+click
+                if clicked_tracker in self.selected_trackers:
+                    self.selected_trackers.remove(clicked_tracker)
+                else:
+                    self.selected_trackers.add(clicked_tracker)
+            else:
+                # Regular click - select only this tracker
+                self.selected_trackers = {clicked_tracker}
+            
+            self.draw_block()
+            self.draw_selection_highlights()
+            return True
+        
+        # Clicked on empty space - clear selection if not adding
+        if not add_to_selection:
+            self.selected_trackers.clear()
         self.draw_block()
         return False
+
+    def draw_selection_highlights(self):
+        """Draw highlight rectangles for all selected trackers"""
+        if not self.current_block:
+            return
+            
+        block = self.blocks[self.current_block]
+        scale = self.get_canvas_scale()
+        
+        # Delete existing selection highlights
+        self.canvas.delete('selection')
+        
+        for sel_x, sel_y in self.selected_trackers:
+            # Find the tracker at this position to get its dimensions
+            for pos in block.tracker_positions:
+                if abs(pos.x - sel_x) < 0.01 and abs(pos.y - sel_y) < 0.01:
+                    tracker_width, tracker_height = self.calculate_tracker_dimensions(pos.template)
+                    
+                    # Draw highlight rectangle
+                    x_canvas = 10 + pos.x * scale + self.pan_x
+                    y_canvas = 10 + pos.y * scale + self.pan_y
+                    
+                    self.canvas.create_rectangle(
+                        x_canvas - 2, y_canvas - 2,
+                        x_canvas + tracker_width * scale + 2,
+                        y_canvas + tracker_height * scale + 2,
+                        outline='red', width=2,
+                        fill='red', stipple='gray50',
+                        tags='selection'
+                    )
+                    break
+
+    def get_selected_tracker_at(self, x, y):
+        """Check if canvas coordinates are on a selected tracker.
+        Returns the tracker position tuple if found, None otherwise."""
+        if not self.current_block or not self.selected_trackers:
+            return None
+        
+        block = self.blocks[self.current_block]
+        scale = self.get_canvas_scale()
+        
+        # Convert canvas coordinates to meters
+        x_m = (x - 10 - self.pan_x) / scale
+        y_m = (y - 10 - self.pan_y) / scale
+        
+        # Check if click is within any selected tracker
+        for sel_x, sel_y in self.selected_trackers:
+            # Find the actual tracker to get dimensions
+            for pos in block.tracker_positions:
+                if abs(pos.x - sel_x) < 0.01 and abs(pos.y - sel_y) < 0.01:
+                    tracker_width, tracker_height = self.calculate_tracker_dimensions(pos.template)
+                    if (pos.x - 0.2 <= x_m <= pos.x + tracker_width + 0.2 and
+                        pos.y - 0.2 <= y_m <= pos.y + tracker_height + 0.2):
+                        return (sel_x, sel_y)
+                    break
+        return None
+    
+    def start_tracker_move(self, event):
+        """Start moving selected trackers"""
+        if not self.selected_trackers:
+            return
+        
+        block = self.blocks[self.current_block]
+        scale = self.get_canvas_scale()
+        
+        # Store starting position in meters
+        x_m = (event.x - 10 - self.pan_x) / scale
+        y_m = (event.y - 10 - self.pan_y) / scale
+        self.move_start_m = (x_m, y_m)
+        
+        # Store original positions of all selected trackers
+        self.move_original_positions = {}
+        for sel_x, sel_y in self.selected_trackers:
+            self.move_original_positions[(sel_x, sel_y)] = (sel_x, sel_y)
+        
+        self.moving_trackers = True
+
+    def update_tracker_move_preview(self, event):
+        """Update preview of trackers being moved"""
+        if not self.move_start_m or not self.current_block:
+            return
+        
+        block = self.blocks[self.current_block]
+        scale = self.get_canvas_scale()
+        
+        # Calculate current position in meters
+        x_m = (event.x - 10 - self.pan_x) / scale
+        y_m = (event.y - 10 - self.pan_y) / scale
+        
+        # Calculate delta from start
+        delta_x = x_m - self.move_start_m[0]
+        delta_y = y_m - self.move_start_m[1]
+        
+        # Snap delta to grid
+        delta_x = round(delta_x / block.row_spacing_m) * block.row_spacing_m
+        delta_y = round(delta_y / float(self.ns_spacing_var.get())) * float(self.ns_spacing_var.get())
+        
+        # Delete old move preview
+        self.canvas.delete('move_preview')
+        
+        # Draw preview for each selected tracker at new position
+        for orig_pos, (orig_x, orig_y) in self.move_original_positions.items():
+            new_x = orig_x + delta_x
+            new_y = orig_y + delta_y
+            
+            # Find the tracker to get its template
+            for pos in block.tracker_positions:
+                if abs(pos.x - orig_x) < 0.01 and abs(pos.y - orig_y) < 0.01:
+                    # Convert to canvas coordinates
+                    canvas_x = 10 + new_x * scale + self.pan_x
+                    canvas_y = 10 + new_y * scale + self.pan_y
+                    self.draw_tracker(canvas_x, canvas_y, pos.template, 'move_preview')
+                    break
+
+    def complete_tracker_move(self, event):
+        """Complete the tracker move operation"""
+        if not self.move_start_m or not self.current_block:
+            self.cancel_tracker_move()
+            return
+        
+        block = self.blocks[self.current_block]
+        scale = self.get_canvas_scale()
+        
+        # Calculate final delta
+        x_m = (event.x - 10 - self.pan_x) / scale
+        y_m = (event.y - 10 - self.pan_y) / scale
+        
+        delta_x = x_m - self.move_start_m[0]
+        delta_y = y_m - self.move_start_m[1]
+        
+        # Snap delta to grid
+        delta_x = round(delta_x / block.row_spacing_m) * block.row_spacing_m
+        delta_y = round(delta_y / float(self.ns_spacing_var.get())) * float(self.ns_spacing_var.get())
+        
+        # If no movement, just cancel
+        if abs(delta_x) < 0.01 and abs(delta_y) < 0.01:
+            self.cancel_tracker_move()
+            return
+        
+        # Calculate new positions and check for collisions
+        new_positions = {}
+        for orig_pos, (orig_x, orig_y) in self.move_original_positions.items():
+            new_x = orig_x + delta_x
+            new_y = orig_y + delta_y
+            new_positions[orig_pos] = (new_x, new_y)
+        
+        # Check for collisions with non-selected trackers
+        for orig_pos, (new_x, new_y) in new_positions.items():
+            # Find template for this tracker
+            template = None
+            for pos in block.tracker_positions:
+                if abs(pos.x - orig_pos[0]) < 0.01 and abs(pos.y - orig_pos[1]) < 0.01:
+                    template = pos.template
+                    break
+            
+            if not template:
+                continue
+                
+            new_width, new_height = self.calculate_tracker_dimensions(template)
+            
+            # Check collision with non-moving trackers
+            for pos in block.tracker_positions:
+                # Skip if this tracker is being moved
+                is_moving = False
+                for moving_pos in self.move_original_positions:
+                    if abs(pos.x - moving_pos[0]) < 0.01 and abs(pos.y - moving_pos[1]) < 0.01:
+                        is_moving = True
+                        break
+                
+                if is_moving:
+                    continue
+                
+                existing_width, existing_height = self.calculate_tracker_dimensions(pos.template)
+                if (new_x < pos.x + existing_width and
+                    new_x + new_width > pos.x and
+                    new_y < pos.y + existing_height and
+                    new_y + new_height > pos.y):
+                    messagebox.showwarning("Invalid Position", 
+                        "Cannot move trackers here - overlaps with existing tracker")
+                    self.cancel_tracker_move()
+                    return
+            
+            # Check device placement restrictions
+            if not self.is_valid_tracker_position(new_x, new_y, new_height):
+                messagebox.showwarning("Invalid Position",
+                    "Cannot move trackers here due to device placement restrictions")
+                self.cancel_tracker_move()
+                return
+        
+        # Apply the move
+        new_selected = set()
+        for pos in block.tracker_positions:
+            for orig_pos, (new_x, new_y) in new_positions.items():
+                if abs(pos.x - orig_pos[0]) < 0.01 and abs(pos.y - orig_pos[1]) < 0.01:
+                    pos.x = new_x
+                    pos.y = new_y
+                    pos.calculate_string_positions()
+                    new_selected.add((new_x, new_y))
+                    break
+        
+        # Update selection to new positions
+        self.selected_trackers = new_selected
+        
+        # Clean up
+        self.moving_trackers = False
+        self.move_start_m = None
+        self.move_original_positions = {}
+        self.canvas.delete('move_preview')
+        
+        # Redraw
+        self.draw_block()
+        self.draw_selection_highlights()
+        
+        # Notify blocks changed
+        self._notify_blocks_changed()
+
+    def cancel_tracker_move(self):
+        """Cancel the tracker move operation"""
+        self.moving_trackers = False
+        self.move_start_m = None
+        self.move_original_positions = {}
+        self.canvas.delete('move_preview')
+        self.draw_block()
+        self.draw_selection_highlights()
+
+    def complete_box_selection(self, event):
+        """Complete box selection and select all trackers within the box"""
+        if not self.box_select_start or not self.current_block:
+            self.box_selecting = False
+            self.box_select_start = None
+            if self.selection_box_id:
+                self.canvas.delete(self.selection_box_id)
+                self.selection_box_id = None
+            return
+        
+        block = self.blocks[self.current_block]
+        scale = self.get_canvas_scale()
+        
+        # Get box coordinates in canvas space
+        x1, y1 = self.box_select_start
+        x2, y2 = event.x, event.y
+        
+        # Normalize coordinates (ensure x1 < x2 and y1 < y2)
+        box_left = min(x1, x2)
+        box_right = max(x1, x2)
+        box_top = min(y1, y2)
+        box_bottom = max(y1, y2)
+        
+        # Convert box to meters
+        box_left_m = (box_left - 10 - self.pan_x) / scale
+        box_right_m = (box_right - 10 - self.pan_x) / scale
+        box_top_m = (box_top - 10 - self.pan_y) / scale
+        box_bottom_m = (box_bottom - 10 - self.pan_y) / scale
+        
+        # Check each tracker to see if it intersects the box
+        for pos in block.tracker_positions:
+            tracker_width, tracker_height = self.calculate_tracker_dimensions(pos.template)
+            tracker_left = pos.x
+            tracker_right = pos.x + tracker_width
+            tracker_top = pos.y
+            tracker_bottom = pos.y + tracker_height
+            
+            # Select if tracker rectangle intersects with selection box
+            # Two rectangles intersect if they overlap on both axes
+            if (tracker_left < box_right_m and tracker_right > box_left_m and
+                tracker_top < box_bottom_m and tracker_bottom > box_top_m):
+                self.selected_trackers.add((pos.x, pos.y))
+        
+        # Clean up
+        self.box_selecting = False
+        self.box_select_start = None
+        if self.selection_box_id:
+            self.canvas.delete(self.selection_box_id)
+            self.selection_box_id = None
+        
+        # Redraw with selections
+        self.draw_block()
+        self.draw_selection_highlights()
     
     def calculate_block_dimensions(self):
         """Calculate block dimensions based on placed trackers or template"""
