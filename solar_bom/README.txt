@@ -1,5 +1,5 @@
 ================================================================================
-Solar eBOS BOM Generator v2.3.0
+Solar eBOS BOM Generator v2.5.0
 ================================================================================
 
 INSTALLATION INSTRUCTIONS
@@ -18,25 +18,30 @@ INSTALLATION INSTRUCTIONS
 
 This is our internal tool - these warnings are normal for unsigned applications.
 
-WHAT'S NEW IN VERSION 2.4.1 (November 13, 2025)
+WHAT'S NEW IN VERSION 2.5.0 (December 11, 2025)
 ----------------------------------------------
 
+MAJOR NEW FEATURES:
+- Automatic Pricing: Import pricing data and get instant cost estimates
+- Project Import/Export: Share projects with team members easily
+- Multiple Module Types: Support for projects with different modules per block
+- Configurable NEC Safety Factor: Customize safety factor in device configurator
+
 NEW FEATURES:
-- Block Allocation Tab: New Excel BOM tab showing block assignments
-- Combiner Box Details: BOM now includes complete combiner box information
-- README Documentation: Download instructions included with every release
+- Shift+Select: Multi-select strings in harness configurator using shift+click
+- Module Wattages: Block allocation tab now shows module power ratings
 
 IMPROVEMENTS:
-- Row spacing now supports 3 decimal point precision (improved accuracy)
-- Tracker template names auto-populate when selected
-- Streamlined block configurator with irrelevant inputs removed
-- Cable sizing disclaimer added to Excel BOM exports
+- Custom parts now labeled "CUSTOM" instead of "N/A" in BOM
 
-PREVIOUS VERSION HIGHLIGHTS (v2.3.0):
-- SLD Generator with ANSI symbol library
-- Thermal parameters for modules
-- NEC safety factor updated to 1.56
-- Select all/deselect all in wiring configurator
+BUG FIXES:
+- Fixed tracker template auto-populate bug
+
+PREVIOUS VERSION HIGHLIGHTS (v2.4.1):
+- Block Allocation Tab in Excel BOM
+- Combiner box information in BOM
+- 3 decimal point precision for row spacing
+- Streamlined block configurator interface
 
 
 SUPPORT

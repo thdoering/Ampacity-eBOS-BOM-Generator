@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] - 2025-12-11
+
+### Added
+- **Automatic Pricing**: Integrated pricing calculation with importable pricing data for accurate cost estimates
+- **Project Import/Export**: Added file sharing functionality to import and export projects for team collaboration
+- **Multiple Module Types**: Enabled support for projects using different module types across blocks
+- **User-Configurable NEC Factor**: Added ability to customize NEC safety factor in device configurator
+- **Shift+Select Function**: Implemented shift+click multi-select for string selection in harness configurator
+- **Module Wattages Display**: Added module wattage information to block allocation tab in Excel BOM
+
+### Changed
+- **Custom Part Labels**: BOM now displays "CUSTOM" instead of "N/A" for custom parts (improved clarity)
+
+### Fixed
+- **Tracker Auto-populate Bug**: Corrected issue with automatic tracker template population
+
+### Enhanced
+- More flexible project configuration with multiple module type support
+- Improved cost estimation capabilities with automatic pricing
+- Better team collaboration with project sharing features
+- Enhanced harness configuration workflow with multi-select functionality
+
 ## [2.4.1] - 2025-11-17
 
 ### Added
@@ -22,7 +44,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved Excel BOM organization with better tab structure
 - Cleaner block configuration workflow with focused inputs
 - More precise project layout capabilities
-```
 
 ## [2.3.0] - 2025-10-06
 
