@@ -32,9 +32,29 @@ class DeviceConfigurator(ttk.Frame):
         # Instructions
         instructions = ttk.Label(main_frame, 
                                text="Configure fuses, cables, and breakers for combiner boxes. "
-                                    "Red values indicate cable size mismatches with wiring configuration.",
-                               wraplength=800)
-        instructions.pack(pady=(0, 10))
+                                    "Red values indicate cable size mismatches with wiring configuration.")
+        instructions.pack(anchor=tk.W)
+        
+        # NEC Safety Factor control frame
+        nec_frame = ttk.Frame(main_frame)
+        nec_frame.pack(fill=tk.X, pady=(10, 10))
+        
+        ttk.Label(nec_frame, text="NEC Safety Factor:").pack(side=tk.LEFT, padx=(0, 5))
+        
+        self.nec_factor_var = tk.StringVar(value="1.56")
+        self.nec_factor_entry = ttk.Entry(
+            nec_frame,
+            textvariable=self.nec_factor_var,
+            width=6
+        )
+        self.nec_factor_entry.pack(side=tk.LEFT, padx=(0, 10))
+        
+        # Bind Enter key and focus out to trigger update
+        self.nec_factor_entry.bind('<Return>', lambda e: self.on_nec_factor_changed())
+        self.nec_factor_entry.bind('<FocusOut>', lambda e: self.on_nec_factor_changed())
+        
+        ttk.Label(nec_frame, text="(Default: 1.56 = 125% × 125%)", 
+                 foreground='gray').pack(side=tk.LEFT)
         
         # Create treeview for the table
         self.create_treeview(main_frame)
@@ -171,6 +191,61 @@ class DeviceConfigurator(ttk.Frame):
         for item in self.tree.get_children():
             self.tree.item(item, open=True)
 
+    def on_nec_factor_changed(self):
+        """Handle NEC safety factor change"""
+        if not self.current_project:
+            return
+        
+        try:
+            new_factor = float(self.nec_factor_var.get())
+            
+            # Validate range
+            if new_factor < 1.0 or new_factor > 2.0:
+                return
+            
+            # Check if value actually changed
+            current_factor = getattr(self.current_project, 'nec_safety_factor', 1.56)
+            if abs(new_factor - current_factor) < 0.001:
+                return  # No change, skip update
+            
+            # Update project
+            self.current_project.nec_safety_factor = new_factor
+            
+            # Update existing combiner configs instead of regenerating
+            for combiner_id, config in self.combiner_configs.items():
+                for conn in config.connections:
+                    # Update NEC factor
+                    conn.nec_factor = new_factor
+                    # Recalculate derived values
+                    conn.harness_current = conn.num_strings * conn.module_isc * new_factor
+                    conn.calculated_fuse_size = conn._calculate_fuse_size()
+                    conn.calculated_cable_size = conn._calculate_cable_size()
+                
+                # Recalculate combiner totals
+                config.calculate_totals()
+                
+                # Reapply fuse uniformity rule
+                if config.connections:
+                    max_fuse = max(c.calculated_fuse_size for c in config.connections)
+                    for conn in config.connections:
+                        conn.calculated_fuse_size = max_fuse
+                        if conn.user_fuse_size and conn.user_fuse_size < max_fuse:
+                            conn.user_fuse_size = None
+                            conn.fuse_manually_set = False
+            
+            # Refresh display
+            self.refresh_display()
+            
+            # Trigger autosave
+            if hasattr(self, 'main_app') and hasattr(self.main_app, 'autosave_project'):
+                self.main_app.autosave_project()
+                
+            self.status_var.set(f"NEC factor updated to {new_factor:.2f}")
+            
+        except tk.TclError:
+            # Invalid value in spinbox, ignore
+            pass
+
     def on_whips_changed(self):
         """Handle whips checkbox change"""
         use_whips = self.use_whips_var.get()
@@ -196,6 +271,10 @@ class DeviceConfigurator(ttk.Frame):
             self.status_var.set("No project loaded")
             self.tree.delete(*self.tree.get_children())
             return
+        
+        # Set NEC factor from project (or default)
+        nec_factor = getattr(project, 'nec_safety_factor', 1.56)
+        self.nec_factor_var.set(f"{nec_factor:.2f}")
         
         # Generate configurations for all combiner boxes
         self.generate_combiner_configs()
@@ -318,6 +397,7 @@ class DeviceConfigurator(ttk.Frame):
                                 harness_id=harness_id,
                                 num_strings=len(harness.string_indices),
                                 module_isc=module_isc,
+                                nec_factor=self.current_project.nec_safety_factor,
                                 actual_cable_size=whip_size
                             )
                             
@@ -330,6 +410,7 @@ class DeviceConfigurator(ttk.Frame):
                             harness_id="H01",
                             num_strings=strings_in_tracker,
                             module_isc=module_isc,
+                            nec_factor=self.current_project.nec_safety_factor,
                             actual_cable_size=block.wiring_config.whip_cable_size if block.wiring_config else "8 AWG"
                         )
                         
@@ -346,6 +427,7 @@ class DeviceConfigurator(ttk.Frame):
                             harness_id="H01",
                             num_strings=tracker_pos.template.strings_per_tracker,
                             module_isc=module_isc,
+                            nec_factor=self.current_project.nec_safety_factor,
                             actual_cable_size=block.wiring_config.whip_cable_size if block.wiring_config else "8 AWG"
                         )
                         
