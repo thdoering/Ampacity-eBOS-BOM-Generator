@@ -272,6 +272,19 @@ class ProjectManager:
                 
         return results
     
+    def project_name_exists(self, name: str) -> bool:
+        """
+        Check if a project with the given name already exists
+        
+        Args:
+            name: Project name to check
+            
+        Returns:
+            bool: True if project exists, False otherwise
+        """
+        filepath = self._get_filepath(name)
+        return os.path.exists(filepath)
+    
     def _load_recent_projects(self) -> List[str]:
         """Load list of recent projects from file"""
         if os.path.exists(self.recent_projects_file):

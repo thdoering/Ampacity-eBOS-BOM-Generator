@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, messagebox, Menu
+from tkinter import ttk, messagebox, Menu, filedialog
 from src.models.module import ModuleSpec, ModuleType
 from src.models.project import Project
 from src.ui.tracker_creator import TrackerTemplateCreator
@@ -47,6 +47,9 @@ class SolarBOMApplication:
         file_menu.add_command(label="Dashboard", command=self.show_dashboard)
         file_menu.add_command(label="New Project", command=self.new_project)
         file_menu.add_command(label="Save Project", command=self.save_project)
+        file_menu.add_separator()
+        file_menu.add_command(label="Export Project...", command=self.export_project)
+        file_menu.add_command(label="Import Project...", command=self.import_project)
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.root.quit)
         
@@ -478,6 +481,104 @@ class SolarBOMApplication:
             messagebox.showinfo("Success", "Project saved successfully")
         else:
             messagebox.showerror("Error", "Failed to save project")
+
+    def export_project(self):
+        """Export current project to a .ebom file for sharing"""
+        if not self.current_project:
+            messagebox.showwarning("No Project", "No project is currently open to export.")
+            return
+        
+        # Suggest filename based on project name
+        suggested_name = self.current_project.metadata.name.replace(' ', '_')
+        
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".ebom",
+            filetypes=[("eBOM Project Files", "*.ebom"), ("All Files", "*.*")],
+            title="Export Project",
+            initialfile=suggested_name
+        )
+        
+        if not filepath:
+            return  # User cancelled
+        
+        try:
+            import json
+            
+            # Update modified date before export
+            self.current_project.update_modified_date()
+            
+            with open(filepath, 'w') as f:
+                json.dump(self.current_project.to_dict(), f, indent=2)
+            
+            messagebox.showinfo("Success", f"Project exported successfully to:\n{filepath}")
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Failed to export project:\n{str(e)}")
+    
+    def import_project(self):
+        """Import a .ebom project file and copy it to local projects folder"""
+        filepath = filedialog.askopenfilename(
+            filetypes=[("eBOM Project Files", "*.ebom"), ("All Files", "*.*")],
+            title="Import Project"
+        )
+        
+        if not filepath:
+            return  # User cancelled
+        
+        try:
+            import json
+            import os
+            from src.models.project import Project
+            from src.utils.project_manager import ProjectManager
+            
+            # Load the project from the external file
+            with open(filepath, 'r') as f:
+                data = json.load(f)
+            
+            project = Project.from_dict(data)
+            
+            # Check if a project with this name already exists
+            project_manager = ProjectManager()
+            original_name = project.metadata.name
+            
+            if project_manager.project_name_exists(original_name):
+                # Ask user what to do
+                result = messagebox.askyesnocancel(
+                    "Project Exists",
+                    f"A project named '{original_name}' already exists.\n\n"
+                    "Yes = Overwrite existing project\n"
+                    "No = Import as copy with new name\n"
+                    "Cancel = Abort import"
+                )
+                
+                if result is None:  # Cancel
+                    return
+                elif result is False:  # No - create with new name
+                    # Generate a unique name
+                    counter = 1
+                    new_name = f"{original_name} (Imported)"
+                    while project_manager.project_name_exists(new_name):
+                        counter += 1
+                        new_name = f"{original_name} (Imported {counter})"
+                    project.metadata.name = new_name
+                # If result is True (Yes), we'll overwrite
+            
+            # Save to local projects folder
+            if project_manager.save_project(project):
+                messagebox.showinfo(
+                    "Success", 
+                    f"Project '{project.metadata.name}' imported successfully!"
+                )
+                # Open the imported project
+                self.load_project(project)
+            else:
+                messagebox.showerror("Error", "Failed to save imported project to local folder.")
+                
+        except json.JSONDecodeError:
+            messagebox.showerror("Import Error", "The selected file is not a valid project file.")
+        except KeyError as e:
+            messagebox.showerror("Import Error", f"The project file is missing required data: {e}")
+        except Exception as e:
+            messagebox.showerror("Import Error", f"Failed to import project:\n{str(e)}")
 
 
     def autosave_project(self):
