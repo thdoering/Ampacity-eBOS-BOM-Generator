@@ -267,7 +267,9 @@ class SolarBOMApplication:
                                     motor_placement_type=template_data.get('motor_placement_type', 'between_strings'),
                                     motor_string_index=template_data.get('motor_string_index', 1),
                                     motor_split_north=template_data.get('motor_split_north', default_split_north),
-                                    motor_split_south=template_data.get('motor_split_south', default_split_south)
+                                    motor_split_south=template_data.get('motor_split_south', default_split_south),
+                                    # Multi-module-high configuration
+                                    modules_high=template_data.get('modules_high', 1)
                                 )
                                 
                                 # Also store with the old name for backwards compatibility
@@ -316,7 +318,9 @@ class SolarBOMApplication:
                                 motor_placement_type=template_data.get('motor_placement_type', 'between_strings'),
                                 motor_string_index=template_data.get('motor_string_index', 1),
                                 motor_split_north=template_data.get('motor_split_north', default_split_north),
-                                motor_split_south=template_data.get('motor_split_south', default_split_south)
+                                motor_split_south=template_data.get('motor_split_south', default_split_south),
+                                # Multi-module-high configuration
+                                modules_high=template_data.get('modules_high', 1)
                             )
 
             except Exception as e:

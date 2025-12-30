@@ -185,6 +185,10 @@ class TrackerTemplate:
     motor_split_north: int = 0  # Modules north of motor when middle_of_string  
     motor_split_south: int = 0  # Modules south of motor when middle_of_string
     
+    # Multi-module-high configuration (1p, 2p, 4p, 1l, 2l, 4l)
+    # Each column of stacked modules is a separate string
+    modules_high: int = 1  # Number of modules stacked E/W (1, 2, or 4)
+    
     def validate(self) -> bool:
         """
         Validate tracker template configuration
@@ -216,6 +220,10 @@ class TrackerTemplate:
                 raise ValueError("Motor split values cannot be negative")
             if self.motor_split_north + self.motor_split_south != self.modules_per_string:
                 raise ValueError("Motor split north + south must equal modules_per_string")
+        
+        # Validate modules_high
+        if self.modules_high not in [1, 2, 4]:
+            raise ValueError("Modules high must be 1, 2, or 4")
             
         return True
     
@@ -225,7 +233,11 @@ class TrackerTemplate:
     
     def get_total_modules(self) -> int:
         """Calculate total number of modules on the tracker"""
-        return self.modules_per_string * self.strings_per_tracker
+        return self.modules_per_string * self.strings_per_tracker * self.modules_high
+    
+    def get_total_strings(self) -> int:
+        """Calculate total number of strings on the tracker (each E/W column is a separate string)"""
+        return self.strings_per_tracker * self.modules_high
     
     def get_physical_dimensions(self) -> Tuple[float, float]:
         """
@@ -254,14 +266,14 @@ class TrackerTemplate:
             # In portrait, module width runs along torque tube
             single_string_length = (module_width * self.modules_per_string) + \
                         (self.module_spacing_m * (self.modules_per_string - 1))
-            # Tracker width is module length
-            total_width = module_length
+            # Tracker width is module length × modules_high (stacked E/W)
+            total_width = module_length * self.modules_high
         else:  # LANDSCAPE
             # In landscape, module length runs along torque tube
             single_string_length = (module_length * self.modules_per_string) + \
                         (self.module_spacing_m * (self.modules_per_string - 1))
-            # Tracker width is module width
-            total_width = module_width
+            # Tracker width is module width × modules_high (stacked E/W)
+            total_width = module_width * self.modules_high
         
         # Calculate total length based on motor placement type
         if self.motor_placement_type == "middle_of_string":
@@ -319,5 +331,6 @@ class TrackerTemplate:
     
     def __str__(self) -> str:
         dims = self.get_physical_dimensions()
+        config_suffix = f"{self.modules_high}{'P' if self.module_orientation == ModuleOrientation.PORTRAIT else 'L'}"
         return (f"{self.template_name} - {self.get_total_modules()} modules "
-                f"({dims[0]:.1f}m x {dims[1]:.1f}m)")
+                f"({dims[0]:.1f}m x {dims[1]:.1f}m) [{config_suffix}]")
