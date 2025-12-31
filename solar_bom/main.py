@@ -48,6 +48,8 @@ class SolarBOMApplication:
         file_menu.add_command(label="New Project", command=self.new_project)
         file_menu.add_command(label="Save Project", command=self.save_project)
         file_menu.add_separator()
+        file_menu.add_command(label="Apply Recommended Cable Sizes (All Blocks)", command=self.apply_recommended_sizes_all_blocks)
+        file_menu.add_separator()
         file_menu.add_command(label="Export Project...", command=self.export_project)
         file_menu.add_command(label="Import Project...", command=self.import_project)
         file_menu.add_separator()
@@ -404,6 +406,9 @@ class SolarBOMApplication:
         # Set up the callback to keep blocks synchronized with project
         # ADD THIS LINE HERE (outside and after the function definition):
         block_configurator.on_blocks_changed = update_bom_blocks
+
+        # Store reference for menu actions
+        self.block_configurator = block_configurator
         
         # Add status bar with project info
         status_frame = ttk.Frame(self.main_frame, relief=tk.SUNKEN, borderwidth=1)
@@ -485,6 +490,81 @@ class SolarBOMApplication:
             messagebox.showinfo("Success", "Project saved successfully")
         else:
             messagebox.showerror("Error", "Failed to save project")
+
+    def apply_recommended_sizes_all_blocks(self):
+        """Apply recommended cable sizes to all harnesses in all blocks"""
+        if not self.current_project:
+            messagebox.showwarning("No Project", "Please load a project first.")
+            return
+        
+        if not hasattr(self, 'block_configurator') or not self.block_configurator:
+            messagebox.showwarning("Error", "Block configurator not available. Please reload the project.")
+            return
+        
+        from src.utils.cable_sizing import calculate_all_cable_sizes
+        from src.models.block import WiringType
+        
+        # Get NEC factor from project
+        nec_factor = getattr(self.current_project, 'nec_safety_factor', 1.56)
+        
+        blocks_updated = 0
+        harnesses_updated = 0
+        
+        # Update the live BlockConfig objects in block_configurator
+        for block_id, block in self.block_configurator.blocks.items():
+            if not hasattr(block, 'wiring_config') or not block.wiring_config:
+                continue
+            
+            if block.wiring_config.wiring_type != WiringType.HARNESS:
+                continue
+            
+            if not hasattr(block.wiring_config, 'harness_groupings') or not block.wiring_config.harness_groupings:
+                continue
+            
+            # Get module Isc from block's tracker template
+            module_isc = 10.0  # Default fallback
+            if (block.tracker_template and 
+                hasattr(block.tracker_template, 'module_spec') and 
+                block.tracker_template.module_spec):
+                module_isc = block.tracker_template.module_spec.isc
+            
+            block_changed = False
+            
+            for string_count, harness_list in block.wiring_config.harness_groupings.items():
+                for harness in harness_list:
+                    num_strings = len(harness.string_indices)
+                    
+                    # Calculate recommended sizes
+                    recommended = calculate_all_cable_sizes(num_strings, module_isc, nec_factor)
+                    
+                    # Apply recommended sizes
+                    harness.string_cable_size = recommended['string']
+                    harness.cable_size = recommended['harness']
+                    harness.extender_cable_size = recommended['extender']
+                    harness.whip_cable_size = recommended['whip']
+                    
+                    harnesses_updated += 1
+                    block_changed = True
+            
+            if block_changed:
+                blocks_updated += 1
+        
+        # Update the serialized blocks in project for saving
+        serialized_blocks = {}
+        for block_id, block in self.block_configurator.blocks.items():
+            serialized_blocks[block_id] = block.to_dict()
+        self.current_project.blocks = serialized_blocks
+        
+        # Save the project
+        if blocks_updated > 0:
+            self.save_project()
+            messagebox.showinfo(
+                "Cable Sizes Updated", 
+                f"Applied recommended cable sizes to {harnesses_updated} harness(es) in {blocks_updated} block(s).\n\nProject saved.\n\nSelect a block to see the updated values."
+            )
+        else:
+            messagebox.showinfo("No Changes", "No harness configurations found to update.\n\nMake sure blocks have Wire Harness wiring type configured with harness groupings.")
+
 
     def export_project(self):
         """Export current project to a .ebom file for sharing"""
