@@ -91,8 +91,8 @@ class CombinerBoxConfig:
     def calculate_totals(self):
         """Calculate total current and breaker size"""
         if self.connections:
-            sum_current = sum(conn.harness_current for conn in self.connections)
-            self.total_input_current = sum_current * 1.56  # Additional NEC factor
+            # harness_current already includes NEC factor, so just sum them
+            self.total_input_current = sum(conn.harness_current for conn in self.connections)
             self.calculated_breaker_size = self._calculate_breaker_size()
         else:
             self.total_input_current = 0

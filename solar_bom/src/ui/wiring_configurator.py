@@ -472,8 +472,11 @@ class WiringConfigurator(tk.Toplevel):
             for harness_idx, harness in enumerate(harness_list):
                 num_strings = len(harness.string_indices)
                 
+                # Get NEC factor from project (default to 1.56)
+                nec_factor = getattr(self.project, 'nec_safety_factor', 1.56) if self.project else 1.56
+                
                 # Calculate recommended sizes
-                recommended = calculate_all_cable_sizes(num_strings, module_isc)
+                recommended = calculate_all_cable_sizes(num_strings, module_isc, nec_factor)
                 
                 # Check what would change
                 current = {
@@ -505,8 +508,11 @@ class WiringConfigurator(tk.Toplevel):
             for harness_idx, harness in enumerate(harness_list):
                 num_strings = len(harness.string_indices)
                 
-                # Calculate and apply recommended sizes
-                recommended = calculate_all_cable_sizes(num_strings, module_isc)
+                # Get NEC factor from project (default to 1.56)
+                nec_factor = getattr(self.project, 'nec_safety_factor', 1.56) if self.project else 1.56
+                
+                # Calculate recommended sizes
+                recommended = calculate_all_cable_sizes(num_strings, module_isc, nec_factor)
                 
                 harness.string_cable_size = recommended['string']
                 harness.cable_size = recommended['harness']
@@ -631,13 +637,16 @@ class WiringConfigurator(tk.Toplevel):
         if not self.block or not self.block.tracker_template or not self.block.tracker_template.module_spec:
             return "8 AWG"
         
-        # Calculate current: num_strings × module_Isc × 1.56 (NEC double 125% factor)
+        # Get NEC factor from project (default to 1.56)
+        nec_factor = getattr(self.project, 'nec_safety_factor', 1.56) if self.project else 1.56
+        
+        # Calculate current: num_strings × module_Isc × NEC factor
         module_isc = self.block.tracker_template.module_spec.isc
-        total_current = string_count * module_isc * 1.56
+        total_current = string_count * module_isc * nec_factor
         
         # Use the cable sizing utility - whip carries same current as harness
         from ..utils.cable_sizing import calculate_whip_cable_size
-        return calculate_whip_cable_size(string_count, module_isc, 1.56)
+        return calculate_whip_cable_size(string_count, module_isc, nec_factor)
 
     def is_cable_undersized(self, cable_size, string_count):
         """Check if cable size is undersized for the given string count"""
@@ -645,13 +654,16 @@ class WiringConfigurator(tk.Toplevel):
         if not self.block or not self.block.tracker_template or not self.block.tracker_template.module_spec:
             return False
         
+        # Get NEC factor from project (default to 1.56)
+        nec_factor = getattr(self.project, 'nec_safety_factor', 1.56) if self.project else 1.56
+        
         # Calculate required current
         module_isc = self.block.tracker_template.module_spec.isc
         required_current = string_count * module_isc
         
         # Use cable sizing utility to validate
         from ..utils.cable_sizing import validate_cable_size_for_current
-        return not validate_cable_size_for_current(cable_size, required_current, 1.25)
+        return not validate_cable_size_for_current(cable_size, required_current, nec_factor)
     
     def on_harness_cable_click(self, event):
         """Handle click for inline editing - improved UX"""
@@ -1990,7 +2002,10 @@ class WiringConfigurator(tk.Toplevel):
         if ampacity == 0:
             return True  # Unknown size, assume OK
         
-        nec_current = calculate_nec_current(current)
+        # Get NEC factor from project (default to 1.56)
+        nec_factor = getattr(self.project, 'nec_safety_factor', 1.56) if self.project else 1.56
+        
+        nec_current = calculate_nec_current(current, nec_factor)
         return nec_current <= ampacity
 
     def add_current_label(self, points, current, is_positive, segment_type='string'):
@@ -2938,8 +2953,11 @@ class WiringConfigurator(tk.Toplevel):
         if ampacity == 0:
             return line_id
         
+        # Get NEC factor from project (default to 1.56)
+        nec_factor = getattr(self.project, 'nec_safety_factor', 1.56) if self.project else 1.56
+
         # Calculate load percentage
-        nec_current = calculate_nec_current(current)
+        nec_current = calculate_nec_current(current, nec_factor)
         load_percent = (nec_current / ampacity) * 100
         
         # Only add warning if it's an overload (>100%)
@@ -2995,13 +3013,16 @@ class WiringConfigurator(tk.Toplevel):
         # Create default single harness for each string count
         self.block.wiring_config.harness_groupings = {}
         for string_count, positions in tracker_groups.items():
+            # Get recommended cable sizes for this string count
+            recommended = self.get_recommended_cable_sizes_for_harness(string_count)
+
             self.block.wiring_config.harness_groupings[string_count] = [
                 HarnessGroup(
                     string_indices=list(range(string_count)),
-                    cable_size=self.harness_cable_size_var.get(),
-                    string_cable_size="",  # Use block default
-                    extender_cable_size="",  # Use block default
-                    whip_cable_size="",  # Use block default
+                    cable_size=recommended['harness'],
+                    string_cable_size=recommended['string'],
+                    extender_cable_size=recommended['extender'],
+                    whip_cable_size=recommended['whip'],
                     fuse_rating_amps=self.calculate_recommended_fuse_size(list(range(string_count))),
                     use_fuse=string_count > 1
                 )
@@ -3231,13 +3252,17 @@ class WiringConfigurator(tk.Toplevel):
         # Calculate recommended fuse size
         recommended_fuse = self.calculate_recommended_fuse_size(selected_indices)
 
-        # Create new harness with default cable sizes
+        # Get recommended cable sizes
+        num_strings = len(selected_indices)
+        recommended = self.get_recommended_cable_sizes_for_harness(num_strings)
+
+        # Create new harness with recommended cable sizes
         new_harness = HarnessGroup(
             string_indices=selected_indices,
-            cable_size=self.harness_cable_size_var.get(),  # Use current block default
-            string_cable_size="",  # Empty = use block default
-            extender_cable_size="",  # Empty = use block default
-            whip_cable_size="",  # Empty = use block default
+            cable_size=recommended['harness'],
+            string_cable_size=recommended['string'],
+            extender_cable_size=recommended['extender'],
+            whip_cable_size=recommended['whip'],
             fuse_rating_amps=recommended_fuse,
             use_fuse=len(selected_indices) > 1  # Only use fuses for 2+ strings
         )
@@ -3901,6 +3926,25 @@ class WiringConfigurator(tk.Toplevel):
                 return fuse_size
         
         return self.FUSE_RATINGS[-1]  # Return largest if none found
+    
+    def get_recommended_cable_sizes_for_harness(self, num_strings):
+        """Get recommended cable sizes for a harness based on string count"""
+        from ..utils.cable_sizing import calculate_all_cable_sizes
+        
+        # Get module Isc
+        module_isc = 10.0  # Default fallback
+        if (self.block and 
+            hasattr(self.block, 'tracker_template') and 
+            self.block.tracker_template and 
+            hasattr(self.block.tracker_template, 'module_spec') and 
+            self.block.tracker_template.module_spec):
+            module_isc = self.block.tracker_template.module_spec.isc
+        
+        # Get NEC factor from project
+        nec_factor = getattr(self.project, 'nec_safety_factor', 1.56) if self.project else 1.56
+        
+        # Calculate recommended sizes
+        return calculate_all_cable_sizes(num_strings, module_isc, nec_factor)
     
     def get_current_routes(self):
         """Get routes based on current routing mode (realistic or conceptual)"""
@@ -4771,14 +4815,15 @@ class WiringConfigurator(tk.Toplevel):
                 harness_idx < len(self.block.wiring_config.harness_groupings[string_count])):
                 harness = self.block.wiring_config.harness_groupings[string_count][harness_idx]
         
-        # For default harnesses, create a harness with default values
+        # For default harnesses, create a harness with recommended values
         if is_default and harness is None:
+            recommended = self.get_recommended_cable_sizes_for_harness(len(string_indices))
             harness = HarnessGroup(
                 string_indices=string_indices,
-                cable_size="10 AWG",
-                string_cable_size="10 AWG",
-                extender_cable_size="8 AWG",
-                whip_cable_size="8 AWG"
+                cable_size=recommended['harness'],
+                string_cable_size=recommended['string'],
+                extender_cable_size=recommended['extender'],
+                whip_cable_size=recommended['whip']
             )
         
         # Calculate collection points

@@ -254,14 +254,23 @@ def wire_harness_compatibility(
     
     return is_acceptable, utilization
 
-def calculate_nec_current(isc: float) -> float:
-    """Calculate NEC-compliant current (125% of Isc)"""
-    return isc * 1.56
+def calculate_nec_current(isc: float, nec_factor: float = 1.56) -> float:
+    """Calculate NEC-compliant current
     
-def calculate_conductor_required_ampacity(isc: float) -> float:
-    """Calculate required conductor ampacity per NEC (156.25% of Isc)"""
-    # 156.25% comes from 125% * 125% (double 125% factor)
-    return isc * 1.5625
+    Args:
+        isc: Short circuit current in amperes
+        nec_factor: NEC safety factor (default 1.56)
+    """
+    return isc * nec_factor
+    
+def calculate_conductor_required_ampacity(isc: float, nec_factor: float = 1.56) -> float:
+    """Calculate required conductor ampacity per NEC
+    
+    Args:
+        isc: Short circuit current in amperes
+        nec_factor: NEC safety factor (default 1.56)
+    """
+    return isc * nec_factor
 
 def get_ampacity_for_wire_gauge(wire_gauge: str, temperature_rating: int = 90) -> float:
     """
@@ -304,7 +313,8 @@ def validate_device_inputs(
 
 def validate_input_current(
     input_current: float,
-    max_input_current: float
+    max_input_current: float,
+    nec_factor: float = 1.56
 ) -> Tuple[bool, str, float]:
     """
     Validate if the current flowing into an input is within limits.
@@ -312,6 +322,7 @@ def validate_input_current(
     Args:
         input_current: Current flowing into the input (A)
         max_input_current: Maximum rated current for the input (A)
+        nec_factor: NEC safety factor (default 1.56)
         
     Returns:
         Tuple containing:
@@ -319,8 +330,8 @@ def validate_input_current(
             - str: Error message if invalid, empty string if valid
             - float: Utilization percentage
     """
-    # Apply NEC 125% safety factor
-    design_current = input_current * 1.56
+    # Apply NEC safety factor
+    design_current = input_current * nec_factor
     utilization = (design_current / max_input_current) * 100
     
     if design_current > max_input_current:
@@ -329,7 +340,8 @@ def validate_input_current(
 
 def validate_mppt_channel(
     channel_current: float,
-    max_channel_current: float
+    max_channel_current: float,
+    nec_factor: float = 1.56
 ) -> Tuple[bool, str, float]:
     """
     Validate if the current flowing into an MPPT channel is within limits.
@@ -337,6 +349,7 @@ def validate_mppt_channel(
     Args:
         channel_current: Current flowing into the MPPT channel (A)
         max_channel_current: Maximum rated current for the MPPT channel (A)
+        nec_factor: NEC safety factor (default 1.56)
         
     Returns:
         Tuple containing:
@@ -344,8 +357,8 @@ def validate_mppt_channel(
             - str: Error message if invalid, empty string if valid
             - float: Utilization percentage
     """
-    # Apply NEC 125% safety factor
-    design_current = channel_current * 1.56
+    # Apply NEC safety factor
+    design_current = channel_current * nec_factor
     utilization = (design_current / max_channel_current) * 100
     
     if design_current > max_channel_current:
