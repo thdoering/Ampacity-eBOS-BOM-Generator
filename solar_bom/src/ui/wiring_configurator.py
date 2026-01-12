@@ -115,7 +115,6 @@ class WiringConfigurator(tk.Toplevel):
         self.drag_whips = False
         self.selection_box = None
         self.routing_mode_var = tk.StringVar(value="realistic")
-        self.extended_extender_points = {}  # Track extended extender points
         
         # Set up window properties
         self.title("Wiring Configuration")
@@ -1220,8 +1219,6 @@ class WiringConfigurator(tk.Toplevel):
                     saved_labels[label_id] = label_info['current_pos']
 
         self.canvas.delete("all")
-        # Reset extended extender points
-        self.extended_extender_points = {}
 
         # Reset current labels tracking
         self.current_labels = {}
@@ -3695,31 +3692,15 @@ class WiringConfigurator(tk.Toplevel):
         return pos_nodes, neg_nodes
 
     def draw_harness_extender_cables(self, pos_extender_point, neg_extender_point, pos_whip_point, neg_whip_point, num_strings, tracker_idx, harness_idx):
-        """Draw extender cables for a harness"""
-        current_pos_whip = self.get_whip_position(str(tracker_idx), 'positive', harness_idx)
-        current_neg_whip = self.get_whip_position(str(tracker_idx), 'negative', harness_idx)
-        
-        # Check if we have extended extender points
-        extended_pos = self.extended_extender_points.get((tracker_idx, harness_idx, 'positive'), pos_extender_point)
-        extended_neg = self.extended_extender_points.get((tracker_idx, harness_idx, 'negative'), neg_extender_point)
+       """Draw extender cables for a harness"""
+       current_pos_whip = self.get_whip_position(str(tracker_idx), 'positive', harness_idx)
+       current_neg_whip = self.get_whip_position(str(tracker_idx), 'negative', harness_idx)
 
-        # Get harness group for cable sizes
-        harness = None
-        string_count = len(self.block.tracker_positions[tracker_idx].strings)
-        if (hasattr(self.block.wiring_config, 'harness_groupings') and 
-            string_count in self.block.wiring_config.harness_groupings and
-            harness_idx < len(self.block.wiring_config.harness_groupings[string_count])):
-            harness = self.block.wiring_config.harness_groupings[string_count][harness_idx]
+       if pos_extender_point and current_pos_whip:
+           self.draw_extender_route(pos_extender_point, current_pos_whip, num_strings, True, tracker_idx, harness_idx)
 
-        if extended_pos and current_pos_whip:
-            self._current_harness_group = harness
-            self.draw_extender_route(extended_pos, current_pos_whip, num_strings, True, tracker_idx, harness_idx)
-            self._current_harness_group = None
-
-        if extended_neg and current_neg_whip:
-            self._current_harness_group = harness
-            self.draw_extender_route(extended_neg, current_neg_whip, num_strings, False, tracker_idx, harness_idx)
-            self._current_harness_group = None
+       if neg_extender_point and current_neg_whip:
+           self.draw_extender_route(neg_extender_point, current_neg_whip, num_strings, False, tracker_idx, harness_idx)
 
     def draw_harness_whip_to_device(self, tracker_idx, harness_idx, num_strings):
         """Draw whip to device connections for a harness"""
@@ -4402,111 +4383,52 @@ class WiringConfigurator(tk.Toplevel):
         return self.get_whip_default_position(tracker_id, polarity, harness_idx=0)
     
     def draw_harness_to_extender_connection(self, collection_points, extender_point, num_strings, is_positive, harness, tracker_idx, harness_idx):
-        """Draw harness cables from collection points to extender point"""
-        if not collection_points or not extender_point:
-            return
-        
-        # Check if this is a 1-string harness
-        if num_strings == 1:
-            # For 1-string harness, no harness trunk is drawn
-            # The extender point is already at the collection point
-            # Just update the extended extender points to match
-            self.extended_extender_points[(tracker_idx, harness_idx, 'positive' if is_positive else 'negative')] = collection_points[0]
-            return
-        
-        # Sort collection points to route from far end toward extender point
-        extender_point = self.get_harness_extender_end(tracker_idx, harness_idx, is_positive, collection_points)
-        if not extender_point:
-            return
-        
-        # Get the opposite polarity's extender point to check if we need a long trunk
-        opposite_polarity = 'negative' if is_positive else 'positive'
-        opposite_extender_point = self.get_extender_point(tracker_idx, opposite_polarity, harness_idx)
-        
-        # Determine if we need a long trunk end based on device location
-        needs_long_trunk = False
-        final_extender_point = extender_point
-        
-        if opposite_extender_point and abs(extender_point[1] - opposite_extender_point[1]) > 0.1:
-            # The extender points are at different y-coordinates
-            device_y = self.block.device_y
-            
-            # Calculate the midpoint between the two harness extender points
-            harness_midpoint_y = (extender_point[1] + opposite_extender_point[1]) / 2
-            
-            # Determine which harness needs the long trunk
-            if device_y < min(extender_point[1], opposite_extender_point[1]):
-                # Device is north of both harnesses
-                needs_long_trunk = not is_positive  # Negative gets long trunk
-            elif device_y > max(extender_point[1], opposite_extender_point[1]):
-                # Device is south of both harnesses  
-                needs_long_trunk = is_positive  # Positive gets long trunk
-            else:
-                # Device is between harnesses - check which side of center
-                if device_y < harness_midpoint_y:
-                    # Device is on north side of center
-                    needs_long_trunk = not is_positive  # Negative gets long trunk
-                else:
-                    # Device is on south side of center (or exactly at center)
-                    needs_long_trunk = is_positive  # Positive gets long trunk
-                
-            if needs_long_trunk:
-                # Create new extender point at the same y-coordinate as opposite harness
-                final_extender_point = (extender_point[0], opposite_extender_point[1])
-        
-        # Determine if extender is at north or south end
-        extender_y = extender_point[1]
-        extender_is_north = extender_y == min(p[1] for p in collection_points)
+       """Draw harness cables from collection points to extender point"""
+       if not collection_points or not extender_point:
+           return
+       
+       # Sort collection points to route from far end toward extender point
+       extender_point = self.get_harness_extender_end(tracker_idx, harness_idx, is_positive, collection_points)
+       if not extender_point:
+           return
+           
+       # Determine if extender is at north or south end
+       extender_y = extender_point[1]
+       extender_is_north = extender_y == min(p[1] for p in collection_points)
 
-        if extender_is_north:
-            # Extender at north, route from south to north  
-            sorted_points = sorted(collection_points, key=lambda p: p[1], reverse=True)
-        else:
-            # Extender at south, route from north to south
-            sorted_points = sorted(collection_points, key=lambda p: p[1], reverse=False)
-        
-        # Connect collection points in sequence, with last one being the original extender point
-        for i in range(len(sorted_points)):
-            start_point = sorted_points[i]
-            
-            if i < len(sorted_points) - 1:
-                # Connect to next collection point
-                end_point = sorted_points[i + 1]
-            else:
-                # Last point - connect to extender point
-                end_point = extender_point
-                # Verify they're not the same (they should be for the last collection point)
-                if abs(end_point[0] - start_point[0]) < 0.1 and abs(end_point[1] - start_point[1]) < 0.1:
-                    # If we need a long trunk, draw from this point to the final extender point
-                    if needs_long_trunk and abs(extender_point[1] - final_extender_point[1]) > 0.1:
-                        route = self.calculate_cable_route(
-                            extender_point[0], extender_point[1],
-                            final_extender_point[0], final_extender_point[1],
-                            is_positive, len(sorted_points)
-                        )
-                        current = self.calculate_current_for_segment('harness', num_strings)
-                        cable_size = harness.cable_size if hasattr(harness, 'cable_size') else self.harness_cable_size_var.get()
-                        context_info = f"T{tracker_idx+1}-H{harness_idx+1} Harness"
-                        self.draw_wire_route(route, cable_size, current, is_positive, "harness", context_info)
-                    continue  # Don't draw zero-length cable
-            
-            route = self.calculate_cable_route(
-                start_point[0], start_point[1],
-                end_point[0], end_point[1],
-                is_positive, i
-            )
-            
-            # Calculate accumulated current (more strings as we progress toward device)
-            accumulated_strings = len(sorted_points) - i
-            current = self.calculate_current_for_segment('harness', num_strings)
-            cable_size = harness.cable_size if hasattr(harness, 'cable_size') else self.harness_cable_size_var.get()
-            context_info = f"T{tracker_idx+1}-H{harness_idx+1} Harness"
-            self.draw_wire_route(route, cable_size, current, is_positive, "harness", context_info)
-        
-        # If we added a long trunk, draw that final segment
-        if needs_long_trunk and abs(extender_point[1] - final_extender_point[1]) > 0.1:
-            # Update the extender point for this harness to the extended position
-            self.extended_extender_points[(tracker_idx, harness_idx, 'positive' if is_positive else 'negative')] = final_extender_point
+       if extender_is_north:
+           # Extender at north, route from south to north  
+           sorted_points = sorted(collection_points, key=lambda p: p[1], reverse=True)
+       else:
+           # Extender at south, route from north to south
+           sorted_points = sorted(collection_points, key=lambda p: p[1], reverse=False)
+       
+       # Connect collection points in sequence, with last one being the extender point
+       for i in range(len(sorted_points)):
+           start_point = sorted_points[i]
+           
+           if i < len(sorted_points) - 1:
+               # Connect to next collection point
+               end_point = sorted_points[i + 1]
+           else:
+               # Last point - this should be the extender point
+               end_point = extender_point
+               # Verify they're the same (they should be)
+               if abs(end_point[0] - start_point[0]) < 0.1 and abs(end_point[1] - start_point[1]) < 0.1:
+                   continue  # Don't draw zero-length cable
+           
+           route = self.calculate_cable_route(
+               start_point[0], start_point[1],
+               end_point[0], end_point[1],
+               is_positive, i
+           )
+           
+           # Calculate accumulated current (more strings as we progress toward device)
+           accumulated_strings = len(sorted_points) - i
+           current = self.calculate_current_for_segment('harness', num_strings)
+           cable_size = harness.cable_size if hasattr(harness, 'cable_size') else self.harness_cable_size_var.get()
+           context_info = f"T{tracker_idx+1}-H{harness_idx+1} Harness"
+           self.draw_wire_route(route, cable_size, current, is_positive, "harness", context_info)
 
     def draw_simple_harness_connection(self, collection_points, extender_point, num_strings, is_positive):
         """Draw simple harness connection for default single harness"""
