@@ -18,7 +18,27 @@ INSTALLATION INSTRUCTIONS
 
 This is our internal tool - these warnings are normal for unsigned applications.
 
-WHAT'S NEW IN VERSION 2.5.0 (December 11, 2025)
+WHAT'S NEW IN VERSION 2.6.0 (January 13, 2026)
+----------------------------------------------
+
+NEW FEATURES:
+- Tracker Multi-Select and Move: Select and relocate multiple trackers at once
+- 2P Tracker Support: Preliminary support for 2-portrait configurations (WIP)
+- Batch Wire Sizing: Apply recommended wire sizes to all blocks with one click
+
+IMPROVEMENTS:
+- All wires now default to recommended cable sizes automatically
+- Harness geometry updated: Positive/negative harnesses identical, extenders differentiated
+- Complete whip cable pricing added to cost estimates
+
+PREVIOUS VERSION HIGHLIGHTS (v2.5.0):
+- Automatic pricing with importable data
+- Project import/export for team collaboration
+- Multiple module types per project
+- User-configurable NEC safety factor
+- Shift+select in harness configurator
+
+VERSION 2.5.0 (December 11, 2025)
 ----------------------------------------------
 
 MAJOR NEW FEATURES:

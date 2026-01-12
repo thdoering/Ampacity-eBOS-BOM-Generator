@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0] - 2026-01-13
+
+### Added
+- **Tracker Multi-Select and Move**: Select and move multiple trackers simultaneously for faster layout adjustments
+- **2P Tracker Support**: Added preliminary support for 2-portrait tracker configurations (work in progress)
+- **Batch Wire Sizing**: Added button to apply recommended wire sizes to all blocks at once
+- **Whip Pricing**: Updated pricing data to include previously missing whip cables
+
+### Changed
+- **Default Wire Sizes**: All wires now default to recommended cable sizes automatically
+- **Harness Geometry**: Reverted to identical positive/negative harness routing with differentiated extender cables
+
+### Enhanced
+- Faster project layout workflow with multi-tracker operations
+- Improved cable sizing efficiency with bulk apply function
+- More accurate cost estimates with complete whip pricing
+
 ## [2.5.0] - 2025-12-11
 
 ### Added
