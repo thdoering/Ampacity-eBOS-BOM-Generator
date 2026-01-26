@@ -155,14 +155,17 @@ class QuickEstimate(ttk.Frame):
         elif num_strings == 2:
             return ["2", "1+1"]
         elif num_strings == 3:
-            return ["3", "2+1", "1+1+1"]
+            return ["3", "2+1"]
         elif num_strings == 4:
-            return ["4", "3+1", "2+2", "2+1+1", "1+1+1+1"]
+            return ["4", "3+1", "2+2"]
         elif num_strings == 5:
-            return ["5", "4+1", "3+2", "3+1+1", "2+2+1", "2+1+1+1", "1+1+1+1+1"]
+            return ["5", "4+1", "3+2"]
         elif num_strings == 6:
-            return ["6", "5+1", "4+2", "4+1+1", "3+3", "3+2+1", "3+1+1+1",
-                    "2+2+2", "2+2+1+1", "2+1+1+1+1", "1+1+1+1+1+1"]
+            return ["6", "5+1", "4+2", "3+3"]
+        elif num_strings == 7:
+            return ["7", "6+1", "5+2", "4+3"]
+        elif num_strings == 8:
+            return ["8", "7+1", "6+2", "5+3", "4+4"]
         else:
             return [str(num_strings)]
 
@@ -518,7 +521,7 @@ class QuickEstimate(ttk.Frame):
         # Strings dropdown
         strings_var = tk.StringVar(value=str(tracker['strings']))
         strings_combo = ttk.Combobox(row_frame, textvariable=strings_var, 
-                                     values=["1", "2", "3", "4", "5", "6"], 
+                                     values=["1", "2", "3", "4", "5", "6", "7", "8"], 
                                      width=12, state='readonly')
         strings_combo.pack(side='left', padx=2)
         
@@ -726,8 +729,8 @@ class QuickEstimateDialog(tk.Toplevel):
         self.current_project = current_project
         
         # Set dialog size
-        self.geometry("900x700")
-        self.minsize(800, 600)
+        self.geometry("1100x850")
+        self.minsize(900, 700)
         
         # Make dialog modal
         self.transient(parent)
