@@ -95,7 +95,7 @@ class SolarBOMApplication:
         notebook.pack(fill='both', expand=True, padx=10, pady=10)
         
         # Create frames for each tab
-        quick_estimate_frame = ttk.Frame(notebook)
+        project_info_frame = ttk.Frame(notebook)
         module_frame = ttk.Frame(notebook)
         tracker_frame = ttk.Frame(notebook)
         block_frame = ttk.Frame(notebook)
@@ -111,10 +111,14 @@ class SolarBOMApplication:
         # Store reference for other components to access
         self.device_configurator = device_configurator
         
-        # Create Quick Estimate tab
-        from src.ui.quick_estimate import QuickEstimate
-        quick_estimate = QuickEstimate(quick_estimate_frame, current_project=self.current_project)
-        quick_estimate.pack(fill='both', expand=True, padx=5, pady=5)
+        # Create Project Info tab
+        from src.ui.project_info_tab import ProjectInfoTab
+        project_info_tab = ProjectInfoTab(
+            project_info_frame, 
+            current_project=self.current_project,
+            on_project_changed=self.autosave_project
+        )
+        project_info_tab.pack(fill='both', expand=True, padx=5, pady=5)
 
         # Create BOM manager tab - pass reference to main app
         bom_manager = BOMManager(bom_frame, main_app=self)
@@ -208,7 +212,7 @@ class SolarBOMApplication:
         module_manager.pack(fill='both', expand=True, padx=5, pady=5)
         
         # Add tabs to notebook
-        notebook.add(quick_estimate_frame, text='Quick Estimate')
+        notebook.add(project_info_frame, text='Project Info')
         notebook.add(module_frame, text='Modules')
         notebook.add(tracker_frame, text='Tracker Templates')
         notebook.add(block_frame, text='Block Layout')
