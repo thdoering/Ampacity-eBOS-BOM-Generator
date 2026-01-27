@@ -4,18 +4,26 @@ from typing import Optional, Dict, List, Any
 from pathlib import Path
 import json
 import uuid
+from datetime import datetime
 
 
 class QuickEstimate(ttk.Frame):
     """Quick estimation tool for early-stage project sizing with hierarchical structure"""
     
-    def __init__(self, parent, current_project=None):
+    def __init__(self, parent, current_project=None, estimate_id=None, on_save=None):
         super().__init__(parent)
         self.current_project = current_project
+        self.estimate_id = estimate_id
+        self.on_save = on_save
         self.pricing_data = self.load_pricing_data()
         
         # Data structure for subarrays and blocks
         self.subarrays: Dict[str, Dict[str, Any]] = {}
+        
+        # Global settings defaults
+        self.module_width_default = 1134
+        self.modules_per_string_default = 28
+        self.row_spacing_default = 20.0
         
         # Track currently selected item
         self.selected_item_id = None
@@ -23,8 +31,12 @@ class QuickEstimate(ttk.Frame):
         
         self.setup_ui()
         
-        # Add a default subarray with one block to start
-        self.add_subarray(auto_add_block=True)
+        # Load existing estimate or create default
+        if self.estimate_id and self.current_project:
+            self.load_estimate()
+        else:
+            # Add a default subarray with one block to start
+            self.add_subarray(auto_add_block=True)
 
     def load_pricing_data(self):
         """Load pricing data from JSON file"""
@@ -40,6 +52,67 @@ class QuickEstimate(ttk.Frame):
     def generate_id(self, prefix: str) -> str:
         """Generate a unique ID with a prefix"""
         return f"{prefix}_{uuid.uuid4().hex[:8]}"
+    
+    def get_next_block_name(self, subarray_id: str, source_name: str) -> str:
+        """Generate the next logical block name based on the source name pattern"""
+        import re
+        
+        # Try to find a trailing number (with optional leading zeros)
+        match = re.match(r'^(.*?)(\d+)$', source_name)
+        
+        if not match:
+            # No number found, just append (Copy)
+            return f"{source_name} (Copy)"
+        
+        prefix = match.group(1)
+        number_str = match.group(2)
+        number = int(number_str)
+        
+        # Determine the padding (e.g., "01" is width 2, "001" is width 3)
+        padding = len(number_str)
+        
+        # Get existing block names in this subarray
+        existing_names = set()
+        if subarray_id in self.subarrays:
+            for block_data in self.subarrays[subarray_id]['blocks'].values():
+                existing_names.add(block_data['name'])
+        
+        # Find the next available number
+        next_number = number + 1
+        while True:
+            new_name = f"{prefix}{str(next_number).zfill(padding)}"
+            if new_name not in existing_names:
+                return new_name
+            next_number += 1
+            # Safety limit to prevent infinite loop
+            if next_number > number + 1000:
+                return f"{source_name} (Copy)"
+            
+    def disable_combobox_scroll(self, combobox):
+        """Prevent combobox from responding to mouse wheel"""
+        def _ignore_scroll(event):
+            return "break"
+        
+        combobox.bind("<MouseWheel>", _ignore_scroll)
+        # For Linux compatibility
+        combobox.bind("<Button-4>", _ignore_scroll)
+        combobox.bind("<Button-5>", _ignore_scroll)
+
+    def update_string_count(self):
+        """Update the string count label for the current block"""
+        if not hasattr(self, 'string_count_label') or not hasattr(self, 'current_block'):
+            return
+        
+        total_strings = 0
+        total_trackers = 0
+        
+        for tracker in self.current_block.get('trackers', []):
+            qty = tracker.get('quantity', 0)
+            strings = tracker.get('strings', 0)
+            total_trackers += qty
+            total_strings += qty * strings
+        
+        self.string_count_label.config(text=f"Total Strings: {total_strings:,}  |  Total Trackers: {total_trackers:,}")
 
     # ==================== Data Management ====================
     
@@ -79,9 +152,8 @@ class QuickEstimate(ttk.Frame):
             'name': f"Block {block_num}",
             'type': 'combiner',  # 'combiner' or 'string_inverter'
             'num_rows': 4,
-            'row_spacing_ft': 20.0,
             'trackers': [
-                {'strings': 2, 'quantity': 100, 'harness_config': '2'}
+                {'strings': 2, 'quantity': 1, 'harness_config': '2'}
             ]
         }
         
@@ -166,6 +238,22 @@ class QuickEstimate(ttk.Frame):
             return ["7", "6+1", "5+2", "4+3"]
         elif num_strings == 8:
             return ["8", "7+1", "6+2", "5+3", "4+4"]
+        elif num_strings == 9:
+            return ["9", "8+1", "7+2", "6+3", "5+4"]
+        elif num_strings == 10:
+            return ["10", "9+1", "8+2", "7+3", "6+4", "5+5"]
+        elif num_strings == 11:
+            return ["11", "10+1", "9+2", "8+3", "7+4", "6+5"]
+        elif num_strings == 12:
+            return ["12", "11+1", "10+2", "9+3", "8+4", "7+5", "6+6"]
+        elif num_strings == 13:
+            return ["13", "12+1", "11+2", "10+3", "9+4", "8+5", "7+6"]
+        elif num_strings == 14:
+            return ["14", "13+1", "12+2", "11+3", "10+4", "9+5", "8+6", "7+7"]
+        elif num_strings == 15:
+            return ["15", "14+1", "13+2", "12+3", "11+4", "10+5", "9+6", "8+7"]
+        elif num_strings == 16:
+            return ["16", "15+1", "14+2", "13+3", "12+4", "11+5", "10+6", "9+7", "8+8"]
         else:
             return [str(num_strings)]
 
@@ -175,6 +263,128 @@ class QuickEstimate(ttk.Frame):
             return [int(x) for x in config_str.split('+')]
         except:
             return []
+        
+    def load_estimate(self):
+        """Load estimate data from the project"""
+        if not self.current_project or not self.estimate_id:
+            self.add_subarray(auto_add_block=True)
+            return
+        
+        estimate_data = self.current_project.quick_estimates.get(self.estimate_id)
+        if not estimate_data:
+            self.add_subarray(auto_add_block=True)
+            return
+        
+        # Load global settings
+        self.module_width_default = estimate_data.get('module_width_mm', 1134)
+        self.modules_per_string_default = estimate_data.get('modules_per_string', 28)
+        self.row_spacing_default = estimate_data.get('row_spacing_ft', 20.0)
+        
+        # Update UI if already set up
+        if hasattr(self, 'module_width_var'):
+            self.module_width_var.set(str(self.module_width_default))
+        if hasattr(self, 'modules_per_string_var'):
+            self.modules_per_string_var.set(str(self.modules_per_string_default))
+        if hasattr(self, 'row_spacing_var'):
+            self.row_spacing_var.set(str(self.row_spacing_default))
+        
+        # Load subarrays
+        saved_subarrays = estimate_data.get('subarrays', {})
+        
+        if not saved_subarrays:
+            # No saved data, create default
+            self.add_subarray(auto_add_block=True)
+            return
+        
+        # Clear existing tree items
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        self.subarrays.clear()
+        
+        # Reconstruct subarrays and blocks
+        for subarray_id, subarray_data in saved_subarrays.items():
+            # Add to internal data
+            self.subarrays[subarray_id] = {
+                'name': subarray_data.get('name', 'Subarray'),
+                'transformer_mva': subarray_data.get('transformer_mva', 4.0),
+                'blocks': {}
+            }
+            
+            # Add to tree
+            self.tree.insert('', 'end', subarray_id, text=subarray_data.get('name', 'Subarray'), open=True)
+            
+            # Load blocks
+            for block_id, block_data in subarray_data.get('blocks', {}).items():
+                self.subarrays[subarray_id]['blocks'][block_id] = {
+                    'name': block_data.get('name', 'Block'),
+                    'type': block_data.get('type', 'combiner'),
+                    'num_rows': block_data.get('num_rows', 4),
+                    'trackers': block_data.get('trackers', [{'strings': 2, 'quantity': 1, 'harness_config': '2'}])
+                }
+                
+                # Add block to tree
+                self.tree.insert(subarray_id, 'end', block_id, text=block_data.get('name', 'Block'))
+        
+        # Select first item
+        first_items = self.tree.get_children()
+        if first_items:
+            self.tree.selection_set(first_items[0])
+            self.on_tree_select(None)
+
+    def save_estimate(self):
+        """Save estimate data to the project"""
+        if not self.current_project or not self.estimate_id:
+            return
+        
+        # Get current estimate or create new one
+        if self.estimate_id not in self.current_project.quick_estimates:
+            self.current_project.quick_estimates[self.estimate_id] = {
+                'name': 'Unnamed Estimate',
+                'created_date': datetime.now().isoformat(),
+            }
+        
+        estimate_data = self.current_project.quick_estimates[self.estimate_id]
+        
+        # Update global settings
+        try:
+            estimate_data['module_width_mm'] = float(self.module_width_var.get())
+        except ValueError:
+            estimate_data['module_width_mm'] = 1134
+        
+        try:
+            estimate_data['modules_per_string'] = int(self.modules_per_string_var.get())
+        except ValueError:
+            estimate_data['modules_per_string'] = 28
+        
+        try:
+            estimate_data['row_spacing_ft'] = float(self.row_spacing_var.get())
+        except ValueError:
+            estimate_data['row_spacing_ft'] = 20.0
+        
+        # Update modified date
+        estimate_data['modified_date'] = datetime.now().isoformat()
+        
+        # Save subarrays
+        estimate_data['subarrays'] = {}
+        
+        for subarray_id, subarray_data in self.subarrays.items():
+            estimate_data['subarrays'][subarray_id] = {
+                'name': subarray_data['name'],
+                'transformer_mva': subarray_data['transformer_mva'],
+                'blocks': {}
+            }
+            
+            for block_id, block_data in subarray_data['blocks'].items():
+                estimate_data['subarrays'][subarray_id]['blocks'][block_id] = {
+                    'name': block_data['name'],
+                    'type': block_data['type'],
+                    'num_rows': block_data['num_rows'],
+                    'trackers': block_data['trackers']
+                }
+        
+        # Notify callback
+        if self.on_save:
+            self.on_save()
 
     # ==================== UI Setup ====================
     
@@ -211,20 +421,24 @@ class QuickEstimate(ttk.Frame):
         bottom_frame = ttk.Frame(main_container)
         bottom_frame.pack(fill='both', expand=True)
         
-        # Module info frame (applies to all calculations)
-        module_frame = ttk.LabelFrame(bottom_frame, text="Module Info (for extender calculations)", padding="5")
-        module_frame.pack(fill='x', pady=(0, 10))
+        # Global settings frame (applies to all calculations)
+        settings_frame = ttk.LabelFrame(bottom_frame, text="Global Settings", padding="5")
+        settings_frame.pack(fill='x', pady=(0, 10))
         
-        module_inner = ttk.Frame(module_frame)
-        module_inner.pack(fill='x')
+        settings_inner = ttk.Frame(settings_frame)
+        settings_inner.pack(fill='x')
         
-        ttk.Label(module_inner, text="Module Width (mm):").pack(side='left', padx=(0, 5))
-        self.module_width_var = tk.StringVar(value="1134")
-        ttk.Entry(module_inner, textvariable=self.module_width_var, width=8).pack(side='left', padx=(0, 15))
+        ttk.Label(settings_inner, text="Module Width (mm):").pack(side='left', padx=(0, 5))
+        self.module_width_var = tk.StringVar(value=str(getattr(self, 'module_width_default', 1134)))
+        ttk.Entry(settings_inner, textvariable=self.module_width_var, width=8).pack(side='left', padx=(0, 15))
         
-        ttk.Label(module_inner, text="Modules per String:").pack(side='left', padx=(0, 5))
-        self.modules_per_string_var = tk.StringVar(value="28")
-        ttk.Spinbox(module_inner, from_=1, to=100, textvariable=self.modules_per_string_var, width=6).pack(side='left')
+        ttk.Label(settings_inner, text="Modules per String:").pack(side='left', padx=(0, 5))
+        self.modules_per_string_var = tk.StringVar(value=str(getattr(self, 'modules_per_string_default', 28)))
+        ttk.Spinbox(settings_inner, from_=1, to=100, textvariable=self.modules_per_string_var, width=6).pack(side='left', padx=(0, 15))
+        
+        ttk.Label(settings_inner, text="Row Spacing (ft):").pack(side='left', padx=(0, 5))
+        self.row_spacing_var = tk.StringVar(value=str(getattr(self, 'row_spacing_default', 20.0)))
+        ttk.Spinbox(settings_inner, from_=1, to=100, textvariable=self.row_spacing_var, width=6).pack(side='left')
         
         # Calculate button
         calc_btn = ttk.Button(bottom_frame, text="Calculate Estimate", command=self.calculate_estimate)
@@ -282,6 +496,9 @@ class QuickEstimate(ttk.Frame):
         add_block_btn = ttk.Button(btn_frame, text="+ Block", command=self.add_block_to_selected)
         add_block_btn.pack(side='left', padx=(0, 5))
         
+        copy_block_btn = ttk.Button(btn_frame, text="Copy Block", command=self.copy_selected_block)
+        copy_block_btn.pack(side='left', padx=(0, 5))
+        
         delete_btn = ttk.Button(btn_frame, text="Delete", command=self.delete_selected_item)
         delete_btn.pack(side='left')
 
@@ -304,6 +521,55 @@ class QuickEstimate(ttk.Frame):
         
         if subarray_id in self.subarrays:
             self.add_block(subarray_id)
+
+    def copy_selected_block(self):
+        """Copy the currently selected block with all its configurations"""
+        selection = self.tree.selection()
+        if not selection:
+            return
+        
+        item_id = selection[0]
+        parent_id = self.tree.parent(item_id)
+        
+        # Only copy if a block is selected (not a subarray)
+        if parent_id == '':
+            # Selected item is a subarray, not a block
+            return
+        
+        subarray_id = parent_id
+        source_block_id = item_id
+        
+        if subarray_id not in self.subarrays:
+            return
+        if source_block_id not in self.subarrays[subarray_id]['blocks']:
+            return
+        
+        # Get source block data
+        source_block = self.subarrays[subarray_id]['blocks'][source_block_id]
+        
+        # Create new block ID
+        new_block_id = self.generate_id("block")
+        
+        # Deep copy the tracker configurations
+        import copy
+        copied_trackers = copy.deepcopy(source_block['trackers'])
+        
+        # Create new block with copied data
+        new_block_name = self.get_next_block_name(subarray_id, source_block['name'])
+        
+        self.subarrays[subarray_id]['blocks'][new_block_id] = {
+            'name': new_block_name,
+            'type': source_block['type'],
+            'num_rows': source_block['num_rows'],
+            'trackers': copied_trackers
+        }
+        
+        # Add to tree view under the same subarray
+        self.tree.insert(subarray_id, 'end', new_block_id, text=new_block_name)
+        
+        # Select the new block
+        self.tree.selection_set(new_block_id)
+        self.on_tree_select(None)
 
     def setup_details_panel(self, parent):
         """Setup the right details panel"""
@@ -430,6 +696,22 @@ class QuickEstimate(ttk.Frame):
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
         
+        # Bind mouse wheel scrolling
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        
+        def _bind_mousewheel(event):
+            canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        
+        def _unbind_mousewheel(event):
+            canvas.unbind_all("<MouseWheel>")
+        
+        # Bind when mouse enters canvas, unbind when it leaves
+        canvas.bind("<Enter>", _bind_mousewheel)
+        canvas.bind("<Leave>", _unbind_mousewheel)
+        scrollable_frame.bind("<Enter>", _bind_mousewheel)
+        scrollable_frame.bind("<Leave>", _unbind_mousewheel)
+        
         # Form frame
         form_frame = ttk.Frame(scrollable_frame, padding="10")
         form_frame.pack(fill='x')
@@ -451,17 +733,18 @@ class QuickEstimate(ttk.Frame):
         type_var = tk.StringVar(value=block['type'])
         type_combo = ttk.Combobox(form_frame, textvariable=type_var, values=['combiner', 'string_inverter'], state='readonly', width=15)
         type_combo.grid(row=1, column=1, sticky='w', pady=5, padx=(10, 0))
+        self.disable_combobox_scroll(type_combo)
         
         def update_type(*args):
             block['type'] = type_var.get()
         type_var.trace_add('write', update_type)
         
         # Number of Rows
-        ttk.Label(form_frame, text="Rows from Block:").grid(row=2, column=0, sticky='w', pady=5)
+        ttk.Label(form_frame, text="Rows from Device:").grid(row=2, column=0, sticky='w', pady=5)
         rows_var = tk.StringVar(value=str(block['num_rows']))
         rows_spinbox = ttk.Spinbox(form_frame, from_=1, to=50, textvariable=rows_var, width=10)
         rows_spinbox.grid(row=2, column=1, sticky='w', pady=5, padx=(10, 0))
-        ttk.Label(form_frame, text="(furthest row from block)", font=('Helvetica', 8), foreground='gray').grid(row=2, column=2, sticky='w', padx=(5, 0))
+        ttk.Label(form_frame, text="(furthest row from combiner/string inverter)", font=('Helvetica', 8), foreground='gray').grid(row=2, column=2, sticky='w', padx=(5, 0))
         
         def update_rows(*args):
             try:
@@ -469,19 +752,6 @@ class QuickEstimate(ttk.Frame):
             except ValueError:
                 pass
         rows_var.trace_add('write', update_rows)
-        
-        # Row Spacing
-        ttk.Label(form_frame, text="Row Spacing (ft):").grid(row=3, column=0, sticky='w', pady=5)
-        spacing_var = tk.StringVar(value=str(block['row_spacing_ft']))
-        spacing_spinbox = ttk.Spinbox(form_frame, from_=1, to=100, textvariable=spacing_var, width=10)
-        spacing_spinbox.grid(row=3, column=1, sticky='w', pady=5, padx=(10, 0))
-        
-        def update_spacing(*args):
-            try:
-                block['row_spacing_ft'] = float(spacing_var.get())
-            except ValueError:
-                pass
-        spacing_var.trace_add('write', update_spacing)
         
         # Tracker Configurations Section
         tracker_frame = ttk.LabelFrame(scrollable_frame, text="Tracker Configurations", padding="10")
@@ -491,6 +761,13 @@ class QuickEstimate(ttk.Frame):
         self.current_block_tracker_frame = tracker_frame
         self.current_block_id = block_id
         self.current_subarray_id = subarray_id
+        self.current_block = block
+        
+        # String count display
+        count_frame = ttk.Frame(tracker_frame)
+        count_frame.pack(fill='x', pady=(0, 10))
+        self.string_count_label = ttk.Label(count_frame, text="Total Strings: 0", font=('Helvetica', 10, 'bold'))
+        self.string_count_label.pack(side='left')
         
         # Headers
         header_frame = ttk.Frame(tracker_frame)
@@ -508,6 +785,9 @@ class QuickEstimate(ttk.Frame):
         for i, tracker in enumerate(block['trackers']):
             self.add_tracker_row_ui(block, i, tracker)
         
+        # Update initial string count
+        self.update_string_count()
+        
         # Add tracker button
         add_btn = ttk.Button(tracker_frame, text="+ Add Tracker Type", 
                             command=lambda: self.add_new_tracker_to_block(block))
@@ -521,9 +801,10 @@ class QuickEstimate(ttk.Frame):
         # Strings dropdown
         strings_var = tk.StringVar(value=str(tracker['strings']))
         strings_combo = ttk.Combobox(row_frame, textvariable=strings_var, 
-                                     values=["1", "2", "3", "4", "5", "6", "7", "8"], 
+                                     values=["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16"], 
                                      width=12, state='readonly')
         strings_combo.pack(side='left', padx=2)
+        self.disable_combobox_scroll(strings_combo)
         
         # Quantity
         qty_var = tk.StringVar(value=str(tracker['quantity']))
@@ -536,6 +817,7 @@ class QuickEstimate(ttk.Frame):
         harness_combo = ttk.Combobox(row_frame, textvariable=harness_var, 
                                      values=harness_options, width=12)
         harness_combo.pack(side='left', padx=2)
+        self.disable_combobox_scroll(harness_combo)
         
         # Update harness options when strings change
         def on_strings_change(*args):
@@ -549,6 +831,7 @@ class QuickEstimate(ttk.Frame):
                     tracker['harness_config'] = new_options[0]
             except ValueError:
                 pass
+            self.update_string_count()
         strings_var.trace_add('write', on_strings_change)
         
         # Update data when values change
@@ -557,6 +840,7 @@ class QuickEstimate(ttk.Frame):
                 tracker['quantity'] = int(qty_var.get())
             except ValueError:
                 pass
+            self.update_string_count()
         qty_var.trace_add('write', on_qty_change)
         
         def on_harness_change(*args):
@@ -568,6 +852,7 @@ class QuickEstimate(ttk.Frame):
             if tracker in block['trackers']:
                 block['trackers'].remove(tracker)
             row_frame.destroy()
+            self.update_string_count()
         
         remove_btn = ttk.Button(row_frame, text="✕", width=3, command=remove_tracker)
         remove_btn.pack(side='left', padx=2)
@@ -644,7 +929,10 @@ class QuickEstimate(ttk.Frame):
                 
                 # Calculate whips for this block
                 num_rows = block['num_rows']
-                row_spacing = block['row_spacing_ft']
+                try:
+                    row_spacing = float(self.row_spacing_var.get())
+                except ValueError:
+                    row_spacing = 20.0
                 
                 if num_rows > 0:
                     for row_num in range(1, num_rows + 1):
@@ -723,10 +1011,12 @@ class QuickEstimate(ttk.Frame):
 class QuickEstimateDialog(tk.Toplevel):
     """Dialog wrapper for Quick Estimate tool"""
     
-    def __init__(self, parent, current_project=None):
+    def __init__(self, parent, current_project=None, estimate_id=None, on_save=None):
         super().__init__(parent)
         self.title("Quick Estimate")
         self.current_project = current_project
+        self.estimate_id = estimate_id
+        self.on_save = on_save
         
         # Set dialog size
         self.geometry("1100x850")
@@ -737,14 +1027,24 @@ class QuickEstimateDialog(tk.Toplevel):
         self.grab_set()
         
         # Create the Quick Estimate frame inside the dialog
-        self.quick_estimate = QuickEstimate(self, current_project=current_project)
+        self.quick_estimate = QuickEstimate(
+            self, 
+            current_project=current_project,
+            estimate_id=estimate_id,
+            on_save=self._handle_save
+        )
         self.quick_estimate.pack(fill='both', expand=True)
         
-        # Add close button at bottom
+        # Add button frame at bottom
         button_frame = ttk.Frame(self)
         button_frame.pack(fill='x', padx=10, pady=10)
         
-        close_btn = ttk.Button(button_frame, text="Close", command=self.destroy)
+        # Save button
+        save_btn = ttk.Button(button_frame, text="Save", command=self.save_and_close)
+        save_btn.pack(side='right', padx=(5, 0))
+        
+        # Close button (save on close)
+        close_btn = ttk.Button(button_frame, text="Close", command=self.save_and_close)
         close_btn.pack(side='right')
         
         # Center the dialog on the parent window
@@ -753,8 +1053,21 @@ class QuickEstimateDialog(tk.Toplevel):
         # Focus on the dialog
         self.focus_set()
         
+        # Handle window close button (X)
+        self.protocol("WM_DELETE_WINDOW", self.save_and_close)
+        
         # Wait for window to close before returning
         self.wait_window(self)
+    
+    def _handle_save(self):
+        """Internal save handler"""
+        if self.on_save:
+            self.on_save()
+    
+    def save_and_close(self):
+        """Save the estimate and close the dialog"""
+        self.quick_estimate.save_estimate()
+        self.destroy()
     
     def center_on_parent(self, parent):
         """Center the dialog on the parent window"""
