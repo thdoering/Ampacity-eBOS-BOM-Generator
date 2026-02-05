@@ -10,12 +10,13 @@ from datetime import datetime
 class QuickEstimate(ttk.Frame):
     """Quick estimation tool for early-stage project sizing with hierarchical structure"""
     
-    def __init__(self, parent, current_project=None, estimate_id=None, on_save=None):
+    def __init__(self, parent, current_project=None, on_save=None):
         super().__init__(parent)
         self.current_project = current_project
-        self.estimate_id = estimate_id
+        self.estimate_id = None
         self.on_save = on_save
         self.pricing_data = self.load_pricing_data()
+        self._estimate_id_map = {}  # Map display name to ID
         
         # Data structure for subarrays and blocks
         self.subarrays: Dict[str, Dict[str, Any]] = {}
@@ -31,12 +32,8 @@ class QuickEstimate(ttk.Frame):
         
         self.setup_ui()
         
-        # Load existing estimate or create default
-        if self.estimate_id and self.current_project:
-            self.load_estimate()
-        else:
-            # Add a default subarray with one block to start
-            self.add_subarray(auto_add_block=True)
+        # Load most recent estimate or show empty state
+        self._refresh_estimate_dropdown(auto_select=True)
 
     def load_pricing_data(self):
         """Load pricing data from JSON file"""
@@ -386,6 +383,149 @@ class QuickEstimate(ttk.Frame):
         if self.on_save:
             self.on_save()
 
+    # ==================== Estimate Management ====================
+
+    def _refresh_estimate_dropdown(self, auto_select=False):
+        """Refresh the estimate dropdown with saved estimates"""
+        if not self.current_project:
+            return
+        
+        estimates = self.current_project.quick_estimates
+        
+        # Build list of estimate names for dropdown
+        estimate_names = []
+        self._estimate_id_map = {}
+        
+        for est_id, est_data in estimates.items():
+            name = est_data.get('name', 'Unnamed Estimate')
+            estimate_names.append(name)
+            self._estimate_id_map[name] = est_id
+        
+        if hasattr(self, 'estimate_combo'):
+            self.estimate_combo['values'] = estimate_names
+        
+        if auto_select and estimates:
+            # Find most recently modified
+            most_recent_id = None
+            most_recent_date = None
+            for est_id, est_data in estimates.items():
+                mod_date = est_data.get('modified_date')
+                if mod_date:
+                    if most_recent_date is None or mod_date > most_recent_date:
+                        most_recent_date = mod_date
+                        most_recent_id = est_id
+            
+            if most_recent_id is None:
+                most_recent_id = list(estimates.keys())[0]
+            
+            self.estimate_id = most_recent_id
+            if hasattr(self, 'estimate_var'):
+                self.estimate_var.set(estimates[most_recent_id].get('name', ''))
+            self.load_estimate()
+        elif auto_select and not estimates:
+            # No estimates exist — create a default one
+            self.new_estimate()
+
+    def _on_estimate_selected(self, event=None):
+        """Handle selection of an estimate from the dropdown"""
+        # Save current estimate before switching
+        if self.estimate_id:
+            self.save_estimate()
+        
+        selected_name = self.estimate_var.get()
+        if selected_name in self._estimate_id_map:
+            self.estimate_id = self._estimate_id_map[selected_name]
+            self.load_estimate()
+
+    def _on_estimate_name_changed(self, event=None):
+        """Handle renaming of the current estimate via the combobox"""
+        if not self.estimate_id or not self.current_project:
+            return
+        
+        new_name = self.estimate_var.get().strip()
+        if not new_name:
+            return
+        
+        if self.estimate_id in self.current_project.quick_estimates:
+            self.current_project.quick_estimates[self.estimate_id]['name'] = new_name
+            self._refresh_estimate_dropdown()
+            self.estimate_var.set(new_name)
+
+    def new_estimate(self):
+        """Create a new quick estimate"""
+        if not self.current_project:
+            return
+        
+        # Save current estimate first
+        if self.estimate_id:
+            self.save_estimate()
+        
+        # Generate new ID and name
+        estimate_id = f"estimate_{uuid.uuid4().hex[:8]}"
+        estimate_num = len(self.current_project.quick_estimates) + 1
+        estimate_name = f"Estimate {estimate_num}"
+        
+        new_estimate = {
+            'name': estimate_name,
+            'created_date': datetime.now().isoformat(),
+            'modified_date': datetime.now().isoformat(),
+            'module_width_mm': 1134,
+            'modules_per_string': 28,
+            'row_spacing_ft': 20.0,
+            'subarrays': {}
+        }
+        
+        self.current_project.quick_estimates[estimate_id] = new_estimate
+        
+        self.estimate_id = estimate_id
+        self._refresh_estimate_dropdown()
+        self.estimate_var.set(estimate_name)
+        
+        # Clear and set up fresh
+        self._clear_estimate_ui()
+        self.add_subarray(auto_add_block=True)
+        
+        if self.on_save:
+            self.on_save()
+
+    def delete_estimate(self):
+        """Delete the currently selected estimate"""
+        if not self.current_project or not self.estimate_id:
+            from tkinter import messagebox
+            messagebox.showinfo("No Estimate", "No estimate selected to delete.")
+            return
+        
+        from tkinter import messagebox
+        estimate_name = self.current_project.quick_estimates.get(
+            self.estimate_id, {}
+        ).get('name', 'this estimate')
+        
+        if messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete '{estimate_name}'?"):
+            del self.current_project.quick_estimates[self.estimate_id]
+            self.estimate_id = None
+            self._clear_estimate_ui()
+            self._refresh_estimate_dropdown(auto_select=True)
+            
+            if self.on_save:
+                self.on_save()
+
+    def _clear_estimate_ui(self):
+        """Clear the tree and details when switching/deleting estimates"""
+        # Clear tree
+        if hasattr(self, 'tree'):
+            for item in self.tree.get_children():
+                self.tree.delete(item)
+        self.subarrays.clear()
+        
+        # Clear details panel
+        if hasattr(self, 'details_container'):
+            self.clear_details_panel()
+        
+        # Clear results
+        if hasattr(self, 'results_tree'):
+            for item in self.results_tree.get_children():
+                self.results_tree.delete(item)
+
     # ==================== UI Setup ====================
     
     def setup_ui(self):
@@ -394,12 +534,33 @@ class QuickEstimate(ttk.Frame):
         main_container = ttk.Frame(self, padding="10")
         main_container.pack(fill='both', expand=True)
         
+        # Top bar: Title + Estimate selector
+        top_bar = ttk.Frame(main_container)
+        top_bar.pack(fill='x', pady=(0, 10))
+        
         # Title
-        title_label = ttk.Label(main_container, text="Quick Estimate", font=('Helvetica', 14, 'bold'))
-        title_label.pack(anchor='w', pady=(0, 5))
+        title_label = ttk.Label(top_bar, text="Quick Estimate", font=('Helvetica', 14, 'bold'))
+        title_label.pack(side='left', padx=(0, 20))
+        
+        # Estimate selector
+        ttk.Label(top_bar, text="Estimate:").pack(side='left', padx=(0, 5))
+        self.estimate_var = tk.StringVar()
+        self.estimate_combo = ttk.Combobox(
+            top_bar,
+            textvariable=self.estimate_var,
+            width=30,
+            state='normal'
+        )
+        self.estimate_combo.pack(side='left', padx=(0, 5))
+        self.estimate_combo.bind('<<ComboboxSelected>>', self._on_estimate_selected)
+        self.estimate_combo.bind('<Return>', self._on_estimate_name_changed)
+        self.estimate_combo.bind('<FocusOut>', self._on_estimate_name_changed)
+        
+        ttk.Button(top_bar, text="New", command=self.new_estimate, width=6).pack(side='left', padx=2)
+        ttk.Button(top_bar, text="Delete", command=self.delete_estimate, width=6).pack(side='left', padx=2)
         
         # Description
-        desc_label = ttk.Label(main_container, text="Early-stage BOM estimation for bid and preliminary designs")
+        desc_label = ttk.Label(main_container, text="Early-stage BOM estimation for bid and preliminary designs", foreground='gray')
         desc_label.pack(anchor='w', pady=(0, 10))
         
         # Main content area - PanedWindow for resizable split
