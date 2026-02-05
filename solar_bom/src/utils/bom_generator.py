@@ -202,6 +202,27 @@ class BOMGenerator:
             cable_lengths = block.calculate_cable_lengths()
             
             if not block.wiring_config:
+                # Add DC Feeder cable even if no wiring config
+                dc_feeder_distance = getattr(block, 'dc_feeder_distance_ft', 0.0)
+                dc_feeder_cable_size = getattr(block, 'dc_feeder_cable_size', '4/0 AWG')
+                
+                if dc_feeder_distance > 0:
+                    feeder_length_with_waste = round(dc_feeder_distance * self.CABLE_WASTE_FACTOR, 1)
+                    
+                    block_quantities[f'Positive DC Feeder ({dc_feeder_cable_size})'] = {
+                        'description': f'DC Positive Feeder Cable {dc_feeder_cable_size}',
+                        'quantity': feeder_length_with_waste,
+                        'unit': 'feet',
+                        'category': 'eBOS'
+                    }
+                    
+                    block_quantities[f'Negative DC Feeder ({dc_feeder_cable_size})'] = {
+                        'description': f'DC Negative Feeder Cable {dc_feeder_cable_size}',
+                        'quantity': feeder_length_with_waste,
+                        'unit': 'feet',
+                        'category': 'eBOS'
+                    }
+                
                 quantities[block_id] = block_quantities
                 continue
             
@@ -1661,7 +1682,28 @@ class BOMGenerator:
                 # Calculate and add total extender entries from segments
                 self.calculate_totals_from_segments(block_quantities, extender_size, "Positive Extender Cable")
                 self.calculate_totals_from_segments(block_quantities, extender_size, "Negative Extender Cable")
-                    
+       
+            # Add DC Feeder cable if distance is specified
+            dc_feeder_distance = getattr(block, 'dc_feeder_distance_ft', 0.0)
+            dc_feeder_cable_size = getattr(block, 'dc_feeder_cable_size', '4/0 AWG')
+            
+            if dc_feeder_distance > 0:
+                feeder_length_with_waste = round(dc_feeder_distance * self.CABLE_WASTE_FACTOR, 1)
+                
+                block_quantities[f'Positive DC Feeder ({dc_feeder_cable_size})'] = {
+                    'description': f'DC Positive Feeder Cable {dc_feeder_cable_size}',
+                    'quantity': feeder_length_with_waste,
+                    'unit': 'feet',
+                    'category': 'eBOS'
+                }
+                
+                block_quantities[f'Negative DC Feeder ({dc_feeder_cable_size})'] = {
+                    'description': f'DC Negative Feeder Cable {dc_feeder_cable_size}',
+                    'quantity': feeder_length_with_waste,
+                    'unit': 'feet',
+                    'category': 'eBOS'
+                }
+
             # Update quantities
             quantities[block_id] = block_quantities
         

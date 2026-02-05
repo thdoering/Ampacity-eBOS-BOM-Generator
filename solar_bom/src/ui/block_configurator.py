@@ -2704,6 +2704,10 @@ class BlockConfigurator(ttk.Frame):
             new_block.pile_reveal_m = 1.5
         if not hasattr(new_block, 'trench_depth_m'):
             new_block.trench_depth_m = 0.91
+        if not hasattr(new_block, 'dc_feeder_distance_ft'):
+            new_block.dc_feeder_distance_ft = 0.0
+        if not hasattr(new_block, 'dc_feeder_cable_size'):
+            new_block.dc_feeder_cable_size = '4/0 AWG'
         
         # Ensure enabled_templates is copied (for backward compatibility)
         if not hasattr(new_block, 'enabled_templates'):
