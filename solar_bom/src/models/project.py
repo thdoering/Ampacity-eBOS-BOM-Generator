@@ -41,6 +41,8 @@ class Project:
     # Quick estimates for early-stage BOM estimation
     quick_estimates: Dict[str, dict] = field(default_factory=dict)
 
+    def __post_init__(self):
+        self._source_filepath: Optional[str] = None
     
     def update_modified_date(self):
         """Update the last modified date"""
@@ -113,6 +115,17 @@ class Project:
             
             with open(filepath, 'w') as f:
                 json.dump(self.to_dict(), f, indent=2)
+            
+            # If the filepath changed (e.g. rename), delete the old file
+            if self._source_filepath and self._source_filepath != filepath:
+                try:
+                    if os.path.exists(self._source_filepath):
+                        os.remove(self._source_filepath)
+                except Exception as e:
+                    print(f"Warning: Could not remove old project file: {e}")
+            
+            # Update source filepath to the new location
+            self._source_filepath = filepath
                 
             return True
         except Exception as e:
@@ -126,7 +139,9 @@ class Project:
             with open(filepath, 'r') as f:
                 data = json.load(f)
                 
-            return cls.from_dict(data)
+            project = cls.from_dict(data)
+            project._source_filepath = filepath
+            return project
         except Exception as e:
             print(f"Error loading project: {str(e)}")
             return None

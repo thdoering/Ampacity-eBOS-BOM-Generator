@@ -16,7 +16,9 @@ class ProjectInfoTab(ttk.Frame):
         
         # Track the currently selected estimate ID
         self.current_estimate_id = None
-        
+
+        self._field_change_after_id = None
+
         self.setup_ui()
         self.load_project_data()
     
@@ -240,9 +242,18 @@ class ProjectInfoTab(ttk.Frame):
                     self.on_project_changed()
     
     def _on_field_changed(self, *args):
-        """Handle changes to text entry fields"""
+        """Handle changes to text entry fields (debounced)"""
         if getattr(self, '_loading', False):
             return
+        # Cancel any pending save
+        if hasattr(self, '_field_change_after_id') and self._field_change_after_id:
+            self.after_cancel(self._field_change_after_id)
+        # Schedule save after 1 second of no changes
+        self._field_change_after_id = self.after(1000, self._debounced_save)
+    
+    def _debounced_save(self):
+        """Execute the debounced save"""
+        self._field_change_after_id = None
         self._save_to_project()
     
     def _on_notes_changed(self, event=None):
