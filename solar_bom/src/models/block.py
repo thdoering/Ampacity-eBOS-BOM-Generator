@@ -73,6 +73,8 @@ class BlockConfig:
     underground_routing: bool = False
     pile_reveal_m: float = 1.5
     trench_depth_m: float = 0.91  # 3ft default
+    dc_feeder_distance_ft: float = 0.0  # DC feeder distance in feet
+    dc_feeder_cable_size: str = "4/0 AWG"  # DC feeder cable size (default)
     
     # Optional fields with defaults must come after
     description: Optional[str] = None
@@ -313,6 +315,10 @@ class BlockConfig:
         elif self.tracker_template:
             data['tracker_template_name'] = self.tracker_template.template_name
         
+        # Add DC feeder config
+        data['dc_feeder_distance_ft'] = getattr(self, 'dc_feeder_distance_ft', 0.0)
+        data['dc_feeder_cable_size'] = getattr(self, 'dc_feeder_cable_size', '4/0 AWG')
+
         # Add enabled templates
         data['enabled_templates'] = self.enabled_templates
 
@@ -403,7 +409,9 @@ class BlockConfig:
             underground_routing=data.get('underground_routing', False),
             pile_reveal_m=data.get('pile_reveal_m', 1.5),
             trench_depth_m=data.get('trench_depth_m', 0.91),
-            enabled_templates=data.get('enabled_templates', [])
+            enabled_templates=data.get('enabled_templates', []),
+            dc_feeder_distance_ft=data.get('dc_feeder_distance_ft', 0.0),
+            dc_feeder_cable_size=data.get('dc_feeder_cable_size', '4/0 AWG')
         )
         
         # Load tracker positions

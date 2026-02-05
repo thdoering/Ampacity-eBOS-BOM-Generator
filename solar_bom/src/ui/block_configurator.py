@@ -12,6 +12,12 @@ from copy import deepcopy
 
 class BlockConfigurator(ttk.Frame):
     def __init__(self, parent, current_project=None, on_autosave=None):
+        # DC Feeder cable size options (larger sizes for high current)
+        self.DC_FEEDER_SIZES = [
+            "2/0 AWG", "3/0 AWG", "4/0 AWG", 
+            "250 kcmil", "300 kcmil", "350 kcmil", "400 kcmil", "500 kcmil",
+            "600 kcmil", "750 kcmil", "1000 kcmil"
+        ]
         super().__init__(parent)
         self.parent = parent
         self.current_project = current_project
@@ -271,6 +277,29 @@ class BlockConfigurator(ttk.Frame):
         ttk.Button(underground_frame, text="Apply to All Blocks", 
                 command=self.apply_underground_routing_to_all).grid(
                 row=3, column=0, columnspan=5, padx=5, pady=5)
+        
+        # DC Feeder Configuration
+        dc_feeder_frame = ttk.LabelFrame(device_frame, text="DC Feeder (Combiner to Inverter)")
+        dc_feeder_frame.grid(row=8, column=0, columnspan=3, padx=5, pady=5, sticky=(tk.W, tk.E))
+
+        # DC Feeder Distance
+        ttk.Label(dc_feeder_frame, text="Distance:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
+        self.dc_feeder_distance_var = tk.StringVar(value="0")
+        self.dc_feeder_distance_entry = ttk.Entry(dc_feeder_frame, textvariable=self.dc_feeder_distance_var, width=10)
+        self.dc_feeder_distance_entry.grid(row=0, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        ttk.Label(dc_feeder_frame, text="ft").grid(row=0, column=2, padx=2, pady=2, sticky=tk.W)
+
+        # DC Feeder Cable Size
+        ttk.Label(dc_feeder_frame, text="Cable Size:").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
+        self.dc_feeder_cable_size_var = tk.StringVar(value="4/0 AWG")
+        dc_feeder_cable_combo = ttk.Combobox(dc_feeder_frame, textvariable=self.dc_feeder_cable_size_var, 
+                                              state='readonly', width=12)
+        dc_feeder_cable_combo['values'] = self.DC_FEEDER_SIZES
+        dc_feeder_cable_combo.grid(row=1, column=1, columnspan=2, padx=5, pady=2, sticky=(tk.W, tk.E))
+
+        # Add traces to save DC feeder settings when changed
+        self.dc_feeder_distance_var.trace('w', lambda *args: self.save_dc_feeder_settings())
+        self.dc_feeder_cable_size_var.trace('w', lambda *args: self.save_dc_feeder_settings())
 
         # Initially disable the inputs
         self.pile_reveal_m_entry.config(state='disabled')
@@ -658,6 +687,23 @@ class BlockConfigurator(ttk.Frame):
         # Notify that blocks have changed
         self._notify_blocks_changed()
 
+    def save_dc_feeder_settings(self):
+        """Save DC feeder settings to current block"""
+        if self.updating_ui or not self.current_block or self.current_block not in self.blocks:
+            return
+        
+        block = self.blocks[self.current_block]
+        
+        try:
+            block.dc_feeder_distance_ft = float(self.dc_feeder_distance_var.get())
+        except ValueError:
+            block.dc_feeder_distance_ft = 0.0
+        
+        block.dc_feeder_cable_size = self.dc_feeder_cable_size_var.get()
+        
+        # Notify that blocks have changed
+        self._notify_blocks_changed()
+
     def set_project(self, project):
         """Set the current project and update UI accordingly"""
         self.current_project = project
@@ -920,6 +966,12 @@ class BlockConfigurator(ttk.Frame):
                 self.inverter_label.config(text=f"{block.inverter.manufacturer} {block.inverter.model}")
             else:
                 self.inverter_label.config(text="No inverter selected")
+
+            # Update DC feeder settings
+            self.updating_ui = True
+            self.dc_feeder_distance_var.set(str(getattr(block, 'dc_feeder_distance_ft', 0.0)))
+            self.dc_feeder_cable_size_var.set(getattr(block, 'dc_feeder_cable_size', '4/0 AWG'))
+            self.updating_ui = False
             
             # Sync enabled_templates with any placed trackers
             self.sync_enabled_templates_with_placed_trackers(block)
