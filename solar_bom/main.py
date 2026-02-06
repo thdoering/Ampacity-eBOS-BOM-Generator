@@ -214,12 +214,12 @@ class SolarBOMApplication:
         
         # Create Quick Estimate tab
         from src.ui.quick_estimate import QuickEstimate
-        quick_estimate = QuickEstimate(
+        self.quick_estimate_widget = QuickEstimate(
             quick_estimate_frame,
             current_project=self.current_project,
             on_save=self.autosave_project
         )
-        quick_estimate.pack(fill='both', expand=True, padx=5, pady=5)
+        self.quick_estimate_widget.pack(fill='both', expand=True, padx=5, pady=5)
 
         # Add tabs to notebook
         notebook.add(project_info_frame, text='Project Info')
@@ -708,6 +708,13 @@ class SolarBOMApplication:
         """Update project with current blocks from UI before saving"""
         if not hasattr(self, 'current_project') or not self.current_project:
             return
+        
+        # Save quick estimate if it exists (without triggering on_save callback to avoid recursion)
+        if hasattr(self, 'quick_estimate_widget') and self.quick_estimate_widget:
+            old_callback = self.quick_estimate_widget.on_save
+            self.quick_estimate_widget.on_save = None
+            self.quick_estimate_widget.save_estimate()
+            self.quick_estimate_widget.on_save = old_callback
             
         # Find the BlockConfigurator instance in the UI
         block_configurator = None

@@ -17,6 +17,8 @@ class QuickEstimate(ttk.Frame):
         self.on_save = on_save
         self.pricing_data = self.load_pricing_data()
         self._estimate_id_map = {}  # Map display name to ID
+        self.available_modules = self.load_module_library()  # {display_name: ModuleSpec}
+        self.selected_module = None  # Currently selected ModuleSpec
         
         # Data structure for subarrays and blocks
         self.subarrays: Dict[str, Dict[str, Any]] = {}
@@ -29,6 +31,7 @@ class QuickEstimate(ttk.Frame):
         # Track currently selected item
         self.selected_item_id = None
         self.selected_item_type = None  # 'subarray' or 'block'
+        self._autosave_after_id = None
         
         self.setup_ui()
         
@@ -45,6 +48,54 @@ class QuickEstimate(ttk.Frame):
         except Exception as e:
             print(f"Error loading pricing data: {e}")
         return {}
+
+    def load_module_library(self):
+        """Load modules from the module templates JSON file"""
+        modules = {}
+        try:
+            module_path = Path('data/module_templates.json')
+            if module_path.exists():
+                with open(module_path, 'r') as f:
+                    data = json.load(f)
+                
+                from ..models.module import ModuleSpec, ModuleType, ModuleOrientation
+                
+                for manufacturer, models in data.items():
+                    if not isinstance(models, dict):
+                        continue
+                    for model_name, spec_data in models.items():
+                        try:
+                            # Handle enum conversions
+                            mod_type = ModuleType(spec_data.get('type', 'Mono PERC'))
+                            orientation = ModuleOrientation(spec_data.get('default_orientation', 'Portrait'))
+                            
+                            module = ModuleSpec(
+                                manufacturer=spec_data.get('manufacturer', manufacturer),
+                                model=spec_data.get('model', model_name),
+                                type=mod_type,
+                                length_mm=float(spec_data.get('length_mm', 0)),
+                                width_mm=float(spec_data.get('width_mm', 0)),
+                                depth_mm=float(spec_data.get('depth_mm', 40)),
+                                weight_kg=float(spec_data.get('weight_kg', 25)),
+                                wattage=float(spec_data.get('wattage', 0)),
+                                vmp=float(spec_data.get('vmp', 0)),
+                                imp=float(spec_data.get('imp', 0)),
+                                voc=float(spec_data.get('voc', 0)),
+                                isc=float(spec_data.get('isc', 0)),
+                                max_system_voltage=float(spec_data.get('max_system_voltage', 1500)),
+                                temperature_coefficient_pmax=spec_data.get('temperature_coefficient_pmax'),
+                                temperature_coefficient_voc=spec_data.get('temperature_coefficient_voc'),
+                                temperature_coefficient_isc=spec_data.get('temperature_coefficient_isc'),
+                                default_orientation=orientation,
+                                cells_per_module=int(spec_data.get('cells_per_module', 72))
+                            )
+                            display_name = f"{module.manufacturer} {module.model} ({module.wattage}W)"
+                            modules[display_name] = module
+                        except (ValueError, TypeError) as e:
+                            print(f"Error loading module {manufacturer}/{model_name}: {e}")
+        except Exception as e:
+            print(f"Error loading module library: {e}")
+        return modules
 
     def generate_id(self, prefix: str) -> str:
         """Generate a unique ID with a prefix"""
@@ -148,7 +199,8 @@ class QuickEstimate(ttk.Frame):
         self.subarrays[subarray_id]['blocks'][block_id] = {
             'name': f"Block {block_num}",
             'type': 'combiner',  # 'combiner' or 'string_inverter'
-            'num_rows': 4,
+            'num_combiners': 1,
+            'breaker_size': 400,
             'trackers': [
                 {'strings': 2, 'quantity': 1, 'harness_config': '2'}
             ]
@@ -203,6 +255,93 @@ class QuickEstimate(ttk.Frame):
         length_with_waste = raw_length_ft * WASTE_FACTOR
         rounded = 5 * ((length_with_waste + 5 - 0.1) // 5 + 1)
         return max(10, int(rounded))
+    
+    def load_combiner_library(self):
+        """Load combiner box library from JSON file"""
+        try:
+            lib_path = Path('data/combiner_box_library.json')
+            if lib_path.exists():
+                with open(lib_path, 'r') as f:
+                    return json.load(f)
+        except Exception as e:
+            print(f"Error loading combiner box library: {e}")
+        return {}
+
+    def get_fuse_holder_category(self, fuse_current_amps):
+        """Determine fuse holder rating category from required fuse current"""
+        if fuse_current_amps <= 20:
+            return "20A and below"
+        elif fuse_current_amps <= 32:
+            return "25-32A"
+        else:
+            return "32A and above"
+
+    def find_combiner_box(self, strings_per_cb, breaker_size, fuse_holder_rating):
+        """Find a matching combiner box from the library.
+        
+        Returns the part_number and description, or None if no match.
+        Prefers smallest max_inputs that fits, with whips (whip_length > 0).
+        """
+        combiner_library = self.load_combiner_library()
+        
+        candidates = []
+        for part_num, cb_data in combiner_library.items():
+            if (cb_data.get('max_inputs', 0) >= strings_per_cb and
+                cb_data.get('breaker_size', 0) == breaker_size and
+                cb_data.get('fuse_holder_rating', '') == fuse_holder_rating):
+                candidates.append(cb_data)
+        
+        if not candidates:
+            return None
+        
+        # Sort by max_inputs (prefer smallest that fits), then prefer with whips
+        candidates.sort(key=lambda c: (c['max_inputs'], -c.get('whip_length_ft', 0)))
+        return candidates[0]
+
+    def calculate_cb_whip_distances(self, total_rows, num_combiners, row_spacing_ft):
+        """Calculate whip distances for each row based on evenly-spaced CB placement.
+        
+        Returns a list of (distance_ft, cb_index) for each row.
+        
+        CB placement logic:
+        - Rows are divided into groups, first CB(s) get extra rows if uneven
+        - Each CB is placed at the center of its group
+        - Each row connects to its nearest CB
+        """
+        if total_rows <= 0 or num_combiners <= 0:
+            return []
+        
+        # Divide rows into groups for each CB
+        base_group_size = total_rows // num_combiners
+        extra_rows = total_rows % num_combiners
+        
+        # Build groups - first CBs get the extra rows
+        groups = []
+        row_start = 1
+        for cb_idx in range(num_combiners):
+            group_size = base_group_size + (1 if cb_idx < extra_rows else 0)
+            row_end = row_start + group_size - 1
+            # CB position is center of its group
+            cb_position = (row_start + row_end) / 2.0
+            groups.append({
+                'cb_idx': cb_idx,
+                'row_start': row_start,
+                'row_end': row_end,
+                'cb_position': cb_position
+            })
+            row_start = row_end + 1
+        
+        # Calculate distance from each row to its assigned CB
+        whip_distances = []
+        for row_num in range(1, total_rows + 1):
+            # Find which group this row belongs to
+            for group in groups:
+                if group['row_start'] <= row_num <= group['row_end']:
+                    distance_ft = abs(row_num - group['cb_position']) * row_spacing_ft
+                    whip_distances.append((distance_ft, group['cb_idx']))
+                    break
+        
+        return whip_distances
 
     def get_default_combiner_price(self):
         """Get default combiner box price from pricing data"""
@@ -273,13 +412,20 @@ class QuickEstimate(ttk.Frame):
             return
         
         # Load global settings
-        self.module_width_default = estimate_data.get('module_width_mm', 1134)
         self.modules_per_string_default = estimate_data.get('modules_per_string', 28)
         self.row_spacing_default = estimate_data.get('row_spacing_ft', 20.0)
         
+        # Restore module selection
+        saved_module_name = estimate_data.get('module_name', '')
+        if saved_module_name and hasattr(self, 'module_combo'):
+            # Find the matching display name in available modules
+            for display_name, module in self.available_modules.items():
+                if f"{module.manufacturer} {module.model}" == saved_module_name:
+                    self.module_select_var.set(display_name)
+                    self._on_module_selected()
+                    break
+        
         # Update UI if already set up
-        if hasattr(self, 'module_width_var'):
-            self.module_width_var.set(str(self.module_width_default))
         if hasattr(self, 'modules_per_string_var'):
             self.modules_per_string_var.set(str(self.modules_per_string_default))
         if hasattr(self, 'row_spacing_var'):
@@ -315,7 +461,8 @@ class QuickEstimate(ttk.Frame):
                 self.subarrays[subarray_id]['blocks'][block_id] = {
                     'name': block_data.get('name', 'Block'),
                     'type': block_data.get('type', 'combiner'),
-                    'num_rows': block_data.get('num_rows', 4),
+                    'num_combiners': block_data.get('num_combiners', 1),
+                    'breaker_size': block_data.get('breaker_size', 400),
                     'trackers': block_data.get('trackers', [{'strings': 2, 'quantity': 1, 'harness_config': '2'}])
                 }
                 
@@ -343,10 +490,10 @@ class QuickEstimate(ttk.Frame):
         estimate_data = self.current_project.quick_estimates[self.estimate_id]
         
         # Update global settings
-        try:
-            estimate_data['module_width_mm'] = float(self.module_width_var.get())
-        except ValueError:
-            estimate_data['module_width_mm'] = 1134
+        if self.selected_module:
+            estimate_data['module_name'] = f"{self.selected_module.manufacturer} {self.selected_module.model}"
+            estimate_data['module_width_mm'] = self.selected_module.width_mm
+            estimate_data['module_isc'] = self.selected_module.isc
         
         try:
             estimate_data['modules_per_string'] = int(self.modules_per_string_var.get())
@@ -375,7 +522,8 @@ class QuickEstimate(ttk.Frame):
                 estimate_data['subarrays'][subarray_id]['blocks'][block_id] = {
                     'name': block_data['name'],
                     'type': block_data['type'],
-                    'num_rows': block_data['num_rows'],
+                    'num_combiners': block_data.get('num_combiners', 1),
+                    'breaker_size': block_data.get('breaker_size', 400),
                     'trackers': block_data['trackers']
                 }
         
@@ -526,6 +674,32 @@ class QuickEstimate(ttk.Frame):
             for item in self.results_tree.get_children():
                 self.results_tree.delete(item)
 
+    def _schedule_autosave(self):
+        """Debounced auto-save — saves estimate after a brief pause"""
+        if hasattr(self, '_autosave_after_id') and self._autosave_after_id:
+            self.after_cancel(self._autosave_after_id)
+        self._autosave_after_id = self.after(1000, self._do_autosave)
+    
+    def _do_autosave(self):
+        """Execute the debounced save"""
+        self._autosave_after_id = None
+        self.save_estimate()
+
+    def _on_module_selected(self, event=None):
+        """Handle module selection from dropdown"""
+        selected_name = self.module_select_var.get()
+        if selected_name in self.available_modules:
+            self.selected_module = self.available_modules[selected_name]
+            self.module_info_label.config(
+                text=f"Isc: {self.selected_module.isc}A  |  Width: {self.selected_module.width_mm}mm  |  Voc: {self.selected_module.voc}V",
+                foreground='black'
+            )
+            # Auto-save when module changes
+            self.save_estimate()
+        else:
+            self.selected_module = None
+            self.module_info_label.config(text="No module selected", foreground='gray')
+
     # ==================== UI Setup ====================
     
     def setup_ui(self):
@@ -586,24 +760,50 @@ class QuickEstimate(ttk.Frame):
         settings_frame = ttk.LabelFrame(bottom_frame, text="Global Settings", padding="5")
         settings_frame.pack(fill='x', pady=(0, 10))
         
+        # Row 1: Module selection
+        module_row = ttk.Frame(settings_frame)
+        module_row.pack(fill='x', pady=(0, 5))
+        
+        ttk.Label(module_row, text="Module:").pack(side='left', padx=(0, 5))
+        self.module_select_var = tk.StringVar()
+        self.module_combo = ttk.Combobox(
+            module_row,
+            textvariable=self.module_select_var,
+            values=sorted(self.available_modules.keys()),
+            state='readonly',
+            width=50
+        )
+        self.module_combo.pack(side='left', padx=(0, 15))
+        self.module_combo.bind('<<ComboboxSelected>>', self._on_module_selected)
+        self.disable_combobox_scroll(self.module_combo)
+        
+        # Module info display
+        self.module_info_label = ttk.Label(module_row, text="No module selected", foreground='gray')
+        self.module_info_label.pack(side='left', padx=(5, 0))
+        
+        # Row 2: Other settings
         settings_inner = ttk.Frame(settings_frame)
         settings_inner.pack(fill='x')
-        
-        ttk.Label(settings_inner, text="Module Width (mm):").pack(side='left', padx=(0, 5))
-        self.module_width_var = tk.StringVar(value=str(getattr(self, 'module_width_default', 1134)))
-        ttk.Entry(settings_inner, textvariable=self.module_width_var, width=8).pack(side='left', padx=(0, 15))
         
         ttk.Label(settings_inner, text="Modules per String:").pack(side='left', padx=(0, 5))
         self.modules_per_string_var = tk.StringVar(value=str(getattr(self, 'modules_per_string_default', 28)))
         ttk.Spinbox(settings_inner, from_=1, to=100, textvariable=self.modules_per_string_var, width=6).pack(side='left', padx=(0, 15))
+        self.modules_per_string_var.trace_add('write', lambda *args: self._schedule_autosave())
         
         ttk.Label(settings_inner, text="Row Spacing (ft):").pack(side='left', padx=(0, 5))
         self.row_spacing_var = tk.StringVar(value=str(getattr(self, 'row_spacing_default', 20.0)))
         ttk.Spinbox(settings_inner, from_=1, to=100, textvariable=self.row_spacing_var, width=6).pack(side='left')
+        self.row_spacing_var.trace_add('write', lambda *args: self._schedule_autosave())
         
-        # Calculate button
-        calc_btn = ttk.Button(bottom_frame, text="Calculate Estimate", command=self.calculate_estimate)
-        calc_btn.pack(anchor='w', pady=(0, 10))
+        # Button row
+        button_row = ttk.Frame(bottom_frame)
+        button_row.pack(fill='x', pady=(0, 10))
+        
+        calc_btn = ttk.Button(button_row, text="Calculate Estimate", command=self.calculate_estimate)
+        calc_btn.pack(side='left', padx=(0, 10))
+        
+        export_btn = ttk.Button(button_row, text="Export to Excel", command=self.export_to_excel)
+        export_btn.pack(side='left')
         
         # Results frame
         results_frame = ttk.LabelFrame(bottom_frame, text="Estimated BOM (Rolled-Up Totals)", padding="10")
@@ -721,7 +921,8 @@ class QuickEstimate(ttk.Frame):
         self.subarrays[subarray_id]['blocks'][new_block_id] = {
             'name': new_block_name,
             'type': source_block['type'],
-            'num_rows': source_block['num_rows'],
+            'num_combiners': source_block.get('num_combiners', 1),
+            'breaker_size': source_block.get('breaker_size', 400),
             'trackers': copied_trackers
         }
         
@@ -803,6 +1004,7 @@ class QuickEstimate(ttk.Frame):
             subarray['name'] = name_var.get()
             self.tree.item(subarray_id, text=name_var.get())
             self.details_label.config(text=f"Subarray: {name_var.get()}")
+            self._schedule_autosave()
         name_var.trace_add('write', update_name)
         
         # Transformer MVA
@@ -816,6 +1018,7 @@ class QuickEstimate(ttk.Frame):
                 subarray['transformer_mva'] = float(mva_var.get())
             except ValueError:
                 pass
+            self._schedule_autosave()
         mva_var.trace_add('write', update_mva)
         
         # Summary info
@@ -887,6 +1090,7 @@ class QuickEstimate(ttk.Frame):
             block['name'] = name_var.get()
             self.tree.item(block_id, text=name_var.get())
             self.details_label.config(text=f"Block: {name_var.get()}")
+            self._schedule_autosave()
         name_var.trace_add('write', update_name)
         
         # Block Type
@@ -898,21 +1102,39 @@ class QuickEstimate(ttk.Frame):
         
         def update_type(*args):
             block['type'] = type_var.get()
+            self._schedule_autosave()
         type_var.trace_add('write', update_type)
         
-        # Number of Rows
-        ttk.Label(form_frame, text="Rows from Device:").grid(row=2, column=0, sticky='w', pady=5)
-        rows_var = tk.StringVar(value=str(block['num_rows']))
-        rows_spinbox = ttk.Spinbox(form_frame, from_=1, to=50, textvariable=rows_var, width=10)
-        rows_spinbox.grid(row=2, column=1, sticky='w', pady=5, padx=(10, 0))
-        ttk.Label(form_frame, text="(furthest row from combiner/string inverter)", font=('Helvetica', 8), foreground='gray').grid(row=2, column=2, sticky='w', padx=(5, 0))
+        # Number of Combiner Boxes
+        ttk.Label(form_frame, text="# Combiner Boxes:").grid(row=2, column=0, sticky='w', pady=5)
+        num_cb_var = tk.StringVar(value=str(block.get('num_combiners', 1)))
+        num_cb_spinbox = ttk.Spinbox(form_frame, from_=1, to=20, textvariable=num_cb_var, width=10)
+        num_cb_spinbox.grid(row=2, column=1, sticky='w', pady=5, padx=(10, 0))
+        ttk.Label(form_frame, text="(evenly spaced among tracker rows)", font=('Helvetica', 8), foreground='gray').grid(row=2, column=2, sticky='w', padx=(5, 0))
         
-        def update_rows(*args):
+        def update_num_cb(*args):
             try:
-                block['num_rows'] = int(rows_var.get())
+                block['num_combiners'] = int(num_cb_var.get())
             except ValueError:
                 pass
-        rows_var.trace_add('write', update_rows)
+            self._schedule_autosave()
+        num_cb_var.trace_add('write', update_num_cb)
+        
+        # Breaker Size
+        ttk.Label(form_frame, text="Breaker Size (A):").grid(row=3, column=0, sticky='w', pady=5)
+        breaker_sizes = [100, 125, 150, 175, 200, 225, 250, 300, 350, 400, 450, 500, 600, 700, 800]
+        breaker_var = tk.StringVar(value=str(block.get('breaker_size', 400)))
+        breaker_combo = ttk.Combobox(form_frame, textvariable=breaker_var, values=breaker_sizes, state='readonly', width=10)
+        breaker_combo.grid(row=3, column=1, sticky='w', pady=5, padx=(10, 0))
+        self.disable_combobox_scroll(breaker_combo)
+        
+        def update_breaker(*args):
+            try:
+                block['breaker_size'] = int(breaker_var.get())
+            except ValueError:
+                pass
+            self._schedule_autosave()
+        breaker_var.trace_add('write', update_breaker)
         
         # Tracker Configurations Section
         tracker_frame = ttk.LabelFrame(scrollable_frame, text="Tracker Configurations", padding="10")
@@ -1002,10 +1224,12 @@ class QuickEstimate(ttk.Frame):
             except ValueError:
                 pass
             self.update_string_count()
+            self._schedule_autosave()
         qty_var.trace_add('write', on_qty_change)
         
         def on_harness_change(*args):
             tracker['harness_config'] = harness_var.get()
+            self._schedule_autosave()
         harness_var.trace_add('write', on_harness_change)
         
         # Remove button
@@ -1034,7 +1258,8 @@ class QuickEstimate(ttk.Frame):
         
         # Aggregated totals
         totals = {
-            'combiners': 0,
+            'combiners_by_breaker': {},  # {breaker_size: quantity}
+            'combiner_details': [],  # list of matched CB info dicts
             'string_inverters': 0,
             'trackers_by_string': {},  # {num_strings: quantity}
             'harnesses_by_size': {},   # {num_strings: quantity}
@@ -1044,28 +1269,41 @@ class QuickEstimate(ttk.Frame):
             'total_whip_length': 0,
         }
         
-        # Get module info for extender calculations
+        # Validate module selection
+        if not self.selected_module:
+            from tkinter import messagebox
+            messagebox.showwarning("No Module Selected", "Please select a module in Global Settings before calculating.")
+            return
+        
+        # Get module info from selected module
+        module_isc = self.selected_module.isc
+        module_width_mm = self.selected_module.width_mm
         try:
-            module_width_mm = float(self.module_width_var.get())
             modules_per_string = int(self.modules_per_string_var.get())
-            module_width_ft = module_width_mm / 304.8
-            string_length_ft = module_width_ft * modules_per_string
         except ValueError:
-            module_width_ft = 3.72  # Default ~1134mm
             modules_per_string = 28
-            string_length_ft = module_width_ft * modules_per_string
+        module_width_ft = module_width_mm / 304.8
+        string_length_ft = module_width_ft * modules_per_string
         
         # Process each subarray and block
         for subarray_id, subarray in self.subarrays.items():
             for block_id, block in subarray['blocks'].items():
-                # Count block types
+                num_combiners = block.get('num_combiners', 1)
+                breaker_size = block.get('breaker_size', 400)
+                
+                # Count block device types
                 if block['type'] == 'combiner':
-                    totals['combiners'] += 1
+                    if breaker_size not in totals['combiners_by_breaker']:
+                        totals['combiners_by_breaker'][breaker_size] = 0
+                    totals['combiners_by_breaker'][breaker_size] += num_combiners
                 else:
                     totals['string_inverters'] += 1
                 
                 # Process trackers in this block
+                block_total_strings = 0
+                block_total_rows = 0
                 block_total_harnesses = 0
+                max_harness_strings = 0  # Largest harness group size in block
                 
                 for tracker in block['trackers']:
                     strings = tracker['strings']
@@ -1075,36 +1313,77 @@ class QuickEstimate(ttk.Frame):
                     if qty <= 0:
                         continue
                     
+                    block_total_strings += qty * strings
+                    block_total_rows += qty
+                    
                     # Count trackers by string count
                     if strings not in totals['trackers_by_string']:
                         totals['trackers_by_string'][strings] = 0
                     totals['trackers_by_string'][strings] += qty
                     
-                    # Count harnesses by size
+                    # Count harnesses by size and track max harness group
                     harness_sizes = self.parse_harness_config(harness_config)
                     for size in harness_sizes:
+                        if size > max_harness_strings:
+                            max_harness_strings = size
                         if size not in totals['harnesses_by_size']:
                             totals['harnesses_by_size'][size] = 0
                         totals['harnesses_by_size'][size] += qty
                         block_total_harnesses += qty
                 
-                # Calculate whips for this block
-                num_rows = block['num_rows']
+                # --- Combiner box sizing ---
+                if block['type'] == 'combiner' and block_total_strings > 0:
+                    import math
+                    strings_per_cb = math.ceil(block_total_strings / num_combiners)
+                    
+                    # Calculate fuse current: Isc * 1.56 * max harness strings
+                    fuse_current = module_isc * 1.56 * max(max_harness_strings, 1)
+                    fuse_holder_rating = self.get_fuse_holder_category(fuse_current)
+                    
+                    # Try to find matching combiner from library
+                    matched_cb = self.find_combiner_box(strings_per_cb, breaker_size, fuse_holder_rating)
+                    if matched_cb:
+                        totals['combiner_details'].append({
+                            'part_number': matched_cb.get('part_number', ''),
+                            'description': matched_cb.get('description', ''),
+                            'max_inputs': matched_cb.get('max_inputs', 0),
+                            'breaker_size': breaker_size,
+                            'fuse_holder_rating': fuse_holder_rating,
+                            'strings_per_cb': strings_per_cb,
+                            'quantity': num_combiners,
+                            'block_name': block['name']
+                        })
+                    else:
+                        totals['combiner_details'].append({
+                            'part_number': 'NO MATCH',
+                            'description': f'No CB found: {strings_per_cb} inputs, {breaker_size}A, {fuse_holder_rating}',
+                            'max_inputs': strings_per_cb,
+                            'breaker_size': breaker_size,
+                            'fuse_holder_rating': fuse_holder_rating,
+                            'strings_per_cb': strings_per_cb,
+                            'quantity': num_combiners,
+                            'block_name': block['name']
+                        })
+                
+                # --- Whip calculation with CB placement ---
                 try:
                     row_spacing = float(self.row_spacing_var.get())
                 except ValueError:
                     row_spacing = 20.0
                 
-                if num_rows > 0:
-                    for row_num in range(1, num_rows + 1):
-                        raw_whip_length = row_num * row_spacing
-                        whip_length = self.round_whip_length(raw_whip_length)
-                        whips_at_length = 2  # 2 whips per row (both sides of block)
+                if block_total_rows > 0:
+                    cb_count = num_combiners if block['type'] == 'combiner' else 1
+                    whip_distances = self.calculate_cb_whip_distances(
+                        block_total_rows, cb_count, row_spacing
+                    )
+                    
+                    for distance_ft, cb_idx in whip_distances:
+                        whip_length = self.round_whip_length(distance_ft)
+                        whips_at_length = 2  # pos + neg per row
                         
                         if whip_length not in totals['whips_by_length']:
                             totals['whips_by_length'][whip_length] = 0
                         totals['whips_by_length'][whip_length] += whips_at_length
-                        
                         totals['total_whip_length'] += whip_length * whips_at_length
                 
                 # Calculate extenders for this block (2 per harness - short and long)
@@ -1117,9 +1396,31 @@ class QuickEstimate(ttk.Frame):
         
         # ==================== Display Results ====================
         
-        # Combiner Boxes / String Inverters
-        if totals['combiners'] > 0:
-            self.results_tree.insert('', 'end', values=('Combiner Boxes', totals['combiners'], 'ea'))
+        # Combiner Boxes by breaker size
+        if totals['combiners_by_breaker']:
+            self.results_tree.insert('', 'end', values=('--- COMBINER BOXES ---', '', ''))
+            total_cbs = 0
+            for breaker_size in sorted(totals['combiners_by_breaker'].keys()):
+                qty = totals['combiners_by_breaker'][breaker_size]
+                total_cbs += qty
+                self.results_tree.insert('', 'end', values=(
+                    f"Combiner Box ({breaker_size}A breaker)", qty, 'ea'
+                ))
+            if len(totals['combiners_by_breaker']) > 1:
+                self.results_tree.insert('', 'end', values=('Total Combiner Boxes', total_cbs, 'ea'))
+            
+            # Show matched part numbers
+            for detail in totals['combiner_details']:
+                if detail['part_number'] != 'NO MATCH':
+                    self.results_tree.insert('', 'end', values=(
+                        f"  └ {detail['block_name']}: {detail['part_number']} ({detail['max_inputs']}-input, {detail['fuse_holder_rating']})",
+                        detail['quantity'], 'ea'
+                    ))
+                else:
+                    self.results_tree.insert('', 'end', values=(
+                        f"  └ {detail['block_name']}: ⚠ {detail['description']}",
+                        detail['quantity'], 'ea'
+                    ))
         
         if totals['string_inverters'] > 0:
             self.results_tree.insert('', 'end', values=('String Inverters', totals['string_inverters'], 'ea'))
@@ -1167,6 +1468,239 @@ class QuickEstimate(ttk.Frame):
                 f"{totals['total_whip_length']:,}", 
                 'ft'
             ))
+
+    def export_to_excel(self):
+        """Export the quick estimate BOM to Excel"""
+        from tkinter import filedialog, messagebox
+        
+        # Run calculation first to ensure results are current
+        self.calculate_estimate()
+        
+        if not self.selected_module:
+            messagebox.showwarning("No Module", "Please select a module before exporting.")
+            return
+        
+        # Gather all the data we need
+        try:
+            modules_per_string = int(self.modules_per_string_var.get())
+        except ValueError:
+            modules_per_string = 28
+        try:
+            row_spacing = float(self.row_spacing_var.get())
+        except ValueError:
+            row_spacing = 20.0
+        
+        module_isc = self.selected_module.isc
+        module_width_mm = self.selected_module.width_mm
+        module_width_ft = module_width_mm / 304.8
+        string_length_ft = module_width_ft * modules_per_string
+        
+        # Build suggested filename
+        project_name = "Quick_Estimate"
+        estimate_name = "Estimate"
+        if self.current_project and self.current_project.metadata:
+            project_name = self.current_project.metadata.name or "Quick_Estimate"
+        if self.estimate_id and self.current_project:
+            est_data = self.current_project.quick_estimates.get(self.estimate_id, {})
+            estimate_name = est_data.get('name', 'Estimate')
+        
+        # Clean filename
+        safe_project = "".join(c for c in project_name if c.isalnum() or c in (' ', '-', '_')).strip()
+        safe_estimate = "".join(c for c in estimate_name if c.isalnum() or c in (' ', '-', '_')).strip()
+        suggested_filename = f"{safe_project}_{safe_estimate}_Quick_BOM.xlsx"
+        
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+            title="Export Quick Estimate BOM",
+            initialfile=suggested_filename
+        )
+        
+        if not filepath:
+            return
+        
+        try:
+            from openpyxl import Workbook
+            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+            from openpyxl.utils import get_column_letter
+            
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Quick Estimate BOM"
+            
+            # Define styles
+            title_font = Font(bold=True, size=14)
+            header_font = Font(bold=True, size=11, color="FFFFFF")
+            header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+            section_font = Font(bold=True, size=11)
+            section_fill = PatternFill(start_color="D9E2F3", end_color="D9E2F3", fill_type="solid")
+            label_font = Font(bold=True)
+            thin_border = Border(
+                left=Side(style='thin'), right=Side(style='thin'),
+                top=Side(style='thin'), bottom=Side(style='thin')
+            )
+            center_align = Alignment(horizontal='center', vertical='center')
+            wrap_align = Alignment(horizontal='left', vertical='center', wrap_text=True)
+            warning_fill = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type="solid")
+            
+            row = 1
+            
+            # ========== PROJECT INFO SECTION ==========
+            ws.merge_cells(f'A{row}:E{row}')
+            ws.cell(row=row, column=1, value="Quick Estimate BOM").font = title_font
+            row += 2
+            
+            # Project info pairs
+            info_items = []
+            if self.current_project and self.current_project.metadata:
+                meta = self.current_project.metadata
+                if meta.name:
+                    info_items.append(("Project Name:", meta.name))
+                if meta.client:
+                    info_items.append(("Customer:", meta.client))
+                if meta.location:
+                    info_items.append(("Location:", meta.location))
+            
+            info_items.append(("Module:", f"{self.selected_module.manufacturer} {self.selected_module.model} ({self.selected_module.wattage}W)"))
+            info_items.append(("Module Isc:", f"{module_isc} A"))
+            info_items.append(("Module Width:", f"{module_width_mm} mm"))
+            info_items.append(("Modules per String:", str(modules_per_string)))
+            info_items.append(("Row Spacing:", f"{row_spacing} ft"))
+            
+            if self.estimate_id and self.current_project:
+                est_data = self.current_project.quick_estimates.get(self.estimate_id, {})
+                info_items.append(("Estimate:", est_data.get('name', '')))
+            
+            for label, value in info_items:
+                ws.cell(row=row, column=1, value=label).font = label_font
+                ws.cell(row=row, column=2, value=value)
+                row += 1
+            
+            row += 1
+            
+            # ========== BLOCK SUMMARY SECTION ==========
+            ws.merge_cells(f'A{row}:E{row}')
+            cell = ws.cell(row=row, column=1, value="Block Configuration Summary")
+            cell.font = title_font
+            row += 1
+            
+            # Block summary headers
+            block_headers = ['Subarray', 'Block', 'Type', '# CBs', 'Breaker (A)', 
+                           'Tracker Configs', 'Total Strings', 'Total Trackers']
+            for col, header in enumerate(block_headers, 1):
+                cell = ws.cell(row=row, column=col, value=header)
+                cell.font = header_font
+                cell.fill = header_fill
+                cell.alignment = center_align
+                cell.border = thin_border
+            row += 1
+            
+            # Block data rows
+            for subarray_id, subarray in self.subarrays.items():
+                for block_id, block in subarray['blocks'].items():
+                    block_strings = sum(t['quantity'] * t['strings'] for t in block['trackers'] if t['quantity'] > 0)
+                    block_trackers = sum(t['quantity'] for t in block['trackers'] if t['quantity'] > 0)
+                    
+                    tracker_summary = ", ".join(
+                        f"{t['quantity']}x {t['strings']}S ({t['harness_config']})"
+                        for t in block['trackers'] if t['quantity'] > 0
+                    )
+                    
+                    row_data = [
+                        subarray['name'],
+                        block['name'],
+                        block['type'].title(),
+                        block.get('num_combiners', 1),
+                        block.get('breaker_size', 400),
+                        tracker_summary,
+                        block_strings,
+                        block_trackers
+                    ]
+                    for col, value in enumerate(row_data, 1):
+                        cell = ws.cell(row=row, column=col, value=value)
+                        cell.border = thin_border
+                        cell.alignment = center_align
+                    row += 1
+            
+            row += 1
+            
+            # ========== BOM RESULTS SECTION ==========
+            ws.merge_cells(f'A{row}:E{row}')
+            ws.cell(row=row, column=1, value="Estimated Bill of Materials").font = title_font
+            row += 1
+            
+            # BOM headers
+            bom_headers = ['Item', 'Quantity', 'Unit']
+            for col, header in enumerate(bom_headers, 1):
+                cell = ws.cell(row=row, column=col, value=header)
+                cell.font = header_font
+                cell.fill = header_fill
+                cell.alignment = center_align
+                cell.border = thin_border
+            row += 1
+            
+            # Pull results from the results treeview
+            for item_id in self.results_tree.get_children():
+                values = self.results_tree.item(item_id, 'values')
+                if len(values) >= 3:
+                    item_name = values[0]
+                    qty = values[1]
+                    unit = values[2]
+                    
+                    # Check if this is a section header
+                    is_section = str(item_name).startswith('---')
+                    is_warning = '⚠' in str(item_name)
+                    
+                    cell_item = ws.cell(row=row, column=1, value=str(item_name).replace('---', '').strip() if is_section else item_name)
+                    cell_qty = ws.cell(row=row, column=2, value=qty if qty else '')
+                    cell_unit = ws.cell(row=row, column=3, value=unit if unit else '')
+                    
+                    if is_section:
+                        cell_item.font = section_font
+                        cell_item.fill = section_fill
+                        cell_qty.fill = section_fill
+                        cell_unit.fill = section_fill
+                    elif is_warning:
+                        cell_item.fill = warning_fill
+                        cell_qty.fill = warning_fill
+                        cell_unit.fill = warning_fill
+                    
+                    for c in [cell_item, cell_qty, cell_unit]:
+                        c.border = thin_border
+                        c.alignment = center_align
+                    cell_item.alignment = wrap_align
+                    
+                    row += 1
+            
+            # ========== AUTO-FIT COLUMNS ==========
+            for col_idx in range(1, 9):
+                max_length = 0
+                col_letter = get_column_letter(col_idx)
+                for cell in ws[col_letter]:
+                    if cell.value:
+                        max_length = max(max_length, len(str(cell.value)))
+                ws.column_dimensions[col_letter].width = min(max_length + 4, 55)
+            
+            # Save
+            wb.save(filepath)
+            
+            # Try to open the file
+            import os
+            try:
+                os.startfile(filepath)
+            except Exception:
+                pass
+            
+            messagebox.showinfo("Success", f"Quick Estimate BOM exported to:\n{filepath}")
+            
+        except PermissionError:
+            messagebox.showerror(
+                "Permission Error",
+                f"Cannot write to {filepath}.\n\n"
+                "The file may be open in Excel. Please close it and try again."
+            )
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Failed to export BOM:\n{str(e)}")
 
 
 class QuickEstimateDialog(tk.Toplevel):
