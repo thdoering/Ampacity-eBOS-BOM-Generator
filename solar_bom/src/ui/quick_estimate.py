@@ -406,8 +406,11 @@ class QuickEstimate(ttk.Frame):
             self.add_subarray(auto_add_block=True)
             return
         
+        self._loading = True
+        
         estimate_data = self.current_project.quick_estimates.get(self.estimate_id)
         if not estimate_data:
+            self._loading = False
             self.add_subarray(auto_add_block=True)
             return
         
@@ -436,6 +439,7 @@ class QuickEstimate(ttk.Frame):
         
         if not saved_subarrays:
             # No saved data, create default
+            self._loading = False
             self.add_subarray(auto_add_block=True)
             return
         
@@ -474,6 +478,8 @@ class QuickEstimate(ttk.Frame):
         if first_items:
             self.tree.selection_set(first_items[0])
             self.on_tree_select(None)
+        
+        self._loading = False
 
     def save_estimate(self):
         """Save estimate data to the project"""
@@ -676,6 +682,8 @@ class QuickEstimate(ttk.Frame):
 
     def _schedule_autosave(self):
         """Debounced auto-save — saves estimate after a brief pause"""
+        if getattr(self, '_loading', False):
+            return
         if hasattr(self, '_autosave_after_id') and self._autosave_after_id:
             self.after_cancel(self._autosave_after_id)
         self._autosave_after_id = self.after(1000, self._do_autosave)
@@ -694,8 +702,9 @@ class QuickEstimate(ttk.Frame):
                 text=f"Isc: {self.selected_module.isc}A  |  Width: {self.selected_module.width_mm}mm  |  Voc: {self.selected_module.voc}V",
                 foreground='black'
             )
-            # Auto-save when module changes
-            self.save_estimate()
+            # Auto-save when module changes (but not during load)
+            if not getattr(self, '_loading', False):
+                self.save_estimate()
         else:
             self.selected_module = None
             self.module_info_label.config(text="No module selected", foreground='gray')
