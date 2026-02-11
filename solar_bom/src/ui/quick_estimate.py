@@ -201,6 +201,8 @@ class QuickEstimate(ttk.Frame):
             'type': 'combiner',  # 'combiner' or 'string_inverter'
             'num_combiners': 1,
             'breaker_size': 400,
+            'dc_feeder_distance_ft': 0.0,
+            'dc_feeder_cable_size': '4/0 AWG',
             'trackers': [
                 {'strings': 2, 'quantity': 1, 'harness_config': '2'}
             ]
