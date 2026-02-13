@@ -384,9 +384,20 @@ class BOMManager(ttk.Frame):
             # Check if this is a 1-string harness
             is_1_string_harness = '1-String Harness' in row['Component Type']
 
-            # Set default checked state - unchecked for 1-string harnesses
-            default_checked = '☐' if is_1_string_harness else '☑'
-            default_tag = 'unchecked' if is_1_string_harness else 'checked'
+            # Check if this is a fuse line item for a First Solar job
+            # (First Solar harnesses have integrated fuses, so discrete fuses are excluded by default)
+            is_integrated_fuse = False
+            if 'Fuse' in row['Component Type']:
+                for block in selected_blocks.values():
+                    if (block.tracker_template and block.tracker_template.module_spec and
+                        'first solar' in getattr(block.tracker_template.module_spec, 'manufacturer', '').lower()):
+                        is_integrated_fuse = True
+                        break
+
+            # Set default checked state - unchecked for 1-string harnesses and integrated fuses
+            should_uncheck = is_1_string_harness or is_integrated_fuse
+            default_checked = '☐' if should_uncheck else '☑'
+            default_tag = 'unchecked' if should_uncheck else 'checked'
 
             # Format prices
             unit_price = row.get('Unit Price', None)
@@ -411,6 +422,10 @@ class BOMManager(ttk.Frame):
 
             # Only add to checked_items if it's checked by default
             if not is_1_string_harness:
+                self.checked_items.add(item)
+
+            # Only add to checked_items if it's checked by default
+            if not should_uncheck:
                 self.checked_items.add(item)
     
     def export_bom(self):

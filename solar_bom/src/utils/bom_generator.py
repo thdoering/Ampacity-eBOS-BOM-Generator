@@ -295,12 +295,14 @@ class BOMGenerator:
                     else:
                         string_spacing_ft = 102.0  # Default spacing
                         
-                    # Get descriptions from harness library
+                    # Get fuse rating from harness group if available
+                    harness_fuse_rating = getattr(harness_group, 'fuse_rating_amps', None) if harness_group else None
+                    
                     pos_description = self.get_harness_description(
-                        string_count, 'positive', string_spacing_ft, harness_cable_size, string_cable_size
+                        string_count, 'positive', string_spacing_ft, harness_cable_size, string_cable_size, harness_fuse_rating
                     )
                     neg_description = self.get_harness_description(
-                        string_count, 'negative', string_spacing_ft, harness_cable_size, string_cable_size
+                        string_count, 'negative', string_spacing_ft, harness_cable_size, string_cable_size, harness_fuse_rating
                     )
 
                     block_quantities[f'Positive {string_count}-String Harness'] = {
@@ -1776,7 +1778,7 @@ class BOMGenerator:
         # Default format if not found
         return f"1500 VDC {wire_gauge} EXTENDER WITH MC4 CONNECTORS, LENGTH (FT): {{length}}"
     
-    def get_harness_description(self, num_strings, polarity, string_spacing_ft, trunk_cable_size, string_cable_size):
+    def get_harness_description(self, num_strings, polarity, string_spacing_ft, trunk_cable_size, string_cable_size, fuse_rating_amps=None):
         """Get harness description from library based on matching part number"""      
         # First find the matching part number
         part_number = self.find_matching_harness_part_number(
@@ -1786,18 +1788,26 @@ class BOMGenerator:
         if part_number == "N/A" or " or " in part_number:
             # If no match or multiple matches, return a generic description
             pol_text = "Positive" if polarity == 'positive' else "Negative"
-            string_text = "String" if num_strings == 1 else "String"
             fuse_text = ""
             
-            # Try to determine if this should be fused based on polarity and string count
-            if polarity == 'positive' and num_strings > 1:
-                # Make an educated guess about fuse rating based on string count
-                if num_strings <= 2:
-                    fuse_text = "20A Fuses, " if string_spacing_ft > 110 else "Unfused, "
+            # Use actual fuse rating if provided, otherwise leave blank for 1-string
+            if num_strings > 1:
+                if fuse_rating_amps is not None:
+                    fuse_text = f"{fuse_rating_amps}A Fuses, "
                 else:
-                    fuse_text = "30A Fuses, " if string_spacing_ft > 120 else "20A Fuses, "
+                    fuse_text = "Fused, "
             
-            return f"{num_strings} {string_text}, {pol_text}, {fuse_text}{string_cable_size} Drops w/{trunk_cable_size} Trunk, {int(string_spacing_ft)}' string length, MC4 connectors"
+            # Use target spacing (next largest available) instead of raw calculated value
+            available_spacings = [26.0, 102.0, 113.0, 122.0, 133.0]
+            target_spacing = string_spacing_ft  # fallback to raw
+            for spacing in sorted(available_spacings):
+                if spacing >= string_spacing_ft:
+                    target_spacing = spacing
+                    break
+            else:
+                target_spacing = max(available_spacings)
+            
+            return f"{num_strings} String, {pol_text}, {fuse_text}{string_cable_size} Drops w/{trunk_cable_size} Trunk, {int(target_spacing)}' string spacing, MC4 connectors"
         
         # If single part number found, get its description
         if part_number in self.harness_library:
