@@ -593,11 +593,9 @@ class BOMGenerator:
                         num_strings, polarity, string_spacing_ft, trunk_cable_size
                     )
                     
-                    # If no match found and trunk size is non-standard, return CUSTOM
+                    # If no match found in library, it's a custom harness
                     if part_number == "N/A":
-                        standard_trunk_sizes = ["8 AWG", "10 AWG"]
-                        if trunk_cable_size not in standard_trunk_sizes:
-                            return "CUSTOM"
+                        return "CUSTOM"
                     
                     return part_number
             return "N/A"
@@ -618,6 +616,11 @@ class BOMGenerator:
                 return self.get_extender_segment_part_number_from_item(item)
             elif 'String Cable' in component_type:
                 return self.get_extender_segment_part_number_from_item(item)
+        
+        # DC Feeder cables are always custom/field-sourced
+        elif 'DC Feeder' in component_type:
+            return "CUSTOM"
+        
         return "N/A"
     
     def get_whip_segment_part_number_from_item(self, item):
@@ -1790,8 +1793,8 @@ class BOMGenerator:
             pol_text = "Positive" if polarity == 'positive' else "Negative"
             fuse_text = ""
             
-            # Use actual fuse rating if provided, otherwise leave blank for 1-string
-            if num_strings > 1:
+            # Use actual fuse rating if provided - only positive harnesses have fuses
+            if num_strings > 1 and polarity == 'positive':
                 if fuse_rating_amps is not None:
                     fuse_text = f"{fuse_rating_amps}A Fuses, "
                 else:
@@ -2195,13 +2198,18 @@ class BOMGenerator:
         
         Returns part number or 'CUSTOM' if not in standard library
         """
-        # Determine input capacity (14 for High Amp, 30 for Standard Amp)
-        if num_inputs <= 14:
-            input_indicator = 14
-        elif num_inputs <= 30:
-            input_indicator = 30
-        else:
-            return "CUSTOM"  # Over 30 inputs
+        # Dynamically determine available input sizes from library
+        available_input_sizes = self._get_available_input_sizes()
+        
+        # Find the smallest input size that fits
+        input_indicator = None
+        for size in available_input_sizes:
+            if num_inputs <= size:
+                input_indicator = size
+                break
+        
+        if input_indicator is None:
+            return "CUSTOM"  # Exceeds all available sizes
         
         # Determine fuse holder rating
         if max_fuse_size <= 20:
@@ -2237,6 +2245,17 @@ class BOMGenerator:
             return "CUSTOM"
         
         return part_number
+    
+    def _get_available_input_sizes(self) -> List[int]:
+        """
+        Extract available combiner box input sizes from the library.
+        Returns sorted list of unique max_inputs values.
+        """
+        sizes = set()
+        for entry in self.combiner_box_library.values():
+            if 'max_inputs' in entry:
+                sizes.add(entry['max_inputs'])
+        return sorted(sizes)
     
     def get_combiner_box_fuse_part_number(self, fuse_size: int) -> str:
         """Get combiner box fuse part number for given amperage"""

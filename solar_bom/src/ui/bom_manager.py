@@ -766,6 +766,10 @@ class BOMManager(ttk.Frame):
         elif 'String Cable Segment' in component_type:
             part_num = self.get_extender_segment_part_number(row, selected_blocks)
             return part_num
+        
+        # Handle DC Feeder cables - these are always custom/field-sourced
+        elif 'DC Feeder' in component_type:
+            return "CUSTOM"
 
         # Other components don't have part numbers yet
         return "N/A"
