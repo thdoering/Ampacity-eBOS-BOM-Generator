@@ -40,6 +40,9 @@ class Project:
     nec_safety_factor: float = 1.56
     # Quick estimates for early-stage BOM estimation
     quick_estimates: Dict[str, dict] = field(default_factory=dict)
+    # BOM revision number
+    bom_revision: str = "0"
+
 
     def __post_init__(self):
         self._source_filepath: Optional[str] = None
@@ -69,7 +72,8 @@ class Project:
             'device_configs': self.device_configs,
             'sld_diagram': self.sld_diagram,
             'nec_safety_factor': self.nec_safety_factor,
-            'quick_estimates': self.quick_estimates
+            'quick_estimates': self.quick_estimates,
+            'bom_revision': self.bom_revision
         }
     
     @classmethod
@@ -96,7 +100,8 @@ class Project:
             device_configs=data.get('device_configs', {}),
             sld_diagram=data.get('sld_diagram', None),
             nec_safety_factor=data.get('nec_safety_factor', 1.56),
-            quick_estimates=data.get('quick_estimates', {})
+            quick_estimates=data.get('quick_estimates', {}),
+            bom_revision=data.get('bom_revision', '0')
         )
     
     def save(self, projects_dir: str = 'projects') -> bool:

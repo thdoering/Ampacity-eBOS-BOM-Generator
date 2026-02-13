@@ -1064,7 +1064,8 @@ class BOMGenerator:
                 # First set of info in columns A and B
                 main_info = ['Project Name', 'Customer', 'Location', 'System Size (kW DC)', 
                             'Number of Modules', 'Module Manufacturer', 'Module Model', 
-                            'Inverter Manufacturer', 'Inverter Model', 'DC Collection']
+                            'Inverter Manufacturer', 'Inverter Model', 'DC Collection',
+                            'BOM Revision']
                 
                 # Additional info for columns C and D
                 additional_info = {

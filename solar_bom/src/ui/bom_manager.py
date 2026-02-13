@@ -35,8 +35,28 @@ class BOMManager(ttk.Frame):
         self.selected_blocks = []  # Store selected block IDs
         self.main_app = main_app  # Store reference to main application
         
+        # Load saved revision from project
+        self._load_revision_from_project()
         self.setup_ui()
         self.update_block_list()
+
+    def _load_revision_from_project(self):
+        """Load BOM revision from the current project"""
+        project = None
+        if self.main_app and hasattr(self.main_app, 'current_project'):
+            project = self.main_app.current_project
+        if project and hasattr(project, 'bom_revision'):
+            self._saved_revision = project.bom_revision
+        else:
+            self._saved_revision = "0"
+
+    def _on_revision_changed(self, *args):
+        """Save BOM revision back to the project when changed"""
+        project = None
+        if self.main_app and hasattr(self.main_app, 'current_project'):
+            project = self.main_app.current_project
+        if project and hasattr(project, 'bom_revision'):
+            project.bom_revision = self.revision_var.get()
         
     def setup_ui(self):
         """Create and arrange UI components"""
@@ -87,41 +107,53 @@ class BOMManager(ttk.Frame):
         # BOM Action Frame
         bom_frame = ttk.LabelFrame(left_column, text="BOM Generation", padding="5")
         bom_frame.grid(row=1, column=0, padx=5, pady=5, sticky=(tk.W, tk.E))
-
-        # SLD Generator button
-        ttk.Button(
-            bom_frame, 
-            text="Single Line Diagram", 
-            command=self.open_sld_editor
-        ).grid(row=3, column=0, padx=5, pady=5)
         
+        # Revision input
+        rev_frame = ttk.Frame(bom_frame)
+        rev_frame.grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+        ttk.Label(rev_frame, text="BOM Rev:").pack(side=tk.LEFT, padx=(0, 5))
+        self.revision_var = tk.StringVar(value=self._saved_revision)
+        self.revision_var.trace_add('write', self._on_revision_changed)
+        rev_entry = ttk.Entry(rev_frame, textvariable=self.revision_var, width=5)
+        rev_entry.pack(side=tk.LEFT)
+        # Validate: numbers only
+        vcmd = (self.register(lambda P: P == "" or P.isdigit()), '%P')
+        rev_entry.config(validate='key', validatecommand=vcmd)
+
         # Export button
         ttk.Button(
             bom_frame, 
             text="Export BOM to Excel", 
             command=self.export_bom
-        ).grid(row=0, column=0, padx=5, pady=5)
+        ).grid(row=1, column=0, padx=5, pady=5)
         
         # Harness designer button
         ttk.Button(
             bom_frame, 
             text="Harness Designer", 
             command=self.open_harness_designer
-        ).grid(row=1, column=0, padx=5, pady=5)
+        ).grid(row=2, column=0, padx=5, pady=5)
         
         # Harness drawings button
         ttk.Button(
             bom_frame, 
             text="Generate Harness Drawings", 
             command=self.generate_harness_drawings
-        ).grid(row=2, column=0, padx=5, pady=5)
+        ).grid(row=3, column=0, padx=5, pady=5)
+
+        # SLD Generator button
+        ttk.Button(
+            bom_frame, 
+            text="Single Line Diagram", 
+            command=self.open_sld_editor
+        ).grid(row=4, column=0, padx=5, pady=5)
 
         # Pricing manager button
         ttk.Button(
             bom_frame, 
             text="Manage Pricing", 
             command=self.open_pricing_manager
-        ).grid(row=4, column=0, padx=5, pady=5)
+        ).grid(row=5, column=0, padx=5, pady=5)
         
         # Right side - BOM Preview
         right_column = ttk.Frame(main_container)
@@ -510,7 +542,8 @@ class BOMManager(ttk.Frame):
                     'Number of Strings': total_strings,
                     'Module Wiring': wiring_mode,
                     'Module Dimensions': ', '.join(module_dimensions) if module_dimensions else 'Unknown',
-                    'Number of Combiner Boxes': len(selected_blocks)
+                    'Number of Combiner Boxes': len(selected_blocks),
+                    'BOM Revision': self.revision_var.get() or '0'
                 }
         except Exception as e:
             print(f"Error getting project info: {str(e)}")
@@ -524,7 +557,8 @@ class BOMManager(ttk.Frame):
                 dc_collection = clean_filename(project_info.get('DC Collection', 'Unknown'))
                 
                 # Build filename
-                suggested_filename = f"{client}_{project_name}_Ampacity eBOM_{dc_collection}.xlsx"
+                rev = self.revision_var.get() or '0'
+                suggested_filename = f"{client}_{project_name}_Ampacity eBOM_{dc_collection}_Rev{rev}.xlsx"
         except Exception as e:
             print(f"Error generating suggested filename: {str(e)}")
         
