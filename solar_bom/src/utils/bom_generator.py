@@ -521,11 +521,10 @@ class BOMGenerator:
         for item in summary_data:
             item['Part Number'] = self.get_component_part_number(item)
             
-            # Look up price
+            # Look up price - Extended Price will be a formula in Excel
             unit_price = pricing.get_price(item['Part Number'])
             if unit_price is not None:
                 item['Unit Price'] = unit_price
-                item['Extended Price'] = round(unit_price * item['Quantity'], 2)
 
         # Create DataFrame with specific column order
         df = pd.DataFrame(summary_data)
@@ -892,22 +891,41 @@ class BOMGenerator:
             # Write summary data
             summary_data.to_excel(writer, sheet_name='BOM Summary', index=False, startrow=15)  # Start after project info
             
-            # Add total row if Extended Price column exists
+            # Add Excel formulas for Extended Price and Total
             if 'Extended Price' in summary_data.columns:
                 summary_sheet = writer.sheets['BOM Summary']
-                total_row = 15 + len(summary_data) + 2  # +1 for header, +1 to go after last data row
                 
-                # Find the Extended Price column index
-                ext_price_col = list(summary_data.columns).index('Extended Price') + 1  # +1 for 1-based Excel
+                # Find column letters for Quantity, Unit Price, and Extended Price
+                qty_col_idx = list(summary_data.columns).index('Quantity') + 1
+                unit_price_col_idx = list(summary_data.columns).index('Unit Price') + 1
+                ext_price_col_idx = list(summary_data.columns).index('Extended Price') + 1
                 
-                # Add "Total:" label in the column before Extended Price
-                label_cell = summary_sheet.cell(row=total_row, column=ext_price_col - 1, value="Total:")
+                qty_col_letter = get_column_letter(qty_col_idx)
+                unit_price_col_letter = get_column_letter(unit_price_col_idx)
+                ext_price_col_letter = get_column_letter(ext_price_col_idx)
+                
+                # Data starts at row 17 (startrow=15 + 1 header row + 1 for 1-based)
+                first_data_row = 17
+                last_data_row = first_data_row + len(summary_data) - 1
+                
+                # Add formulas for Extended Price: =Quantity * Unit Price
+                for row_num in range(first_data_row, last_data_row + 1):
+                    cell = summary_sheet.cell(row=row_num, column=ext_price_col_idx)
+                    cell.value = f'=IF({unit_price_col_letter}{row_num}="","",' \
+                                 f'{qty_col_letter}{row_num}*{unit_price_col_letter}{row_num})'
+                    cell.number_format = '"$"#,##0.00'
+                
+                # Add Total row with SUM formula
+                total_row = last_data_row + 2
+                
+                # "Total:" label
+                label_cell = summary_sheet.cell(row=total_row, column=ext_price_col_idx - 1, value="Total:")
                 label_cell.font = Font(bold=True)
                 label_cell.alignment = Alignment(horizontal='right')
                 
-                # Calculate and add the total
-                total_extended = summary_data['Extended Price'].dropna().sum()
-                total_cell = summary_sheet.cell(row=total_row, column=ext_price_col, value=total_extended)
+                # SUM formula
+                total_cell = summary_sheet.cell(row=total_row, column=ext_price_col_idx)
+                total_cell.value = f'=SUM({ext_price_col_letter}{first_data_row}:{ext_price_col_letter}{last_data_row})'
                 total_cell.font = Font(bold=True)
                 total_cell.number_format = '"$"#,##0.00'
             
