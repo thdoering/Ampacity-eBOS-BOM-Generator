@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import Optional, Dict, List
-from ..models.block import BlockConfig, WiringType, TrackerPosition, DeviceType, CollectionPoint, WiringConfig, HarnessGroup
+from ..models.block import BlockConfig, WiringType, TrackerPosition, DeviceType, CollectionPoint, WiringConfig, HarnessGroup, PolarityConvention
 from ..models.tracker import TrackerTemplate, TrackerPosition, ModuleOrientation
 from ..models.inverter import InverterSpec
 from .inverter_manager import InverterManager
@@ -205,25 +205,33 @@ class BlockConfigurator(ttk.Frame):
         device_frame = ttk.LabelFrame(config_frame, text="Downstream Device", padding="5")
         device_frame.grid(row=5, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
 
+        # Module Polarity Convention
+        ttk.Label(device_frame, text="Polarity Convention:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
+        self.polarity_convention_var = tk.StringVar(value=PolarityConvention.NEGATIVE_SOUTH.value)
+        polarity_combo = ttk.Combobox(device_frame, textvariable=self.polarity_convention_var, state='readonly', width=22)
+        polarity_combo['values'] = [p.value for p in PolarityConvention]
+        polarity_combo.grid(row=0, column=1, columnspan=2, padx=5, pady=2, sticky=(tk.W, tk.E))
+        polarity_combo.bind('<<ComboboxSelected>>', self.on_polarity_convention_change)
+
         # Device Type Selection
-        ttk.Label(device_frame, text="Device Type:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(device_frame, text="Device Type:").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
         self.device_type_var = tk.StringVar(value=DeviceType.STRING_INVERTER.value)
         device_type_combo = ttk.Combobox(device_frame, textvariable=self.device_type_var, state='readonly')
         device_type_combo['values'] = [t.value for t in DeviceType]
-        device_type_combo.grid(row=0, column=1, columnspan=2, padx=5, pady=2, sticky=(tk.W, tk.E))
+        device_type_combo.grid(row=1, column=1, columnspan=2, padx=5, pady=2, sticky=(tk.W, tk.E))
 
         # Device Spacing
-        ttk.Label(device_frame, text="Device Spacing (ft):").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(device_frame, text="Device Spacing (ft):").grid(row=2, column=0, padx=5, pady=2, sticky=tk.W)
         self.device_spacing_var = tk.StringVar(value="6.0")
         device_spacing_entry = ttk.Entry(device_frame, textvariable=self.device_spacing_var)
-        device_spacing_entry.grid(row=1, column=1, padx=5, pady=2, sticky=tk.W)
+        device_spacing_entry.grid(row=2, column=1, padx=5, pady=2, sticky=tk.W)
         self.device_spacing_meters_label = ttk.Label(device_frame, text="(1.83m)")
-        self.device_spacing_meters_label.grid(row=1, column=2, padx=5, pady=2, sticky=tk.W)
+        self.device_spacing_meters_label.grid(row=2, column=2, padx=5, pady=2, sticky=tk.W)
 
         # Selected Inverter
-        ttk.Label(device_frame, text="Selected Inverter:").grid(row=2, column=0, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(device_frame, text="Selected Inverter:").grid(row=3, column=0, padx=5, pady=2, sticky=tk.W)
         self.inverter_label = ttk.Label(device_frame, text="None")
-        self.inverter_label.grid(row=2, column=1, padx=5, pady=2, sticky=tk.W)
+        self.inverter_label.grid(row=3, column=1, padx=5, pady=2, sticky=tk.W)
         # Change this line in the UI setup:
         self.inverter_select_button = ttk.Button(device_frame, text="Select Inverter", command=self.select_inverter)
         self.inverter_select_button.grid(row=6, column=2, padx=5, pady=2)
@@ -232,7 +240,6 @@ class BlockConfigurator(ttk.Frame):
             self.update_device_spacing_display(),
             self.draw_block()
         ))
-
         # Underground Routing Configuration - goes after the inverter button row
         underground_frame = ttk.LabelFrame(device_frame, text="Whip Routing")
         underground_frame.grid(row=7, column=0, columnspan=3, padx=5, pady=5, sticky=(tk.W, tk.E))
@@ -845,6 +852,7 @@ class BlockConfigurator(ttk.Frame):
                 device_x=initial_device_x,
                 device_y=0.0,
                 device_type=DeviceType(self.device_type_var.get()),
+                polarity_convention=PolarityConvention(self.polarity_convention_var.get()),
                 underground_routing=False,
                 pile_reveal_m=1.5,
                 trench_depth_m=0.91
@@ -972,6 +980,13 @@ class BlockConfigurator(ttk.Frame):
             self.dc_feeder_distance_var.set(str(getattr(block, 'dc_feeder_distance_ft', 0.0)))
             self.dc_feeder_cable_size_var.set(getattr(block, 'dc_feeder_cable_size', '4/0 AWG'))
             self.updating_ui = False
+
+            # Update polarity convention
+            self.updating_ui = True
+            self.polarity_convention_var.set(
+                getattr(block, 'polarity_convention', PolarityConvention.NEGATIVE_SOUTH).value
+            )
+            self.updating_ui = False
             
             # Sync enabled_templates with any placed trackers
             self.sync_enabled_templates_with_placed_trackers(block)
@@ -985,6 +1000,66 @@ class BlockConfigurator(ttk.Frame):
             # Multiple selection - clear current block display but keep selection
             self.current_block = None
             self.clear_config_display()
+
+    def on_polarity_convention_change(self, event=None):
+        """Handle polarity convention change"""
+        if self.updating_ui or not self.current_block or self.current_block not in self.blocks:
+            return
+        
+        block = self.blocks[self.current_block]
+        new_convention = PolarityConvention(self.polarity_convention_var.get())
+        block.polarity_convention = new_convention
+        
+        # Apply polarity to all tracker positions and recalculate string positions
+        self.apply_polarity_to_trackers(block)
+        
+        # Redraw the block
+        self.draw_block()
+        
+        # Notify blocks changed
+        self._notify_blocks_changed()
+    
+    def apply_polarity_to_trackers(self, block):
+        """Apply polarity convention to all tracker positions in a block"""
+        for tracker_pos in block.tracker_positions:
+            tracker_pos.set_polarity_info(
+                block.polarity_convention.value,
+                block.device_y
+            )
+            tracker_pos.calculate_string_positions()
+        
+        # Check for mixed orientations on same tracker (warn user)
+        if block.polarity_convention.value in ("Negative Toward Device", "Positive Toward Device"):
+            self._check_mixed_tracker_orientations(block)
+    
+    def _check_mixed_tracker_orientations(self, block):
+        """Check if any tracker has strings on both sides of the device and warn"""
+        device_y = block.device_y
+        
+        for idx, tracker_pos in enumerate(block.tracker_positions):
+            if not tracker_pos.strings or len(tracker_pos.strings) < 2:
+                continue
+            
+            # Check if strings span across the device Y position
+            string_centers = []
+            for string in tracker_pos.strings:
+                center_y = tracker_pos.y + (string.positive_source_y + string.negative_source_y) / 2
+                string_centers.append(center_y)
+            
+            has_north = any(c < device_y for c in string_centers)
+            has_south = any(c > device_y for c in string_centers)
+            
+            if has_north and has_south:
+                from tkinter import messagebox
+                messagebox.showwarning(
+                    "Mixed Polarity Alert",
+                    f"Tracker {idx + 1} has strings on both sides of the device. "
+                    f"This would require modules to be oriented in opposite directions "
+                    f"on the same tracker, which is unusual in practice.\n\n"
+                    f"Consider moving the device or using an absolute polarity convention "
+                    f"(Negative Always North/South)."
+                )
+                break  # Only show one warning per change
         
     def on_device_config_change(self, *args):
         """Update block configuration when device settings change"""
@@ -1632,6 +1707,12 @@ class BlockConfigurator(ttk.Frame):
         # Pass project reference for wiring mode
         if hasattr(self, 'current_project'):
             pos._project_ref = self.current_project
+        # Set polarity info before calculating string positions
+        if block:
+            pos.set_polarity_info(
+                block.polarity_convention.value,
+                block.device_y
+            )
         pos.calculate_string_positions()
         block.tracker_positions.append(pos)
         
@@ -2378,6 +2459,10 @@ class BlockConfigurator(ttk.Frame):
                 if abs(pos.x - orig_pos[0]) < 0.01 and abs(pos.y - orig_pos[1]) < 0.01:
                     pos.x = new_x
                     pos.y = new_y
+                    pos.set_polarity_info(
+                        block.polarity_convention.value,
+                        block.device_y
+                    )
                     pos.calculate_string_positions()
                     new_selected.add((new_x, new_y))
                     break

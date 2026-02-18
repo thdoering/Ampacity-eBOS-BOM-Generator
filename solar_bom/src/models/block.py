@@ -14,6 +14,13 @@ class DeviceType(Enum):
     STRING_INVERTER = "String Inverter"
     COMBINER_BOX = "Combiner Box"
 
+class PolarityConvention(Enum):
+    """Enumeration of module polarity orientation conventions"""
+    NEGATIVE_SOUTH = "Negative Always South"
+    NEGATIVE_NORTH = "Negative Always North"
+    NEGATIVE_TOWARD_DEVICE = "Negative Toward Device"
+    POSITIVE_TOWARD_DEVICE = "Positive Toward Device"
+
 @dataclass
 class CollectionPoint:
     """Data class representing a wiring collection point"""
@@ -75,6 +82,7 @@ class BlockConfig:
     trench_depth_m: float = 0.91  # 3ft default
     dc_feeder_distance_ft: float = 0.0  # DC feeder distance in feet
     dc_feeder_cable_size: str = "4/0 AWG"  # DC feeder cable size (default)
+    polarity_convention: PolarityConvention = PolarityConvention.NEGATIVE_SOUTH  # Default: current behavior
     
     # Optional fields with defaults must come after
     description: Optional[str] = None
@@ -299,6 +307,7 @@ class BlockConfig:
             'device_y': self.device_y,
             'device_spacing_m': self.device_spacing_m,
             'device_type': self.device_type.value,
+            'polarity_convention': self.polarity_convention.value,
             'underground_routing': self.underground_routing,
             'pile_reveal_m': self.pile_reveal_m,
             'trench_depth_m': self.trench_depth_m
@@ -411,7 +420,8 @@ class BlockConfig:
             trench_depth_m=data.get('trench_depth_m', 0.91),
             enabled_templates=data.get('enabled_templates', []),
             dc_feeder_distance_ft=data.get('dc_feeder_distance_ft', 0.0),
-            dc_feeder_cable_size=data.get('dc_feeder_cable_size', '4/0 AWG')
+            dc_feeder_cable_size=data.get('dc_feeder_cable_size', '4/0 AWG'),
+            polarity_convention=PolarityConvention(data.get('polarity_convention', PolarityConvention.NEGATIVE_SOUTH.value)),
         )
         
         # Load tracker positions
@@ -436,10 +446,15 @@ class BlockConfig:
                 template=position_template
             )
             
+            # Set polarity info before calculating string positions
+            pos.set_polarity_info(
+                block.polarity_convention.value,
+                block.device_y
+            )
+            
             # Always recalculate string positions to ensure they match current template
             # This is important for motor placement changes and template updates
             pos.calculate_string_positions()
-                
             block.tracker_positions.append(pos)
         
         # Load wiring configuration if exists

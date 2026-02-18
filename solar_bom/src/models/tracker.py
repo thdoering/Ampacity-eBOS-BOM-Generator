@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 from .module import ModuleSpec, ModuleOrientation
+from enum import Enum  # Add if not already imported
 
 """
 Solar Tracker Terminology:
@@ -48,6 +49,57 @@ class TrackerPosition:
     rotation: float  # Rotation angle in degrees
     template: 'TrackerTemplate'  # Forward reference to avoid circular import
     strings: List[StringPosition] = field(default_factory=list)  # List of strings on this tracker
+
+    def _apply_polarity_convention(self, polarity_convention_value: str, device_y: float = None):
+        """
+        Flip string polarity based on convention. Called after normal string position calculation.
+        Default calculation assumes Negative South (positive at top, negative at bottom).
+        
+        Args:
+            polarity_convention_value: String value of PolarityConvention enum
+            device_y: Y coordinate of the device in the block (needed for toward-device modes)
+        """
+        for string in self.strings:
+            should_flip = False
+            
+            if polarity_convention_value == "Negative Always North":
+                # Flip all strings: negative goes to top (north), positive to bottom (south)
+                should_flip = True
+                
+            elif polarity_convention_value == "Negative Toward Device":
+                if device_y is not None:
+                    # Calculate this string's center Y in block coordinates
+                    string_center_y = self.y + (string.positive_source_y + string.negative_source_y) / 2
+                    # If string center is south of device (higher Y), flip so negative faces north (toward device)
+                    # If string center is north of device (lower Y), keep default (negative at south, toward device)
+                    should_flip = string_center_y > device_y
+                    
+            elif polarity_convention_value == "Positive Toward Device":
+                if device_y is not None:
+                    # Calculate this string's center Y in block coordinates
+                    string_center_y = self.y + (string.positive_source_y + string.negative_source_y) / 2
+                    # If string center is north of device (lower Y), flip so positive faces south (toward device)
+                    # If string center is south of device (higher Y), keep default (positive at north, toward device)
+                    should_flip = string_center_y <= device_y
+            
+            # "Negative Always South" = default behavior, no flip needed
+            
+            if should_flip:
+                # Swap positive and negative Y source positions
+                string.positive_source_y, string.negative_source_y = (
+                    string.negative_source_y, string.positive_source_y
+                )
+
+    def set_polarity_info(self, polarity_convention_value: str, device_y: float = None):
+        """
+        Store polarity convention info for use during string position calculation.
+        
+        Args:
+            polarity_convention_value: String value of PolarityConvention enum
+            device_y: Y coordinate of the device in the block
+        """
+        self._polarity_convention = polarity_convention_value
+        self._device_y = device_y
 
     def calculate_string_positions(self) -> None:
         """Calculate string positions and their source points"""
@@ -162,6 +214,13 @@ class TrackerPosition:
                         num_modules=modules_per_string
                     )
                 self.strings.append(string)
+
+        # Apply polarity convention if set
+        if hasattr(self, '_polarity_convention') and self._polarity_convention:
+            self._apply_polarity_convention(
+                self._polarity_convention,
+                getattr(self, '_device_y', None)
+            )
 
 @dataclass
 class TrackerTemplate:
