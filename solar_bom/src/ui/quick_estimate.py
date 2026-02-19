@@ -365,9 +365,9 @@ class QuickEstimate(ttk.Frame):
         elif num_strings == 2:
             return ["2", "1+1"]
         elif num_strings == 3:
-            return ["3", "2+1"]
+            return ["3", "2+1", "1+1+1"]
         elif num_strings == 4:
-            return ["4", "3+1", "2+2"]
+            return ["4", "3+1", "2+2", "2+1+1", "1+1+1+1"]
         elif num_strings == 5:
             return ["5", "4+1", "3+2"]
         elif num_strings == 6:
@@ -1406,6 +1406,9 @@ class QuickEstimate(ttk.Frame):
         long_extender_length = self.round_whip_length(string_length_ft)
         
         # ==================== Display Results ====================
+
+        # Store totals for Excel export
+        self.last_totals = totals
         
         # Combiner Boxes by breaker size
         if totals['combiners_by_breaker']:
@@ -1435,16 +1438,6 @@ class QuickEstimate(ttk.Frame):
         
         if totals['string_inverters'] > 0:
             self.results_tree.insert('', 'end', values=('String Inverters', totals['string_inverters'], 'ea'))
-        
-        # Trackers
-        if totals['trackers_by_string']:
-            self.results_tree.insert('', 'end', values=('--- TRACKERS ---', '', ''))
-            total_trackers = 0
-            for strings in sorted(totals['trackers_by_string'].keys()):
-                qty = totals['trackers_by_string'][strings]
-                total_trackers += qty
-                self.results_tree.insert('', 'end', values=(f"{strings}-String Trackers", qty, 'ea'))
-            self.results_tree.insert('', 'end', values=('Total Trackers', total_trackers, 'ea'))
         
         # Harnesses
         if totals['harnesses_by_size']:
@@ -1634,6 +1627,47 @@ class QuickEstimate(ttk.Frame):
                     row += 1
             
             row += 1
+            
+            # ========== TRACKER SUMMARY SECTION ==========
+            if hasattr(self, 'last_totals') and self.last_totals.get('trackers_by_string'):
+                ws.merge_cells(f'A{row}:E{row}')
+                ws.cell(row=row, column=1, value="Tracker Summary").font = title_font
+                row += 1
+                
+                tracker_headers = ['Tracker Type', 'Quantity', 'Unit']
+                for col, header in enumerate(tracker_headers, 1):
+                    cell = ws.cell(row=row, column=col, value=header)
+                    cell.font = header_font
+                    cell.fill = header_fill
+                    cell.alignment = center_align
+                    cell.border = thin_border
+                row += 1
+                
+                total_trackers = 0
+                for strings in sorted(self.last_totals['trackers_by_string'].keys()):
+                    qty = self.last_totals['trackers_by_string'][strings]
+                    total_trackers += qty
+                    ws.cell(row=row, column=1, value=f"{strings}-String Trackers").border = thin_border
+                    cell_qty = ws.cell(row=row, column=2, value=qty)
+                    cell_qty.border = thin_border
+                    cell_qty.alignment = center_align
+                    cell_unit = ws.cell(row=row, column=3, value='ea')
+                    cell_unit.border = thin_border
+                    cell_unit.alignment = center_align
+                    row += 1
+                
+                # Total row
+                total_label = ws.cell(row=row, column=1, value="Total Trackers")
+                total_label.font = label_font
+                total_label.border = thin_border
+                total_qty = ws.cell(row=row, column=2, value=total_trackers)
+                total_qty.font = label_font
+                total_qty.border = thin_border
+                total_qty.alignment = center_align
+                total_unit = ws.cell(row=row, column=3, value='ea')
+                total_unit.border = thin_border
+                total_unit.alignment = center_align
+                row += 2
             
             # ========== BOM RESULTS SECTION ==========
             ws.merge_cells(f'A{row}:E{row}')
