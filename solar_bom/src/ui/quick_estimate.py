@@ -27,10 +27,14 @@ class QuickEstimate(ttk.Frame):
         self.module_width_default = 1134
         self.modules_per_string_default = 28
         self.row_spacing_default = 20.0
+        self.wire_gauge_default = '10 AWG'
         
         # Track currently selected item
         self.selected_item_id = None
         self.selected_item_type = None  # 'subarray' or 'block'
+        self.checked_items = set()  # Items checked for export
+        self._results_stale = True
+        self._calc_btn = None  # Reference to calculate button
         self._autosave_after_id = None
         
         self.setup_ui()
@@ -272,11 +276,11 @@ class QuickEstimate(ttk.Frame):
     def get_fuse_holder_category(self, fuse_current_amps):
         """Determine fuse holder rating category from required fuse current"""
         if fuse_current_amps <= 20:
-            return "20A and below"
+            return "20A and Below"
         elif fuse_current_amps <= 32:
             return "25-32A"
         else:
-            return "32A and above"
+            return "32A and Above"
 
     def find_combiner_box(self, strings_per_cb, breaker_size, fuse_holder_rating):
         """Find a matching combiner box from the library.
@@ -344,6 +348,141 @@ class QuickEstimate(ttk.Frame):
                     break
         
         return whip_distances
+
+    def lookup_part_and_price(self, item_type, **kwargs):
+        """Look up part number and unit price for a BOM item.
+        item_type: 'harness', 'whip', 'extender'
+        Returns (part_number, unit_price_str, ext_price_str)
+        """
+        try:
+            import os
+            import json
+            from src.utils.pricing_lookup import PricingLookup
+
+            wire_gauge = getattr(self, 'wire_gauge_var', None)
+            wire_gauge = wire_gauge.get() if wire_gauge else '10 AWG'
+
+            pricing = PricingLookup()
+            part_number = 'N/A'
+
+            if item_type == 'harness':
+                num_strings = kwargs.get('num_strings', 1)
+                polarity = kwargs.get('polarity', 'positive')
+                qty = kwargs.get('qty', 1)
+
+                # Calculate string spacing from module width and modules per string
+                try:
+                    mps = int(self.modules_per_string_var.get())
+                except ValueError:
+                    mps = 28
+                module_width_mm = self.selected_module.width_mm if self.selected_module else 1134
+                # Use 0.02m (20mm) as default module gap spacing
+                string_spacing_ft = (mps * module_width_mm + (mps - 1) * 20) / 1000 * 3.28084
+
+                # Load harness library
+                current_dir = os.path.dirname(os.path.abspath(__file__))
+                project_root = os.path.dirname(os.path.dirname(current_dir))
+                lib_path = os.path.join(project_root, 'data', 'harness_library.json')
+                with open(lib_path, 'r') as f:
+                    harness_library = json.load(f)
+
+                available_spacings = [26.0, 102.0, 113.0, 122.0, 133.0]
+                target_spacing = max(available_spacings)
+                for sp in sorted(available_spacings):
+                    if sp >= string_spacing_ft:
+                        target_spacing = sp
+                        break
+
+                matches = []
+                for pn, spec in harness_library.items():
+                    if pn.startswith('_comment_'):
+                        continue
+                    if (spec.get('num_strings') == num_strings and
+                            spec.get('polarity') == polarity and
+                            abs(spec.get('string_spacing_ft', 0) - target_spacing) < 0.1):
+                        spec_trunk = spec.get('trunk_cable_size', spec.get('trunk_wire_gauge', ''))
+                        if spec_trunk == wire_gauge:
+                            matches.append(pn)
+                part_number = matches[0] if len(matches) == 1 else ('N/A' if not matches else ' or '.join(sorted(matches)))
+
+            elif item_type in ('whip', 'extender'):
+                polarity = kwargs.get('polarity', 'positive')
+                length_ft = kwargs.get('length_ft', 10)
+                qty = kwargs.get('qty', 1)
+
+                target_length = ((length_ft - 1) // 5 + 1) * 5
+                target_length = max(10, target_length)
+
+                lib_name = 'whip_library.json' if item_type == 'whip' else 'extender_library.json'
+                current_dir = os.path.dirname(os.path.abspath(__file__))
+                project_root = os.path.dirname(os.path.dirname(current_dir))
+                lib_path = os.path.join(project_root, 'data', lib_name)
+                with open(lib_path, 'r') as f:
+                    library = json.load(f)
+
+                for pn, spec in library.items():
+                    if pn.startswith('_comment_'):
+                        continue
+                    if (spec.get('wire_gauge') == wire_gauge and
+                            spec.get('polarity') == polarity and
+                            spec.get('length_ft') == target_length):
+                        part_number = pn
+                        break
+            else:
+                qty = kwargs.get('qty', 1)
+
+            # Look up price
+            unit_price = pricing.get_price(part_number) if part_number != 'N/A' else None
+            if unit_price is not None:
+                qty_val = kwargs.get('qty', 1)
+                return part_number, f"${unit_price:,.2f}", f"${unit_price * qty_val:,.2f}"
+            else:
+                return part_number, '', ''
+
+        except Exception as e:
+            print(f"lookup_part_and_price error ({item_type}): {e}")
+            return 'N/A', '', ''
+
+    def _on_results_tree_click(self, event):
+        """Handle click on results tree - toggle checkbox if include column clicked"""
+        item = self.results_tree.identify_row(event.y)
+        column = self.results_tree.identify_column(event.x)
+        if item and column == '#1':  # include column
+            self._toggle_result_item(item)
+
+    def _toggle_result_item(self, item):
+        """Toggle the checked state of a results tree item"""
+        values = list(self.results_tree.item(item, 'values'))
+        # Don't allow toggling section headers
+        if str(values[1]).startswith('---'):
+            return
+        if values[0] == '☐':
+            values[0] = '☑'
+            self.checked_items.add(item)
+            self.results_tree.item(item, values=values, tags=('checked',))
+        else:
+            values[0] = '☐'
+            self.checked_items.discard(item)
+            self.results_tree.item(item, values=values, tags=('unchecked',))
+
+    def _results_select_all(self):
+        """Check all non-section rows in results tree"""
+        for item in self.results_tree.get_children():
+            values = list(self.results_tree.item(item, 'values'))
+            if not str(values[1]).startswith('---'):
+                values[0] = '☑'
+                self.checked_items.add(item)
+                self.results_tree.item(item, values=values, tags=('checked',))
+
+    def _results_select_none(self):
+        """Uncheck all rows in results tree"""
+        for item in self.results_tree.get_children():
+            values = list(self.results_tree.item(item, 'values'))
+            if not str(values[1]).startswith('---'):
+                values[0] = '☐'
+                self.checked_items.discard(item)
+                self.results_tree.item(item, values=values, tags=('unchecked',))
+        self.checked_items.clear()
 
     def get_default_combiner_price(self):
         """Get default combiner box price from pricing data"""
@@ -419,6 +558,7 @@ class QuickEstimate(ttk.Frame):
         # Load global settings
         self.modules_per_string_default = estimate_data.get('modules_per_string', 28)
         self.row_spacing_default = estimate_data.get('row_spacing_ft', 20.0)
+        self.wire_gauge_default = estimate_data.get('wire_gauge', '10 AWG')
         
         # Restore module selection
         saved_module_name = estimate_data.get('module_name', '')
@@ -435,6 +575,8 @@ class QuickEstimate(ttk.Frame):
             self.modules_per_string_var.set(str(self.modules_per_string_default))
         if hasattr(self, 'row_spacing_var'):
             self.row_spacing_var.set(str(self.row_spacing_default))
+        if hasattr(self, 'wire_gauge_var'):
+            self.wire_gauge_var.set(estimate_data.get('wire_gauge', '10 AWG'))
         
         # Load subarrays
         saved_subarrays = estimate_data.get('subarrays', {})
@@ -469,6 +611,7 @@ class QuickEstimate(ttk.Frame):
                     'type': block_data.get('type', 'combiner'),
                     'num_combiners': block_data.get('num_combiners', 1),
                     'breaker_size': block_data.get('breaker_size', 400),
+                    'cb_override': block_data.get('cb_override'),
                     'trackers': block_data.get('trackers', [{'strings': 2, 'quantity': 1, 'harness_config': '2'}])
                 }
                 
@@ -482,6 +625,9 @@ class QuickEstimate(ttk.Frame):
             self.on_tree_select(None)
         
         self._loading = False
+
+        # Auto-calculate on load
+        self.after(100, self.calculate_estimate)
 
     def save_estimate(self):
         """Save estimate data to the project"""
@@ -512,6 +658,8 @@ class QuickEstimate(ttk.Frame):
             estimate_data['row_spacing_ft'] = float(self.row_spacing_var.get())
         except ValueError:
             estimate_data['row_spacing_ft'] = 20.0
+
+        estimate_data['wire_gauge'] = self.wire_gauge_var.get()
         
         # Update modified date
         estimate_data['modified_date'] = datetime.now().isoformat()
@@ -532,6 +680,7 @@ class QuickEstimate(ttk.Frame):
                     'type': block_data['type'],
                     'num_combiners': block_data.get('num_combiners', 1),
                     'breaker_size': block_data.get('breaker_size', 400),
+                    'cb_override': block_data.get('cb_override'),
                     'trackers': block_data['trackers']
                 }
         
@@ -695,6 +844,12 @@ class QuickEstimate(ttk.Frame):
         self._autosave_after_id = None
         self.save_estimate()
 
+    def _mark_stale(self):
+        """Mark results as stale and re-enable the calculate button"""
+        self._results_stale = True
+        if self._calc_btn:
+            self._calc_btn.config(state='normal')
+
     def _on_module_selected(self, event=None):
         """Handle module selection from dropdown"""
         selected_name = self.module_select_var.get()
@@ -706,6 +861,7 @@ class QuickEstimate(ttk.Frame):
             )
             # Auto-save when module changes (but not during load)
             if not getattr(self, '_loading', False):
+                self._mark_stale()
                 self.save_estimate()
         else:
             self.selected_module = None
@@ -799,19 +955,32 @@ class QuickEstimate(ttk.Frame):
         ttk.Label(settings_inner, text="Modules per String:").pack(side='left', padx=(0, 5))
         self.modules_per_string_var = tk.StringVar(value=str(getattr(self, 'modules_per_string_default', 28)))
         ttk.Spinbox(settings_inner, from_=1, to=100, textvariable=self.modules_per_string_var, width=6).pack(side='left', padx=(0, 15))
-        self.modules_per_string_var.trace_add('write', lambda *args: self._schedule_autosave())
+        self.modules_per_string_var.trace_add('write', lambda *args: (self._mark_stale(), self._schedule_autosave()))
         
         ttk.Label(settings_inner, text="Row Spacing (ft):").pack(side='left', padx=(0, 5))
         self.row_spacing_var = tk.StringVar(value=str(getattr(self, 'row_spacing_default', 20.0)))
-        ttk.Spinbox(settings_inner, from_=1, to=100, textvariable=self.row_spacing_var, width=6).pack(side='left')
-        self.row_spacing_var.trace_add('write', lambda *args: self._schedule_autosave())
+        ttk.Spinbox(settings_inner, from_=1, to=100, textvariable=self.row_spacing_var, width=6).pack(side='left', padx=(0, 15))
+        self.row_spacing_var.trace_add('write', lambda *args: (self._mark_stale(), self._schedule_autosave()))
+
+        ttk.Label(settings_inner, text="Wire Gauge:").pack(side='left', padx=(0, 5))
+        self.wire_gauge_var = tk.StringVar(value=getattr(self, 'wire_gauge_default', '8 AWG'))
+        wire_gauge_combo = ttk.Combobox(
+            settings_inner,
+            textvariable=self.wire_gauge_var,
+            values=['8 AWG', '10 AWG'],
+            state='readonly',
+            width=8
+        )
+        wire_gauge_combo.pack(side='left')
+        self.disable_combobox_scroll(wire_gauge_combo)
+        self.wire_gauge_var.trace_add('write', lambda *args: (self._mark_stale(), self._schedule_autosave()))
         
         # Button row
         button_row = ttk.Frame(bottom_frame)
         button_row.pack(fill='x', pady=(0, 10))
         
-        calc_btn = ttk.Button(button_row, text="Calculate Estimate", command=self.calculate_estimate)
-        calc_btn.pack(side='left', padx=(0, 10))
+        self._calc_btn = ttk.Button(button_row, text="Calculate Estimate", command=self.calculate_estimate, state='disabled')
+        self._calc_btn.pack(side='left', padx=(0, 10))
         
         export_btn = ttk.Button(button_row, text="Export to Excel", command=self.export_to_excel)
         export_btn.pack(side='left')
@@ -821,14 +990,30 @@ class QuickEstimate(ttk.Frame):
         results_frame.pack(fill='both', expand=True)
         
         # Results treeview
-        columns = ('item', 'quantity', 'unit')
+        columns = ('include', 'item', 'part_number', 'quantity', 'unit', 'unit_cost', 'ext_cost')
         self.results_tree = ttk.Treeview(results_frame, columns=columns, show='headings', height=8)
+        self.results_tree.heading('include', text='')
         self.results_tree.heading('item', text='Item')
+        self.results_tree.heading('part_number', text='Part Number')
         self.results_tree.heading('quantity', text='Quantity')
         self.results_tree.heading('unit', text='Unit')
-        self.results_tree.column('item', width=250, anchor='w')
-        self.results_tree.column('quantity', width=100, anchor='center')
-        self.results_tree.column('unit', width=60, anchor='center')
+        self.results_tree.heading('unit_cost', text='Unit Cost')
+        self.results_tree.heading('ext_cost', text='Ext. Cost')
+        self.results_tree.column('include', width=30, anchor='center')
+        self.results_tree.column('item', width=230, anchor='w')
+        self.results_tree.column('part_number', width=160, anchor='w')
+        self.results_tree.column('quantity', width=80, anchor='center')
+        self.results_tree.column('unit', width=50, anchor='center')
+        self.results_tree.column('unit_cost', width=80, anchor='e')
+        self.results_tree.column('ext_cost', width=90, anchor='e')
+
+        # Tags for checked/unchecked styling
+        self.results_tree.tag_configure('checked', foreground='black')
+        self.results_tree.tag_configure('unchecked', foreground='gray60')
+        self.results_tree.tag_configure('section', foreground='black')
+
+        # Click handler for checkbox column
+        self.results_tree.bind('<Button-1>', self._on_results_tree_click)
         
         # Scrollbar for results
         results_scroll = ttk.Scrollbar(results_frame, orient='vertical', command=self.results_tree.yview)
@@ -836,6 +1021,12 @@ class QuickEstimate(ttk.Frame):
         
         self.results_tree.pack(side='left', fill='both', expand=True)
         results_scroll.pack(side='right', fill='y')
+
+        # Select all / none buttons
+        check_btn_frame = ttk.Frame(results_frame)
+        check_btn_frame.pack(fill='x', pady=(5, 0))
+        ttk.Button(check_btn_frame, text="Select All", command=self._results_select_all).pack(side='left', padx=(0, 5))
+        ttk.Button(check_btn_frame, text="Select None", command=self._results_select_none).pack(side='left')
 
     def setup_tree_panel(self, parent):
         """Setup the left tree view panel"""
@@ -934,6 +1125,7 @@ class QuickEstimate(ttk.Frame):
             'type': source_block['type'],
             'num_combiners': source_block.get('num_combiners', 1),
             'breaker_size': source_block.get('breaker_size', 400),
+            'cb_override': source_block.get('cb_override'),
             'trackers': copied_trackers
         }
         
@@ -1113,6 +1305,7 @@ class QuickEstimate(ttk.Frame):
         
         def update_type(*args):
             block['type'] = type_var.get()
+            self._mark_stale()
             self._schedule_autosave()
         type_var.trace_add('write', update_type)
         
@@ -1128,6 +1321,7 @@ class QuickEstimate(ttk.Frame):
                 block['num_combiners'] = int(num_cb_var.get())
             except ValueError:
                 pass
+            self._mark_stale()
             self._schedule_autosave()
         num_cb_var.trace_add('write', update_num_cb)
         
@@ -1144,9 +1338,32 @@ class QuickEstimate(ttk.Frame):
                 block['breaker_size'] = int(breaker_var.get())
             except ValueError:
                 pass
+            self._mark_stale()
             self._schedule_autosave()
         breaker_var.trace_add('write', update_breaker)
-        
+
+        # Combiner Box Override
+        ttk.Label(form_frame, text="Combiner Box:").grid(row=4, column=0, sticky='w', pady=5)
+        combiner_library = self.load_combiner_library()
+        cb_options = ['Auto'] + sorted(
+            [pn for pn in combiner_library.keys() if not pn.startswith('_')],
+            key=lambda pn: (
+                combiner_library[pn].get('max_inputs', 0),
+                combiner_library[pn].get('breaker_size', 0)
+            )
+        )
+        cb_override_var = tk.StringVar(value=block.get('cb_override', 'Auto'))
+        cb_override_combo = ttk.Combobox(form_frame, textvariable=cb_override_var, values=cb_options, state='readonly', width=25)
+        cb_override_combo.grid(row=4, column=1, sticky='w', pady=5, padx=(10, 0))
+        self.disable_combobox_scroll(cb_override_combo)
+
+        def update_cb_override(*args):
+            val = cb_override_var.get()
+            block['cb_override'] = val if val != 'Auto' else None
+            self._mark_stale()
+            self._schedule_autosave()
+        cb_override_var.trace_add('write', update_cb_override)
+
         # Tracker Configurations Section
         tracker_frame = ttk.LabelFrame(scrollable_frame, text="Tracker Configurations", padding="10")
         tracker_frame.pack(fill='x', pady=(15, 0), padx=10)
@@ -1226,6 +1443,7 @@ class QuickEstimate(ttk.Frame):
             except ValueError:
                 pass
             self.update_string_count()
+            self._mark_stale()
         strings_var.trace_add('write', on_strings_change)
         
         # Update data when values change
@@ -1235,11 +1453,13 @@ class QuickEstimate(ttk.Frame):
             except ValueError:
                 pass
             self.update_string_count()
+            self._mark_stale()
             self._schedule_autosave()
         qty_var.trace_add('write', on_qty_change)
         
         def on_harness_change(*args):
             tracker['harness_config'] = harness_var.get()
+            self._mark_stale()
             self._schedule_autosave()
         harness_var.trace_add('write', on_harness_change)
         
@@ -1266,6 +1486,7 @@ class QuickEstimate(ttk.Frame):
         # Clear previous results
         for item in self.results_tree.get_children():
             self.results_tree.delete(item)
+        self.checked_items.clear()
         
         # Aggregated totals
         totals = {
@@ -1351,8 +1572,13 @@ class QuickEstimate(ttk.Frame):
                     fuse_current = module_isc * 1.56 * max(max_harness_strings, 1)
                     fuse_holder_rating = self.get_fuse_holder_category(fuse_current)
                     
-                    # Try to find matching combiner from library
-                    matched_cb = self.find_combiner_box(strings_per_cb, breaker_size, fuse_holder_rating)
+                    # Use manual override if set, otherwise auto-match
+                    cb_override = block.get('cb_override')
+                    if cb_override:
+                        combiner_library = self.load_combiner_library()
+                        matched_cb = combiner_library.get(cb_override)
+                    else:
+                        matched_cb = self.find_combiner_box(strings_per_cb, breaker_size, fuse_holder_rating)
                     if matched_cb:
                         totals['combiner_details'].append({
                             'part_number': matched_cb.get('part_number', ''),
@@ -1409,69 +1635,73 @@ class QuickEstimate(ttk.Frame):
 
         # Store totals for Excel export
         self.last_totals = totals
+        self._results_stale = False
+        if self._calc_btn:
+            self._calc_btn.config(state='disabled')
         
+        def insert_section(label):
+            self.results_tree.insert('', 'end', values=('', f'--- {label} ---', '', '', '', '', ''), tags=('section',))
+
+        def insert_row(item, part_number, qty, unit, unit_cost='', ext_cost=''):
+            iid = self.results_tree.insert('', 'end', values=('☑', item, part_number, qty, unit, unit_cost, ext_cost), tags=('checked',))
+            self.checked_items.add(iid)
+
         # Combiner Boxes by breaker size
         if totals['combiners_by_breaker']:
-            self.results_tree.insert('', 'end', values=('--- COMBINER BOXES ---', '', ''))
+            insert_section('COMBINER BOXES')
             total_cbs = 0
             for breaker_size in sorted(totals['combiners_by_breaker'].keys()):
                 qty = totals['combiners_by_breaker'][breaker_size]
                 total_cbs += qty
-                self.results_tree.insert('', 'end', values=(
-                    f"Combiner Box ({breaker_size}A breaker)", qty, 'ea'
-                ))
+                insert_row(f"Combiner Box ({breaker_size}A breaker)", '', qty, 'ea')
             if len(totals['combiners_by_breaker']) > 1:
-                self.results_tree.insert('', 'end', values=('Total Combiner Boxes', total_cbs, 'ea'))
-            
-            # Show matched part numbers
+                insert_row('Total Combiner Boxes', '', total_cbs, 'ea')
+
             for detail in totals['combiner_details']:
                 if detail['part_number'] != 'NO MATCH':
-                    self.results_tree.insert('', 'end', values=(
-                        f"  └ {detail['block_name']}: {detail['part_number']} ({detail['max_inputs']}-input, {detail['fuse_holder_rating']})",
-                        detail['quantity'], 'ea'
-                    ))
+                    insert_row(
+                        f"  └ {detail['block_name']}: ({detail['max_inputs']}-input, {detail['fuse_holder_rating']})",
+                        detail['part_number'], detail['quantity'], 'ea'
+                    )
                 else:
-                    self.results_tree.insert('', 'end', values=(
+                    insert_row(
                         f"  └ {detail['block_name']}: ⚠ {detail['description']}",
-                        detail['quantity'], 'ea'
-                    ))
-        
+                        '', detail['quantity'], 'ea'
+                    )
+
         if totals['string_inverters'] > 0:
-            self.results_tree.insert('', 'end', values=('String Inverters', totals['string_inverters'], 'ea'))
-        
+            insert_row('String Inverters', '', totals['string_inverters'], 'ea')
+
         # Harnesses
         if totals['harnesses_by_size']:
-            self.results_tree.insert('', 'end', values=('--- HARNESSES ---', '', ''))
+            insert_section('HARNESSES')
             for size in sorted(totals['harnesses_by_size'].keys(), reverse=True):
                 qty = totals['harnesses_by_size'][size]
-                self.results_tree.insert('', 'end', values=(f"{size}-String Harness", qty, 'ea'))
-        
+                pos_pn, pos_unit, pos_ext = self.lookup_part_and_price('harness', num_strings=size, polarity='positive', qty=qty)
+                neg_pn, neg_unit, neg_ext = self.lookup_part_and_price('harness', num_strings=size, polarity='negative', qty=qty)
+                if size == 1:
+                    iid = self.results_tree.insert('', 'end', values=('☐', f"{size}-String Harness (Pos)", pos_pn, qty, 'ea', pos_unit, pos_ext), tags=('unchecked',))
+                    iid2 = self.results_tree.insert('', 'end', values=('☐', f"{size}-String Harness (Neg)", neg_pn, qty, 'ea', neg_unit, neg_ext), tags=('unchecked',))
+                else:
+                    insert_row(f"{size}-String Harness (Pos)", pos_pn, qty, 'ea', pos_unit, pos_ext)
+                    insert_row(f"{size}-String Harness (Neg)", neg_pn, qty, 'ea', neg_unit, neg_ext)
+
         # Extenders
         total_extenders = totals['extenders_short'] + totals['extenders_long']
         if total_extenders > 0:
-            self.results_tree.insert('', 'end', values=('--- EXTENDERS ---', '', ''))
-            self.results_tree.insert('', 'end', values=(
-                f"Extender {short_extender_length}ft (short side)", 
-                totals['extenders_short'], 
-                'ea'
-            ))
-            self.results_tree.insert('', 'end', values=(
-                f"Extender {long_extender_length}ft (long side)", 
-                totals['extenders_long'], 
-                'ea'
-            ))
-        
+            insert_section('EXTENDERS')
+            s_pn, s_unit, s_ext = self.lookup_part_and_price('extender', polarity='positive', length_ft=short_extender_length, qty=totals['extenders_short'])
+            insert_row(f"Extender {short_extender_length}ft (short side, Pos)", s_pn, totals['extenders_short'], 'ea', s_unit, s_ext)
+            l_pn, l_unit, l_ext = self.lookup_part_and_price('extender', polarity='negative', length_ft=long_extender_length, qty=totals['extenders_long'])
+            insert_row(f"Extender {long_extender_length}ft (long side, Neg)", l_pn, totals['extenders_long'], 'ea', l_unit, l_ext)
+
         # Whips
         if totals['whips_by_length']:
-            self.results_tree.insert('', 'end', values=('--- WHIPS ---', '', ''))
+            insert_section('WHIPS')
             for length in sorted(totals['whips_by_length'].keys()):
                 qty = totals['whips_by_length'][length]
-                self.results_tree.insert('', 'end', values=(f"Whip {length}ft", qty, 'ea'))
-            self.results_tree.insert('', 'end', values=(
-                'Total Whip Length', 
-                f"{totals['total_whip_length']:,}", 
-                'ft'
-            ))
+                w_pn, w_unit, w_ext = self.lookup_part_and_price('whip', polarity='positive', length_ft=length, qty=qty)
+                insert_row(f"Whip {length}ft", w_pn, qty, 'ea', w_unit, w_ext)
 
     def export_to_excel(self):
         """Export the quick estimate BOM to Excel"""
@@ -1670,12 +1900,12 @@ class QuickEstimate(ttk.Frame):
                 row += 2
             
             # ========== BOM RESULTS SECTION ==========
-            ws.merge_cells(f'A{row}:E{row}')
+            ws.merge_cells(f'A{row}:F{row}')
             ws.cell(row=row, column=1, value="Estimated Bill of Materials").font = title_font
             row += 1
             
             # BOM headers
-            bom_headers = ['Item', 'Quantity', 'Unit']
+            bom_headers = ['Item', 'Part Number', 'Quantity', 'Unit', 'Unit Cost', 'Ext. Cost']
             for col, header in enumerate(bom_headers, 1):
                 cell = ws.cell(row=row, column=col, value=header)
                 cell.font = header_font
@@ -1684,38 +1914,70 @@ class QuickEstimate(ttk.Frame):
                 cell.border = thin_border
             row += 1
             
-            # Pull results from the results treeview
+            # Pull results from the results treeview - only checked items
+            bom_first_data_row = None
             for item_id in self.results_tree.get_children():
                 values = self.results_tree.item(item_id, 'values')
-                if len(values) >= 3:
-                    item_name = values[0]
-                    qty = values[1]
-                    unit = values[2]
-                    
-                    # Check if this is a section header
-                    is_section = str(item_name).startswith('---')
-                    is_warning = '⚠' in str(item_name)
-                    
-                    cell_item = ws.cell(row=row, column=1, value=str(item_name).replace('---', '').strip() if is_section else item_name)
-                    cell_qty = ws.cell(row=row, column=2, value=qty if qty else '')
-                    cell_unit = ws.cell(row=row, column=3, value=unit if unit else '')
-                    
-                    if is_section:
-                        cell_item.font = section_font
-                        cell_item.fill = section_fill
-                        cell_qty.fill = section_fill
-                        cell_unit.fill = section_fill
-                    elif is_warning:
-                        cell_item.fill = warning_fill
-                        cell_qty.fill = warning_fill
-                        cell_unit.fill = warning_fill
-                    
-                    for c in [cell_item, cell_qty, cell_unit]:
-                        c.border = thin_border
-                        c.alignment = center_align
-                    cell_item.alignment = wrap_align
-                    
-                    row += 1
+                if len(values) < 7:
+                    continue
+
+                include = values[0]   # ☑ or ☐ or ''
+                item_name = values[1]
+                part_number = values[2]
+                qty = values[3]
+                unit = values[4]
+                unit_cost = values[5]
+
+                is_section = str(item_name).startswith('---')
+                is_warning = '⚠' in str(item_name)
+
+                # Skip unchecked non-section rows
+                if not is_section and include != '☑':
+                    continue
+
+                cell_item = ws.cell(row=row, column=1, value=str(item_name).replace('---', '').strip() if is_section else item_name)
+                cell_pn = ws.cell(row=row, column=2, value=part_number if not is_section else '')
+                cell_qty = ws.cell(row=row, column=3, value=qty if qty else '')
+                cell_unit = ws.cell(row=row, column=4, value=unit if unit else '')
+                cell_unit_cost = ws.cell(row=row, column=5, value=unit_cost if unit_cost else '')
+
+                # Ext. Cost: formula for all non-section rows
+                if not is_section:
+                    cell_ext_cost = ws.cell(row=row, column=6, value=f'=IF(E{row}="","",C{row}*E{row})')
+                    cell_ext_cost.number_format = '"$"#,##0.00'
+                    if bom_first_data_row is None:
+                        bom_first_data_row = row
+                else:
+                    cell_ext_cost = ws.cell(row=row, column=6, value='')
+
+                if is_section:
+                    for c in [cell_item, cell_pn, cell_qty, cell_unit, cell_unit_cost, cell_ext_cost]:
+                        c.font = section_font
+                        c.fill = section_fill
+                elif is_warning:
+                    for c in [cell_item, cell_pn, cell_qty, cell_unit, cell_unit_cost, cell_ext_cost]:
+                        c.fill = warning_fill
+
+                for c in [cell_item, cell_pn, cell_qty, cell_unit, cell_unit_cost, cell_ext_cost]:
+                    c.border = thin_border
+                    c.alignment = center_align
+                cell_item.alignment = wrap_align
+
+                row += 1
+
+            # Total Cost row
+            if bom_first_data_row:
+                row += 1
+                total_label = ws.cell(row=row, column=5, value='Total Cost:')
+                total_label.font = Font(bold=True)
+                total_label.alignment = Alignment(horizontal='right')
+                total_label.border = thin_border
+                total_cell = ws.cell(row=row, column=6, value=f'=SUM(F{bom_first_data_row}:F{row - 2})')
+                total_cell.font = Font(bold=True)
+                total_cell.number_format = '"$"#,##0.00'
+                total_cell.border = thin_border
+                total_cell.alignment = center_align
+                row += 1
             
             # ========== AUTO-FIT COLUMNS ==========
             for col_idx in range(1, 9):
