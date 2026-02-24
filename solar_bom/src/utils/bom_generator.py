@@ -485,7 +485,6 @@ class BOMGenerator:
         summary_data = []
         for (component_type, description, unit, category), quantity in component_totals.items():
             summary_data.append({
-            'Category': category,
             'Component Type': component_type,
             'Part Number': '',
             'Description': description,
@@ -497,7 +496,6 @@ class BOMGenerator:
         
         # Sort by category then component type, with numerical sorting for segments
         def sort_key(item):
-            category = item['Category']
             component_type = item['Component Type']
             
             # For segment entries, extract the numeric part for proper numerical sorting
@@ -509,10 +507,10 @@ class BOMGenerator:
                     length = int(match.group(1))
                     # Create a sort key that groups by cable type and sorts numerically by length
                     cable_type = component_type.split(' Segment')[0]  # e.g., "Positive Whip Cable"
-                    return (category, cable_type, length)
+                    return (cable_type, length)
             
             # For non-segment entries, sort normally
-            return (category, component_type, 0)
+            return (component_type, 0)
 
         summary_data = sorted(summary_data, key=sort_key)
 
@@ -530,7 +528,7 @@ class BOMGenerator:
         df = pd.DataFrame(summary_data)
         if not df.empty:
             # Define desired column order
-            desired_order = ['Category', 'Component Type', 'Part Number', 'Description', 
+            desired_order = ['Component Type', 'Part Number', 'Description', 
                            'Quantity', 'Unit', 'Unit Price', 'Extended Price']
             # Only include columns that exist
             columns = [col for col in desired_order if col in df.columns]
@@ -712,7 +710,6 @@ class BOMGenerator:
                 item_data = {
                     'Block': block_id,
                     'Strings': strings_per_block.get(block_id, 0),
-                    'Category': category,
                     'Component Type': component_type,
                     'Description': description,
                     'Quantity': round(quantity, 1) if unit == 'feet' else int(quantity),
@@ -726,13 +723,13 @@ class BOMGenerator:
 
         
         # Sort by block ID, category, and component type
-        detailed_data = sorted(detailed_data, key=lambda x: (x['Block'], x['Category'], x['Component Type']))
+        detailed_data = sorted(detailed_data, key=lambda x: (x['Block'], x['Component Type']))
 
         # Create DataFrame and ensure column order
         df = pd.DataFrame(detailed_data)
         if not df.empty:
             # Define the column order with Strings after Block
-            column_order = ['Block', 'Strings', 'Category', 'Component Type', 'Description', 'Quantity', 'Unit', 'Part Number']
+            column_order = ['Block', 'Strings', 'Component Type', 'Description', 'Quantity', 'Unit', 'Part Number']
             # Only reorder columns that exist
             existing_columns = [col for col in column_order if col in df.columns]
             df = df[existing_columns]
@@ -845,30 +842,13 @@ class BOMGenerator:
                     if new_items:
                         # Convert to dataframe with proper columns
                         cb_bom_df = pd.DataFrame(new_items)
-                        cb_bom_df = cb_bom_df[['Category', 'Component Type', 'Part Number', 'Description', 'Quantity', 'Unit']]
+                        cb_bom_df = cb_bom_df[['Component Type', 'Part Number', 'Description', 'Quantity', 'Unit']]
                         
                         # Append to summary data
                         summary_data = pd.concat([summary_data, cb_bom_df], ignore_index=True)
                 
-                # Add Category column (infer from component type)
-                def get_category(component_type):
-                    if 'Whip Cable Segment' in component_type:
-                        return 'eBOS Segments'
-                    elif 'Extender Cable Segment' in component_type:
-                        return 'Extender Cable Segments'
-                    elif 'String Cable' in component_type:
-                        return 'eBOS'
-                    elif 'Harness' in component_type:
-                        return 'eBOS'
-                    elif 'Fuse' in component_type:
-                        return 'Electrical'
-                    else:
-                        return 'Other'
-                
-                summary_data['Category'] = summary_data['Component Type'].apply(get_category)
-                
                 # Reorder columns to match expected format
-                column_order = ['Category', 'Component Type', 'Part Number', 'Description', 'Quantity', 'Unit', 'Unit Price', 'Extended Price']
+                column_order = ['Component Type', 'Part Number', 'Description', 'Quantity', 'Unit', 'Unit Price', 'Extended Price']
                 # Only include columns that exist in the data
                 existing_columns = [col for col in column_order if col in summary_data.columns]
                 summary_data = summary_data[existing_columns]
@@ -970,12 +950,11 @@ class BOMGenerator:
                     # Add BOM headers with custom layout
                     # Category (A), Component Type (B), Part Number (C), Description (D-I merged), Quantity (J), Unit (K)
                     headers_config = [
-                        ('Category', 1, 1),  # Column A
-                        ('Component Type', 2, 1),  # Column B
-                        ('Part Number', 3, 1),  # Column C
-                        ('Description', 4, 6),  # Columns D-I (6 columns)
-                        ('Quantity', 10, 1),  # Column J
-                        ('Unit', 11, 1),  # Column K
+                        ('Component Type', 1, 1),  # Column A
+                        ('Part Number', 2, 1),  # Column B
+                        ('Description', 3, 6),  # Columns C-H (6 columns)
+                        ('Quantity', 9, 1),  # Column I
+                        ('Unit', 10, 1),  # Column J
                     ]
                     
                     for header, start_col, col_span in headers_config:
@@ -994,37 +973,32 @@ class BOMGenerator:
                     
                     # Write BOM data with custom layout
                     for _, row_data in pd.DataFrame(combiner_bom_items).iterrows():
-                        # Category (A)
-                        cell = worksheet.cell(row=current_row, column=1, value=row_data.get('Category', ''))
+                        # Component Type (A)
+                        cell = worksheet.cell(row=current_row, column=1, value=row_data.get('Component Type', ''))
                         cell.border = thin_border
                         cell.alignment = Alignment(horizontal='center', vertical='center')
                         
-                        # Component Type (B)
-                        cell = worksheet.cell(row=current_row, column=2, value=row_data.get('Component Type', ''))
+                        # Part Number (B)
+                        cell = worksheet.cell(row=current_row, column=2, value=row_data.get('Part Number', ''))
                         cell.border = thin_border
                         cell.alignment = Alignment(horizontal='center', vertical='center')
                         
-                        # Part Number (C)
-                        cell = worksheet.cell(row=current_row, column=3, value=row_data.get('Part Number', ''))
-                        cell.border = thin_border
-                        cell.alignment = Alignment(horizontal='center', vertical='center')
-                        
-                        # Description (D-I merged)
-                        worksheet.merge_cells(start_row=current_row, start_column=4, 
-                                            end_row=current_row, end_column=9)
-                        cell = worksheet.cell(row=current_row, column=4, value=row_data.get('Description', ''))
-                        cell.alignment = Alignment(horizontal='left', vertical='center')  # Left align description
+                        # Description (C-H merged)
+                        worksheet.merge_cells(start_row=current_row, start_column=3, 
+                                            end_row=current_row, end_column=8)
+                        cell = worksheet.cell(row=current_row, column=3, value=row_data.get('Description', ''))
+                        cell.alignment = Alignment(horizontal='left', vertical='center')
                         # Add borders to all cells in the merge
-                        for col in range(4, 10):
+                        for col in range(3, 9):
                             worksheet.cell(row=current_row, column=col).border = thin_border
                         
-                        # Quantity (J)
-                        cell = worksheet.cell(row=current_row, column=10, value=row_data.get('Quantity', ''))
+                        # Quantity (I)
+                        cell = worksheet.cell(row=current_row, column=9, value=row_data.get('Quantity', ''))
                         cell.border = thin_border
                         cell.alignment = Alignment(horizontal='center', vertical='center')
                         
-                        # Unit (K)
-                        cell = worksheet.cell(row=current_row, column=11, value=row_data.get('Unit', ''))
+                        # Unit (J)
+                        cell = worksheet.cell(row=current_row, column=10, value=row_data.get('Unit', ''))
                         cell.border = thin_border
                         cell.alignment = Alignment(horizontal='center', vertical='center')
                         
@@ -1373,8 +1347,8 @@ class BOMGenerator:
             adjusted_width = max_length + 2
             
             # Set maximum widths for specific columns
-            if column_name == 'A':  # Category column
-                adjusted_width = min(adjusted_width, 25)  # Max width of 25 for column A
+            if column_name == 'A':  # Component Type column
+                adjusted_width = min(adjusted_width, 35)  # Max width of 35 for column A
             elif column_name == 'B':  # Component Type column  
                 adjusted_width = min(adjusted_width, 35)  # Max width of 35 for column B
             elif column_name == 'D':  # Description column
@@ -2335,7 +2309,6 @@ class BOMGenerator:
                 cb_description = "CUSTOM Combiner Box"
             
             bom_items.append({
-                'Category': 'Electrical',
                 'Component Type': 'Combiner Box',
                 'Part Number': cb_part,
                 'Description': cb_description,
@@ -2353,7 +2326,6 @@ class BOMGenerator:
                 fuse_description = "CUSTOM Combiner Box Fuse"
             
             bom_items.append({
-                'Category': 'Electrical',
                 'Component Type': 'Combiner Box Fuse',
                 'Part Number': fuse_part,
                 'Description': fuse_description,

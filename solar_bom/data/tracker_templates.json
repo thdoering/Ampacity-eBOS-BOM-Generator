@@ -707,6 +707,34 @@
         "isc": 18.39,
         "max_system_voltage": 1500
       }
+    },
+    "NXT-84-690W-56/M/28-1P": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 28,
+      "strings_per_tracker": 3,
+      "module_spacing_m": 0.01,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 2,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 2,
+      "motor_split_north": 14,
+      "motor_split_south": 14,
+      "modules_high": 1,
+      "module_spec": {
+        "manufacturer": "CSI Solar",
+        "model": "CS7N-690TB-AG",
+        "type": "Bifacial",
+        "length_mm": 2384.0,
+        "width_mm": 1303.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 690.0,
+        "vmp": 39.6,
+        "imp": 17.43,
+        "voc": 47.5,
+        "isc": 18.39,
+        "max_system_voltage": 1500
+      }
     }
   },
   "ZnShine": {
