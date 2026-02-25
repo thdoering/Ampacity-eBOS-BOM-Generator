@@ -175,6 +175,7 @@ class BOMManager(ttk.Frame):
         # Configure tags for styling
         self.preview_tree.tag_configure('checked', foreground='black')
         self.preview_tree.tag_configure('unchecked', foreground='gray60')
+        self.preview_tree.tag_configure('section', background='#D9E2F3', foreground='black')
 
         # Configure columns
         self.preview_tree.column('include', width=60, anchor='center')
@@ -368,9 +369,24 @@ class BOMManager(ttk.Frame):
                         if col not in summary_data.columns:
                             summary_data[col] = None
                     summary_data = pd.concat([summary_data, combiner_df], ignore_index=True)
-        
+
+        # Insert section headers
+        summary_data = bom_generator.insert_section_headers(summary_data)
+
         # Add summary data to preview
         for _, row in summary_data.iterrows():
+            # Check if this is a section header row
+            is_section = str(row['Component Type']).startswith('---')
+            
+            if is_section:
+                # Insert section header row
+                self.preview_tree.insert('', 'end', values=(
+                    '', 
+                    row['Component Type'].replace('---', '').strip(),
+                    '', '', '', '', '', ''
+                ), tags=('section',))
+                continue
+            
             # Format quantity based on unit
             quantity = row['Quantity']
             if row['Unit'] == 'feet':

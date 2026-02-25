@@ -451,6 +451,82 @@ class BOMGenerator:
         
         return harness_info
     
+    def _get_section_for_component(self, component_type):
+        """Determine section group for a component type"""
+        SECTION_ORDER = {
+            'HARNESSES': 0,
+            'STRING CABLES': 1,
+            'WHIP CABLES': 2,
+            'EXTENDER CABLES': 3,
+            'STRING CABLE SEGMENTS': 4,
+            'FUSES': 5,
+            'DC FEEDER CABLES': 6,
+            'COMBINER BOXES': 7,
+            'OTHER': 8
+        }
+        
+        if 'Harness' in component_type and 'Segment' not in component_type:
+            section = 'HARNESSES'
+        elif 'String Cable Segment' in component_type:
+            section = 'STRING CABLE SEGMENTS'
+        elif 'String Cable' in component_type and 'Segment' not in component_type:
+            section = 'STRING CABLES'
+        elif 'Whip Cable' in component_type:
+            section = 'WHIP CABLES'
+        elif 'Extender Cable' in component_type:
+            section = 'EXTENDER CABLES'
+        elif 'Fuse' in component_type and 'Combiner' not in component_type:
+            section = 'FUSES'
+        elif 'DC Feeder' in component_type:
+            section = 'DC FEEDER CABLES'
+        elif 'Combiner' in component_type:
+            section = 'COMBINER BOXES'
+        else:
+            section = 'OTHER'
+        
+        return section, SECTION_ORDER.get(section, 99)
+    
+    def insert_section_headers(self, summary_data_df):
+        """Insert section header rows into summary DataFrame based on component type grouping"""
+        if summary_data_df.empty:
+            return summary_data_df
+        
+        # Convert to list of dicts for easier manipulation
+        items = summary_data_df.to_dict('records')
+        
+        # Sort by section order, then by component type
+        def sort_key(item):
+            component_type = str(item.get('Component Type', ''))
+            _, section_order = self._get_section_for_component(component_type)
+            
+            if 'Segment' in component_type and 'ft' in component_type:
+                import re
+                match = re.search(r'Segment (\d+)ft', component_type)
+                if match:
+                    length = int(match.group(1))
+                    cable_type = component_type.split(' Segment')[0]
+                    return (section_order, cable_type, length)
+            
+            return (section_order, component_type, 0)
+        
+        items = sorted(items, key=sort_key)
+        
+        # Insert section headers
+        grouped = []
+        current_section = None
+        for item in items:
+            section, _ = self._get_section_for_component(str(item.get('Component Type', '')))
+            if section != current_section:
+                current_section = section
+                header = {col: '' for col in summary_data_df.columns}
+                header['Component Type'] = f'--- {section} ---'
+                header['Unit Price'] = None
+                header['Extended Price'] = None
+                grouped.append(header)
+            grouped.append(item)
+        
+        return pd.DataFrame(grouped, columns=summary_data_df.columns)
+    
     def generate_summary_data(self, quantities: Dict[str, Dict[str, Any]]) -> pd.DataFrame:
         """
         Generate summary data for BOM with categories
@@ -497,20 +573,18 @@ class BOMGenerator:
         # Sort by category then component type, with numerical sorting for segments
         def sort_key(item):
             component_type = item['Component Type']
+            _, section_order = self._get_section_for_component(component_type)
             
             # For segment entries, extract the numeric part for proper numerical sorting
             if 'Segment' in component_type and 'ft' in component_type:
                 import re
-                # Extract the numeric part from patterns like "Positive Whip Cable Segment 115ft (8 AWG)"
                 match = re.search(r'Segment (\d+)ft', component_type)
                 if match:
                     length = int(match.group(1))
-                    # Create a sort key that groups by cable type and sorts numerically by length
-                    cable_type = component_type.split(' Segment')[0]  # e.g., "Positive Whip Cable"
-                    return (cable_type, length)
+                    cable_type = component_type.split(' Segment')[0]
+                    return (section_order, cable_type, length)
             
-            # For non-segment entries, sort normally
-            return (component_type, 0)
+            return (section_order, component_type, 0)
 
         summary_data = sorted(summary_data, key=sort_key)
 
@@ -852,10 +926,16 @@ class BOMGenerator:
                 # Only include columns that exist in the data
                 existing_columns = [col for col in column_order if col in summary_data.columns]
                 summary_data = summary_data[existing_columns]
+                
+                # Insert section headers
+                summary_data = self.insert_section_headers(summary_data)
             else:
                 # Fall back to original method
                 quantities = self.calculate_cable_quantities()
                 summary_data = self.generate_summary_data(quantities)
+                
+                # Insert section headers
+                summary_data = self.insert_section_headers(summary_data)
             
             # Generate detailed data (this can still use the original method)
             quantities = self.calculate_cable_quantities() 
@@ -1132,7 +1212,7 @@ class BOMGenerator:
             summary_sheet.cell(row=row, column=1, value="Bill of Materials").font = Font(bold=True, size=14)
             
             # Format sheets
-            self._format_excel_sheet(workbook['BOM Summary'], summary_data, start_row=15)
+            self._format_excel_sheet(workbook['BOM Summary'], summary_data, start_row=16)
             self._format_excel_sheet(workbook['Block Details'], detailed_data)
 
             # Format block allocation sheet
@@ -1268,7 +1348,7 @@ class BOMGenerator:
 
     def _format_excel_sheet(self, worksheet, data: pd.DataFrame, start_row: int = 1):
         """
-        Format Excel worksheet
+        Format Excel worksheet with section header support
         
         Args:
             worksheet: openpyxl worksheet
@@ -1276,18 +1356,21 @@ class BOMGenerator:
             start_row: Row to start formatting from (default=1)
         """
         # Define styles
-        header_font = Font(bold=True, color="FFFFFF")
+        header_font = Font(bold=True, color="FFFFFF", size=11)
         header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
-        centered_alignment = Alignment(horizontal='center')
+        section_font = Font(bold=True, size=11)
+        section_fill = PatternFill(start_color="D9E2F3", end_color="D9E2F3", fill_type="solid")
+        centered_alignment = Alignment(horizontal='center', vertical='center')
+        wrap_align = Alignment(horizontal='left', vertical='center', wrap_text=True)
         border = Border(
             left=Side(style='thin'),
             right=Side(style='thin'),
             top=Side(style='thin'),
             bottom=Side(style='thin')
         )
+        warning_fill = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type="solid")
         
-        # Warning style
-        warning_fill = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type="solid")  # Light red
+        num_cols = len(data.columns)
         
         # Format headers
         for col_num, column_title in enumerate(data.columns, 1):
@@ -1298,83 +1381,127 @@ class BOMGenerator:
             cell.alignment = centered_alignment
             cell.border = border
 
-        # Apply center alignment to Part Number column data
-        if 'Part Number' in data.columns:
-            part_number_col = list(data.columns).index('Part Number') + 1
-            for row_num in range(start_row + 1, start_row + len(data) + 2):  # +2 to include last row
-                cell = worksheet.cell(row=row_num, column=part_number_col)
-                cell.alignment = centered_alignment
-        
-        for i, row in enumerate(worksheet.iter_rows(min_row=start_row+1, 
-                                                    max_row=start_row+len(data)+1,  # +1 to ensure last row is included
-                                                    min_col=1, 
-                                                    max_col=len(data.columns)), 1):
-            # Get the row index
-            row_index = start_row + i
+        # Format data rows
+        for i in range(len(data)):
+            row_index = start_row + 1 + i
+            row_data = data.iloc[i]
             
-            # Check if this is a warning row
-            is_warning = False
-            if 'Unit' in data.columns:
-                unit_col_idx = list(data.columns).index('Unit')
-                unit_value = worksheet.cell(row=row_index, column=unit_col_idx + 1).value
-                if unit_value and 'warning' in str(unit_value).lower():
-                    is_warning = True
+            # Check if this is a section header row
+            component_type = str(row_data.get('Component Type', ''))
+            is_section = component_type.startswith('---')
             
-            # Apply warning formatting if this is a warning row
-            if is_warning:
-                for cell in row:
-                    cell.fill = warning_fill
-            
-            # Add borders to all cells
-            for cell in row:
+            if is_section:
+                # Section header: merge across all columns, apply section style
+                section_name = component_type.replace('---', '').strip()
+                
+                # Clear all cells in the row first
+                for col_num in range(1, num_cols + 1):
+                    cell = worksheet.cell(row=row_index, column=col_num)
+                    cell.value = None
+                    cell.font = section_font
+                    cell.fill = section_fill
+                    cell.border = border
+                    cell.alignment = centered_alignment
+                
+                # Merge and write section name
+                if num_cols > 1:
+                    worksheet.merge_cells(
+                        start_row=row_index, start_column=1,
+                        end_row=row_index, end_column=num_cols
+                    )
+                cell = worksheet.cell(row=row_index, column=1)
+                cell.value = section_name
+                cell.font = section_font
+                cell.fill = section_fill
+                cell.alignment = Alignment(horizontal='left', vertical='center')
                 cell.border = border
+            else:
+                # Regular data row
+                is_warning = False
+                if 'Unit' in data.columns:
+                    unit_value = row_data.get('Unit', '')
+                    if unit_value and 'warning' in str(unit_value).lower():
+                        is_warning = True
+                
+                # Check if Part Number is N/A
+                is_na_part = False
+                if 'Part Number' in data.columns:
+                    pn_value = str(row_data.get('Part Number', ''))
+                    if pn_value == 'N/A':
+                        is_na_part = True
+                
+                black_fill = PatternFill(start_color="000000", end_color="000000", fill_type="solid")
+                
+                for col_num in range(1, num_cols + 1):
+                    cell = worksheet.cell(row=row_index, column=col_num)
+                    cell.border = border
+                    cell.alignment = centered_alignment
+                    
+                    if is_warning:
+                        cell.fill = warning_fill
+                    
+                    # Black out price cells for N/A part numbers
+                    if is_na_part:
+                        col_name = data.columns[col_num - 1]
+                        if col_name in ('Unit Price', 'Extended Price'):
+                            cell.fill = black_fill
+                            cell.value = None
+                
+                # Left-align Description column
+                if 'Description' in data.columns:
+                    desc_col = list(data.columns).index('Description') + 1
+                    cell = worksheet.cell(row=row_index, column=desc_col)
+                    cell.alignment = wrap_align
+                
+                # Left-align Component Type column
+                if 'Component Type' in data.columns:
+                    ct_col = list(data.columns).index('Component Type') + 1
+                    cell = worksheet.cell(row=row_index, column=ct_col)
+                    cell.alignment = wrap_align
         
-        # Auto-adjust column width with maximum constraints
+        # Auto-adjust column widths
         for column in worksheet.columns:
             max_length = 0
             column_name = get_column_letter(column[0].column)
             
-            # Calculate the maximum content length in this column
             for cell in column:
                 try:
                     cell_value = str(cell.value) if cell.value is not None else ""
-                    if len(cell_value) > max_length:
-                        max_length = len(cell_value)
+                    # Skip section headers for width calculation
+                    if not cell_value.startswith('---'):
+                        if len(cell_value) > max_length:
+                            max_length = len(cell_value)
                 except:
                     pass
             
-            # Apply width with constraints
             adjusted_width = max_length + 2
             
-            # Set maximum widths for specific columns
-            if column_name == 'A':  # Component Type column
-                adjusted_width = min(adjusted_width, 35)  # Max width of 35 for column A
-            elif column_name == 'B':  # Component Type column  
-                adjusted_width = min(adjusted_width, 35)  # Max width of 35 for column B
-            elif column_name == 'D':  # Description column
-                adjusted_width = min(adjusted_width, 50)  # Max width of 50 for description
+            if column_name == 'A':
+                adjusted_width = min(adjusted_width, 35)
+            elif column_name == 'B':
+                adjusted_width = min(adjusted_width, 35)
+            elif 'Description' in str(worksheet.cell(row=start_row, column=column[0].column).value or ''):
+                adjusted_width = min(adjusted_width, 50)
             else:
-                adjusted_width = min(adjusted_width, 30)  # General max width for other columns
+                adjusted_width = min(adjusted_width, 30)
             
-            # Also set a minimum width
-            adjusted_width = max(adjusted_width, 10)  # Minimum width of 10
-            
+            adjusted_width = max(adjusted_width, 10)
             worksheet.column_dimensions[column_name].width = adjusted_width
         
         # Format price columns as currency
         if 'Unit Price' in data.columns:
             unit_price_col = list(data.columns).index('Unit Price') + 1
-            for row_num in range(start_row + 1, start_row + len(data) + 2):
+            for row_num in range(start_row + 1, start_row + len(data) + 1):
                 cell = worksheet.cell(row=row_num, column=unit_price_col)
-                if cell.value is not None:
+                if cell.value is not None and cell.value != '':
                     cell.number_format = '"$"#,##0.00'
                 cell.alignment = Alignment(horizontal='right')
         
         if 'Extended Price' in data.columns:
             ext_price_col = list(data.columns).index('Extended Price') + 1
-            for row_num in range(start_row + 1, start_row + len(data) + 2):
+            for row_num in range(start_row + 1, start_row + len(data) + 1):
                 cell = worksheet.cell(row=row_num, column=ext_price_col)
-                if cell.value is not None:
+                if cell.value is not None and cell.value != '':
                     cell.number_format = '"$"#,##0.00'
                 cell.alignment = Alignment(horizontal='right')
 
