@@ -1,6 +1,6 @@
 # Version information
 VERSION_MAJOR = 2
-VERSION_MINOR = 6
+VERSION_MINOR = 7
 VERSION_PATCH = 0
 
 # Get version string

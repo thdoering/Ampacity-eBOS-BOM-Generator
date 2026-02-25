@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.0] - 2026-02-07
+
+### Added
+- **Quick Estimate Tab**: New streamlined interface for rapid project estimates with dedicated Excel BOM export
+- **DC Feeder Lengths**: Added input fields for DC feeder cable lengths per block for accurate material takeoffs
+- **Revision Tracking**: Added revision number input for Excel BOM version control
+- **Module Orientation**: Added module orientation input for improved layout specifications
+
+### Changed
+- **BOM Formatting**: Multiple Excel BOM formatting improvements for better readability
+- **Removed Category Column**: Streamlined BOM by removing redundant category column
+
+### Fixed
+- Various bug fixes and stability improvements throughout the application
+
+### Enhanced
+- Faster estimate workflows with dedicated Quick Estimate interface
+- More accurate DC cable calculations with block-specific feeder lengths
+- Better project documentation with revision tracking
+
 ## [2.6.0] - 2026-01-13
 
 ### Added

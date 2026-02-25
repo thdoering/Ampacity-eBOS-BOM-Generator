@@ -1,5 +1,5 @@
 ================================================================================
-Solar eBOS BOM Generator v2.5.0
+Solar eBOS BOM Generator v2.7.0
 ================================================================================
 
 INSTALLATION INSTRUCTIONS
@@ -17,6 +17,28 @@ INSTALLATION INSTRUCTIONS
    - If Windows SmartScreen appears, click "More info" then "Run anyway"
 
 This is our internal tool - these warnings are normal for unsigned applications.
+
+WHAT'S NEW IN VERSION 2.7.0 (February 25, 2026)
+----------------------------------------------
+
+MAJOR NEW FEATURES:
+- Quick Estimate Tab: Fast project estimates with dedicated Excel export
+- DC Feeder Lengths: Input specific feeder cable lengths for each block
+
+NEW FEATURES:
+- Revision Number: Track BOM revisions with version numbering
+- Module Orientation: Specify module orientation in project configuration
+
+IMPROVEMENTS:
+- Enhanced Excel BOM formatting for better clarity
+- Streamlined BOM by removing redundant category column
+- Various bug fixes and stability improvements
+
+PREVIOUS VERSION HIGHLIGHTS (v2.6.0):
+- Tracker multi-select and move functionality
+- 2P tracker support (WIP)
+- Batch apply recommended wire sizes
+- Default recommended cable sizes for all wires
 
 WHAT'S NEW IN VERSION 2.6.0 (January 13, 2026)
 ----------------------------------------------

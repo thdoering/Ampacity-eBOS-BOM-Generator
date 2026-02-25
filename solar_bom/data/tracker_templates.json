@@ -4036,6 +4036,34 @@
         "isc": 2.59,
         "max_system_voltage": 1500
       }
+    },
+    "ATI-12-530W-12/M/0-1P": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 6,
+      "strings_per_tracker": 2,
+      "module_spacing_m": 0.01,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 2,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 2,
+      "motor_split_north": 14,
+      "motor_split_south": 0,
+      "modules_high": 1,
+      "module_spec": {
+        "manufacturer": "First Solar",
+        "model": "Series 7 530W",
+        "type": "Thin Film",
+        "length_mm": 2300.0,
+        "width_mm": 1216.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 530.0,
+        "vmp": 186.9,
+        "imp": 2.84,
+        "voc": 226.7,
+        "isc": 3.05,
+        "max_system_voltage": 1500
+      }
     }
   },
   "NE Solar": {
