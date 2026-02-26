@@ -187,6 +187,11 @@ class PricingManager(tk.Toplevel):
                 json.dump(self.pricing_data, f, indent=2)
             
             self.modified = False
+            
+            # Reload the singleton pricing lookup so BOM preview uses updated data
+            from ..utils.pricing_lookup import reload_pricing_data
+            reload_pricing_data()
+            
             messagebox.showinfo("Success", "Pricing data saved successfully!")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save pricing data: {str(e)}")

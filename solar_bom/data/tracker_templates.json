@@ -6233,6 +6233,90 @@
         "isc": 13.92,
         "max_system_voltage": 1500
       }
+    },
+    "NXT-108-545W-54/M/54-1P": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 27,
+      "strings_per_tracker": 4,
+      "module_spacing_m": 0.01,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 2,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 2,
+      "motor_split_north": 14,
+      "motor_split_south": 13,
+      "modules_high": 1,
+      "module_spec": {
+        "manufacturer": "Longi",
+        "model": "LR5-72HBD-545M",
+        "type": "Bifacial",
+        "length_mm": 2278.0,
+        "width_mm": 1134.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 545.0,
+        "vmp": 41.8,
+        "imp": 13.04,
+        "voc": 49.65,
+        "isc": 13.92,
+        "max_system_voltage": 1500
+      }
+    },
+    "NXT-81-545W-54/M/27-1P": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 27,
+      "strings_per_tracker": 3,
+      "module_spacing_m": 0.01,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 2,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 2,
+      "motor_split_north": 14,
+      "motor_split_south": 13,
+      "modules_high": 1,
+      "module_spec": {
+        "manufacturer": "Longi",
+        "model": "LR5-72HBD-545M",
+        "type": "Bifacial",
+        "length_mm": 2278.0,
+        "width_mm": 1134.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 545.0,
+        "vmp": 41.8,
+        "imp": 13.04,
+        "voc": 49.65,
+        "isc": 13.92,
+        "max_system_voltage": 1500
+      }
+    },
+    "NXT-81-545W-27/M/54-1P": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 27,
+      "strings_per_tracker": 3,
+      "module_spacing_m": 0.01,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 1,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 2,
+      "motor_split_north": 14,
+      "motor_split_south": 13,
+      "modules_high": 1,
+      "module_spec": {
+        "manufacturer": "Longi",
+        "model": "LR5-72HBD-545M",
+        "type": "Bifacial",
+        "length_mm": 2278.0,
+        "width_mm": 1134.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 545.0,
+        "vmp": 41.8,
+        "imp": 13.04,
+        "voc": 49.65,
+        "isc": 13.92,
+        "max_system_voltage": 1500
+      }
     }
   }
 }
