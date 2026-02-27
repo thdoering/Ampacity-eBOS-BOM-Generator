@@ -833,6 +833,28 @@
       "bifaciality_factor": null,
       "default_orientation": "Portrait",
       "cells_per_module": 72
+    },
+    "Q.PEAK DUO XL-G11S 585W": {
+      "manufacturer": "QCells",
+      "model": "Q.PEAK DUO XL-G11S 585W",
+      "type": "Bifacial",
+      "length_mm": 2462.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 585.0,
+      "vmp": 44.75,
+      "imp": 13.07,
+      "voc": 53.57,
+      "isc": 13.72,
+      "max_system_voltage": 1500,
+      "efficiency": null,
+      "temperature_coefficient_pmax": -0.34,
+      "temperature_coefficient_voc": -0.27,
+      "temperature_coefficient_isc": 0.04,
+      "bifaciality_factor": null,
+      "default_orientation": "Portrait",
+      "cells_per_module": 72
     }
   },
   "Heliene": {

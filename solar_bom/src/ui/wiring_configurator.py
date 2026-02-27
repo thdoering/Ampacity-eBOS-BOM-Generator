@@ -2224,7 +2224,13 @@ class WiringConfigurator(tk.Toplevel):
         # Ensure custom_whip_points exists
         if not hasattr(self.block, 'wiring_config') or not self.block.wiring_config:
             from ..models.block import WiringConfig, WiringType
-            self.block.wiring_config = WiringConfig(wiring_type=WiringType.HOMERUN)
+            self.block.wiring_config = WiringConfig(
+                wiring_type=WiringType.HOMERUN,
+                positive_collection_points=[],
+                negative_collection_points=[],
+                strings_per_collection={},
+                cable_routes={}
+            )
         
         if not hasattr(self.block.wiring_config, 'custom_whip_points'):
             self.block.wiring_config.custom_whip_points = {}
@@ -2239,7 +2245,13 @@ class WiringConfigurator(tk.Toplevel):
         # Ensure custom_harness_whip_points exists
         if not hasattr(self.block, 'wiring_config') or not self.block.wiring_config:
             from ..models.block import WiringConfig, WiringType
-            self.block.wiring_config = WiringConfig(wiring_type=WiringType.HOMERUN)
+            self.block.wiring_config = WiringConfig(
+                wiring_type=WiringType.HOMERUN,
+                positive_collection_points=[],
+                negative_collection_points=[],
+                strings_per_collection={},
+                cable_routes={}
+            )
         
         if not hasattr(self.block.wiring_config, 'custom_harness_whip_points'):
             self.block.wiring_config.custom_harness_whip_points = {}
@@ -2306,7 +2318,13 @@ class WiringConfigurator(tk.Toplevel):
         # Ensure custom_whip_points exists
         if not hasattr(self.block, 'wiring_config') or not self.block.wiring_config:
             from ..models.block import WiringConfig, WiringType
-            self.block.wiring_config = WiringConfig(wiring_type=WiringType.HOMERUN)
+            self.block.wiring_config = WiringConfig(
+                wiring_type=WiringType.HOMERUN,
+                positive_collection_points=[],
+                negative_collection_points=[],
+                strings_per_collection={},
+                cable_routes={}
+            )
         
         if not hasattr(self.block.wiring_config, 'custom_whip_points'):
             self.block.wiring_config.custom_whip_points = {}
@@ -2340,7 +2358,13 @@ class WiringConfigurator(tk.Toplevel):
         # Ensure custom_whip_points exists
         if not hasattr(self.block, 'wiring_config') or not self.block.wiring_config:
             from ..models.block import WiringConfig, WiringType
-            self.block.wiring_config = WiringConfig(wiring_type=WiringType.HOMERUN)
+            self.block.wiring_config = WiringConfig(
+                wiring_type=WiringType.HOMERUN,
+                positive_collection_points=[],
+                negative_collection_points=[],
+                strings_per_collection={},
+                cable_routes={}
+            )
         
         if not hasattr(self.block.wiring_config, 'custom_whip_points'):
             self.block.wiring_config.custom_whip_points = {}
@@ -2374,7 +2398,13 @@ class WiringConfigurator(tk.Toplevel):
         # Ensure custom_harness_whip_points exists
         if not hasattr(self.block, 'wiring_config') or not self.block.wiring_config:
             from ..models.block import WiringConfig, WiringType
-            self.block.wiring_config = WiringConfig(wiring_type=WiringType.HOMERUN)
+            self.block.wiring_config = WiringConfig(
+                wiring_type=WiringType.HOMERUN,
+                positive_collection_points=[],
+                negative_collection_points=[],
+                strings_per_collection={},
+                cable_routes={}
+            )
         
         if not hasattr(self.block.wiring_config, 'custom_harness_whip_points'):
             self.block.wiring_config.custom_harness_whip_points = {}
