@@ -19,6 +19,8 @@ class QuickEstimate(ttk.Frame):
         self._estimate_id_map = {}  # Map display name to ID
         self.available_modules = self.load_module_library()  # {display_name: ModuleSpec}
         self.selected_module = None  # Currently selected ModuleSpec
+        self.available_inverters = self.load_inverter_library()  # {display_name: InverterSpec}
+        self.selected_inverter = None  # Currently selected InverterSpec
         
         # Data structure for subarrays and blocks
         self.subarrays: Dict[str, Dict[str, Any]] = {}
@@ -100,6 +102,54 @@ class QuickEstimate(ttk.Frame):
         except Exception as e:
             print(f"Error loading module library: {e}")
         return modules
+    
+    def load_inverter_library(self):
+        """Load inverters from the inverters JSON file"""
+        inverters = {}
+        try:
+            inverter_path = Path('data/inverters.json')
+            if inverter_path.exists():
+                with open(inverter_path, 'r') as f:
+                    data = json.load(f)
+                
+                from ..models.inverter import InverterSpec, MPPTChannel, MPPTConfig, InverterType
+                
+                for name, specs in data.items():
+                    try:
+                        rated_power = specs.get('rated_power_kw', specs.get('rated_power', 10.0))
+                        max_dc_power = specs.get('max_dc_power_kw', float(rated_power) * 1.5)
+                        inverter_type_str = specs.get('inverter_type', 'String')
+                        
+                        channels = []
+                        for ch in specs.get('mppt_channels', []):
+                            channels.append(MPPTChannel(**ch))
+                        
+                        inverter = InverterSpec(
+                            manufacturer=specs.get('manufacturer', 'Unknown'),
+                            model=specs.get('model', 'Unknown'),
+                            inverter_type=InverterType(inverter_type_str),
+                            rated_power_kw=float(rated_power),
+                            max_dc_power_kw=float(max_dc_power),
+                            max_efficiency=float(specs.get('max_efficiency', 98.0)),
+                            mppt_channels=channels,
+                            mppt_configuration=MPPTConfig(specs.get('mppt_configuration', 'Independent')),
+                            max_dc_voltage=float(specs.get('max_dc_voltage', 1500)),
+                            startup_voltage=float(specs.get('startup_voltage', 150)),
+                            nominal_ac_voltage=float(specs.get('nominal_ac_voltage', 400.0)),
+                            max_ac_current=float(specs.get('max_ac_current', 40.0)),
+                            power_factor=float(specs.get('power_factor', 0.99)),
+                            dimensions_mm=tuple(specs.get('dimensions_mm', (1000, 600, 300))),
+                            weight_kg=float(specs.get('weight_kg', 75.0)),
+                            ip_rating=specs.get('ip_rating', 'IP65'),
+                            max_short_circuit_current=specs.get('max_short_circuit_current')
+                        )
+                        display_name = f"{inverter.manufacturer} {inverter.model}"
+                        inverters[display_name] = inverter
+                    except Exception as e:
+                        print(f"Warning: Failed to load inverter '{name}': {e}")
+        except Exception as e:
+            print(f"Error loading inverter library: {e}")
+        return inverters
 
     def generate_id(self, prefix: str) -> str:
         """Generate a unique ID with a prefix"""
@@ -578,6 +628,19 @@ class QuickEstimate(ttk.Frame):
         if hasattr(self, 'wire_gauge_var'):
             self.wire_gauge_var.set(estimate_data.get('wire_gauge', '10 AWG'))
         
+        # Restore inverter selection
+        saved_inverter_name = estimate_data.get('inverter_name', '')
+        if saved_inverter_name and hasattr(self, 'inverter_combo'):
+            if saved_inverter_name in self.available_inverters:
+                self.inverter_select_var.set(saved_inverter_name)
+                self._on_inverter_selected()
+        
+        # Restore topology and DC:AC ratio
+        if hasattr(self, 'topology_var'):
+            self.topology_var.set(estimate_data.get('topology', 'Distributed String'))
+        if hasattr(self, 'dc_ac_ratio_var'):
+            self.dc_ac_ratio_var.set(str(estimate_data.get('dc_ac_ratio', 1.25)))
+        
         # Load subarrays
         saved_subarrays = estimate_data.get('subarrays', {})
         
@@ -660,6 +723,17 @@ class QuickEstimate(ttk.Frame):
             estimate_data['row_spacing_ft'] = 20.0
 
         estimate_data['wire_gauge'] = self.wire_gauge_var.get()
+        
+        # Save inverter selection
+        if self.selected_inverter:
+            estimate_data['inverter_name'] = f"{self.selected_inverter.manufacturer} {self.selected_inverter.model}"
+        
+        # Save topology and DC:AC ratio
+        estimate_data['topology'] = self.topology_var.get()
+        try:
+            estimate_data['dc_ac_ratio'] = float(self.dc_ac_ratio_var.get())
+        except ValueError:
+            estimate_data['dc_ac_ratio'] = 1.25
         
         # Update modified date
         estimate_data['modified_date'] = datetime.now().isoformat()
@@ -777,6 +851,8 @@ class QuickEstimate(ttk.Frame):
             'module_width_mm': 1134,
             'modules_per_string': 28,
             'row_spacing_ft': 20.0,
+            'topology': 'Distributed String',
+            'dc_ac_ratio': 1.25,
             'subarrays': {}
         }
         
@@ -830,6 +906,20 @@ class QuickEstimate(ttk.Frame):
         if hasattr(self, 'results_tree'):
             for item in self.results_tree.get_children():
                 self.results_tree.delete(item)
+        
+        # Reset inverter and topology fields
+        if hasattr(self, 'inverter_select_var'):
+            self.inverter_select_var.set('')
+            self.selected_inverter = None
+            self.inverter_info_label.config(text="No inverter selected", foreground='gray')
+        if hasattr(self, 'topology_var'):
+            self.topology_var.set('Distributed String')
+        if hasattr(self, 'dc_ac_ratio_var'):
+            self.dc_ac_ratio_var.set('1.25')
+        if hasattr(self, 'strings_per_inverter_var'):
+            self.strings_per_inverter_var.set('--')
+        if hasattr(self, 'isc_warning_label'):
+            self.isc_warning_label.config(text="")
 
     def _schedule_autosave(self):
         """Debounced auto-save — saves estimate after a brief pause"""
@@ -859,6 +949,8 @@ class QuickEstimate(ttk.Frame):
                 text=f"Isc: {self.selected_module.isc}A  |  Width: {self.selected_module.width_mm}mm  |  Voc: {self.selected_module.voc}V",
                 foreground='black'
             )
+            # Recalculate strings per inverter with new module
+            self._update_strings_per_inverter()
             # Auto-save when module changes (but not during load)
             if not getattr(self, '_loading', False):
                 self._mark_stale()
@@ -866,6 +958,70 @@ class QuickEstimate(ttk.Frame):
         else:
             self.selected_module = None
             self.module_info_label.config(text="No module selected", foreground='gray')
+
+    def _on_inverter_selected(self, event=None):
+        """Handle inverter selection from dropdown"""
+        selected_name = self.inverter_select_var.get()
+        if selected_name in self.available_inverters:
+            self.selected_inverter = self.available_inverters[selected_name]
+            inv = self.selected_inverter
+            type_str = inv.inverter_type.value if hasattr(inv, 'inverter_type') else 'String'
+            self.inverter_info_label.config(
+                text=f"{inv.rated_power_kw}kW AC  |  {inv.max_dc_power_kw}kW DC  |  {inv.get_total_string_capacity()} inputs  |  {type_str}",
+                foreground='black'
+            )
+            self._update_strings_per_inverter()
+            # Auto-save when inverter changes (but not during load)
+            if not getattr(self, '_loading', False):
+                self._mark_stale()
+                self.save_estimate()
+        else:
+            self.selected_inverter = None
+            self.inverter_info_label.config(text="No inverter selected", foreground='gray')
+            self.strings_per_inverter_var.set('--')
+            self.isc_warning_label.config(text="")
+
+    def _update_strings_per_inverter(self):
+        """Auto-calculate strings per inverter from DC:AC ratio and show Isc warning if needed"""
+        if not self.selected_inverter or not self.selected_module:
+            self.strings_per_inverter_var.set('--')
+            self.isc_warning_label.config(text="")
+            return
+        
+        try:
+            target_ratio = float(self.dc_ac_ratio_var.get())
+        except ValueError:
+            self.strings_per_inverter_var.set('--')
+            return
+        
+        try:
+            modules_per_string = int(self.modules_per_string_var.get())
+        except ValueError:
+            modules_per_string = 28
+        
+        module_wattage = self.selected_module.wattage
+        strings_per_inv = self.selected_inverter.strings_for_target_ratio(
+            target_ratio, module_wattage, modules_per_string
+        )
+        
+        self.strings_per_inverter_var.set(str(strings_per_inv))
+        
+        # Calculate actual DC:AC ratio achieved
+        actual_ratio = self.selected_inverter.dc_ac_ratio(
+            strings_per_inv, module_wattage, modules_per_string
+        )
+        
+        # Check Isc hard limit
+        module_isc = self.selected_module.isc
+        total_isc = strings_per_inv * module_isc
+        max_isc = getattr(self.selected_inverter, 'max_short_circuit_current', None)
+        
+        if max_isc and total_isc > max_isc:
+            self.isc_warning_label.config(
+                text=f"⚠️ Isc limit exceeded: {total_isc:.1f}A > {max_isc:.0f}A max"
+            )
+        else:
+            self.isc_warning_label.config(text="")
 
     # ==================== UI Setup ====================
     
@@ -948,7 +1104,62 @@ class QuickEstimate(ttk.Frame):
         self.module_info_label = ttk.Label(module_row, text="No module selected", foreground='gray')
         self.module_info_label.pack(side='left', padx=(5, 0))
         
-        # Row 2: Other settings
+        # Row 2: Inverter selection
+        inverter_row = ttk.Frame(settings_frame)
+        inverter_row.pack(fill='x', pady=(0, 5))
+        
+        ttk.Label(inverter_row, text="Inverter:").pack(side='left', padx=(0, 5))
+        self.inverter_select_var = tk.StringVar()
+        self.inverter_combo = ttk.Combobox(
+            inverter_row,
+            textvariable=self.inverter_select_var,
+            values=sorted(self.available_inverters.keys()),
+            state='readonly',
+            width=50
+        )
+        self.inverter_combo.pack(side='left', padx=(0, 15))
+        self.inverter_combo.bind('<<ComboboxSelected>>', self._on_inverter_selected)
+        self.disable_combobox_scroll(self.inverter_combo)
+        
+        # Inverter info display
+        self.inverter_info_label = ttk.Label(inverter_row, text="No inverter selected", foreground='gray')
+        self.inverter_info_label.pack(side='left', padx=(5, 0))
+        
+        # Row 3: Topology and DC:AC ratio
+        topology_row = ttk.Frame(settings_frame)
+        topology_row.pack(fill='x', pady=(0, 5))
+        
+        ttk.Label(topology_row, text="Topology:").pack(side='left', padx=(0, 5))
+        self.topology_var = tk.StringVar(value='Distributed String')
+        topology_combo = ttk.Combobox(
+            topology_row,
+            textvariable=self.topology_var,
+            values=['Distributed String', 'Centralized String', 'Central Inverter'],
+            state='readonly',
+            width=20
+        )
+        topology_combo.pack(side='left', padx=(0, 15))
+        self.disable_combobox_scroll(topology_combo)
+        self.topology_var.trace_add('write', lambda *args: (self._mark_stale(), self._schedule_autosave()))
+        
+        ttk.Label(topology_row, text="DC:AC Ratio:").pack(side='left', padx=(0, 5))
+        self.dc_ac_ratio_var = tk.StringVar(value='1.25')
+        ttk.Spinbox(
+            topology_row, from_=1.0, to=2.0, increment=0.05,
+            textvariable=self.dc_ac_ratio_var, width=6, format='%.2f'
+        ).pack(side='left', padx=(0, 15))
+        self.dc_ac_ratio_var.trace_add('write', lambda *args: (self._update_strings_per_inverter(), self._mark_stale(), self._schedule_autosave()))
+        
+        ttk.Label(topology_row, text="Strings/Inverter:").pack(side='left', padx=(0, 5))
+        self.strings_per_inverter_var = tk.StringVar(value='--')
+        self.strings_per_inverter_label = ttk.Label(topology_row, textvariable=self.strings_per_inverter_var, width=6, font=('Helvetica', 10, 'bold'))
+        self.strings_per_inverter_label.pack(side='left', padx=(0, 15))
+        
+        # Isc warning label (hidden by default)
+        self.isc_warning_label = ttk.Label(topology_row, text="", foreground='red')
+        self.isc_warning_label.pack(side='left', padx=(5, 0))
+        
+        # Row 4: Other settings
         settings_inner = ttk.Frame(settings_frame)
         settings_inner.pack(fill='x')
         
