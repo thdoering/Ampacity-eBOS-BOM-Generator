@@ -2459,14 +2459,31 @@ class WiringConfigurator(tk.Toplevel):
             # Select all whip points within this box
             for tracker_idx, pos in enumerate(self.block.tracker_positions):
                 tracker_id = str(tracker_idx)
+                string_count = len(pos.strings)
                 
-                # Check positive whip
+                # In String Homerun mode, check per-string whip points
+                if (hasattr(self.block, 'wiring_config') and 
+                    self.block.wiring_config and 
+                    self.block.wiring_config.wiring_type == WiringType.HOMERUN):
+                    
+                    for string_idx in range(string_count):
+                        pos_whip = self.get_whip_position(tracker_id, 'positive', harness_idx=string_idx)
+                        if pos_whip:
+                            if wx1 <= pos_whip[0] <= wx2 and wy1 <= pos_whip[1] <= wy2:
+                                self.selected_whips.add((tracker_id, string_idx, 'positive'))
+                        
+                        neg_whip = self.get_whip_position(tracker_id, 'negative', harness_idx=string_idx)
+                        if neg_whip:
+                            if wx1 <= neg_whip[0] <= wx2 and wy1 <= neg_whip[1] <= wy2:
+                                self.selected_whips.add((tracker_id, string_idx, 'negative'))
+                    continue
+                
+                # Wire Harness / regular mode - check tracker-level whip points
                 pos_whip = self.get_whip_position(tracker_id, 'positive')
                 if pos_whip:
                     if wx1 <= pos_whip[0] <= wx2 and wy1 <= pos_whip[1] <= wy2:
                         self.selected_whips.add((tracker_id, 'positive'))
                         
-                # Check negative whip
                 neg_whip = self.get_whip_position(tracker_id, 'negative')
                 if neg_whip:
                     if wx1 <= neg_whip[0] <= wx2 and wy1 <= neg_whip[1] <= wy2:
@@ -2535,10 +2552,20 @@ class WiringConfigurator(tk.Toplevel):
         """Select all whip points"""
         self.selected_whips.clear()
         
-        for tracker_idx, _ in enumerate(self.block.tracker_positions):
+        for tracker_idx, pos in enumerate(self.block.tracker_positions):
             tracker_id = str(tracker_idx)
-            self.selected_whips.add((tracker_id, 'positive'))
-            self.selected_whips.add((tracker_id, 'negative'))
+            
+            # In String Homerun mode, select per-string whip points
+            if (hasattr(self.block, 'wiring_config') and 
+                self.block.wiring_config and 
+                self.block.wiring_config.wiring_type == WiringType.HOMERUN):
+                
+                for string_idx in range(len(pos.strings)):
+                    self.selected_whips.add((tracker_id, string_idx, 'positive'))
+                    self.selected_whips.add((tracker_id, string_idx, 'negative'))
+            else:
+                self.selected_whips.add((tracker_id, 'positive'))
+                self.selected_whips.add((tracker_id, 'negative'))
             
         self.draw_wiring_layout()
         return "break"  # Prevent default Ctrl+A behavior
@@ -2660,11 +2687,31 @@ class WiringConfigurator(tk.Toplevel):
             
     def get_whip_at_position(self, x, y, tolerance=0.5):
         """Find a whip point at the given position within tolerance"""
-        # Check each tracker's harness whip points
+        # Check each tracker's whip points
         for tracker_idx, pos in enumerate(self.block.tracker_positions):
             tracker_id = str(tracker_idx)
             string_count = len(pos.strings)
             
+            # In String Homerun mode, check per-string whip points
+            if (hasattr(self.block, 'wiring_config') and 
+                self.block.wiring_config and 
+                self.block.wiring_config.wiring_type == WiringType.HOMERUN):
+                
+                for string_idx in range(string_count):
+                    # Check positive string whip
+                    pos_whip = self.get_whip_position(tracker_id, 'positive', harness_idx=string_idx)
+                    if pos_whip:
+                        if abs(x - pos_whip[0]) <= tolerance and abs(y - pos_whip[1]) <= tolerance:
+                            return (tracker_id, string_idx, 'positive')
+                    
+                    # Check negative string whip
+                    neg_whip = self.get_whip_position(tracker_id, 'negative', harness_idx=string_idx)
+                    if neg_whip:
+                        if abs(x - neg_whip[0]) <= tolerance and abs(y - neg_whip[1]) <= tolerance:
+                            return (tracker_id, string_idx, 'negative')
+                continue  # Skip regular whip checks for homerun mode
+            
+            # In Wire Harness mode, check harness whip points
             if (hasattr(self.block, 'wiring_config') and 
                 self.block.wiring_config and 
                 hasattr(self.block.wiring_config, 'harness_groupings') and
@@ -2680,7 +2727,7 @@ class WiringConfigurator(tk.Toplevel):
                     # Check negative harness whip
                     neg_whip = self.get_whip_position(tracker_id, 'negative', harness_idx)
                     if neg_whip:
-                        if abs(x - neg_whip[0]) <= tolerance and abs(y - pos_whip[1]) <= tolerance:
+                        if abs(x - neg_whip[0]) <= tolerance and abs(y - neg_whip[1]) <= tolerance:
                             return (tracker_id, harness_idx, 'negative')
             
             # Check regular tracker whip points
@@ -3444,8 +3491,8 @@ class WiringConfigurator(tk.Toplevel):
                     )
                     y_pos += (module_height + template.module_spacing_m) * scale
                 
-                # Draw motor (only if there are strings below)
-                if strings_below_motor > 0:
+                # Draw motor if has_motor is True
+                if getattr(template, 'has_motor', True):
                     motor_y = y_pos
                     gap_height = template.motor_gap_m * scale
                     circle_radius = min(gap_height / 3, module_width * scale / 4)
@@ -3521,17 +3568,24 @@ class WiringConfigurator(tk.Toplevel):
         pos_routes = []  # List to store positive route info
         neg_routes = []  # List to store negative route info
         
-        # Collect all source points
+        # Collect all source points - each string gets its own whip point
         for pos in self.block.tracker_positions:
             tracker_idx = self.block.tracker_positions.index(pos)
-            pos_whip = self.get_whip_position(str(tracker_idx), 'positive')
-            tracker_idx = self.block.tracker_positions.index(pos)
-            neg_whip = self.get_whip_position(str(tracker_idx), 'negative')
+            tracker_id = str(tracker_idx)
             
-            for string in pos.strings:
-                whip_points_valid = pos_whip and neg_whip  # Check both whip points exist
-                if whip_points_valid:
-                    # First route: source to whip
+            for string_idx, string in enumerate(pos.strings):
+                # Per-string whip points using harness_idx=string_idx
+                pos_whip = self.get_whip_position(tracker_id, 'positive', harness_idx=string_idx)
+                neg_whip = self.get_whip_position(tracker_id, 'negative', harness_idx=string_idx)
+                
+                # Draw per-string whip points (interactive/draggable)
+                if pos_whip:
+                    self.draw_whip_point(pos_whip[0], pos_whip[1], tracker_id, 'positive', harness_idx=string_idx)
+                if neg_whip:
+                    self.draw_whip_point(neg_whip[0], neg_whip[1], tracker_id, 'negative', harness_idx=string_idx)
+                
+                if pos_whip:
+                    # Route: source to whip
                     route1 = self.calculate_cable_route(
                         pos.x + string.positive_source_x,
                         pos.y + string.positive_source_y,
@@ -3539,7 +3593,7 @@ class WiringConfigurator(tk.Toplevel):
                         True, len(pos_routes)
                     )
                     current = self.calculate_current_for_segment('string')
-                    context_info = f"T{tracker_idx+1}-S{len(pos_routes)+1} String"
+                    context_info = f"T{tracker_idx+1}-S{string_idx+1} String"
                     self.draw_wire_route(route1, self.string_cable_size_var.get(), current, True, "string", context_info)
                     
                 if neg_whip:
@@ -3550,7 +3604,7 @@ class WiringConfigurator(tk.Toplevel):
                         False, len(neg_routes)
                     )
                     current = self.calculate_current_for_segment('string')
-                    context_info = f"T{tracker_idx+1}-S{len(neg_routes)+1} String"
+                    context_info = f"T{tracker_idx+1}-S{string_idx+1} String"
                     self.draw_wire_route(route1, self.string_cable_size_var.get(), current, False, "string", context_info)
                                             
                 pos_routes.append({

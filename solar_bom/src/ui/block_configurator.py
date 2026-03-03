@@ -1438,7 +1438,8 @@ class BlockConfigurator(ttk.Frame):
                 current_y = y
                 
                 for string_idx in range(template.strings_per_tracker):
-                    if string_idx + 1 == template.motor_string_index:  # This string has the motor (1-based index)
+                    if string_idx + 1 == template.motor_string_index and getattr(template, 'has_motor', True):
+                        # This string has the motor (1-based index)
                         # Draw north modules
                         for i in range(template.motor_split_north):
                             self.canvas.create_rectangle(
@@ -1502,8 +1503,8 @@ class BlockConfigurator(ttk.Frame):
                     )
                     y_pos += (module_height + template.module_spacing_m) * scale
 
-                # Draw motor (only if there are strings below, and only once for center column)
-                if strings_below_motor > 0 and (col == modules_high // 2 or (modules_high == 1 and col == 0)):
+                # Draw motor if has_motor is True (only once for center column)
+                if getattr(template, 'has_motor', True) and (col == modules_high // 2 or (modules_high == 1 and col == 0)):
                     motor_y = y_pos
                     gap_height = template.motor_gap_m * scale
                     circle_radius = min(gap_height / 3, total_tracker_width * scale / 4)
@@ -1517,7 +1518,7 @@ class BlockConfigurator(ttk.Frame):
                     )
                 
                 # Advance y_pos past motor gap for this column
-                if strings_below_motor > 0:
+                if getattr(template, 'has_motor', True):
                     y_pos += template.motor_gap_m * scale
 
                 # Draw modules below motor

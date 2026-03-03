@@ -6430,5 +6430,65 @@
         "max_system_voltage": 1500
       }
     }
+  },
+  "Sample": {
+    "NXT-56-550W-56-1P": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 28,
+      "strings_per_tracker": 2,
+      "module_spacing_m": 0.01,
+      "has_motor": false,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 2,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 2,
+      "motor_split_north": 14,
+      "motor_split_south": 14,
+      "modules_high": 1,
+      "module_spec": {
+        "manufacturer": "Sample",
+        "model": "Default",
+        "type": "Mono PERC",
+        "length_mm": 2000,
+        "width_mm": 1000,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 400,
+        "vmp": 40,
+        "imp": 10,
+        "voc": 48,
+        "isc": 10.5,
+        "max_system_voltage": 1500
+      }
+    },
+    "NXT-56-400W-56/M/0-1P": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 28,
+      "strings_per_tracker": 2,
+      "module_spacing_m": 0.01,
+      "has_motor": true,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 2,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 2,
+      "motor_split_north": 14,
+      "motor_split_south": 14,
+      "modules_high": 1,
+      "module_spec": {
+        "manufacturer": "Sample",
+        "model": "Default",
+        "type": "Mono PERC",
+        "length_mm": 2000,
+        "width_mm": 1000,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 400,
+        "vmp": 40,
+        "imp": 10,
+        "voc": 48,
+        "isc": 10.5,
+        "max_system_voltage": 1500
+      }
+    }
   }
 }

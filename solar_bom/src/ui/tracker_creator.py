@@ -138,35 +138,43 @@ class TrackerTemplateCreator(ttk.Frame):
         self.spacing_var = tk.StringVar(value="0.01")
         ttk.Entry(editor_frame, textvariable=self.spacing_var).grid(row=7, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         
+        # Has Motor checkbox
+        self.has_motor_var = tk.BooleanVar(value=True)
+        self.has_motor_check = ttk.Checkbutton(editor_frame, text="Has Motor", 
+                                                variable=self.has_motor_var,
+                                                command=self.update_motor_controls_state)
+        self.has_motor_check.grid(row=8, column=0, columnspan=2, padx=5, pady=2, sticky=tk.W)
+
         # Motor Gap
-        ttk.Label(editor_frame, text="Motor Gap (m):").grid(row=8, column=0, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(editor_frame, text="Motor Gap (m):").grid(row=9, column=0, padx=5, pady=2, sticky=tk.W)
         self.motor_gap_var = tk.StringVar(value="1.0")
-        ttk.Entry(editor_frame, textvariable=self.motor_gap_var).grid(row=8, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        self.motor_gap_entry = ttk.Entry(editor_frame, textvariable=self.motor_gap_var)
+        self.motor_gap_entry.grid(row=9, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
 
         # Motor Placement Type
-        ttk.Label(editor_frame, text="Motor Placement:").grid(row=9, column=0, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(editor_frame, text="Motor Placement:").grid(row=10, column=0, padx=5, pady=2, sticky=tk.W)
         self.motor_placement_var = tk.StringVar(value="between_strings")
         placement_combo = ttk.Combobox(editor_frame, textvariable=self.motor_placement_var, 
                                      values=["between_strings", "middle_of_string"], state="readonly")
-        placement_combo.grid(row=9, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        placement_combo.grid(row=10, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
 
         # Motor Position (Between Strings)
-        ttk.Label(editor_frame, text="Motor After String:").grid(row=10, column=0, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(editor_frame, text="Motor After String:").grid(row=11, column=0, padx=5, pady=2, sticky=tk.W)
         self.motor_position_var = tk.StringVar(value="2")  # Default to middle-ish
         self.motor_position_spinbox = ttk.Spinbox(editor_frame, from_=0, to=1, textvariable=self.motor_position_var,
             increment=1, validate='all', validatecommand=(self.register(lambda val: val.isdigit() or val == ""), '%P'))
-        self.motor_position_spinbox.grid(row=10, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        self.motor_position_spinbox.grid(row=11, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         
         # Motor String Index (Middle of String)
-        ttk.Label(editor_frame, text="Motor in String:").grid(row=11, column=0, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(editor_frame, text="Motor in String:").grid(row=12, column=0, padx=5, pady=2, sticky=tk.W)
         self.motor_string_var = tk.StringVar(value="2")
         self.motor_string_spinbox = ttk.Spinbox(editor_frame, from_=1, to=2, textvariable=self.motor_string_var,
             increment=1, validate='all', validatecommand=(self.register(lambda val: val.isdigit() or val == ""), '%P'))
-        self.motor_string_spinbox.grid(row=11, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        self.motor_string_spinbox.grid(row=12, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         
         # Motor Split Controls (Middle of String)
         self.split_frame = ttk.Frame(editor_frame)
-        self.split_frame.grid(row=12, column=0, columnspan=2, padx=5, pady=2, sticky=(tk.W, tk.E))
+        self.split_frame.grid(row=13, column=0, columnspan=2, padx=5, pady=2, sticky=(tk.W, tk.E))
         ttk.Label(self.split_frame, text="Split (North/South):").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
         
         self.motor_split_north_var = tk.StringVar(value="14")
@@ -187,14 +195,14 @@ class TrackerTemplateCreator(ttk.Frame):
         self.south_label.grid(row=0, column=2, padx=2)
 
         # Total Modules Display
-        ttk.Label(editor_frame, text="Modules per Tracker:").grid(row=13, column=0, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(editor_frame, text="Modules per Tracker:").grid(row=14, column=0, padx=5, pady=2, sticky=tk.W)
         self.total_modules_label = ttk.Label(editor_frame, text="--")
         try:
             modules = int(self.modules_string_var.get()) * int(self.strings_tracker_var.get())
             self.total_modules_label.config(text=str(modules))
         except ValueError:
             self.total_modules_label.config(text="--")
-        self.total_modules_label.grid(row=13, column=1, padx=5, pady=2, sticky=tk.W)
+        self.total_modules_label.grid(row=14, column=1, padx=5, pady=2, sticky=tk.W)
         
         # Calculated Dimensions Display
         dims_frame = ttk.LabelFrame(editor_frame, text="Tracker Dimensions", padding="5")
@@ -216,6 +224,7 @@ class TrackerTemplateCreator(ttk.Frame):
         self.motor_split_north_var.trace('w', self.auto_generate_template_name)
         self.modules_high_var.trace('w', self.auto_generate_template_name)
         self.orientation_var.trace('w', self.auto_generate_template_name)
+        self.has_motor_var.trace('w', self.auto_generate_template_name)
 
         # Update total modules calculation when inputs change
         def update_total_modules(*args):
@@ -244,7 +253,7 @@ class TrackerTemplateCreator(ttk.Frame):
         for var in [self.modules_string_var, self.strings_tracker_var, 
                 self.spacing_var, self.motor_gap_var, self.orientation_var, self.motor_position_var,
                 self.motor_placement_var, self.motor_string_var, self.motor_split_north_var,
-                self.modules_high_var]:
+                self.modules_high_var, self.has_motor_var]:
             var.trace('w', lambda *args: self.update_preview())
 
         # Add special traces for motor controls
@@ -292,6 +301,28 @@ class TrackerTemplateCreator(ttk.Frame):
             # Show middle of string controls
             self.motor_string_spinbox.grid()
             self.split_frame.grid()
+
+    def update_motor_controls_state(self, *args):
+        """Enable/disable motor controls based on has_motor checkbox"""
+        enabled = self.has_motor_var.get()
+        state = 'normal' if enabled else 'disabled'
+        
+        self.motor_gap_entry.config(state=state)
+        self.motor_position_spinbox.config(state=state)
+        self.motor_string_spinbox.config(state=state)
+        self.north_spinbox.config(state=state)
+        
+        # Also update the placement combobox
+        # Find it by looking for motor_placement_var's widget
+        for widget in self.motor_gap_entry.master.winfo_children():
+            if isinstance(widget, ttk.Combobox) and hasattr(widget, 'cget'):
+                try:
+                    if str(widget.cget('textvariable')) == str(self.motor_placement_var):
+                        widget.config(state='readonly' if enabled else 'disabled')
+                except:
+                    pass
+        
+        self.update_preview()
 
     def update_motor_string_range(self, *args):
         """Update the motor string spinbox range based on strings per tracker"""
@@ -368,7 +399,10 @@ class TrackerTemplateCreator(ttk.Frame):
             config_suffix = f"-{modules_high}{orientation_letter}"
             
             # Generate the template name
-            template_name = f"{manufacturer}-{total_modules}-{int(wattage)}W-{north_modules}/M/{south_modules}{config_suffix}"
+            if not self.has_motor_var.get():
+                template_name = f"{manufacturer}-{total_modules}-{int(wattage)}W-{north_modules + south_modules}{config_suffix}"
+            else:
+                template_name = f"{manufacturer}-{total_modules}-{int(wattage)}W-{north_modules}/M/{south_modules}{config_suffix}"
             self.name_var.set(template_name)
             
         except (ValueError, AttributeError):
@@ -583,6 +617,7 @@ class TrackerTemplateCreator(ttk.Frame):
                 modules_per_string=int(self.modules_string_var.get()),
                 strings_per_tracker=int(self.strings_tracker_var.get()),
                 module_spacing_m=float(self.spacing_var.get()),
+                has_motor=self.has_motor_var.get(),
                 motor_gap_m=float(self.motor_gap_var.get()),
                 motor_position_after_string=int(self.motor_position_var.get()),
                 # New motor placement fields
@@ -618,6 +653,7 @@ class TrackerTemplateCreator(ttk.Frame):
                 "modules_per_string": template.modules_per_string,
                 "strings_per_tracker": template.strings_per_tracker,
                 "module_spacing_m": template.module_spacing_m,
+                "has_motor": template.has_motor,
                 "motor_gap_m": template.motor_gap_m,
                 "motor_position_after_string": template.motor_position_after_string,
                 # New motor placement fields
@@ -724,6 +760,7 @@ class TrackerTemplateCreator(ttk.Frame):
         self.modules_string_var.set(str(template_data["modules_per_string"]))
         self.strings_tracker_var.set(str(template_data["strings_per_tracker"]))
         self.spacing_var.set(str(template_data["module_spacing_m"]))
+        self.has_motor_var.set(template_data.get("has_motor", True))
         self.motor_gap_var.set(str(template_data["motor_gap_m"]))
         self.motor_position_var.set(str(template_data.get("motor_position_after_string", 2)))
         
@@ -739,6 +776,7 @@ class TrackerTemplateCreator(ttk.Frame):
         # Update UI visibility and calculations
         self.update_motor_placement_visibility()
         self.update_motor_split_calculation()
+        self.update_motor_controls_state()
         
         # If we have module spec data, use it
         if "module_spec" in template_data:
@@ -928,7 +966,7 @@ class TrackerTemplateCreator(ttk.Frame):
                             )
                         
                         # Draw motor gap (only draw once for the center column or first column)
-                        if col == template.modules_high // 2 or (template.modules_high == 1 and col == 0):
+                        if getattr(template, 'has_motor', True) and (col == template.modules_high // 2 or (template.modules_high == 1 and col == 0)):
                             motor_y = current_y + (template.motor_split_north * (module_height + template.module_spacing_m)) * scale
                             gap_height = template.motor_gap_m * scale
                             
@@ -1005,7 +1043,7 @@ class TrackerTemplateCreator(ttk.Frame):
                         )
                 
                 # Draw motor gap (only once for the center)
-                if strings_below_motor > 0 and (col == template.modules_high // 2 or (template.modules_high == 1 and col == 0)):
+                if getattr(template, 'has_motor', True) and (col == template.modules_high // 2 or (template.modules_high == 1 and col == 0)):
                     motor_y = 10 + (modules_above_motor * (module_height + template.module_spacing_m)) * scale
                     gap_height = template.motor_gap_m * scale
                     
@@ -1023,7 +1061,7 @@ class TrackerTemplateCreator(ttk.Frame):
                 # Draw modules below motor
                 for string_idx in range(strings_below_motor):
                     for module_idx in range(template.modules_per_string):
-                        y_offset = template.motor_gap_m if strings_below_motor > 0 else 0
+                        y_offset = template.motor_gap_m if getattr(template, 'has_motor', True) else 0
                         y_pos = 10 + ((modules_above_motor + string_idx * template.modules_per_string + module_idx) * 
                                     (module_height + template.module_spacing_m) + y_offset) * scale
                         self.canvas.create_rectangle(
