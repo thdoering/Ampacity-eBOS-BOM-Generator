@@ -5446,6 +5446,35 @@
         "isc": 13.72,
         "max_system_voltage": 1500
       }
+    },
+    "NXT-24-585W-24-1P": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 24,
+      "strings_per_tracker": 1,
+      "module_spacing_m": 0.01,
+      "has_motor": false,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 1,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 1,
+      "motor_split_north": 12,
+      "motor_split_south": 12,
+      "modules_high": 1,
+      "module_spec": {
+        "manufacturer": "QCells",
+        "model": "Q.PEAK DUO XL-G11S 585W",
+        "type": "Bifacial",
+        "length_mm": 2462.0,
+        "width_mm": 1134.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 585.0,
+        "vmp": 44.75,
+        "imp": 13.07,
+        "voc": 53.57,
+        "isc": 13.72,
+        "max_system_voltage": 1500
+      }
     }
   },
   "Heliene": {

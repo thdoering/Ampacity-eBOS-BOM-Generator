@@ -831,7 +831,7 @@ class BlockConfigurator(ttk.Frame):
             # Calculate device position based on row spacing    
             device_width_m = 0.91  # 3ft in meters
             # Calculate device position based on placement mode
-            if self.device_placement_mode.get() == "row_center":
+            if self.device_placement_mode.get() == "row_center" and selected_template is not None:
                 # Center in the gap between tracker rows
                 tracker_width, _ = self.calculate_tracker_dimensions(selected_template)
                 gap_center = (row_spacing_m + tracker_width) / 2
@@ -852,7 +852,7 @@ class BlockConfigurator(ttk.Frame):
                 description=f"New block {block_id}",
                 device_spacing_m=self.ft_to_m(float(self.device_spacing_var.get())),
                 device_x=initial_device_x,
-                device_y=0.0,
+                device_y=-(0.91 / 2),  # Center of device at Y=0 grid snap point
                 device_type=DeviceType(self.device_type_var.get()),
                 polarity_convention=PolarityConvention(self.polarity_convention_var.get()),
                 underground_routing=False,
@@ -1600,9 +1600,13 @@ class BlockConfigurator(ttk.Frame):
         x_m = (event.x - 10 - self.pan_x) / scale  # Subtract pan offset
         y_m = (event.y - 10 - self.pan_y) / scale  # Subtract pan offset
         
-        # Snap to grid
+        # Snap to grid - Y snap point represents motor position
         x_m = round(x_m / block.row_spacing_m) * block.row_spacing_m
         y_m = round(y_m / float(self.ns_spacing_var.get())) * float(self.ns_spacing_var.get())
+        
+        # Back-calculate actual top-left Y from motor-aligned snap point
+        motor_offset = self.drag_template.get_motor_y_offset()
+        y_m = y_m - motor_offset
         
         # Draw preview - add pan offset back for canvas coordinates
         x = x_m * scale + 10 + self.pan_x  # Add pan offset
@@ -1643,9 +1647,13 @@ class BlockConfigurator(ttk.Frame):
         x_m = (event.x - 10 - self.pan_x) / scale  # Subtract pan offset
         y_m = (event.y - 10 - self.pan_y) / scale  # Subtract pan offset
         
-        # Snap to grid
+        # Snap to grid - Y snap point represents motor position
         x_m = round(x_m / block.row_spacing_m) * block.row_spacing_m
         y_m = round(y_m / float(self.ns_spacing_var.get())) * float(self.ns_spacing_var.get())
+        
+        # Back-calculate actual top-left Y from motor-aligned snap point
+        motor_offset = self.drag_template.get_motor_y_offset()
+        y_m = y_m - motor_offset
         
         # Draw new preview - add pan offset back for canvas coordinates
         x = x_m * scale + 10 + self.pan_x  # Add pan offset
@@ -1678,9 +1686,13 @@ class BlockConfigurator(ttk.Frame):
         x_m = (event.x - 10 - self.pan_x) / scale  # Subtract pan offset
         y_m = (event.y - 10 - self.pan_y) / scale  # Subtract pan offset
         
-        # Snap to grid
+        # Snap to grid - Y snap point represents motor position
         x_m = round(x_m / block.row_spacing_m) * block.row_spacing_m
         y_m = round(y_m / float(self.ns_spacing_var.get())) * float(self.ns_spacing_var.get())
+        
+        # Back-calculate actual top-left Y from motor-aligned snap point
+        motor_offset = self.drag_template.get_motor_y_offset()
+        y_m = y_m - motor_offset
         
         # Check for collisions with existing trackers
         new_width, new_height = self.calculate_tracker_dimensions(self.drag_template)
@@ -2633,15 +2645,12 @@ class BlockConfigurator(ttk.Frame):
         module_width = (template.module_spec.length_mm / 1000 if template.module_orientation == ModuleOrientation.PORTRAIT 
                     else template.module_spec.width_mm / 1000)
 
-        total_height = (
-            # Height for modules above motor
-            (template.modules_per_string * (template.strings_per_tracker - 1)) * 
-            (module_height + template.module_spacing_m) +
-            # Motor gap
-            template.motor_gap_m +
-            # Height for modules below motor
-            template.modules_per_string * (module_height + template.module_spacing_m)
-        )
+        total_modules = template.modules_per_string * template.strings_per_tracker
+        total_height = (total_modules * (module_height + template.module_spacing_m))
+        
+        # Only include motor gap if tracker has a motor
+        if template.has_motor and template.motor_gap_m > 0:
+            total_height += template.motor_gap_m
 
         return module_width, total_height  # width, height
     
@@ -3038,6 +3047,13 @@ class BlockConfigurator(ttk.Frame):
             else:
                 # No trackers, default to row center
                 block.device_x = block.row_spacing_m / 2
+        # Snap device_y so center aligns with NS grid
+        device_height_m = 0.91
+        ns_spacing = float(self.ns_spacing_var.get())
+        current_center_y = block.device_y + (device_height_m / 2)
+        snapped_center_y = round(current_center_y / ns_spacing) * ns_spacing
+        block.device_y = snapped_center_y - (device_height_m / 2)
+        
         # Redraw with new device position
         self.draw_block()
 

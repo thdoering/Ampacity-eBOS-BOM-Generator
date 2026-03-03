@@ -293,6 +293,39 @@ class TrackerTemplate:
         """Get the motor position"""
         return self.motor_position_after_string
     
+    def get_motor_y_offset(self) -> float:
+        """
+        Calculate the Y distance from the top of the tracker to the center of the motor gap.
+        Used for motor-aligned placement where click point = motor position.
+        """
+        if not self.has_motor or self.motor_gap_m <= 0:
+            return 0.0
+        
+        if self.module_orientation == ModuleOrientation.PORTRAIT:
+            module_height = self.module_spec.width_mm / 1000
+        else:
+            module_height = self.module_spec.length_mm / 1000
+        
+        if self.motor_placement_type == "middle_of_string":
+            # Complete strings above the motor string
+            complete_strings_above = self.motor_string_index - 1  # 1-based index
+            complete_strings_height = complete_strings_above * (
+                self.modules_per_string * (module_height + self.module_spacing_m)
+            )
+            
+            # North modules of the motor string
+            north_modules_height = self.motor_split_north * (module_height + self.module_spacing_m)
+            
+            # Motor center is at top + complete strings + north modules + half the gap
+            return complete_strings_height + north_modules_height + (self.motor_gap_m / 2)
+        else:
+            # between_strings: motor is after motor_position_after_string strings
+            motor_pos = self.get_motor_position()
+            modules_above = motor_pos * self.modules_per_string
+            modules_above_height = modules_above * (module_height + self.module_spacing_m)
+            
+            return modules_above_height + (self.motor_gap_m / 2)
+    
     def get_total_modules(self) -> int:
         """Calculate total number of modules on the tracker"""
         return self.modules_per_string * self.strings_per_tracker * self.modules_high
