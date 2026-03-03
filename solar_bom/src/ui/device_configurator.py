@@ -2,7 +2,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import Dict, List, Optional, Set
 import json
-from ..models.block import BlockConfig, DeviceType
+from ..models.block import BlockConfig, DeviceType, WiringType
 from ..models.device import HarnessConnection, CombinerBoxConfig
 from ..utils.calculations import STANDARD_FUSE_SIZES
 
@@ -366,8 +366,35 @@ class DeviceConfigurator(ttk.Frame):
             # Process each tracker
             tracker_positions = sorted(block.tracker_positions, key=lambda t: (t.y, t.x))
             
-            # Check if we have custom harness groupings
-            if hasattr(block.wiring_config, 'harness_groupings') and block.wiring_config.harness_groupings:
+            # Check wiring type - String Homerun creates individual string connections
+            if block.wiring_config and block.wiring_config.wiring_type == WiringType.HOMERUN:
+                # String Homerun: one connection per string per tracker (num_strings=1 each)
+                for idx, tracker_pos in enumerate(tracker_positions):
+                    tracker_id = f"T{idx+1:02d}"
+                    
+                    if not tracker_pos.template:
+                        continue
+                    
+                    strings_in_tracker = tracker_pos.template.strings_per_tracker
+                    whip_size = block.wiring_config.whip_cable_size if block.wiring_config else "10 AWG"
+                    
+                    for s_idx in range(strings_in_tracker):
+                        string_id = f"S{s_idx+1:02d}"
+                        
+                        connection = HarnessConnection(
+                            block_id=block_id,
+                            tracker_id=tracker_id,
+                            harness_id=string_id,
+                            num_strings=1,
+                            module_isc=module_isc,
+                            nec_factor=self.current_project.nec_safety_factor,
+                            actual_cable_size=whip_size
+                        )
+                        
+                        combiner_config.connections.append(connection)
+            
+            # Wire Harness mode: check if we have custom harness groupings
+            elif hasattr(block.wiring_config, 'harness_groupings') and block.wiring_config.harness_groupings:
                 # Process each tracker
                 for idx, tracker_pos in enumerate(tracker_positions):
                     tracker_id = f"T{idx+1:02d}"
