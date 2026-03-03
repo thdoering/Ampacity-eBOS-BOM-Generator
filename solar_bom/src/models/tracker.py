@@ -129,7 +129,8 @@ class TrackerPosition:
             current_y = 0
             
             for i in range(self.template.strings_per_tracker):
-                if i + 1 == self.template.motor_string_index:  # This string has the motor (1-based index)
+                if i + 1 == self.template.motor_string_index and getattr(self.template, 'has_motor', True):
+                    # This string has the motor (1-based index)
                     # Calculate split string dimensions
                     north_modules = self.template.motor_split_north
                     south_modules = self.template.motor_split_south

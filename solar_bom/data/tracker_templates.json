@@ -6432,12 +6432,12 @@
     }
   },
   "Sample": {
-    "NXT-56-550W-56-1P": {
+    "NXT-56-400W-56/M/0-1P": {
       "module_orientation": "Portrait",
       "modules_per_string": 28,
       "strings_per_tracker": 2,
       "module_spacing_m": 0.01,
-      "has_motor": false,
+      "has_motor": true,
       "motor_gap_m": 1.0,
       "motor_position_after_string": 2,
       "motor_placement_type": "between_strings",
@@ -6461,12 +6461,12 @@
         "max_system_voltage": 1500
       }
     },
-    "NXT-56-400W-56/M/0-1P": {
+    "NXT-56-400W-56-1P": {
       "module_orientation": "Portrait",
       "modules_per_string": 28,
       "strings_per_tracker": 2,
       "module_spacing_m": 0.01,
-      "has_motor": true,
+      "has_motor": false,
       "motor_gap_m": 1.0,
       "motor_position_after_string": 2,
       "motor_placement_type": "between_strings",

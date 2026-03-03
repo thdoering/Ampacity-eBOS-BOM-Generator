@@ -3428,7 +3428,8 @@ class WiringConfigurator(tk.Toplevel):
                 current_y = y_base
                 
                 for string_idx in range(template.strings_per_tracker):
-                    if string_idx + 1 == template.motor_string_index:  # This string has the motor (1-based index)
+                    if string_idx + 1 == template.motor_string_index and getattr(template, 'has_motor', True):  # This string has the motor
+                        # This string has the motor (1-based index)
                         # Draw north modules
                         for i in range(template.motor_split_north):
                             self.canvas.create_rectangle(

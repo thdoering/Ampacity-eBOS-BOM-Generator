@@ -1790,6 +1790,7 @@ class BlockConfigurator(ttk.Frame):
                                     modules_per_string=template_data.get('modules_per_string', 28),
                                     strings_per_tracker=template_data.get('strings_per_tracker', 2),
                                     module_spacing_m=template_data.get('module_spacing_m', 0.01),
+                                    has_motor=template_data.get('has_motor', True),
                                     motor_gap_m=template_data.get('motor_gap_m', 1.0),
                                     motor_position_after_string=template_data.get('motor_position_after_string', 0),
                                     # New motor placement fields with backward compatibility
@@ -1833,6 +1834,7 @@ class BlockConfigurator(ttk.Frame):
                                 modules_per_string=template_data.get('modules_per_string', 28),
                                 strings_per_tracker=template_data.get('strings_per_tracker', 2),
                                 module_spacing_m=template_data.get('module_spacing_m', 0.01),
+                                has_motor=template_data.get('has_motor', True),
                                 motor_gap_m=template_data.get('motor_gap_m', 1.0),
                                 motor_position_after_string=template_data.get('motor_position_after_string', 0),
                                 # New motor placement fields with backward compatibility
