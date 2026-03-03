@@ -832,11 +832,13 @@ class BlockConfigurator(ttk.Frame):
             device_width_m = 0.91  # 3ft in meters
             # Calculate device position based on placement mode
             if self.device_placement_mode.get() == "row_center":
-                # Center between rows
-                initial_device_x = row_spacing_m / 2 + (device_width_m / 2)
+                # Center in the gap between tracker rows
+                tracker_width, _ = self.calculate_tracker_dimensions(selected_template)
+                gap_center = (row_spacing_m + tracker_width) / 2
+                initial_device_x = gap_center - (device_width_m / 2)
             else:
                 # Will be updated when a tracker is placed
-                initial_device_x = row_spacing_m / 2 + (device_width_m / 2)  # Default until tracker placed
+                initial_device_x = (row_spacing_m / 2) - (device_width_m / 2)  # Default until tracker placed
             
             block = BlockConfig(
                 block_id=block_id,
@@ -3010,8 +3012,13 @@ class BlockConfigurator(ttk.Frame):
         mode = self.device_placement_mode.get()
         
         if mode == "row_center":
-            # Place device at the center of row spacing
-            block.device_x = block.row_spacing_m / 2
+            # Place device centered in the gap between tracker rows
+            device_width_m = 0.91  # 3ft in meters
+            # Get tracker width (module length dimension)
+            tracker_width, _ = self.calculate_tracker_dimensions(block.tracker_template)
+            # Center of gap = (row_spacing + tracker_width) / 2
+            gap_center = (block.row_spacing_m + tracker_width) / 2
+            block.device_x = gap_center - (device_width_m / 2)
         elif mode == "tracker_align":
             # Find the first tracker or use default position
             if block.tracker_positions:
@@ -3029,7 +3036,6 @@ class BlockConfigurator(ttk.Frame):
             else:
                 # No trackers, default to row center
                 block.device_x = block.row_spacing_m / 2
-        
         # Redraw with new device position
         self.draw_block()
 
