@@ -553,6 +553,21 @@ class BOMManager(ttk.Frame):
                         dim_str = f"{int(module_spec.length_mm)} mm x {int(module_spec.width_mm)} mm"
                         module_dimensions.add(dim_str)
                 
+                # Get polarity conventions from blocks
+                polarity_conventions = set()
+                for block_id_pc, block_pc in selected_blocks.items():
+                    if hasattr(block_pc, 'polarity_convention'):
+                        polarity_conventions.add(block_pc.polarity_convention.value)
+                
+                # Get copper rate from pricing data
+                copper_rate = 'Unknown'
+                try:
+                    from ..utils.pricing_lookup import get_pricing_lookup
+                    pricing = get_pricing_lookup()
+                    copper_rate = f"${pricing.get_current_copper_price():.2f}/lb"
+                except Exception:
+                    pass
+
                 # Get wiring mode from project
                 wiring_mode = 'Unknown'
                 if project and hasattr(project, 'wiring_mode'):
@@ -574,6 +589,8 @@ class BOMManager(ttk.Frame):
                     'Module Wiring': wiring_mode,
                     'Module Dimensions': ', '.join(module_dimensions) if module_dimensions else 'Unknown',
                     'Number of Combiner Boxes': len(selected_blocks),
+                    'Polarity Orientation': ', '.join(sorted(polarity_conventions)) if polarity_conventions else 'Unknown',
+                    'Copper Rate': copper_rate,
                     'BOM Revision': self.revision_var.get() or '0'
                 }
         except Exception as e:

@@ -1150,7 +1150,9 @@ class BOMGenerator:
                     'Number of Strings': project_info.get('Number of Strings', 0),
                     'Module Wiring': project_info.get('Module Wiring', 'Unknown'),
                     'Module Dimensions': project_info.get('Module Dimensions', 'Unknown'),
-                    'Number of Combiner Boxes': project_info.get('Number of Combiner Boxes', 0)
+                    'Number of Combiner Boxes': project_info.get('Number of Combiner Boxes', 0),
+                    'Polarity Orientation': project_info.get('Polarity Orientation', 'Unknown'),
+                    'Copper Rate': project_info.get('Copper Rate', 'Unknown')
                 }
                 
                 # Write main info with units
