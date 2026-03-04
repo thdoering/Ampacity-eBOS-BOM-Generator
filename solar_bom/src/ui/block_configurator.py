@@ -888,6 +888,17 @@ class BlockConfigurator(ttk.Frame):
             self.block_listbox.selection_set(tk.END)
             self.on_block_select()
             
+            # Ensure new block has a tracker template reference for device positioning
+            if block.tracker_template is None and source_block_id and source_block_id in self.blocks:
+                source_block = self.blocks[source_block_id]
+                if source_block.tracker_template:
+                    block.tracker_template = source_block.tracker_template
+                elif source_block.tracker_positions:
+                    block.tracker_template = source_block.tracker_positions[0].template
+            
+            # Recalculate device position with proper centering logic
+            self.update_device_placement()
+            
             # Track this as the most recent block
             self.most_recent_block = block_id
 
@@ -3025,11 +3036,23 @@ class BlockConfigurator(ttk.Frame):
         if mode == "row_center":
             # Place device centered in the gap between tracker rows
             device_width_m = 0.91  # 3ft in meters
-            # Get tracker width (module length dimension)
-            tracker_width, _ = self.calculate_tracker_dimensions(block.tracker_template)
-            # Center of gap = (row_spacing + tracker_width) / 2
-            gap_center = (block.row_spacing_m + tracker_width) / 2
-            block.device_x = gap_center - (device_width_m / 2)
+            # Get tracker width - try block template, placed trackers, then template tree selection
+            template = block.tracker_templat
+            if template is None and block.tracker_positions:
+                template = block.tracker_positions[0].template
+            if template is None:
+                # Try the template tree selection
+                selection = self.template_tree.selection()
+                if selection:
+                    values = self.template_tree.item(selection[0], 'values')
+                    if values:
+                        template = self.tracker_templates.get(values[0])
+            if template is None:
+                block.device_x = (block.row_spacing_m / 2) - (device_width_m / 2)
+            else:
+                tracker_width, _ = self.calculate_tracker_dimensions(template)
+                gap_center = (block.row_spacing_m + tracker_width) / 2
+                block.device_x = gap_center - (device_width_m / 2)
         elif mode == "tracker_align":
             # Find the first tracker or use default position
             if block.tracker_positions:
@@ -3047,13 +3070,14 @@ class BlockConfigurator(ttk.Frame):
             else:
                 # No trackers, default to row center
                 block.device_x = block.row_spacing_m / 2
+        
         # Snap device_y so center aligns with NS grid
         device_height_m = 0.91
         ns_spacing = float(self.ns_spacing_var.get())
         current_center_y = block.device_y + (device_height_m / 2)
         snapped_center_y = round(current_center_y / ns_spacing) * ns_spacing
         block.device_y = snapped_center_y - (device_height_m / 2)
-        
+
         # Redraw with new device position
         self.draw_block()
 
