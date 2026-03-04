@@ -860,11 +860,13 @@ class BlockConfigurator(ttk.Frame):
                 trench_depth_m=0.91
             )
             
-            # Inherit enabled_templates from the source block
+            # Inherit enabled_templates and DC feeder cable size from the source block
             if source_block_id and source_block_id in self.blocks:
                 source_block = self.blocks[source_block_id]
                 if hasattr(source_block, 'enabled_templates') and source_block.enabled_templates:
                     block.enabled_templates = list(source_block.enabled_templates)  # Copy the list
+                # Inherit DC feeder cable size (distance stays at 0 since it varies per block)
+                block.dc_feeder_cable_size = getattr(source_block, 'dc_feeder_cable_size', '4/0 AWG')
             
             # Add to blocks dictionary
             self.blocks[block_id] = block
@@ -3037,7 +3039,7 @@ class BlockConfigurator(ttk.Frame):
             # Place device centered in the gap between tracker rows
             device_width_m = 0.91  # 3ft in meters
             # Get tracker width - try block template, placed trackers, then template tree selection
-            template = block.tracker_templat
+            template = block.tracker_template
             if template is None and block.tracker_positions:
                 template = block.tracker_positions[0].template
             if template is None:
