@@ -458,18 +458,15 @@ class BOMGenerator:
             'STRING CABLES': 1,
             'WHIP CABLES': 2,
             'EXTENDER CABLES': 3,
-            'STRING CABLE SEGMENTS': 4,
-            'FUSES': 5,
-            'DC FEEDER CABLES': 6,
-            'COMBINER BOXES': 7,
-            'OTHER': 8
+            'FUSES': 4,
+            'DC FEEDER CABLES': 5,
+            'COMBINER BOXES': 6,
+            'OTHER': 7
         }
         
         if 'Harness' in component_type and 'Segment' not in component_type:
             section = 'HARNESSES'
-        elif 'String Cable Segment' in component_type:
-            section = 'STRING CABLE SEGMENTS'
-        elif 'String Cable' in component_type and 'Segment' not in component_type:
+        elif 'String Cable' in component_type:
             section = 'STRING CABLES'
         elif 'Whip Cable' in component_type:
             section = 'WHIP CABLES'
