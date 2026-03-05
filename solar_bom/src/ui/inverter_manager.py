@@ -85,17 +85,25 @@ class InverterManager(ttk.Frame):
         
         self.channel_frames = []  # Store references to channel frames
         
-        # Voltage Limits
-        voltage_frame = ttk.LabelFrame(editor_frame, text="Voltage Specifications", padding="5")
+        # Voltage and Current Limits
+        voltage_frame = ttk.LabelFrame(editor_frame, text="Voltage & Current Limits", padding="5")
         voltage_frame.grid(row=6, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
         
-        ttk.Label(voltage_frame, text="Max DC Voltage:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(voltage_frame, text="Max DC Voltage (V):").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
         self.max_dc_voltage_var = tk.StringVar(value="1500")
         ttk.Entry(voltage_frame, textvariable=self.max_dc_voltage_var).grid(row=0, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         
-        ttk.Label(voltage_frame, text="Startup Voltage:").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(voltage_frame, text="Startup Voltage (V):").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
         self.startup_voltage_var = tk.StringVar(value="150")
         ttk.Entry(voltage_frame, textvariable=self.startup_voltage_var).grid(row=1, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        
+        ttk.Label(voltage_frame, text="Max Short Circuit Current (A):").grid(row=2, column=0, padx=5, pady=2, sticky=tk.W)
+        self.max_isc_var = tk.StringVar(value="")
+        ttk.Entry(voltage_frame, textvariable=self.max_isc_var).grid(row=2, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        
+        ttk.Label(voltage_frame, text="Nominal AC Voltage (V):").grid(row=3, column=0, padx=5, pady=2, sticky=tk.W)
+        self.nominal_ac_voltage_var = tk.StringVar(value="480")
+        ttk.Entry(voltage_frame, textvariable=self.nominal_ac_voltage_var).grid(row=3, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         
         # Save button
         ttk.Button(editor_frame, text="Save Inverter", command=self.save_inverter).grid(row=7, column=0, columnspan=2, pady=10)
@@ -176,6 +184,10 @@ class InverterManager(ttk.Frame):
                 ))
             
             # Create inverter spec
+            # Parse optional max short circuit current
+            max_isc_str = self.max_isc_var.get().strip()
+            max_isc = float(max_isc_str) if max_isc_str else None
+            
             inverter = InverterSpec(
                 manufacturer=self.manufacturer_var.get(),
                 model=self.model_var.get(),
@@ -187,12 +199,13 @@ class InverterManager(ttk.Frame):
                 mppt_configuration=MPPTConfig(self.mppt_config_var.get()),
                 max_dc_voltage=float(self.max_dc_voltage_var.get()),
                 startup_voltage=float(self.startup_voltage_var.get()),
-                nominal_ac_voltage=400.0,  # Default value
+                nominal_ac_voltage=float(self.nominal_ac_voltage_var.get()),
                 max_ac_current=40.0,  # Default value
                 power_factor=0.99,  # Default value
                 dimensions_mm=(1000, 600, 300),  # Default values
                 weight_kg=75.0,  # Default value
-                ip_rating="IP65"  # Default value
+                ip_rating="IP65",  # Default value
+                max_short_circuit_current=max_isc
             )
             
             inverter.validate()
@@ -261,7 +274,8 @@ class InverterManager(ttk.Frame):
                             power_factor=float(specs.get('power_factor', 0.99)),
                             dimensions_mm=tuple(specs.get('dimensions_mm', (1000, 600, 300))),
                             weight_kg=float(specs.get('weight_kg', 75.0)),
-                            ip_rating=specs.get('ip_rating', 'IP65')
+                            ip_rating=specs.get('ip_rating', 'IP65'),
+                            max_short_circuit_current=specs.get('max_short_circuit_current')
                         )
                     except Exception as e:
                         print(f"Warning: Failed to load inverter '{name}': {e}")
@@ -294,6 +308,7 @@ class InverterManager(ttk.Frame):
                 'dimensions_mm': list(inverter.dimensions_mm),
                 'weight_kg': inverter.weight_kg,
                 'ip_rating': inverter.ip_rating,
+                'max_short_circuit_current': getattr(inverter, 'max_short_circuit_current', None),
             }
             data[f"{inverter.manufacturer} {inverter.model}"] = inv_dict
         
@@ -341,6 +356,9 @@ class InverterManager(ttk.Frame):
         self.mppt_config_var.set(inverter.mppt_configuration.value)
         self.max_dc_voltage_var.set(str(inverter.max_dc_voltage))
         self.startup_voltage_var.set(str(inverter.startup_voltage))
+        max_isc = getattr(inverter, 'max_short_circuit_current', None)
+        self.max_isc_var.set(str(max_isc) if max_isc else "")
+        self.nominal_ac_voltage_var.set(str(getattr(inverter, 'nominal_ac_voltage', 480.0)))
         
         # Clear existing channels
         for frame in self.channel_frames:

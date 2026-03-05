@@ -5,6 +5,7 @@ from pathlib import Path
 import json
 import uuid
 from datetime import datetime
+from src.utils.string_allocation import allocate_strings
 
 
 class QuickEstimate(ttk.Frame):
@@ -981,6 +982,37 @@ class QuickEstimate(ttk.Frame):
             self.strings_per_inverter_var.set('--')
             self.isc_warning_label.config(text="")
 
+    # Inverter group color palette
+    INVERTER_COLORS = [
+        '#4A90D9',  # Blue
+        '#E67E22',  # Orange
+        '#2ECC71',  # Green
+        '#9B59B6',  # Purple
+        '#E74C3C',  # Red
+        '#1ABC9C',  # Teal
+        '#F39C12',  # Yellow
+        '#3498DB',  # Light Blue
+        '#E91E63',  # Pink
+        '#00BCD4',  # Cyan
+        '#8BC34A',  # Light Green
+        '#FF9800',  # Amber
+        '#795548',  # Brown
+        '#607D8B',  # Blue Gray
+        '#CDDC39',  # Lime
+    ]
+
+    def show_site_preview(self):
+        """Open the site preview in a pop-out window"""
+        inv_summary = getattr(self, 'last_totals', {}).get('inverter_summary', {})
+        
+        if not inv_summary or not inv_summary.get('allocations'):
+            from tkinter import messagebox
+            messagebox.showinfo("No Data", "Run Calculate Estimate first to generate preview data.")
+            return
+        
+        topology = self.topology_var.get()
+        SitePreviewWindow(self, inv_summary, topology, self.INVERTER_COLORS)
+
     def _update_strings_per_inverter(self):
         """Auto-calculate strings per inverter from DC:AC ratio and show Isc warning if needed"""
         if not self.selected_inverter or not self.selected_module:
@@ -1000,16 +1032,51 @@ class QuickEstimate(ttk.Frame):
             modules_per_string = 28
         
         module_wattage = self.selected_module.wattage
-        strings_per_inv = self.selected_inverter.strings_for_target_ratio(
-            target_ratio, module_wattage, modules_per_string
-        )
+        string_power_kw = (module_wattage * modules_per_string) / 1000
         
+        if string_power_kw <= 0:
+            self.strings_per_inverter_var.set('--')
+            return
+        
+        topology = self.topology_var.get()
+        
+        # Calculate power-based string count (always applies)
+        target_dc_kw = target_ratio * self.selected_inverter.rated_power_kw
+        power_based_strings = round(target_dc_kw / string_power_kw)
+        
+        # Also check DC power limit
+        dc_power_limited = int(self.selected_inverter.max_dc_power_kw / string_power_kw)
+        
+        if topology == 'Distributed String':
+            # Physical input count matters — strings connect directly to inverter
+            input_limited = self.selected_inverter.get_total_string_capacity()
+            strings_per_inv = min(power_based_strings, dc_power_limited, input_limited)
+        else:
+            # Centralized String or Central Inverter — combiners aggregate strings
+            # Only power limits apply, not physical input count
+            strings_per_inv = min(power_based_strings, dc_power_limited)
+        
+        strings_per_inv = max(strings_per_inv, 1)  # At least 1
         self.strings_per_inverter_var.set(str(strings_per_inv))
         
         # Calculate actual DC:AC ratio achieved
         actual_ratio = self.selected_inverter.dc_ac_ratio(
             strings_per_inv, module_wattage, modules_per_string
         )
+        
+        # Show warning if DC power limit or input limit is capping the ratio
+        if strings_per_inv < power_based_strings:
+            max_achievable_ratio = self.selected_inverter.max_dc_power_kw / self.selected_inverter.rated_power_kw
+            if topology == 'Distributed String' and self.selected_inverter.get_total_string_capacity() < dc_power_limited:
+                self.inverter_info_label.config(
+                    text=f"{self.selected_inverter.rated_power_kw}kW AC  |  Capped by string inputs ({self.selected_inverter.get_total_string_capacity()})  |  Max DC:AC ≈ {actual_ratio:.2f}",
+                    foreground='orange'
+                )
+            else:
+                self.inverter_info_label.config(
+                    text=f"{self.selected_inverter.rated_power_kw}kW AC  |  Capped by DC power ({self.selected_inverter.max_dc_power_kw}kW)  |  Max DC:AC = {max_achievable_ratio:.2f}",
+                    foreground='orange'
+                )
         
         # Check Isc hard limit
         module_isc = self.selected_module.isc
@@ -1022,6 +1089,7 @@ class QuickEstimate(ttk.Frame):
             )
         else:
             self.isc_warning_label.config(text="")
+
 
     # ==================== UI Setup ====================
     
@@ -1166,7 +1234,7 @@ class QuickEstimate(ttk.Frame):
         ttk.Label(settings_inner, text="Modules per String:").pack(side='left', padx=(0, 5))
         self.modules_per_string_var = tk.StringVar(value=str(getattr(self, 'modules_per_string_default', 28)))
         ttk.Spinbox(settings_inner, from_=1, to=100, textvariable=self.modules_per_string_var, width=6).pack(side='left', padx=(0, 15))
-        self.modules_per_string_var.trace_add('write', lambda *args: (self._mark_stale(), self._schedule_autosave()))
+        self.modules_per_string_var.trace_add('write', lambda *args: (self._update_strings_per_inverter(), self._mark_stale(), self._schedule_autosave()))
         
         ttk.Label(settings_inner, text="Row Spacing (ft):").pack(side='left', padx=(0, 5))
         self.row_spacing_var = tk.StringVar(value=str(getattr(self, 'row_spacing_default', 20.0)))
@@ -1196,7 +1264,10 @@ class QuickEstimate(ttk.Frame):
         export_btn = ttk.Button(button_row, text="Export to Excel", command=self.export_to_excel)
         export_btn.pack(side='left')
         
-        # Results frame
+        preview_btn = ttk.Button(button_row, text="Site Preview", command=self.show_site_preview)
+        preview_btn.pack(side='left', padx=(10, 0))
+        
+        # Results frame (full width)
         results_frame = ttk.LabelFrame(bottom_frame, text="Estimated BOM (Rolled-Up Totals)", padding="10")
         results_frame.pack(fill='both', expand=True)
         
@@ -1842,6 +1913,120 @@ class QuickEstimate(ttk.Frame):
         short_extender_length = self.round_whip_length(10)  # Standard 10ft short side
         long_extender_length = self.round_whip_length(string_length_ft)
         
+        # ==================== Inverter Allocation ====================
+        
+        totals['inverter_allocation'] = None
+        totals['inverter_summary'] = {}
+        
+        # DEBUG: Print all relevant design inputs
+        print("\n" + "="*80)
+        print("QUICK ESTIMATE DEBUG - INVERTER ALLOCATION INPUTS")
+        print("="*80)
+        
+        print(f"\n--- MODULE ---")
+        if self.selected_module:
+            print(f"  Module: {self.selected_module.manufacturer} {self.selected_module.model}")
+            print(f"  Wattage: {self.selected_module.wattage} W")
+            print(f"  Isc: {self.selected_module.isc} A")
+            print(f"  Imp: {self.selected_module.imp} A")
+            print(f"  Voc: {self.selected_module.voc} V")
+            print(f"  Vmp: {self.selected_module.vmp} V")
+            print(f"  Width: {self.selected_module.width_mm} mm")
+        else:
+            print("  No module selected")
+        
+        print(f"\n--- INVERTER ---")
+        if self.selected_inverter:
+            inv = self.selected_inverter
+            print(f"  Inverter: {inv.manufacturer} {inv.model}")
+            print(f"  Type: {inv.inverter_type.value}")
+            print(f"  Rated AC Power: {inv.rated_power_kw} kW")
+            print(f"  Max DC Power: {inv.max_dc_power_kw} kW")
+            print(f"  Max DC Voltage: {inv.max_dc_voltage} V")
+            print(f"  Startup Voltage: {inv.startup_voltage} V")
+            print(f"  Total String Inputs: {inv.get_total_string_capacity()}")
+            print(f"  Max Short Circuit Current: {getattr(inv, 'max_short_circuit_current', None)}")
+            print(f"  MPPT Channels: {len(inv.mppt_channels)}")
+            for i, ch in enumerate(inv.mppt_channels):
+                print(f"    Channel {i+1}: max_current={ch.max_input_current}A, voltage={ch.min_voltage}-{ch.max_voltage}V, max_power={ch.max_power}W, inputs={ch.num_string_inputs}")
+        else:
+            print("  No inverter selected")
+        
+        print(f"\n--- GLOBAL SETTINGS ---")
+        print(f"  Modules per String: {modules_per_string}")
+        print(f"  Topology: {self.topology_var.get()}")
+        print(f"  DC:AC Ratio (target): {self.dc_ac_ratio_var.get()}")
+        print(f"  Strings/Inverter (calculated): {self.strings_per_inverter_var.get()}")
+        
+        print(f"\n--- TRACKER TOTALS ---")
+        for strings_count, qty in totals['trackers_by_string'].items():
+            print(f"  {strings_count}-string trackers: {qty} units = {qty * strings_count} total strings")
+        total_all_strings = sum(s * q for s, q in totals['trackers_by_string'].items())
+        total_all_trackers = sum(totals['trackers_by_string'].values())
+        print(f"  TOTAL: {total_all_trackers} trackers, {total_all_strings} strings")
+        
+        print(f"\n--- DERIVED VALUES ---")
+        if self.selected_module and self.selected_inverter:
+            string_power_kw = (self.selected_module.wattage * modules_per_string) / 1000
+            print(f"  String Power: {string_power_kw:.2f} kW")
+            print(f"  String Isc: {self.selected_module.isc} A")
+            try:
+                spi = int(self.strings_per_inverter_var.get())
+                inv_dc_power = spi * string_power_kw
+                print(f"  Inverter DC Power ({spi} strings): {inv_dc_power:.2f} kW")
+                print(f"  Actual DC:AC Ratio: {inv_dc_power / inv.rated_power_kw:.3f}")
+                print(f"  Total Isc ({spi} strings): {spi * self.selected_module.isc:.1f} A")
+                if total_all_strings > 0:
+                    num_inverters = total_all_strings / spi
+                    print(f"  Inverters Needed: {total_all_strings} / {spi} = {num_inverters:.2f}")
+            except ValueError:
+                print(f"  Strings/Inverter is not a valid number: {self.strings_per_inverter_var.get()}")
+        
+        print("="*80 + "\n")
+        
+        if self.selected_inverter:
+            try:
+                strings_per_inv = int(self.strings_per_inverter_var.get())
+            except (ValueError, AttributeError):
+                strings_per_inv = 0
+            
+            if strings_per_inv > 0:
+                # Run allocation per tracker type, then aggregate
+                all_allocations = []
+                total_inverters = 0
+                total_full_inverters = 0
+                total_split_trackers = 0
+                total_strings_allocated = 0
+                
+                for strings_count, qty in totals['trackers_by_string'].items():
+                    if qty > 0:
+                        alloc = allocate_strings(strings_count, strings_per_inv, qty)
+                        all_allocations.append({
+                            'strings_per_tracker': strings_count,
+                            'tracker_count': qty,
+                            'allocation': alloc
+                        })
+                        total_inverters += alloc['summary']['total_inverters']
+                        total_full_inverters += alloc['summary']['full_inverters']
+                        total_split_trackers += alloc['summary']['total_split_trackers']
+                        total_strings_allocated += alloc['summary']['total_strings']
+                
+                # Calculate actual DC:AC ratio
+                module_wattage = self.selected_module.wattage
+                actual_dc_ac = self.selected_inverter.dc_ac_ratio(
+                    strings_per_inv, module_wattage, modules_per_string
+                )
+                
+                totals['inverter_summary'] = {
+                    'strings_per_inverter': strings_per_inv,
+                    'total_inverters': total_inverters,
+                    'full_inverters': total_full_inverters,
+                    'total_split_trackers': total_split_trackers,
+                    'total_strings': total_strings_allocated,
+                    'actual_dc_ac': actual_dc_ac,
+                    'allocations': all_allocations
+                }
+        
         # ==================== Display Results ====================
 
         # Store totals for Excel export
@@ -1882,6 +2067,17 @@ class QuickEstimate(ttk.Frame):
 
         if totals['string_inverters'] > 0:
             insert_row('String Inverters', '', totals['string_inverters'], 'ea')
+            # Show allocation pattern per tracker type
+            for alloc_data in inv_summary.get('allocations', []):
+                cycle = alloc_data['allocation']['cycle']
+                spt = alloc_data['strings_per_tracker']
+                if cycle:
+                    patterns = ['  '.join(f'{s}' for s in pattern) for pattern in cycle[:3]]
+                    cycle_str = '  /  '.join(f"[{'-'.join(str(s) for s in p)}]" for p in cycle[:3])
+                    insert_row(
+                        f"  {spt}-String Trackers: {cycle_str}",
+                        '', '', ''
+                    )
 
         # Harnesses
         if totals['harnesses_by_size']:
@@ -2220,7 +2416,6 @@ class QuickEstimate(ttk.Frame):
         except Exception as e:
             messagebox.showerror("Export Error", f"Failed to export BOM:\n{str(e)}")
 
-
 class QuickEstimateDialog(tk.Toplevel):
     """Dialog wrapper for Quick Estimate tool"""
     
@@ -2308,3 +2503,313 @@ class QuickEstimateDialog(tk.Toplevel):
         y = max(0, min(y, screen_height - dialog_height))
         
         self.geometry(f"+{x}+{y}")
+
+class SitePreviewWindow(tk.Toplevel):
+    """Pop-out window for site layout preview with zoom and pan"""
+    
+    def __init__(self, parent, inv_summary, topology, colors):
+        super().__init__(parent)
+        self.title("Site Preview — Inverter Allocation")
+        self.geometry("1100x750")
+        self.minsize(600, 400)
+        
+        self.inv_summary = inv_summary
+        self.topology = topology
+        self.colors = colors
+        
+        # Zoom and pan state
+        self.scale = 1.0
+        self.pan_x = 0
+        self.pan_y = 0
+        self.dragging = False
+        self.drag_start_x = 0
+        self.drag_start_y = 0
+        
+        self.setup_ui()
+        self.build_layout_data()
+        self.after(50, self.fit_and_redraw)
+    
+    def setup_ui(self):
+        """Create the preview window UI"""
+        # Top bar with controls
+        top_bar = ttk.Frame(self, padding="5")
+        top_bar.pack(fill='x')
+        
+        ttk.Button(top_bar, text="Fit to Window", command=self.fit_and_redraw).pack(side='left', padx=2)
+        ttk.Button(top_bar, text="Zoom In", command=lambda: self.zoom(1.3)).pack(side='left', padx=2)
+        ttk.Button(top_bar, text="Zoom Out", command=lambda: self.zoom(0.7)).pack(side='left', padx=2)
+        
+        self.zoom_label = ttk.Label(top_bar, text="100%")
+        self.zoom_label.pack(side='left', padx=10)
+        
+        # Summary info
+        num_inv = self.inv_summary.get('total_inverters', 0)
+        total_str = self.inv_summary.get('total_strings', 0)
+        actual_ratio = self.inv_summary.get('actual_dc_ac', 0)
+        split = self.inv_summary.get('total_split_trackers', 0)
+        
+        summary_text = f"{num_inv} Inverters  |  {total_str} Strings  |  DC:AC: {actual_ratio:.2f}  |  {split} Split Trackers  |  {self.topology}"
+        ttk.Label(top_bar, text=summary_text, foreground='#333333').pack(side='right', padx=10)
+        
+        # Canvas
+        canvas_frame = ttk.Frame(self)
+        canvas_frame.pack(fill='both', expand=True)
+        
+        self.canvas = tk.Canvas(canvas_frame, bg='white', highlightthickness=0)
+        self.canvas.pack(fill='both', expand=True)
+        
+        # Bind events
+        self.canvas.bind('<MouseWheel>', self.on_mousewheel)
+        self.canvas.bind('<Button-4>', lambda e: self.zoom(1.1))
+        self.canvas.bind('<Button-5>', lambda e: self.zoom(0.9))
+        self.canvas.bind('<ButtonPress-1>', self.on_drag_start)
+        self.canvas.bind('<B1-Motion>', self.on_drag)
+        self.canvas.bind('<ButtonRelease-1>', self.on_drag_end)
+        self.canvas.bind('<Configure>', lambda e: self.draw())
+        
+        # Bottom legend
+        legend_frame = ttk.Frame(self, padding="5")
+        legend_frame.pack(fill='x')
+        
+        # Color swatches row
+        swatch_frame = ttk.Frame(legend_frame)
+        swatch_frame.pack(anchor='w')
+        
+        num_inv = self.inv_summary.get('total_inverters', 0)
+        max_show = min(num_inv, 15)
+        for i in range(max_show):
+            color = self.colors[i % len(self.colors)]
+            swatch = tk.Canvas(swatch_frame, width=12, height=12, highlightthickness=0)
+            swatch.create_rectangle(0, 0, 12, 12, fill=color, outline='#333333')
+            swatch.pack(side='left', padx=(0, 2))
+            ttk.Label(swatch_frame, text=f"Inv {i+1}", font=('Helvetica', 8)).pack(side='left', padx=(0, 8))
+        if num_inv > max_show:
+            ttk.Label(swatch_frame, text=f"... +{num_inv - max_show} more",
+                     font=('Helvetica', 8, 'italic'), foreground='gray').pack(side='left', padx=(5, 0))
+        
+        # Cycle patterns
+        for alloc_data in self.inv_summary.get('allocations', []):
+            cycle = alloc_data['allocation']['cycle']
+            spt = alloc_data['strings_per_tracker']
+            if cycle:
+                cycle_str = '  →  '.join(f"[{'-'.join(str(s) for s in p)}]" for p in cycle)
+                ttk.Label(legend_frame, text=f"{spt}-String Tracker Pattern: {cycle_str}",
+                         font=('Helvetica', 9), foreground='#555555').pack(anchor='w')
+    
+    def build_layout_data(self):
+        """Build a flat list of trackers in order with their inverter color assignments"""
+        self.tracker_list = []
+        
+        for alloc_data in self.inv_summary['allocations']:
+            allocation = alloc_data['allocation']
+            spt = alloc_data['strings_per_tracker']
+            
+            # First pass: build a dict of tracker_idx -> list of assignments
+            tracker_map = {}
+            global_inv_idx = 0
+            
+            # Count previous allocations to get correct global inverter index
+            for prev_alloc in self.inv_summary['allocations']:
+                if prev_alloc is alloc_data:
+                    break
+                global_inv_idx += len(prev_alloc['allocation']['inverters'])
+            
+            for inv in allocation['inverters']:
+                color = self.colors[global_inv_idx % len(self.colors)]
+                
+                for tracker_idx, strings_taken in inv['tracker_indices']:
+                    if tracker_idx not in tracker_map:
+                        tracker_map[tracker_idx] = {
+                            'strings_per_tracker': spt,
+                            'assignments': []
+                        }
+                    tracker_map[tracker_idx]['assignments'].append({
+                        'color': color,
+                        'strings': strings_taken,
+                        'inv_idx': global_inv_idx
+                    })
+                
+                global_inv_idx += 1
+            
+            # Convert to ordered list
+            for t_idx in sorted(tracker_map.keys()):
+                self.tracker_list.append(tracker_map[t_idx])
+        
+        # World-space dimensions
+        # Each tracker is a vertical bar
+        self.tracker_w = 8     # Width of each tracker column (E-W)
+        self.row_gap = 6       # Gap between tracker columns (row spacing)
+        self.string_h = 30     # Height per string (N-S)
+        self.string_gap = 2    # Gap between strings within a tracker
+        
+        # Calculate world bounds
+        total_trackers = len(self.tracker_list)
+        if total_trackers == 0:
+            self.world_width = 0
+            self.world_height = 0
+            return
+        
+        max_strings = max(t['strings_per_tracker'] for t in self.tracker_list)
+        
+        self.world_width = total_trackers * (self.tracker_w + self.row_gap) - self.row_gap
+        self.world_height = max_strings * (self.string_h + self.string_gap) - self.string_gap
+    
+    def fit_to_canvas(self):
+        """Calculate scale and pan to fit all content"""
+        self.canvas.update_idletasks()
+        cw = self.canvas.winfo_width()
+        ch = self.canvas.winfo_height()
+        
+        if cw < 10 or ch < 10:
+            cw = 1100
+            ch = 750
+        
+        margin = 40
+        
+        if self.world_width <= 0 or self.world_height <= 0:
+            return
+        
+        scale_x = (cw - 2 * margin) / self.world_width
+        scale_y = (ch - 2 * margin) / self.world_height
+        self.scale = min(scale_x, scale_y)
+        
+        scaled_w = self.world_width * self.scale
+        scaled_h = self.world_height * self.scale
+        self.pan_x = (cw - scaled_w) / 2
+        self.pan_y = (ch - scaled_h) / 2
+    
+    def fit_and_redraw(self):
+        """Fit to window and redraw"""
+        self.fit_to_canvas()
+        self.draw()
+    
+    def world_to_canvas(self, wx, wy):
+        """Convert world coordinates to canvas coordinates"""
+        cx = self.pan_x + wx * self.scale
+        cy = self.pan_y + wy * self.scale
+        return cx, cy
+    
+    def zoom(self, factor):
+        """Zoom in/out centered on the canvas"""
+        self.canvas.update_idletasks()
+        cw = self.canvas.winfo_width()
+        ch = self.canvas.winfo_height()
+        
+        center_x = cw / 2
+        center_y = ch / 2
+        
+        self.pan_x = center_x - (center_x - self.pan_x) * factor
+        self.pan_y = center_y - (center_y - self.pan_y) * factor
+        self.scale *= factor
+        
+        self.zoom_label.config(text=f"{self.scale * 100:.0f}%")
+        self.draw()
+    
+    def on_mousewheel(self, event):
+        """Handle mouse wheel zoom"""
+        if event.delta > 0:
+            self.zoom(1.1)
+        else:
+            self.zoom(0.9)
+    
+    def on_drag_start(self, event):
+        """Start panning"""
+        self.dragging = True
+        self.drag_start_x = event.x
+        self.drag_start_y = event.y
+    
+    def on_drag(self, event):
+        """Handle pan dragging"""
+        if self.dragging:
+            dx = event.x - self.drag_start_x
+            dy = event.y - self.drag_start_y
+            self.pan_x += dx
+            self.pan_y += dy
+            self.drag_start_x = event.x
+            self.drag_start_y = event.y
+            self.draw()
+    
+    def on_drag_end(self, event):
+        """End panning"""
+        self.dragging = False
+    
+    def draw(self):
+        """Draw the site layout on the canvas"""
+        self.canvas.delete('all')
+        
+        if not self.tracker_list:
+            return
+        
+        # Draw each tracker as a vertical column of strings
+        for i, tracker in enumerate(self.tracker_list):
+            spt = tracker['strings_per_tracker']
+            assignments = tracker['assignments']
+            
+            # X position for this tracker column
+            wx = i * (self.tracker_w + self.row_gap)
+            
+            # Build a list of string colors from top to bottom
+            string_colors = []
+            for assignment in assignments:
+                for _ in range(assignment['strings']):
+                    string_colors.append(assignment['color'])
+            
+            # Draw each string as a segment of the vertical bar
+            for s_idx in range(spt):
+                if s_idx < len(string_colors):
+                    color = string_colors[s_idx]
+                else:
+                    color = '#D0D0D0'
+                
+                wy = s_idx * (self.string_h + self.string_gap)
+                
+                sx1, sy1 = self.world_to_canvas(wx, wy)
+                sx2, sy2 = self.world_to_canvas(wx + self.tracker_w, wy + self.string_h)
+                
+                self.canvas.create_rectangle(
+                    sx1, sy1, sx2, sy2,
+                    fill=color, outline='#444444', width=1
+                )
+            
+            # Draw tracker outline around all strings
+            ty1_world = 0
+            ty2_world = spt * (self.string_h + self.string_gap) - self.string_gap
+            
+            ox1, oy1 = self.world_to_canvas(wx - 1, ty1_world - 1)
+            ox2, oy2 = self.world_to_canvas(wx + self.tracker_w + 1, ty2_world + 1)
+            
+            self.canvas.create_rectangle(
+                ox1, oy1, ox2, oy2,
+                fill='', outline='#222222', width=1
+            )
+            
+            # Tracker label below
+            label_x, label_y = self.world_to_canvas(
+                wx + self.tracker_w / 2,
+                ty2_world + 5
+            )
+            
+            bar_width = abs(ox2 - ox1)
+            if bar_width > 12:
+                font_size = max(6, min(9, int(8 * self.scale)))
+                self.canvas.create_text(
+                    label_x, label_y,
+                    text=f"T{i+1}", font=('Helvetica', font_size), fill='#555555'
+                )
+        
+        # Draw compass indicator in top-right
+        self.canvas.update_idletasks()
+        cw = self.canvas.winfo_width()
+        compass_x = cw - 30
+        compass_y = 30
+        arrow_len = 18
+        
+        self.canvas.create_line(
+            compass_x, compass_y + arrow_len,
+            compass_x, compass_y - arrow_len,
+            fill='#333333', width=2, arrow='last'
+        )
+        self.canvas.create_text(
+            compass_x, compass_y - arrow_len - 8,
+            text='N', font=('Helvetica', 9, 'bold'), fill='#333333'
+        )

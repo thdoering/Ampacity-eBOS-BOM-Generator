@@ -205,12 +205,30 @@ class SolarBOMApplication:
             # Update block configurator
             block_configurator.current_module = module
         
+        # Create equipment sub-notebook (Modules + Inverters)
+        equipment_notebook = ttk.Notebook(module_frame)
+        equipment_notebook.pack(fill='both', expand=True, padx=5, pady=5)
+        
+        modules_sub_frame = ttk.Frame(equipment_notebook)
+        inverters_sub_frame = ttk.Frame(equipment_notebook)
+        equipment_notebook.add(modules_sub_frame, text='Modules')
+        equipment_notebook.add(inverters_sub_frame, text='Inverters')
+        
         # Create module manager with callback
         module_manager = ModuleManager(
-            module_frame,
+            modules_sub_frame,
             on_module_selected=on_module_selected
         )
         module_manager.pack(fill='both', expand=True, padx=5, pady=5)
+        
+        # Create inverter manager
+        from src.ui.inverter_manager import InverterManager
+        inverter_manager = InverterManager(
+            inverters_sub_frame,
+            on_inverter_selected=lambda inv: self._on_inverter_library_changed(inv)
+        )
+        inverter_manager.pack(fill='both', expand=True, padx=5, pady=5)
+        self.inverter_manager = inverter_manager  # Store reference
         
         # Create Quick Estimate tab
         from src.ui.quick_estimate import QuickEstimate
@@ -223,7 +241,7 @@ class SolarBOMApplication:
 
         # Add tabs to notebook
         notebook.add(project_info_frame, text='Project Info')
-        notebook.add(module_frame, text='Modules')
+        notebook.add(module_frame, text='Equipment')
         notebook.add(quick_estimate_frame, text='Quick Estimate')
         notebook.add(tracker_frame, text='Tracker Templates')
         notebook.add(block_frame, text='Block Layout')
@@ -483,6 +501,16 @@ class SolarBOMApplication:
                 self.load_project(project)
             else:
                 messagebox.showerror("Error", f"Failed to create project '{name}'")
+
+    def _on_inverter_library_changed(self, inverter=None):
+        """Called when an inverter is saved/modified in the inverter manager.
+        Refreshes the Quick Estimate inverter dropdown."""
+        if hasattr(self, 'quick_estimate_widget') and self.quick_estimate_widget:
+            self.quick_estimate_widget.available_inverters = self.quick_estimate_widget.load_inverter_library()
+            if hasattr(self.quick_estimate_widget, 'inverter_combo'):
+                self.quick_estimate_widget.inverter_combo['values'] = sorted(
+                    self.quick_estimate_widget.available_inverters.keys()
+                )
 
     def show_about(self):
         """Show about dialog with version info"""

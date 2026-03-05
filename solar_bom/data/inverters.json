@@ -1,1 +1,33 @@
-{}
+{
+  "SMA Highpower PEAK3 150kW": {
+    "manufacturer": "SMA",
+    "model": "Highpower PEAK3 150kW",
+    "inverter_type": "String",
+    "rated_power_kw": 150.0,
+    "max_dc_power_kw": 225.0,
+    "max_efficiency": 98.0,
+    "mppt_channels": [
+      {
+        "max_input_current": 180.0,
+        "min_voltage": 855.0,
+        "max_voltage": 1425.0,
+        "max_power": 225000.0,
+        "num_string_inputs": 1
+      }
+    ],
+    "mppt_configuration": "Independent",
+    "max_dc_voltage": 1500.0,
+    "startup_voltage": 855.0,
+    "nominal_ac_voltage": 600.0,
+    "max_ac_current": 40.0,
+    "power_factor": 0.99,
+    "dimensions_mm": [
+      1000,
+      600,
+      300
+    ],
+    "weight_kg": 75.0,
+    "ip_rating": "IP65",
+    "max_short_circuit_current": 325.0
+  }
+}
