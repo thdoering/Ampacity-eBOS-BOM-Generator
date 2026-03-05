@@ -2208,6 +2208,18 @@ class QuickEstimate(ttk.Frame):
             info_items.append(("Modules per String:", str(modules_per_string)))
             info_items.append(("Row Spacing:", f"{row_spacing} ft"))
             
+            if self.selected_inverter:
+                inv = self.selected_inverter
+                info_items.append(("Inverter:", f"{inv.manufacturer} {inv.model} ({inv.rated_power_kw}kW AC)"))
+                info_items.append(("Topology:", self.topology_var.get()))
+                info_items.append(("DC:AC Ratio (target):", self.dc_ac_ratio_var.get()))
+                if hasattr(self, 'last_totals') and self.last_totals.get('inverter_summary'):
+                    inv_sum = self.last_totals['inverter_summary']
+                    info_items.append(("DC:AC Ratio (actual):", f"{inv_sum.get('actual_dc_ac', 0):.2f}"))
+                    info_items.append(("Strings per Inverter:", str(inv_sum.get('strings_per_inverter', ''))))
+                    info_items.append(("Total Inverters:", str(inv_sum.get('total_inverters', ''))))
+                    info_items.append(("Split Trackers:", str(inv_sum.get('total_split_trackers', ''))))
+            
             if self.estimate_id and self.current_project:
                 est_data = self.current_project.quick_estimates.get(self.estimate_id, {})
                 info_items.append(("Estimate:", est_data.get('name', '')))
@@ -2306,6 +2318,46 @@ class QuickEstimate(ttk.Frame):
                 total_unit.alignment = center_align
                 row += 2
             
+            # ========== INVERTER ALLOCATION SECTION ==========
+            if hasattr(self, 'last_totals') and self.last_totals.get('inverter_summary'):
+                inv_sum = self.last_totals['inverter_summary']
+                
+                ws.merge_cells(f'A{row}:E{row}')
+                ws.cell(row=row, column=1, value="Inverter Allocation Summary").font = title_font
+                row += 1
+                
+                alloc_headers = ['Inverter', 'Strings', 'Trackers', 'Pattern']
+                for col, header in enumerate(alloc_headers, 1):
+                    cell = ws.cell(row=row, column=col, value=header)
+                    cell.font = header_font
+                    cell.fill = header_fill
+                    cell.alignment = center_align
+                    cell.border = thin_border
+                row += 1
+                
+                global_inv_idx = 0
+                for alloc_data in inv_sum.get('allocations', []):
+                    allocation = alloc_data['allocation']
+                    spt = alloc_data['strings_per_tracker']
+                    
+                    for inv in allocation['inverters']:
+                        pattern_str = '-'.join(str(s) for s in inv['pattern'])
+                        
+                        inv_row = [
+                            f"Inverter {global_inv_idx + 1}",
+                            inv['total_strings'],
+                            len(inv['tracker_indices']),
+                            f"[{pattern_str}]"
+                        ]
+                        for col, value in enumerate(inv_row, 1):
+                            cell = ws.cell(row=row, column=col, value=value)
+                            cell.border = thin_border
+                            cell.alignment = center_align
+                        row += 1
+                        global_inv_idx += 1
+                
+                row += 1
+
             # ========== BOM RESULTS SECTION ==========
             ws.merge_cells(f'A{row}:F{row}')
             ws.cell(row=row, column=1, value="Estimated Bill of Materials").font = title_font
