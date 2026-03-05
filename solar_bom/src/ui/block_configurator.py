@@ -9,6 +9,7 @@ from pathlib import Path
 import json
 from ..models.module import ModuleSpec, ModuleType, ModuleOrientation
 from copy import deepcopy
+from .dc_feeder_dialog import DCFeederDialog
 
 class BlockConfigurator(ttk.Frame):
     def __init__(self, parent, current_project=None, on_autosave=None):
@@ -308,6 +309,11 @@ class BlockConfigurator(ttk.Frame):
         self.dc_feeder_distance_var.trace('w', lambda *args: self.save_dc_feeder_settings())
         self.dc_feeder_cable_size_var.trace('w', lambda *args: self.save_dc_feeder_settings())
 
+        # Bulk edit button
+        ttk.Button(dc_feeder_frame, text="Edit All Blocks...",
+                   command=self.open_dc_feeder_dialog).grid(
+                   row=2, column=0, columnspan=3, padx=5, pady=(4, 2), sticky=(tk.W, tk.E))
+
         # Initially disable the inputs
         self.pile_reveal_m_entry.config(state='disabled')
         self.pile_reveal_ft_entry.config(state='disabled')
@@ -320,12 +326,9 @@ class BlockConfigurator(ttk.Frame):
         self.trench_depth_m_var.trace('w', lambda *args: (self.update_trench_depth_ft(), self.save_underground_settings()))
         self.trench_depth_ft_var.trace('w', lambda *args: (self.update_trench_depth_m(), self.save_underground_settings()))
 
-        # Add spacing after device frame
-        ttk.Label(config_frame, text="").grid(row=6, column=0, pady=5)  # Spacer
-
         # Configure Wiring button
         ttk.Button(config_frame, text="Configure Wiring", 
-                command=self.configure_wiring).grid(row=7, column=0, columnspan=2, padx=5, pady=5)
+                command=self.configure_wiring).grid(row=6, column=0, columnspan=2, padx=5, pady=5)
 
         # Templates List Frame
         templates_frame = ttk.LabelFrame(config_frame, text="Tracker Templates", padding="5")
@@ -693,6 +696,25 @@ class BlockConfigurator(ttk.Frame):
         
         # Notify that blocks have changed
         self._notify_blocks_changed()
+
+    def open_dc_feeder_dialog(self):
+        """Open the bulk DC feeder distance editor dialog"""
+        if not self.blocks:
+            from tkinter import messagebox
+            messagebox.showinfo("No Blocks", "No blocks have been created yet.")
+            return
+
+        def on_dialog_save():
+            # Refresh the current block's display in the single-block inputs
+            if self.current_block and self.current_block in self.blocks:
+                block = self.blocks[self.current_block]
+                self.updating_ui = True
+                self.dc_feeder_distance_var.set(str(getattr(block, 'dc_feeder_distance_ft', 0.0)))
+                self.dc_feeder_cable_size_var.set(getattr(block, 'dc_feeder_cable_size', '4/0 AWG'))
+                self.updating_ui = False
+            self._notify_blocks_changed()
+
+        DCFeederDialog(self, blocks=self.blocks, on_save=on_dialog_save)
 
     def save_dc_feeder_settings(self):
         """Save DC feeder settings to current block"""
