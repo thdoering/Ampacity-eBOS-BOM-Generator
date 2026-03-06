@@ -23,9 +23,10 @@ class QuickEstimate(ttk.Frame):
         self.available_inverters = self.load_inverter_library()  # {display_name: InverterSpec}
         self.selected_inverter = None  # Currently selected InverterSpec
         
-        # Data structure for subarrays and blocks
-        self.subarrays: Dict[str, Dict[str, Any]] = {}
-        
+        self.rows = []
+        self.selected_row_idx = None
+        self._updating_listbox = False
+
         # Global settings defaults
         self.module_width_default = 1134
         self.modules_per_string_default = 28
@@ -155,41 +156,6 @@ class QuickEstimate(ttk.Frame):
     def generate_id(self, prefix: str) -> str:
         """Generate a unique ID with a prefix"""
         return f"{prefix}_{uuid.uuid4().hex[:8]}"
-    
-    def get_next_block_name(self, subarray_id: str, source_name: str) -> str:
-        """Generate the next logical block name based on the source name pattern"""
-        import re
-        
-        # Try to find a trailing number (with optional leading zeros)
-        match = re.match(r'^(.*?)(\d+)$', source_name)
-        
-        if not match:
-            # No number found, just append (Copy)
-            return f"{source_name} (Copy)"
-        
-        prefix = match.group(1)
-        number_str = match.group(2)
-        number = int(number_str)
-        
-        # Determine the padding (e.g., "01" is width 2, "001" is width 3)
-        padding = len(number_str)
-        
-        # Get existing block names in this subarray
-        existing_names = set()
-        if subarray_id in self.subarrays:
-            for block_data in self.subarrays[subarray_id]['blocks'].values():
-                existing_names.add(block_data['name'])
-        
-        # Find the next available number
-        next_number = number + 1
-        while True:
-            new_name = f"{prefix}{str(next_number).zfill(padding)}"
-            if new_name not in existing_names:
-                return new_name
-            next_number += 1
-            # Safety limit to prevent infinite loop
-            if next_number > number + 1000:
-                return f"{source_name} (Copy)"
             
     def disable_combobox_scroll(self, combobox):
         """Prevent combobox from responding to mouse wheel"""
@@ -202,109 +168,150 @@ class QuickEstimate(ttk.Frame):
         combobox.bind("<Button-5>", _ignore_scroll)
 
     def update_string_count(self):
-        """Update the string count label for the current block"""
-        if not hasattr(self, 'string_count_label') or not hasattr(self, 'current_block'):
-            return
-        
-        total_strings = 0
-        total_trackers = 0
-        
-        for tracker in self.current_block.get('trackers', []):
-            qty = tracker.get('quantity', 0)
-            strings = tracker.get('strings', 0)
-            total_trackers += qty
-            total_strings += qty * strings
-        
-        self.string_count_label.config(text=f"Total Strings: {total_strings:,}  |  Total Trackers: {total_trackers:,}")
+        """Legacy method — now handled by _update_row_string_count"""
+        pass
 
     # ==================== Data Management ====================
-    
-    def add_subarray(self, auto_add_block: bool = False) -> str:
-        """Add a new subarray and return its ID"""
-        subarray_id = self.generate_id("subarray")
-        subarray_num = len(self.subarrays) + 1
-        
-        self.subarrays[subarray_id] = {
-            'name': f"Subarray {subarray_num}",
-            'transformer_mva': 4.0,
-            'blocks': {}
-        }
-        
-        # Add to tree view
-        self.tree.insert('', 'end', subarray_id, text=f"Subarray {subarray_num}", open=True)
-        
-        # Optionally add a default block
-        if auto_add_block:
-            self.add_block(subarray_id)
-        
-        # Select the new subarray
-        self.tree.selection_set(subarray_id)
-        self.on_tree_select(None)
-        
-        return subarray_id
 
-    def add_block(self, subarray_id: str) -> str:
-        """Add a new block to a subarray and return its ID"""
-        if subarray_id not in self.subarrays:
-            return None
-        
-        block_id = self.generate_id("block")
-        block_num = len(self.subarrays[subarray_id]['blocks']) + 1
-        
-        self.subarrays[subarray_id]['blocks'][block_id] = {
-            'name': f"Block {block_num}",
-            'type': 'combiner',  # 'combiner' or 'string_inverter'
-            'num_combiners': 1,
-            'breaker_size': 400,
-            'dc_feeder_distance_ft': 0.0,
-            'dc_feeder_cable_size': '4/0 AWG',
-            'trackers': [
-                {'strings': 2, 'quantity': 1, 'harness_config': '2'}
+    def add_row(self) -> int:
+        """Add a new row and return its index"""
+        row_num = len(self.rows) + 1
+        row = {
+            'name': f"Row {row_num}",
+            'segments': [
+                {'quantity': 1, 'strings_per_tracker': 3, 'harness_config': '3', 'template_ref': None}
             ]
         }
+        self.rows.append(row)
+        self._refresh_row_listbox()
         
-        # Add to tree view under the subarray
-        self.tree.insert(subarray_id, 'end', block_id, text=f"Block {block_num}")
+        # Select the new row
+        idx = len(self.rows) - 1
+        self.row_listbox.selection_clear(0, tk.END)
+        self.row_listbox.selection_set(idx)
+        self.row_listbox.see(idx)
+        self.on_row_select(None)
         
-        # Expand the parent subarray
-        self.tree.item(subarray_id, open=True)
-        
-        # Select the new block
-        self.tree.selection_set(block_id)
-        self.on_tree_select(None)
-        
-        return block_id
-
-    def delete_selected_item(self):
-        """Delete the currently selected subarray or block"""
-        selection = self.tree.selection()
-        if not selection:
+        self._mark_stale()
+        self._schedule_autosave()
+        return idx
+    
+    def copy_selected_row(self):
+        """Copy the currently selected row"""
+        sel = self.row_listbox.curselection()
+        if not sel:
             return
         
-        item_id = selection[0]
-        parent_id = self.tree.parent(item_id)
+        import copy
+        source = self.rows[sel[0]]
+        new_row = copy.deepcopy(source)
+        new_row['name'] = f"{source['name']} (Copy)"
         
-        if parent_id == '':
-            # It's a subarray
-            if item_id in self.subarrays:
-                del self.subarrays[item_id]
-                self.tree.delete(item_id)
+        # Insert after the selected row
+        insert_idx = sel[0] + 1
+        self.rows.insert(insert_idx, new_row)
+        self._refresh_row_listbox()
+        
+        self.row_listbox.selection_clear(0, tk.END)
+        self.row_listbox.selection_set(insert_idx)
+        self.row_listbox.see(insert_idx)
+        self.on_row_select(None)
+        
+        self._mark_stale()
+        self._schedule_autosave()
+    
+    def delete_selected_row(self):
+        """Delete the currently selected row"""
+        sel = self.row_listbox.curselection()
+        if not sel:
+            return
+        
+        idx = sel[0]
+        del self.rows[idx]
+        self._refresh_row_listbox()
+        
+        # Select nearest row
+        if self.rows:
+            new_idx = min(idx, len(self.rows) - 1)
+            self.row_listbox.selection_set(new_idx)
+            self.on_row_select(None)
         else:
-            # It's a block
-            if parent_id in self.subarrays:
-                if item_id in self.subarrays[parent_id]['blocks']:
-                    del self.subarrays[parent_id]['blocks'][item_id]
-                    self.tree.delete(item_id)
+            self.clear_details_panel()
         
-        # Clear the details panel
-        self.clear_details_panel()
-
-    def get_subarray_for_block(self, block_id: str) -> Optional[str]:
-        """Find which subarray a block belongs to"""
-        for subarray_id, subarray_data in self.subarrays.items():
-            if block_id in subarray_data['blocks']:
-                return subarray_id
-        return None
+        self._mark_stale()
+        self._schedule_autosave()
+    
+    def move_row_up(self):
+        """Move selected row up"""
+        sel = self.row_listbox.curselection()
+        if not sel or sel[0] == 0:
+            return
+        
+        idx = sel[0]
+        self.rows[idx], self.rows[idx - 1] = self.rows[idx - 1], self.rows[idx]
+        self._refresh_row_listbox()
+        self.row_listbox.selection_set(idx - 1)
+        self.on_row_select(None)
+        
+        self._mark_stale()
+        self._schedule_autosave()
+    
+    def move_row_down(self):
+        """Move selected row down"""
+        sel = self.row_listbox.curselection()
+        if not sel or sel[0] >= len(self.rows) - 1:
+            return
+        
+        idx = sel[0]
+        self.rows[idx], self.rows[idx + 1] = self.rows[idx + 1], self.rows[idx]
+        self._refresh_row_listbox()
+        self.row_listbox.selection_set(idx + 1)
+        self.on_row_select(None)
+        
+        self._mark_stale()
+        self._schedule_autosave()
+    
+    def _refresh_row_listbox(self, preserve_selection=True):
+        """Refresh the listbox display from self.rows"""
+        sel = self.row_listbox.curselection()
+        old_idx = sel[0] if sel else None
+        
+        self._updating_listbox = True
+        self.row_listbox.delete(0, tk.END)
+        for row in self.rows:
+            total_trackers = sum(seg['quantity'] for seg in row['segments'])
+            total_strings = sum(seg['quantity'] * seg['strings_per_tracker'] for seg in row['segments'])
+            display = f"{row['name']}  ({total_trackers}T / {total_strings}S)"
+            self.row_listbox.insert(tk.END, display)
+        
+        if preserve_selection and old_idx is not None and old_idx < len(self.rows):
+            self.row_listbox.selection_set(old_idx)
+        self._updating_listbox = False
+    
+    def _update_row_listbox_text(self, row_idx: int):
+        """Schedule a listbox text refresh — deferred to avoid event loop issues"""
+        if hasattr(self, '_listbox_update_pending'):
+            self.after_cancel(self._listbox_update_pending)
+        self._listbox_update_pending = self.after(300, lambda: self._do_update_row_listbox_text(row_idx))
+    
+    def _do_update_row_listbox_text(self, row_idx: int):
+        """Actually update the listbox text"""
+        if row_idx < 0 or row_idx >= len(self.rows):
+            return
+        row = self.rows[row_idx]
+        total_trackers = sum(seg['quantity'] for seg in row['segments'])
+        total_strings = sum(seg['quantity'] * seg['strings_per_tracker'] for seg in row['segments'])
+        display = f"{row['name']}  ({total_trackers}T / {total_strings}S)"
+        self._updating_listbox = True
+        self.row_listbox.delete(row_idx)
+        self.row_listbox.insert(row_idx, display)
+        self.row_listbox.selection_set(row_idx)
+        # Clear flag after event queue drains
+        self.after(50, self._clear_listbox_guard)
+    
+    def _clear_listbox_guard(self):
+        """Clear the listbox update guard after events have processed"""
+        self._updating_listbox = False
 
     def round_whip_length(self, raw_length_ft):
         """Apply 5% waste factor and round up to nearest 5ft increment (min 10ft)"""
@@ -595,37 +602,26 @@ class QuickEstimate(ttk.Frame):
     def load_estimate(self):
         """Load estimate data from the project"""
         if not self.current_project or not self.estimate_id:
-            self.add_subarray(auto_add_block=True)
+            return
+        
+        estimate_data = self.current_project.quick_estimates.get(self.estimate_id)
+        if not estimate_data:
             return
         
         self._loading = True
         
-        estimate_data = self.current_project.quick_estimates.get(self.estimate_id)
-        if not estimate_data:
-            self._loading = False
-            self.add_subarray(auto_add_block=True)
-            return
-        
-        # Load global settings
-        self.modules_per_string_default = estimate_data.get('modules_per_string', 28)
-        self.row_spacing_default = estimate_data.get('row_spacing_ft', 20.0)
-        self.wire_gauge_default = estimate_data.get('wire_gauge', '10 AWG')
-        
         # Restore module selection
         saved_module_name = estimate_data.get('module_name', '')
         if saved_module_name and hasattr(self, 'module_combo'):
-            # Find the matching display name in available modules
-            for display_name, module in self.available_modules.items():
-                if f"{module.manufacturer} {module.model}" == saved_module_name:
-                    self.module_select_var.set(display_name)
-                    self._on_module_selected()
-                    break
+            if saved_module_name in self.available_modules:
+                self.module_select_var.set(saved_module_name)
+                self._on_module_selected()
         
-        # Update UI if already set up
+        # Restore numeric fields
         if hasattr(self, 'modules_per_string_var'):
-            self.modules_per_string_var.set(str(self.modules_per_string_default))
+            self.modules_per_string_var.set(str(estimate_data.get('modules_per_string', 28)))
         if hasattr(self, 'row_spacing_var'):
-            self.row_spacing_var.set(str(self.row_spacing_default))
+            self.row_spacing_var.set(str(estimate_data.get('row_spacing_ft', 20.0)))
         if hasattr(self, 'wire_gauge_var'):
             self.wire_gauge_var.set(estimate_data.get('wire_gauge', '10 AWG'))
         
@@ -641,56 +637,47 @@ class QuickEstimate(ttk.Frame):
             self.topology_var.set(estimate_data.get('topology', 'Distributed String'))
         if hasattr(self, 'dc_ac_ratio_var'):
             self.dc_ac_ratio_var.set(str(estimate_data.get('dc_ac_ratio', 1.25)))
-        if hasattr(self, 'dc_feeder_distance_var'):
-            self.dc_feeder_distance_var.set(str(estimate_data.get('dc_feeder_distance_ft', 500)))
-        if hasattr(self, 'ac_homerun_distance_var'):
-            self.ac_homerun_distance_var.set(str(estimate_data.get('ac_homerun_distance_ft', 500)))
         
-        # Load subarrays
+        # Load rows (new format) or convert from old subarrays format
         saved_subarrays = estimate_data.get('subarrays', {})
+        saved_rows = estimate_data.get('rows', [])
         
-        if not saved_subarrays:
-            # No saved data, create default
+        self.rows.clear()
+        self._refresh_row_listbox()
+        
+        if saved_rows:
+            self.rows = saved_rows
+        elif saved_subarrays:
+            # Backward compat: convert old subarray/block format to rows
+            row_num = 0
+            for subarray_id, subarray_data in saved_subarrays.items():
+                for block_id, block_data in subarray_data.get('blocks', {}).items():
+                    row_num += 1
+                    segments = []
+                    for tracker in block_data.get('trackers', []):
+                        segments.append({
+                            'quantity': tracker.get('quantity', 1),
+                            'strings_per_tracker': tracker.get('strings', 3),
+                            'harness_config': tracker.get('harness_config', '3'),
+                            'template_ref': None
+                        })
+                    if not segments:
+                        segments = [{'quantity': 1, 'strings_per_tracker': 3, 'harness_config': '3', 'template_ref': None}]
+                    self.rows.append({
+                        'name': block_data.get('name', f"Row {row_num}"),
+                        'segments': segments
+                    })
+        else:
             self._loading = False
-            self.add_subarray(auto_add_block=True)
+            self.add_row()
             return
         
-        # Clear existing tree items
-        for item in self.tree.get_children():
-            self.tree.delete(item)
-        self.subarrays.clear()
+        self._refresh_row_listbox()
         
-        # Reconstruct subarrays and blocks
-        for subarray_id, subarray_data in saved_subarrays.items():
-            # Add to internal data
-            self.subarrays[subarray_id] = {
-                'name': subarray_data.get('name', 'Subarray'),
-                'transformer_mva': subarray_data.get('transformer_mva', 4.0),
-                'blocks': {}
-            }
-            
-            # Add to tree
-            self.tree.insert('', 'end', subarray_id, text=subarray_data.get('name', 'Subarray'), open=True)
-            
-            # Load blocks
-            for block_id, block_data in subarray_data.get('blocks', {}).items():
-                self.subarrays[subarray_id]['blocks'][block_id] = {
-                    'name': block_data.get('name', 'Block'),
-                    'type': block_data.get('type', 'combiner'),
-                    'num_combiners': block_data.get('num_combiners', 1),
-                    'breaker_size': block_data.get('breaker_size', 400),
-                    'cb_override': block_data.get('cb_override'),
-                    'trackers': block_data.get('trackers', [{'strings': 2, 'quantity': 1, 'harness_config': '2'}])
-                }
-                
-                # Add block to tree
-                self.tree.insert(subarray_id, 'end', block_id, text=block_data.get('name', 'Block'))
-        
-        # Select first item
-        first_items = self.tree.get_children()
-        if first_items:
-            self.tree.selection_set(first_items[0])
-            self.on_tree_select(None)
+        # Select first row
+        if self.rows:
+            self.row_listbox.selection_set(0)
+            self.on_row_select(None)
         
         self._loading = False
 
@@ -740,38 +727,12 @@ class QuickEstimate(ttk.Frame):
         except ValueError:
             estimate_data['dc_ac_ratio'] = 1.25
         
-        # Save distance inputs
-        try:
-            estimate_data['dc_feeder_distance_ft'] = float(self.dc_feeder_distance_var.get())
-        except ValueError:
-            estimate_data['dc_feeder_distance_ft'] = 500.0
-        try:
-            estimate_data['ac_homerun_distance_ft'] = float(self.ac_homerun_distance_var.get())
-        except ValueError:
-            estimate_data['ac_homerun_distance_ft'] = 500.0
-        
         # Update modified date
         estimate_data['modified_date'] = datetime.now().isoformat()
         
-        # Save subarrays
+        # Save rows (new format)
+        estimate_data['rows'] = self.rows
         estimate_data['subarrays'] = {}
-        
-        for subarray_id, subarray_data in self.subarrays.items():
-            estimate_data['subarrays'][subarray_id] = {
-                'name': subarray_data['name'],
-                'transformer_mva': subarray_data['transformer_mva'],
-                'blocks': {}
-            }
-            
-            for block_id, block_data in subarray_data['blocks'].items():
-                estimate_data['subarrays'][subarray_id]['blocks'][block_id] = {
-                    'name': block_data['name'],
-                    'type': block_data['type'],
-                    'num_combiners': block_data.get('num_combiners', 1),
-                    'breaker_size': block_data.get('breaker_size', 400),
-                    'cb_override': block_data.get('cb_override'),
-                    'trackers': block_data['trackers']
-                }
         
         # Notify callback
         if self.on_save:
@@ -868,7 +829,8 @@ class QuickEstimate(ttk.Frame):
             'row_spacing_ft': 20.0,
             'topology': 'Distributed String',
             'dc_ac_ratio': 1.25,
-            'subarrays': {}
+            'subarrays': {},
+            'rows': self.rows
         }
         
         self.current_project.quick_estimates[estimate_id] = new_estimate
@@ -879,7 +841,7 @@ class QuickEstimate(ttk.Frame):
         
         # Clear and set up fresh
         self._clear_estimate_ui()
-        self.add_subarray(auto_add_block=True)
+        self.add_row()
         
         if self.on_save:
             self.on_save()
@@ -906,12 +868,11 @@ class QuickEstimate(ttk.Frame):
                 self.on_save()
 
     def _clear_estimate_ui(self):
-        """Clear the tree and details when switching/deleting estimates"""
-        # Clear tree
-        if hasattr(self, 'tree'):
-            for item in self.tree.get_children():
-                self.tree.delete(item)
-        self.subarrays.clear()
+        """Clear the rows and details when switching/deleting estimates"""
+        # Clear rows
+        self.rows.clear()
+        if hasattr(self, 'row_listbox'):
+            self._refresh_row_listbox()
         
         # Clear details panel
         if hasattr(self, 'details_container'):
@@ -935,10 +896,6 @@ class QuickEstimate(ttk.Frame):
             self.strings_per_inverter_var.set('--')
         if hasattr(self, 'isc_warning_label'):
             self.isc_warning_label.config(text="")
-        if hasattr(self, 'dc_feeder_distance_var'):
-            self.dc_feeder_distance_var.set('500')
-        if hasattr(self, 'ac_homerun_distance_var'):
-            self.ac_homerun_distance_var.set('500')
 
     def _schedule_autosave(self):
         """Debounced auto-save — saves estimate after a brief pause"""
@@ -1497,112 +1454,39 @@ class QuickEstimate(ttk.Frame):
         ttk.Button(check_btn_frame, text="Select None", command=self._results_select_none).pack(side='left')
 
     def setup_tree_panel(self, parent):
-        """Setup the left tree view panel"""
-        # Tree frame with label
-        tree_label = ttk.Label(parent, text="Project Structure", font=('Helvetica', 10, 'bold'))
+        """Setup the left row list panel"""
+        # Label
+        tree_label = ttk.Label(parent, text="Tracker Rows", font=('Helvetica', 10, 'bold'))
         tree_label.pack(anchor='w', pady=(0, 5))
         
-        # Tree view
-        tree_frame = ttk.Frame(parent)
-        tree_frame.pack(fill='both', expand=True)
+        # Listbox frame
+        list_frame = ttk.Frame(parent)
+        list_frame.pack(fill='both', expand=True)
         
-        self.tree = ttk.Treeview(tree_frame, show='tree', selectmode='browse')
-        self.tree.pack(side='left', fill='both', expand=True)
+        self.row_listbox = tk.Listbox(list_frame, selectmode='browse', font=('Helvetica', 10))
+        self.row_listbox.pack(side='left', fill='both', expand=True)
         
         # Scrollbar
-        tree_scroll = ttk.Scrollbar(tree_frame, orient='vertical', command=self.tree.yview)
-        tree_scroll.pack(side='right', fill='y')
-        self.tree.configure(yscrollcommand=tree_scroll.set)
+        list_scroll = ttk.Scrollbar(list_frame, orient='vertical', command=self.row_listbox.yview)
+        list_scroll.pack(side='right', fill='y')
+        self.row_listbox.configure(yscrollcommand=list_scroll.set)
         
-        # Bind selection event
-        self.tree.bind('<<TreeviewSelect>>', self.on_tree_select)
+        # Bind selection
+        self.row_listbox.bind('<<ListboxSelect>>', self.on_row_select)
         
         # Buttons frame
         btn_frame = ttk.Frame(parent)
         btn_frame.pack(fill='x', pady=(10, 0))
         
-        add_subarray_btn = ttk.Button(btn_frame, text="+ Subarray", command=lambda: self.add_subarray(auto_add_block=True))
-        add_subarray_btn.pack(side='left', padx=(0, 5))
+        ttk.Button(btn_frame, text="+ Row", command=self.add_row).pack(side='left', padx=(0, 5))
+        ttk.Button(btn_frame, text="Copy", command=self.copy_selected_row).pack(side='left', padx=(0, 5))
+        ttk.Button(btn_frame, text="Delete", command=self.delete_selected_row).pack(side='left', padx=(0, 5))
         
-        add_block_btn = ttk.Button(btn_frame, text="+ Block", command=self.add_block_to_selected)
-        add_block_btn.pack(side='left', padx=(0, 5))
-        
-        copy_block_btn = ttk.Button(btn_frame, text="Copy Block", command=self.copy_selected_block)
-        copy_block_btn.pack(side='left', padx=(0, 5))
-        
-        delete_btn = ttk.Button(btn_frame, text="Delete", command=self.delete_selected_item)
-        delete_btn.pack(side='left')
-
-    def add_block_to_selected(self):
-        """Add a block to the currently selected subarray"""
-        selection = self.tree.selection()
-        if not selection:
-            return
-        
-        item_id = selection[0]
-        parent_id = self.tree.parent(item_id)
-        
-        # Determine which subarray to add to
-        if parent_id == '':
-            # Selected item is a subarray
-            subarray_id = item_id
-        else:
-            # Selected item is a block, get its parent subarray
-            subarray_id = parent_id
-        
-        if subarray_id in self.subarrays:
-            self.add_block(subarray_id)
-
-    def copy_selected_block(self):
-        """Copy the currently selected block with all its configurations"""
-        selection = self.tree.selection()
-        if not selection:
-            return
-        
-        item_id = selection[0]
-        parent_id = self.tree.parent(item_id)
-        
-        # Only copy if a block is selected (not a subarray)
-        if parent_id == '':
-            # Selected item is a subarray, not a block
-            return
-        
-        subarray_id = parent_id
-        source_block_id = item_id
-        
-        if subarray_id not in self.subarrays:
-            return
-        if source_block_id not in self.subarrays[subarray_id]['blocks']:
-            return
-        
-        # Get source block data
-        source_block = self.subarrays[subarray_id]['blocks'][source_block_id]
-        
-        # Create new block ID
-        new_block_id = self.generate_id("block")
-        
-        # Deep copy the tracker configurations
-        import copy
-        copied_trackers = copy.deepcopy(source_block['trackers'])
-        
-        # Create new block with copied data
-        new_block_name = self.get_next_block_name(subarray_id, source_block['name'])
-        
-        self.subarrays[subarray_id]['blocks'][new_block_id] = {
-            'name': new_block_name,
-            'type': source_block['type'],
-            'num_combiners': source_block.get('num_combiners', 1),
-            'breaker_size': source_block.get('breaker_size', 400),
-            'cb_override': source_block.get('cb_override'),
-            'trackers': copied_trackers
-        }
-        
-        # Add to tree view under the same subarray
-        self.tree.insert(subarray_id, 'end', new_block_id, text=new_block_name)
-        
-        # Select the new block
-        self.tree.selection_set(new_block_id)
-        self.on_tree_select(None)
+        # Move buttons
+        move_frame = ttk.Frame(parent)
+        move_frame.pack(fill='x', pady=(5, 0))
+        ttk.Button(move_frame, text="▲ Up", command=self.move_row_up).pack(side='left', padx=(0, 5))
+        ttk.Button(move_frame, text="▼ Down", command=self.move_row_down).pack(side='left')
 
     def setup_details_panel(self, parent):
         """Setup the right details panel"""
@@ -1615,7 +1499,7 @@ class QuickEstimate(ttk.Frame):
         self.details_container.pack(fill='both', expand=True)
         
         # Placeholder
-        self.placeholder_label = ttk.Label(self.details_container, text="Select a subarray or block to view details", foreground='gray')
+        self.placeholder_label = ttk.Label(self.details_container, text="Select a row to view details", foreground='gray')
         self.placeholder_label.pack(pady=20)
 
     def clear_details_panel(self):
@@ -1623,99 +1507,56 @@ class QuickEstimate(ttk.Frame):
         for widget in self.details_container.winfo_children():
             widget.destroy()
         
-        self.placeholder_label = ttk.Label(self.details_container, text="Select a subarray or block to view details", foreground='gray')
+        self.placeholder_label = ttk.Label(self.details_container, text="Select a row to view details", foreground='gray')
         self.placeholder_label.pack(pady=20)
         
         self.details_label.config(text="Details")
 
-    def on_tree_select(self, event):
-        """Handle tree selection changes"""
-        selection = self.tree.selection()
-        if not selection:
+    def on_row_select(self, event):
+        """Handle row selection changes"""
+        sel = self.row_listbox.curselection()
+        print(f"[on_row_select] fired. _updating_listbox={getattr(self, '_updating_listbox', False)}, sel={sel}")
+        if getattr(self, '_updating_listbox', False):
+            print(f"[on_row_select] BLOCKED by guard")
+            return
+        if not sel:
+            print(f"[on_row_select] no selection — clearing panel")
             self.clear_details_panel()
             return
         
-        item_id = selection[0]
-        parent_id = self.tree.parent(item_id)
+        idx = sel[0]
+        if idx < 0 or idx >= len(self.rows):
+            self.clear_details_panel()
+            return
         
         # Clear existing details
         for widget in self.details_container.winfo_children():
             widget.destroy()
         
-        if parent_id == '':
-            # It's a subarray
-            self.selected_item_id = item_id
-            self.selected_item_type = 'subarray'
-            self.show_subarray_details(item_id)
-        else:
-            # It's a block
-            self.selected_item_id = item_id
-            self.selected_item_type = 'block'
-            self.show_block_details(parent_id, item_id)
+        self.selected_row_idx = idx
+        self.show_row_details(idx)
+        
+        idx = sel[0]
+        if idx < 0 or idx >= len(self.rows):
+            self.clear_details_panel()
+            return
+        
+        # Clear existing details
+        for widget in self.details_container.winfo_children():
+            widget.destroy()
+        
+        self.selected_row_idx = idx
+        self.show_row_details(idx)
 
-    def show_subarray_details(self, subarray_id: str):
-        """Show details panel for a subarray"""
-        if subarray_id not in self.subarrays:
+    def show_row_details(self, row_idx: int):
+        """Show segment editor for the selected row"""
+        if row_idx < 0 or row_idx >= len(self.rows):
             return
         
-        subarray = self.subarrays[subarray_id]
-        self.details_label.config(text=f"Subarray: {subarray['name']}")
+        row = self.rows[row_idx]
+        self.details_label.config(text=f"Row: {row['name']}")
         
-        # Create form
-        form_frame = ttk.Frame(self.details_container, padding="10")
-        form_frame.pack(fill='x')
-        
-        # Subarray Name
-        ttk.Label(form_frame, text="Name:").grid(row=0, column=0, sticky='w', pady=5)
-        name_var = tk.StringVar(value=subarray['name'])
-        name_entry = ttk.Entry(form_frame, textvariable=name_var, width=30)
-        name_entry.grid(row=0, column=1, sticky='w', pady=5, padx=(10, 0))
-        
-        def update_name(*args):
-            subarray['name'] = name_var.get()
-            self.tree.item(subarray_id, text=name_var.get())
-            self.details_label.config(text=f"Subarray: {name_var.get()}")
-            self._schedule_autosave()
-        name_var.trace_add('write', update_name)
-        
-        # Transformer MVA
-        ttk.Label(form_frame, text="Transformer (MVA):").grid(row=1, column=0, sticky='w', pady=5)
-        mva_var = tk.StringVar(value=str(subarray['transformer_mva']))
-        mva_spinbox = ttk.Spinbox(form_frame, from_=0.5, to=100, increment=0.5, textvariable=mva_var, width=10)
-        mva_spinbox.grid(row=1, column=1, sticky='w', pady=5, padx=(10, 0))
-        
-        def update_mva(*args):
-            try:
-                subarray['transformer_mva'] = float(mva_var.get())
-            except ValueError:
-                pass
-            self._schedule_autosave()
-        mva_var.trace_add('write', update_mva)
-        
-        # Summary info
-        summary_frame = ttk.LabelFrame(self.details_container, text="Summary", padding="10")
-        summary_frame.pack(fill='x', pady=(20, 0), padx=10)
-        
-        num_blocks = len(subarray['blocks'])
-        total_trackers = sum(
-            sum(t['quantity'] for t in block['trackers'])
-            for block in subarray['blocks'].values()
-        )
-        
-        ttk.Label(summary_frame, text=f"Blocks: {num_blocks}").pack(anchor='w')
-        ttk.Label(summary_frame, text=f"Total Trackers: {total_trackers}").pack(anchor='w')
-
-    def show_block_details(self, subarray_id: str, block_id: str):
-        """Show details panel for a block"""
-        if subarray_id not in self.subarrays:
-            return
-        if block_id not in self.subarrays[subarray_id]['blocks']:
-            return
-        
-        block = self.subarrays[subarray_id]['blocks'][block_id]
-        self.details_label.config(text=f"Block: {block['name']}")
-        
-        # Create scrollable frame for block details
+        # Create scrollable frame
         canvas = tk.Canvas(self.details_container, highlightthickness=0)
         scrollbar = ttk.Scrollbar(self.details_container, orient="vertical", command=canvas.yview)
         scrollable_frame = ttk.Frame(canvas)
@@ -1731,152 +1572,162 @@ class QuickEstimate(ttk.Frame):
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
         
-        # Bind mouse wheel scrolling
+        # Mouse wheel scrolling
         def _on_mousewheel(event):
             canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _on_mousewheel))
+        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
         
-        def _bind_mousewheel(event):
-            canvas.bind_all("<MouseWheel>", _on_mousewheel)
-        
-        def _unbind_mousewheel(event):
-            canvas.unbind_all("<MouseWheel>")
-        
-        # Bind when mouse enters canvas, unbind when it leaves
-        canvas.bind("<Enter>", _bind_mousewheel)
-        canvas.bind("<Leave>", _unbind_mousewheel)
-        scrollable_frame.bind("<Enter>", _bind_mousewheel)
-        scrollable_frame.bind("<Leave>", _unbind_mousewheel)
-        
-        # Form frame
+        # Row name
         form_frame = ttk.Frame(scrollable_frame, padding="10")
         form_frame.pack(fill='x')
         
-        # Block Name
-        ttk.Label(form_frame, text="Name:").grid(row=0, column=0, sticky='w', pady=5)
-        name_var = tk.StringVar(value=block['name'])
+        ttk.Label(form_frame, text="Row Name:").grid(row=0, column=0, sticky='w', pady=5)
+        name_var = tk.StringVar(value=row['name'])
         name_entry = ttk.Entry(form_frame, textvariable=name_var, width=25)
         name_entry.grid(row=0, column=1, sticky='w', pady=5, padx=(10, 0))
         
         def update_name(*args):
-            block['name'] = name_var.get()
-            self.tree.item(block_id, text=name_var.get())
-            self.details_label.config(text=f"Block: {name_var.get()}")
+            row['name'] = name_var.get()
+            self._update_row_listbox_text(row_idx)
+            self.details_label.config(text=f"Row: {name_var.get()}")
             self._schedule_autosave()
         name_var.trace_add('write', update_name)
         
-        # Topology-driven combiner controls
-        topology = self.topology_var.get()
-        current_row = 1
-        
-        if topology == 'Central Inverter':
-            # Central Inverter: user specifies combiner count manually
-            ttk.Label(form_frame, text="# Combiner Boxes:").grid(row=current_row, column=0, sticky='w', pady=5)
-            num_cb_var = tk.StringVar(value=str(block.get('num_combiners', 1)))
-            num_cb_spinbox = ttk.Spinbox(form_frame, from_=1, to=50, textvariable=num_cb_var, width=10)
-            num_cb_spinbox.grid(row=current_row, column=1, sticky='w', pady=5, padx=(10, 0))
-            ttk.Label(form_frame, text="(from project drawings)", font=('Helvetica', 8), foreground='gray').grid(row=current_row, column=2, sticky='w', padx=(5, 0))
-            
-            def update_num_cb(*args):
-                try:
-                    block['num_combiners'] = int(num_cb_var.get())
-                except ValueError:
-                    pass
-                self._mark_stale()
-                self._schedule_autosave()
-            num_cb_var.trace_add('write', update_num_cb)
-            current_row += 1
-        
-        if topology in ('Centralized String', 'Central Inverter'):
-            # Breaker Size — relevant when combiners exist
-            ttk.Label(form_frame, text="Breaker Size (A):").grid(row=current_row, column=0, sticky='w', pady=5)
-            breaker_sizes = [100, 125, 150, 175, 200, 225, 250, 300, 350, 400, 450, 500, 600, 700, 800]
-            breaker_var = tk.StringVar(value=str(block.get('breaker_size', 400)))
-            breaker_combo = ttk.Combobox(form_frame, textvariable=breaker_var, values=breaker_sizes, state='readonly', width=10)
-            breaker_combo.grid(row=current_row, column=1, sticky='w', pady=5, padx=(10, 0))
-            self.disable_combobox_scroll(breaker_combo)
-            
-            def update_breaker(*args):
-                try:
-                    block['breaker_size'] = int(breaker_var.get())
-                except ValueError:
-                    pass
-                self._mark_stale()
-                self._schedule_autosave()
-            breaker_var.trace_add('write', update_breaker)
-            current_row += 1
-            
-            # Combiner Box Override
-            ttk.Label(form_frame, text="Combiner Box:").grid(row=current_row, column=0, sticky='w', pady=5)
-            combiner_library = self.load_combiner_library()
-            cb_options = ['Auto'] + sorted(
-                [pn for pn in combiner_library.keys() if not pn.startswith('_')],
-                key=lambda pn: (
-                    combiner_library[pn].get('max_inputs', 0),
-                    combiner_library[pn].get('breaker_size', 0)
-                )
-            )
-            cb_override_var = tk.StringVar(value=block.get('cb_override', 'Auto'))
-            cb_override_combo = ttk.Combobox(form_frame, textvariable=cb_override_var, values=cb_options, state='readonly', width=25)
-            cb_override_combo.grid(row=current_row, column=1, sticky='w', pady=5, padx=(10, 0))
-            self.disable_combobox_scroll(cb_override_combo)
-
-            def update_cb_override(*args):
-                val = cb_override_var.get()
-                block['cb_override'] = val if val != 'Auto' else None
-                self._mark_stale()
-                self._schedule_autosave()
-            cb_override_var.trace_add('write', update_cb_override)
-            current_row += 1
-            
-            if topology == 'Centralized String':
-                ttk.Label(form_frame, text="", foreground='gray', font=('Helvetica', 8)).grid(row=current_row, column=0, columnspan=3, sticky='w', pady=2)
-                # Update hint after allocation runs
-                self._cb_hint_row = current_row
-                self._cb_hint_frame = form_frame
-        
-        if topology == 'Distributed String':
-            ttk.Label(form_frame, text="No combiner boxes — strings connect directly to inverters",
-                      foreground='gray', font=('Helvetica', 9)).grid(row=current_row, column=0, columnspan=3, sticky='w', pady=5)
-
-        # Tracker Configurations Section
-        tracker_frame = ttk.LabelFrame(scrollable_frame, text="Tracker Configurations", padding="10")
-        tracker_frame.pack(fill='x', pady=(15, 0), padx=10)
-        
-        # Store references for tracker rows
-        self.current_block_tracker_frame = tracker_frame
-        self.current_block_id = block_id
-        self.current_subarray_id = subarray_id
-        self.current_block = block
+        # Segments section
+        seg_frame = ttk.LabelFrame(scrollable_frame, text="Segments (left to right)", padding="10")
+        seg_frame.pack(fill='x', pady=(10, 0), padx=10)
         
         # String count display
-        count_frame = ttk.Frame(tracker_frame)
-        count_frame.pack(fill='x', pady=(0, 10))
-        self.string_count_label = ttk.Label(count_frame, text="Total Strings: 0", font=('Helvetica', 10, 'bold'))
-        self.string_count_label.pack(side='left')
+        self.row_string_count_label = ttk.Label(seg_frame, text="", font=('Helvetica', 10, 'bold'))
+        self.row_string_count_label.pack(anchor='w', pady=(0, 10))
         
         # Headers
-        header_frame = ttk.Frame(tracker_frame)
+        header_frame = ttk.Frame(seg_frame)
         header_frame.pack(fill='x')
+        ttk.Label(header_frame, text="Qty", width=6).pack(side='left', padx=2)
         ttk.Label(header_frame, text="Strings/Tracker", width=14).pack(side='left', padx=2)
-        ttk.Label(header_frame, text="Quantity", width=10).pack(side='left', padx=2)
         ttk.Label(header_frame, text="Harness Config", width=14).pack(side='left', padx=2)
-        ttk.Label(header_frame, text="", width=8).pack(side='left', padx=2)
+        ttk.Label(header_frame, text="", width=4).pack(side='left', padx=2)
         
-        # Container for tracker rows
-        self.tracker_rows_container = ttk.Frame(tracker_frame)
-        self.tracker_rows_container.pack(fill='x', pady=(5, 0))
+        # Container for segment rows
+        self.segment_rows_container = ttk.Frame(seg_frame)
+        self.segment_rows_container.pack(fill='x', pady=(5, 0))
         
-        # Add existing tracker rows
-        for i, tracker in enumerate(block['trackers']):
-            self.add_tracker_row_ui(block, i, tracker)
+        # Add existing segment rows
+        for i, seg in enumerate(row['segments']):
+            self._add_segment_row_ui(row, row_idx, i, seg)
         
-        # Update initial string count
-        self.update_string_count()
+        # Update count
+        self._update_row_string_count(row)
         
-        # Add tracker button
-        add_btn = ttk.Button(tracker_frame, text="+ Add Tracker Type", 
-                            command=lambda: self.add_new_tracker_to_block(block))
+        # Add segment button
+        add_btn = ttk.Button(seg_frame, text="+ Add Segment",
+                            command=lambda: self._add_segment_to_row(row, row_idx))
         add_btn.pack(anchor='w', pady=(10, 0))
+    
+    def _add_segment_row_ui(self, row: dict, row_idx: int, seg_idx: int, segment: dict):
+        """Add a segment configuration row to the UI"""
+        row_frame = ttk.Frame(self.segment_rows_container)
+        row_frame.pack(fill='x', pady=2)
+        
+        # Quantity
+        qty_var = tk.StringVar(value=str(segment['quantity']))
+        qty_spinbox = ttk.Spinbox(row_frame, from_=1, to=10000, textvariable=qty_var, width=6)
+        qty_spinbox.pack(side='left', padx=2)
+        
+        # Strings/tracker dropdown
+        strings_var = tk.StringVar(value=str(segment['strings_per_tracker']))
+        strings_combo = ttk.Combobox(row_frame, textvariable=strings_var,
+                                     values=["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16"],
+                                     width=12, state='readonly')
+        strings_combo.pack(side='left', padx=2)
+        self.disable_combobox_scroll(strings_combo)
+        
+        # Harness config
+        harness_var = tk.StringVar(value=segment['harness_config'])
+        harness_options = self.get_harness_options(segment['strings_per_tracker'])
+        harness_combo = ttk.Combobox(row_frame, textvariable=harness_var,
+                                     values=harness_options, width=12)
+        harness_combo.pack(side='left', padx=2)
+        self.disable_combobox_scroll(harness_combo)
+        
+        # Delete button
+        del_btn = ttk.Button(row_frame, text="×", width=3,
+                            command=lambda: self._delete_segment(row, row_idx, seg_idx))
+        del_btn.pack(side='left', padx=2)
+        
+        # Callbacks
+        def on_strings_change(*args):
+            try:
+                new_strings = int(strings_var.get())
+                segment['strings_per_tracker'] = new_strings
+                new_options = self.get_harness_options(new_strings)
+                harness_combo['values'] = new_options
+                if harness_var.get() not in new_options:
+                    harness_var.set(new_options[0])
+                    segment['harness_config'] = new_options[0]
+            except ValueError:
+                pass
+            self._update_row_string_count(row)
+            self._update_row_listbox_text(row_idx)
+            self._mark_stale()
+            self._schedule_autosave()
+        strings_var.trace_add('write', on_strings_change)
+        
+        def on_qty_change(*args):
+            try:
+                segment['quantity'] = max(1, int(qty_var.get()))
+            except ValueError:
+                pass
+            self._update_row_string_count(row)
+            self._update_row_listbox_text(row_idx)
+            self._mark_stale()
+            self._schedule_autosave()
+        qty_var.trace_add('write', on_qty_change)
+        
+        def on_harness_change(*args):
+            segment['harness_config'] = harness_var.get()
+            self._mark_stale()
+            self._schedule_autosave()
+        harness_var.trace_add('write', on_harness_change)
+    
+    def _add_segment_to_row(self, row: dict, row_idx: int):
+        """Add a new segment to the row and refresh UI"""
+        row['segments'].append({
+            'quantity': 1,
+            'strings_per_tracker': 3,
+            'harness_config': '3',
+            'template_ref': None
+        })
+        self._refresh_row_listbox()
+        self.row_listbox.selection_clear(0, tk.END)
+        self.row_listbox.selection_set(row_idx)
+        self.show_row_details(row_idx)
+        self._mark_stale()
+        self._schedule_autosave()
+    
+    def _delete_segment(self, row: dict, row_idx: int, seg_idx: int):
+        """Delete a segment from the row"""
+        if len(row['segments']) <= 1:
+            return  # Keep at least one segment
+        del row['segments'][seg_idx]
+        self._update_row_listbox_text(row_idx)
+        # Rebuild segment editor to fix indices
+        for widget in self.details_container.winfo_children():
+            widget.destroy()
+        self.show_row_details(row_idx)
+        self._mark_stale()
+        self._schedule_autosave()
+    
+    def _update_row_string_count(self, row: dict):
+        """Update the string/tracker count label for a row"""
+        if not hasattr(self, 'row_string_count_label'):
+            return
+        total_trackers = sum(seg['quantity'] for seg in row['segments'])
+        total_strings = sum(seg['quantity'] * seg['strings_per_tracker'] for seg in row['segments'])
+        self.row_string_count_label.config(
+            text=f"Total Strings: {total_strings:,}  |  Total Trackers: {total_trackers:,}")
 
     def add_tracker_row_ui(self, block: dict, index: int, tracker: dict):
         """Add a tracker configuration row to the UI"""

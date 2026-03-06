@@ -420,6 +420,329 @@ for spt, spi, n, label in [(0, 10, 5, "spt=0"), (3, 0, 5, "spi=0"), (3, 10, 0, "
     else:
         T.fail(label, f"Got {result['summary']['total_inverters']} inverters")
 
+# ============================================================
+# Test 13: allocate_strings_sequential — basic invariants
+# ============================================================
+
+print("\n" + "="*60)
+print("TEST 13: allocate_strings_sequential — basic invariants")
+print("="*60)
+
+from src.utils.string_allocation import allocate_strings_sequential
+
+def check_seq_invariants(result, seq, max_spi, label):
+    """Invariant checks for sequential allocation."""
+    ok = True
+    total_strings = sum(seq)
+    num_trackers = len(seq)
+    summary = result['summary']
+    
+    # String conservation
+    if summary['total_strings'] != total_strings:
+        T.fail(f"{label} — string conservation",
+               f"Expected {total_strings}, got {summary['total_strings']}")
+        ok = False
+    
+    # No inverter exceeds max
+    for i, inv in enumerate(result['inverters']):
+        if inv['total_strings'] > max_spi:
+            T.fail(f"{label} — inverter {i} overflow",
+                   f"{inv['total_strings']} > {max_spi}")
+            ok = False
+    
+    # Balanced: all within 1 of each other
+    sizes = [inv['total_strings'] for inv in result['inverters']]
+    if sizes and max(sizes) - min(sizes) > 1:
+        T.fail(f"{label} — balance",
+               f"Range {min(sizes)}-{max(sizes)}, gap > 1")
+        ok = False
+    
+    # Pattern sums match
+    for i, inv in enumerate(result['inverters']):
+        if sum(inv['pattern']) != inv['total_strings']:
+            T.fail(f"{label} — pattern sum inv {i}",
+                   f"{sum(inv['pattern'])} != {inv['total_strings']}")
+            ok = False
+    
+    # Every tracker fully consumed
+    tracker_totals = {}
+    for inv in result['inverters']:
+        for tidx, taken in inv['tracker_indices']:
+            tracker_totals[tidx] = tracker_totals.get(tidx, 0) + taken
+    for i in range(num_trackers):
+        got = tracker_totals.get(i, 0)
+        if got != seq[i]:
+            T.fail(f"{label} — tracker {i} incomplete",
+                   f"Allocated {got}/{seq[i]}")
+            ok = False
+    
+    # No zero/negative in patterns
+    for i, inv in enumerate(result['inverters']):
+        for val in inv['pattern']:
+            if val <= 0:
+                T.fail(f"{label} — non-positive pattern val", f"Inv {i}: {val}")
+                ok = False
+    
+    # Split tracker count
+    appearances = {}
+    for inv in result['inverters']:
+        for tidx, _ in inv['tracker_indices']:
+            appearances[tidx] = appearances.get(tidx, 0) + 1
+    actual_splits = sum(1 for c in appearances.values() if c > 1)
+    if actual_splits != summary['total_split_trackers']:
+        T.fail(f"{label} — split count",
+               f"Counted {actual_splits}, summary says {summary['total_split_trackers']}")
+        ok = False
+    
+    # Harness map present and consistent
+    for i, inv in enumerate(result['inverters']):
+        if len(inv['harness_map']) != len(inv['tracker_indices']):
+            T.fail(f"{label} — harness_map length inv {i}",
+                   f"{len(inv['harness_map'])} != {len(inv['tracker_indices'])}")
+            ok = False
+        for h in inv['harness_map']:
+            if h['strings_per_tracker'] != seq[h['tracker_idx']]:
+                T.fail(f"{label} — harness_map spt inv {i}",
+                       f"T{h['tracker_idx']}: {h['strings_per_tracker']} != {seq[h['tracker_idx']]}")
+                ok = False
+            if h['split_position'] not in ('full', 'head', 'tail', 'middle'):
+                T.fail(f"{label} — bad split_position", f"{h['split_position']}")
+                ok = False
+    
+    # Balanced summary fields
+    n_inv = len(result['inverters'])
+    if n_inv > 0:
+        expected_n = ceil(total_strings / max_spi)
+        if n_inv != expected_n:
+            T.fail(f"{label} — inv count", f"Expected {expected_n}, got {n_inv}")
+            ok = False
+        base = total_strings // n_inv
+        rem = total_strings % n_inv
+        exp_max = base + 1 if rem > 0 else base
+        if summary['max_strings_per_inverter'] != exp_max:
+            T.fail(f"{label} — max_spi", f"Expected {exp_max}, got {summary['max_strings_per_inverter']}")
+            ok = False
+        if summary['min_strings_per_inverter'] != base:
+            T.fail(f"{label} — min_spi", f"Expected {base}, got {summary['min_strings_per_inverter']}")
+            ok = False
+    
+    if ok:
+        T.ok(f"{label} — all invariants passed")
+    return ok
+
+
+# Uniform sequence (should match old behavior)
+seq = [3]*31
+result = allocate_strings_sequential(seq, 10)
+check_seq_invariants(result, seq, 10, "31x3-str uniform")
+
+# Even division
+seq = [2]*50
+result = allocate_strings_sequential(seq, 10)
+check_seq_invariants(result, seq, 10, "50x2-str uniform")
+if result['summary']['total_split_trackers'] == 0:
+    T.ok("50x2/10 seq: zero splits")
+else:
+    T.fail("50x2/10 seq splits", f"Got {result['summary']['total_split_trackers']}")
+
+
+# ============================================================
+# Test 14: Sequential — mixed tracker types
+# ============================================================
+
+print("\n" + "="*60)
+print("TEST 14: Sequential — mixed tracker types")
+print("="*60)
+
+# Row with edge trackers: 2-str, then 3-str middle, then 2-str edge
+seq = [2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2]
+result = allocate_strings_sequential(seq, 10)
+check_seq_invariants(result, seq, 10, "mixed 2-3-2 row")
+s = result['summary']
+if s['tracker_type_counts'] == {2: 4, 3: 8}:
+    T.ok("mixed 2-3-2: tracker_type_counts correct")
+else:
+    T.fail("mixed 2-3-2 type counts", f"Got {s['tracker_type_counts']}")
+
+# Real-world-ish: irregular boundary
+seq = [1, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 1]
+result = allocate_strings_sequential(seq, 10)
+check_seq_invariants(result, seq, 10, "irregular boundary row")
+
+# All different sizes
+seq = [1, 2, 3, 4, 5, 3, 2, 1]
+result = allocate_strings_sequential(seq, 8)
+check_seq_invariants(result, seq, 8, "all different sizes")
+
+# Single 1-string tracker
+seq = [1]
+result = allocate_strings_sequential(seq, 10)
+check_seq_invariants(result, seq, 10, "single 1-str")
+if result['summary']['total_inverters'] == 1:
+    T.ok("single 1-str: 1 inverter")
+else:
+    T.fail("single 1-str count", f"Got {result['summary']['total_inverters']}")
+
+
+# ============================================================
+# Test 15: Sequential — multi-row flattened
+# ============================================================
+
+print("\n" + "="*60)
+print("TEST 15: Sequential — multi-row simulation")
+print("="*60)
+
+# Simulate 3 rows of different lengths
+row1 = [2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2]  # 12 trackers, 34 strings
+row2 = [2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2]      # 11 trackers, 31 strings
+row3 = [2, 3, 3, 3, 3, 3, 3, 3, 2]             # 9 trackers, 25 strings
+full_seq = row1 + row2 + row3                    # 32 trackers, 90 strings
+result = allocate_strings_sequential(full_seq, 10)
+check_seq_invariants(result, full_seq, 10, "3-row site (90 strings)")
+if result['summary']['total_inverters'] == 9:
+    T.ok("3-row site: 9 inverters (90/10)")
+else:
+    T.fail("3-row site count", f"Got {result['summary']['total_inverters']}")
+
+# Bigger site: 5 rows
+row_a = [1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1]  # 14 trackers
+row_b = [2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2]      # 13 trackers
+row_c = [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3]          # 12 trackers, all 3-str
+row_d = [2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2]             # 11 trackers
+row_e = [1, 2, 3, 3, 3, 3, 3, 2, 1]                   # 9 trackers
+big_seq = row_a + row_b + row_c + row_d + row_e
+result = allocate_strings_sequential(big_seq, 10)
+check_seq_invariants(result, big_seq, 10, f"5-row site ({sum(big_seq)} strings)")
+
+
+# ============================================================
+# Test 16: Sequential — harness_map split positions
+# ============================================================
+
+print("\n" + "="*60)
+print("TEST 16: Harness map split positions")
+print("="*60)
+
+# 3-string trackers, 10 max → known split pattern
+seq = [3]*10
+result = allocate_strings_sequential(seq, 10)
+
+# Check that non-split trackers have 'full'
+full_count = 0
+head_count = 0
+tail_count = 0
+for inv in result['inverters']:
+    for h in inv['harness_map']:
+        if h['split_position'] == 'full':
+            full_count += 1
+            if h['is_split']:
+                T.fail("split position full but is_split=True", f"T{h['tracker_idx']}")
+        elif h['split_position'] == 'head':
+            head_count += 1
+            if not h['is_split']:
+                T.fail("split position head but is_split=False", f"T{h['tracker_idx']}")
+        elif h['split_position'] == 'tail':
+            tail_count += 1
+            if not h['is_split']:
+                T.fail("split position tail but is_split=False", f"T{h['tracker_idx']}")
+
+T.ok(f"10x3/10 seq: {full_count} full, {head_count} head, {tail_count} tail entries")
+
+# Every split tracker should have exactly one head and one tail
+split_trackers = {}
+for inv in result['inverters']:
+    for h in inv['harness_map']:
+        if h['is_split']:
+            tidx = h['tracker_idx']
+            if tidx not in split_trackers:
+                split_trackers[tidx] = []
+            split_trackers[tidx].append(h['split_position'])
+
+all_valid = True
+for tidx, positions in split_trackers.items():
+    if sorted(positions) != ['head', 'tail']:
+        T.fail(f"split tracker {tidx} positions", f"Expected ['head','tail'], got {sorted(positions)}")
+        all_valid = False
+if all_valid and split_trackers:
+    T.ok(f"All {len(split_trackers)} split trackers have exactly head+tail")
+elif not split_trackers:
+    T.ok("No split trackers (evenly divisible)")
+
+
+# ============================================================
+# Test 17: Sequential — harness_map for mixed types
+# ============================================================
+
+print("\n" + "="*60)
+print("TEST 17: Harness map with mixed tracker types")
+print("="*60)
+
+seq = [2, 3, 3, 3, 2]  # 13 strings
+result = allocate_strings_sequential(seq, 7)
+check_seq_invariants(result, seq, 7, "mixed 2-3-3-3-2 / 7spi")
+
+# Print detail for review
+s = result['summary']
+print(f"  {s['total_inverters']} inverters: "
+      f"{s['num_larger_inverters']}x{s['max_strings_per_inverter']} + "
+      f"{s['num_smaller_inverters']}x{s['min_strings_per_inverter']}")
+for i, inv in enumerate(result['inverters']):
+    tracker_str = ', '.join(f"T{h['tracker_idx']}({h['strings_taken']}/{h['strings_per_tracker']} {h['split_position']})" 
+                            for h in inv['harness_map'])
+    print(f"    Inv {i} ({inv['total_strings']}str): {tracker_str}")
+T.ok("mixed harness detail printed for review")
+
+
+# ============================================================
+# Test 18: Sequential — edge cases
+# ============================================================
+
+print("\n" + "="*60)
+print("TEST 18: Sequential edge cases")
+print("="*60)
+
+# Empty sequence
+result = allocate_strings_sequential([], 10)
+if result['summary']['total_inverters'] == 0:
+    T.ok("empty sequence: returns empty")
+else:
+    T.fail("empty seq", f"Got {result['summary']['total_inverters']}")
+
+# max_spi = 0
+result = allocate_strings_sequential([3, 3], 0)
+if result['summary']['total_inverters'] == 0:
+    T.ok("max_spi=0: returns empty")
+else:
+    T.fail("max_spi=0", f"Got {result['summary']['total_inverters']}")
+
+# All 1-string trackers
+seq = [1]*25
+result = allocate_strings_sequential(seq, 10)
+check_seq_invariants(result, seq, 10, "25x1-str sequential")
+
+# Single big tracker > max_spi
+seq = [6]
+result = allocate_strings_sequential(seq, 4)
+check_seq_invariants(result, seq, 4, "1x6-str / 4spi")
+if result['summary']['total_inverters'] == 2:
+    T.ok("1x6/4: 2 inverters (split one tracker)")
+else:
+    T.fail("1x6/4 count", f"Got {result['summary']['total_inverters']}")
+
+# Large mixed site
+import random
+random.seed(42)
+large_seq = []
+for row in range(20):
+    row_len = random.randint(8, 15)
+    row_trackers = [random.choice([2, 3, 3, 3]) for _ in range(row_len)]
+    # Edge trackers smaller
+    row_trackers[0] = random.choice([1, 2])
+    row_trackers[-1] = random.choice([1, 2])
+    large_seq.extend(row_trackers)
+
+result = allocate_strings_sequential(large_seq, 10)
+check_seq_invariants(result, large_seq, 10, f"20-row random site ({len(large_seq)} trackers, {sum(large_seq)} strings)")
 
 # ============================================================
 # Test 12: Detail dump for visual review

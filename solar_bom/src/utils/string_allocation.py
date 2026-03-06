@@ -211,6 +211,177 @@ def allocate_strings(strings_per_tracker: int, strings_per_inverter: int,
         }
     }
 
+def allocate_strings_sequential(tracker_sequence: List[int], 
+                                 max_strings_per_inverter: int) -> Dict[str, Any]:
+    """
+    Balanced string-to-inverter allocation for a physically-ordered tracker sequence.
+    
+    Unlike allocate_strings() which assumes uniform tracker sizes, this accepts
+    a mixed sequence representing the physical left-to-right, row-by-row order
+    of trackers on site. Each entry is the string count for that tracker.
+    
+    Uses balanced distribution: all inverters are within 1 string of each other.
+    
+    Args:
+        tracker_sequence: Ordered list of string counts per tracker.
+            Example: [3,3,3,2,2,3,3,1] means 8 trackers in physical order,
+            with varying string counts.
+        max_strings_per_inverter: Maximum strings any inverter can accept.
+        
+    Returns:
+        Dictionary containing:
+            - inverters: List of inverter assignments, each with:
+                - pattern: List of ints (strings taken from each consecutive tracker)
+                - tracker_indices: List of (tracker_index, strings_taken) tuples
+                - total_strings: Total strings on this inverter
+                - target_strings: The balanced target for this inverter
+                - full_trackers: Count of trackers fully assigned to this inverter
+                - split_trackers: Count of trackers partially assigned
+                - harness_map: List of dicts with split info per tracker:
+                    - tracker_idx: Index in the original sequence
+                    - strings_per_tracker: Original string count of this tracker
+                    - strings_taken: How many strings assigned to this inverter
+                    - is_split: Whether this tracker is shared with another inverter
+                    - split_position: 'head' (first part), 'tail' (last part), 
+                                     'middle' (rare, 3+ way split), or 'full'
+            - summary:
+                - total_inverters: Number of inverters needed
+                - total_strings: Total strings allocated
+                - total_trackers: Total trackers in sequence
+                - total_split_trackers: Trackers shared between inverters
+                - max_strings_per_inverter: Largest inverter size used
+                - min_strings_per_inverter: Smallest inverter size used
+                - num_larger_inverters: How many get the larger size
+                - num_smaller_inverters: How many get the smaller size
+                - tracker_type_counts: Dict of {string_count: quantity} across all trackers
+    """
+    if not tracker_sequence or max_strings_per_inverter <= 0:
+        return {
+            'inverters': [],
+            'summary': {
+                'total_inverters': 0,
+                'total_strings': 0,
+                'total_trackers': 0,
+                'total_split_trackers': 0,
+                'max_strings_per_inverter': 0,
+                'min_strings_per_inverter': 0,
+                'num_larger_inverters': 0,
+                'num_smaller_inverters': 0,
+                'tracker_type_counts': {},
+            }
+        }
+    
+    total_strings = sum(tracker_sequence)
+    num_trackers = len(tracker_sequence)
+    n_inv = ceil(total_strings / max_strings_per_inverter)
+    base = total_strings // n_inv
+    remainder = total_strings % n_inv
+    
+    # Build target sizes: larger inverters first
+    targets = [base + 1] * remainder + [base] * (n_inv - remainder)
+    
+    # Walk through trackers in physical order, filling inverters by target
+    inverters = []
+    current_tracker_idx = 0
+    remaining_in_tracker = tracker_sequence[0] if tracker_sequence else 0
+    
+    for inv_idx, target in enumerate(targets):
+        inv_data = {
+            'pattern': [],
+            'tracker_indices': [],
+            'total_strings': 0,
+            'target_strings': target,
+            'full_trackers': 0,
+            'split_trackers': 0,
+            'harness_map': []
+        }
+        
+        strings_needed = target
+        
+        while strings_needed > 0 and current_tracker_idx < num_trackers:
+            take = min(strings_needed, remaining_in_tracker)
+            inv_data['pattern'].append(take)
+            inv_data['tracker_indices'].append((current_tracker_idx, take))
+            inv_data['total_strings'] += take
+            strings_needed -= take
+            remaining_in_tracker -= take
+            
+            # Build harness info for this tracker contribution
+            harness_entry = {
+                'tracker_idx': current_tracker_idx,
+                'strings_per_tracker': tracker_sequence[current_tracker_idx],
+                'strings_taken': take,
+                'is_split': take < tracker_sequence[current_tracker_idx],
+                'split_position': 'full'  # Will be updated below
+            }
+            inv_data['harness_map'].append(harness_entry)
+            
+            if remaining_in_tracker == 0:
+                current_tracker_idx += 1
+                if current_tracker_idx < num_trackers:
+                    remaining_in_tracker = tracker_sequence[current_tracker_idx]
+        
+        # Count full vs split trackers
+        for entry in inv_data['harness_map']:
+            if entry['is_split']:
+                inv_data['split_trackers'] += 1
+            else:
+                inv_data['full_trackers'] += 1
+        
+        inverters.append(inv_data)
+    
+    # Second pass: determine split positions (head/tail/middle)
+    # Track how many times each tracker appears and in what order
+    tracker_appearances = {}  # tracker_idx -> list of inverter indices
+    for inv_idx, inv in enumerate(inverters):
+        for entry in inv['harness_map']:
+            tidx = entry['tracker_idx']
+            if tidx not in tracker_appearances:
+                tracker_appearances[tidx] = []
+            tracker_appearances[tidx].append(inv_idx)
+    
+    for tidx, inv_indices in tracker_appearances.items():
+        if len(inv_indices) == 1:
+            # Not split — already marked 'full'
+            continue
+        for pos, inv_idx in enumerate(inv_indices):
+            # Find this tracker's entry in this inverter's harness_map
+            for entry in inverters[inv_idx]['harness_map']:
+                if entry['tracker_idx'] == tidx:
+                    if pos == 0:
+                        entry['split_position'] = 'head'
+                    elif pos == len(inv_indices) - 1:
+                        entry['split_position'] = 'tail'
+                    else:
+                        entry['split_position'] = 'middle'
+                    entry['is_split'] = True
+                    break
+    
+    total_split_trackers = sum(1 for appearances in tracker_appearances.values() 
+                                if len(appearances) > 1)
+    
+    # Tracker type counts
+    tracker_type_counts = {}
+    for spt in tracker_sequence:
+        tracker_type_counts[spt] = tracker_type_counts.get(spt, 0) + 1
+    
+    max_spi = base + 1 if remainder > 0 else base
+    min_spi = base
+    
+    return {
+        'inverters': inverters,
+        'summary': {
+            'total_inverters': len(inverters),
+            'total_strings': sum(inv['total_strings'] for inv in inverters),
+            'total_trackers': num_trackers,
+            'total_split_trackers': total_split_trackers,
+            'max_strings_per_inverter': max_spi,
+            'min_strings_per_inverter': min_spi,
+            'num_larger_inverters': remainder,
+            'num_smaller_inverters': n_inv - remainder,
+            'tracker_type_counts': tracker_type_counts,
+        }
+    }
 
 def format_allocation_summary(allocation: Dict[str, Any], strings_per_tracker: int) -> str:
     """
