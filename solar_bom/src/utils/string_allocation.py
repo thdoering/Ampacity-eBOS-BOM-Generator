@@ -12,7 +12,7 @@ Example: 3-string trackers, 10 strings per inverter, 30 trackers
 """
 
 from typing import List, Dict, Any, Tuple
-from math import gcd
+from math import gcd, ceil
 
 
 def compute_allocation_cycle(strings_per_tracker: int, strings_per_inverter: int) -> List[List[int]]:
@@ -68,29 +68,42 @@ def compute_allocation_cycle(strings_per_tracker: int, strings_per_inverter: int
 def allocate_strings(strings_per_tracker: int, strings_per_inverter: int, 
                      num_trackers: int) -> Dict[str, Any]:
     """
-    Perform full string-to-inverter allocation for a block.
+    Perform balanced string-to-inverter allocation for a block.
+    
+    Uses balanced distribution: instead of packing every inverter to max capacity
+    (leaving the last one underfilled), distributes strings so all inverters are
+    as close to equal as possible.
+    
+    Example: 3-string trackers, max 10 strings/inv, 31 trackers (93 strings)
+      Greedy:   9 × 10 strings + 1 × 3 strings  (wasteful last inverter)
+      Balanced: 3 × 10 strings + 7 × 9 strings   (all inverters near capacity)
     
     Args:
         strings_per_tracker: Number of strings on each tracker
-        strings_per_inverter: Number of strings assigned to each inverter
+        strings_per_inverter: Maximum number of strings assigned to each inverter
         num_trackers: Total number of trackers in the block
         
     Returns:
         Dictionary containing:
-            - cycle: The repeating allocation pattern
+            - cycle: List of unique patterns seen across inverters
             - inverters: List of inverter assignments, each with:
                 - pattern: List of ints (strings from each tracker)
                 - tracker_indices: List of (tracker_index, strings_taken) tuples
                 - total_strings: Total strings on this inverter
+                - target_strings: The target this inverter was assigned
                 - full_trackers: Count of trackers fully assigned to this inverter
                 - split_trackers: Count of trackers partially assigned
             - summary:
                 - total_inverters: Number of inverters needed
-                - full_inverters: Inverters with exactly strings_per_inverter
-                - partial_inverter_strings: Strings on the last inverter (if partial)
+                - full_inverters: Inverters with exactly strings_per_inverter strings
+                - partial_inverter_strings: 0 for balanced (kept for backward compat)
                 - total_strings: Total strings allocated
                 - total_split_trackers: Number of trackers shared between inverters
-                - cycle_length: Number of inverters per repeating cycle
+                - cycle_length: Number of unique patterns
+                - max_strings_per_inverter: Largest inverter size used
+                - min_strings_per_inverter: Smallest inverter size used
+                - num_larger_inverters: How many inverters get the larger size
+                - num_smaller_inverters: How many inverters get the smaller size
     """
     if strings_per_tracker <= 0 or strings_per_inverter <= 0 or num_trackers <= 0:
         return {
@@ -102,32 +115,39 @@ def allocate_strings(strings_per_tracker: int, strings_per_inverter: int,
                 'partial_inverter_strings': 0,
                 'total_strings': 0,
                 'total_split_trackers': 0,
-                'cycle_length': 0
+                'cycle_length': 0,
+                'max_strings_per_inverter': 0,
+                'min_strings_per_inverter': 0,
+                'num_larger_inverters': 0,
+                'num_smaller_inverters': 0,
             }
         }
     
-    cycle = compute_allocation_cycle(strings_per_tracker, strings_per_inverter)
     total_strings = num_trackers * strings_per_tracker
+    n_inv = ceil(total_strings / strings_per_inverter)
+    base = total_strings // n_inv
+    remainder = total_strings % n_inv
     
-    # Walk through all trackers, assigning to inverters using the cycle pattern
+    # Build target sizes: 'remainder' inverters get base+1, rest get base
+    # Larger inverters go first in sequence
+    targets = [base + 1] * remainder + [base] * (n_inv - remainder)
+    
+    # Walk through all trackers, assigning to inverters by target
     inverters = []
     remaining_in_tracker = strings_per_tracker
     current_tracker_idx = 0
-    strings_allocated = 0
-    cycle_idx = 0
     
-    while strings_allocated < total_strings:
-        strings_for_this_inverter = min(strings_per_inverter, total_strings - strings_allocated)
-        
+    for inv_idx, target in enumerate(targets):
         inv_data = {
             'pattern': [],
             'tracker_indices': [],
             'total_strings': 0,
+            'target_strings': target,
             'full_trackers': 0,
             'split_trackers': 0
         }
         
-        strings_needed = strings_for_this_inverter
+        strings_needed = target
         
         while strings_needed > 0 and current_tracker_idx < num_trackers:
             take = min(strings_needed, remaining_in_tracker)
@@ -148,9 +168,7 @@ def allocate_strings(strings_per_tracker: int, strings_per_inverter: int,
             else:
                 inv_data['split_trackers'] += 1
         
-        strings_allocated += inv_data['total_strings']
         inverters.append(inv_data)
-        cycle_idx = (cycle_idx + 1) % max(len(cycle), 1)
     
     # Count total split trackers (trackers that appear in more than one inverter)
     tracker_appearances = {}
@@ -162,21 +180,34 @@ def allocate_strings(strings_per_tracker: int, strings_per_inverter: int,
     
     total_split_trackers = sum(1 for count in tracker_appearances.values() if count > 1)
     
+    # Collect unique patterns for display
+    unique_patterns = []
+    seen = set()
+    for inv in inverters:
+        key = tuple(inv['pattern'])
+        if key not in seen:
+            seen.add(key)
+            unique_patterns.append(inv['pattern'])
+    
     # Build summary
     full_inverters = sum(1 for inv in inverters if inv['total_strings'] == strings_per_inverter)
-    last_inv = inverters[-1] if inverters else None
-    partial_strings = last_inv['total_strings'] if last_inv and last_inv['total_strings'] < strings_per_inverter else 0
+    max_spi = base + 1 if remainder > 0 else base
+    min_spi = base
     
     return {
-        'cycle': cycle,
+        'cycle': unique_patterns,
         'inverters': inverters,
         'summary': {
             'total_inverters': len(inverters),
             'full_inverters': full_inverters,
-            'partial_inverter_strings': partial_strings,
-            'total_strings': strings_allocated,
+            'partial_inverter_strings': 0,
+            'total_strings': sum(inv['total_strings'] for inv in inverters),
             'total_split_trackers': total_split_trackers,
-            'cycle_length': len(cycle)
+            'cycle_length': len(unique_patterns),
+            'max_strings_per_inverter': max_spi,
+            'min_strings_per_inverter': min_spi,
+            'num_larger_inverters': remainder,
+            'num_smaller_inverters': n_inv - remainder,
         }
     }
 
