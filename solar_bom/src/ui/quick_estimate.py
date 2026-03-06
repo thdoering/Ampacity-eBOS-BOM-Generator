@@ -641,6 +641,10 @@ class QuickEstimate(ttk.Frame):
             self.topology_var.set(estimate_data.get('topology', 'Distributed String'))
         if hasattr(self, 'dc_ac_ratio_var'):
             self.dc_ac_ratio_var.set(str(estimate_data.get('dc_ac_ratio', 1.25)))
+        if hasattr(self, 'dc_feeder_distance_var'):
+            self.dc_feeder_distance_var.set(str(estimate_data.get('dc_feeder_distance_ft', 500)))
+        if hasattr(self, 'ac_homerun_distance_var'):
+            self.ac_homerun_distance_var.set(str(estimate_data.get('ac_homerun_distance_ft', 500)))
         
         # Load subarrays
         saved_subarrays = estimate_data.get('subarrays', {})
@@ -735,6 +739,16 @@ class QuickEstimate(ttk.Frame):
             estimate_data['dc_ac_ratio'] = float(self.dc_ac_ratio_var.get())
         except ValueError:
             estimate_data['dc_ac_ratio'] = 1.25
+        
+        # Save distance inputs
+        try:
+            estimate_data['dc_feeder_distance_ft'] = float(self.dc_feeder_distance_var.get())
+        except ValueError:
+            estimate_data['dc_feeder_distance_ft'] = 500.0
+        try:
+            estimate_data['ac_homerun_distance_ft'] = float(self.ac_homerun_distance_var.get())
+        except ValueError:
+            estimate_data['ac_homerun_distance_ft'] = 500.0
         
         # Update modified date
         estimate_data['modified_date'] = datetime.now().isoformat()
@@ -921,6 +935,10 @@ class QuickEstimate(ttk.Frame):
             self.strings_per_inverter_var.set('--')
         if hasattr(self, 'isc_warning_label'):
             self.isc_warning_label.config(text="")
+        if hasattr(self, 'dc_feeder_distance_var'):
+            self.dc_feeder_distance_var.set('500')
+        if hasattr(self, 'ac_homerun_distance_var'):
+            self.ac_homerun_distance_var.set('500')
 
     def _schedule_autosave(self):
         """Debounced auto-save — saves estimate after a brief pause"""
@@ -1013,8 +1031,147 @@ class QuickEstimate(ttk.Frame):
         topology = self.topology_var.get()
         SitePreviewWindow(self, inv_summary, topology, self.INVERTER_COLORS)
 
+    def _refresh_block_details(self):
+        """Re-render the block detail panel if a block is currently selected."""
+        if self.selected_item_type == 'block' and self.selected_item_id:
+            parent_id = self.tree.parent(self.selected_item_id)
+            if parent_id:
+                for widget in self.details_container.winfo_children():
+                    widget.destroy()
+                self.show_block_details(parent_id, self.selected_item_id)
+
+    def _on_strings_per_inverter_changed(self, *args):
+        """When user manually edits strings/inverter, reverse-calculate DC:AC ratio."""
+        if self._updating_spi:
+            return
+        if not self.selected_inverter or not self.selected_module:
+            return
+        
+        try:
+            spi = int(self.strings_per_inverter_var.get())
+        except ValueError:
+            return
+        
+        if spi <= 0:
+            return
+        
+        try:
+            modules_per_string = int(self.modules_per_string_var.get())
+        except ValueError:
+            modules_per_string = 28
+        
+        # Reverse-calculate DC:AC ratio
+        module_wattage = self.selected_module.wattage
+        actual_ratio = self.selected_inverter.dc_ac_ratio(spi, module_wattage, modules_per_string)
+        
+        if actual_ratio > 0:
+            # Update DC:AC ratio without triggering forward calc
+            self._updating_spi = True
+            self.dc_ac_ratio_var.set(f"{actual_ratio:.2f}")
+            self._updating_spi = False
+        
+        # Update Isc warning for new string count
+        module_isc = self.selected_module.isc
+        total_isc = spi * module_isc
+        max_isc = getattr(self.selected_inverter, 'max_short_circuit_current', None)
+        
+        if max_isc and total_isc > max_isc:
+            self.isc_warning_label.config(
+                text=f"⚠️ Isc limit exceeded: {total_isc:.1f}A > {max_isc:.0f}A max"
+            )
+        else:
+            self.isc_warning_label.config(text="")
+        
+        self._mark_stale()
+        self._schedule_autosave()
+
+    def _update_distance_hints(self):
+        """Update the hint text next to distance inputs based on topology."""
+        if not hasattr(self, 'distance_hint_label'):
+            return
+        topology = self.topology_var.get()
+        if topology == 'Distributed String':
+            self.distance_hint_label.config(text="(DC feeders N/A for distributed — AC homeruns are primary cable)")
+        elif topology == 'Central Inverter':
+            self.distance_hint_label.config(text="(Long DC feeders to central pad — short AC from inverter)")
+        elif topology == 'Centralized String':
+            self.distance_hint_label.config(text="(DC feeders to inverter bank — short AC from bank)")
+        else:
+            self.distance_hint_label.config(text="")
+
+    def _get_harness_config_for_tracker_type(self, strings_per_tracker):
+        """Find the harness config used for trackers with the given string count."""
+        for subarray_id, subarray in self.subarrays.items():
+            for block_id, block in subarray['blocks'].items():
+                for tracker in block['trackers']:
+                    if tracker['strings'] == strings_per_tracker and tracker['quantity'] > 0:
+                        return self.parse_harness_config(tracker['harness_config'])
+        # Fallback: single harness equal to string count
+        return [strings_per_tracker]
+
+    def _adjust_harnesses_for_splits(self, totals):
+        """Adjust harness counts based on inverter allocation split trackers.
+        
+        When a tracker is split between two inverters, its original harness config
+        is replaced by harnesses matching the split amounts.
+        E.g., a 3-string tracker split 1/2 → remove one 3-string harness, 
+              add one 1-string + one 2-string harness.
+        """
+        inv_summary = totals.get('inverter_summary', {})
+        allocations = inv_summary.get('allocations', [])
+        
+        if not allocations:
+            return
+        
+        for alloc_info in allocations:
+            strings_per_tracker = alloc_info['strings_per_tracker']
+            allocation = alloc_info['allocation']
+            inverters = allocation.get('inverters', [])
+            
+            if not inverters:
+                continue
+            
+            # Find the original harness config for this tracker type
+            original_harness_sizes = self._get_harness_config_for_tracker_type(strings_per_tracker)
+            
+            split_count = 0
+            
+            # Check each inverter's pattern for split trackers
+            for i, inv_info in enumerate(inverters):
+                pattern = inv_info['pattern']
+                tail = pattern[-1]
+                
+                if tail >= strings_per_tracker:
+                    continue  # Full tracker at boundary, no split
+                
+                # Last inverter with partial load = end of allocation, not a split
+                is_last = (i == len(inverters) - 1)
+                if is_last and allocation['summary'].get('partial_inverter_strings', 0) > 0:
+                    continue
+                
+                complement = strings_per_tracker - tail
+                
+                # Remove original harness(es) for one tracker
+                for size in original_harness_sizes:
+                    if size in totals['harnesses_by_size']:
+                        totals['harnesses_by_size'][size] -= 1
+                        if totals['harnesses_by_size'][size] <= 0:
+                            del totals['harnesses_by_size'][size]
+                
+                # Add split harnesses (one per side of the split)
+                for split_size in [tail, complement]:
+                    if split_size not in totals['harnesses_by_size']:
+                        totals['harnesses_by_size'][split_size] = 0
+                    totals['harnesses_by_size'][split_size] += 1
+                
+                split_count += 1
+            
+            print(f"  Harness adjustment for {strings_per_tracker}-string trackers: {split_count} split trackers adjusted")
+
     def _update_strings_per_inverter(self):
         """Auto-calculate strings per inverter from DC:AC ratio and show Isc warning if needed"""
+        if self._updating_spi:
+            return
         if not self.selected_inverter or not self.selected_module:
             self.strings_per_inverter_var.set('--')
             self.isc_warning_label.config(text="")
@@ -1057,7 +1214,9 @@ class QuickEstimate(ttk.Frame):
             strings_per_inv = min(power_based_strings, dc_power_limited)
         
         strings_per_inv = max(strings_per_inv, 1)  # At least 1
+        self._updating_spi = True
         self.strings_per_inverter_var.set(str(strings_per_inv))
+        self._updating_spi = False
         
         # Calculate actual DC:AC ratio achieved
         actual_ratio = self.selected_inverter.dc_ac_ratio(
@@ -1208,7 +1367,7 @@ class QuickEstimate(ttk.Frame):
         )
         topology_combo.pack(side='left', padx=(0, 15))
         self.disable_combobox_scroll(topology_combo)
-        self.topology_var.trace_add('write', lambda *args: (self._mark_stale(), self._schedule_autosave()))
+        self.topology_var.trace_add('write', lambda *args: (self._update_distance_hints(), self._refresh_block_details(), self._mark_stale(), self._schedule_autosave()))
         
         ttk.Label(topology_row, text="DC:AC Ratio:").pack(side='left', padx=(0, 5))
         self.dc_ac_ratio_var = tk.StringVar(value='1.25')
@@ -1220,8 +1379,14 @@ class QuickEstimate(ttk.Frame):
         
         ttk.Label(topology_row, text="Strings/Inverter:").pack(side='left', padx=(0, 5))
         self.strings_per_inverter_var = tk.StringVar(value='--')
-        self.strings_per_inverter_label = ttk.Label(topology_row, textvariable=self.strings_per_inverter_var, width=6, font=('Helvetica', 10, 'bold'))
-        self.strings_per_inverter_label.pack(side='left', padx=(0, 15))
+        self._updating_spi = False  # Guard to prevent infinite loop
+        spi_spinbox = ttk.Spinbox(
+            topology_row, from_=1, to=100,
+            textvariable=self.strings_per_inverter_var, width=6,
+            font=('Helvetica', 10, 'bold')
+        )
+        spi_spinbox.pack(side='left', padx=(0, 15))
+        self.strings_per_inverter_var.trace_add('write', self._on_strings_per_inverter_changed)
         
         # Isc warning label (hidden by default)
         self.isc_warning_label = ttk.Label(topology_row, text="", foreground='red')
@@ -1253,6 +1418,27 @@ class QuickEstimate(ttk.Frame):
         wire_gauge_combo.pack(side='left')
         self.disable_combobox_scroll(wire_gauge_combo)
         self.wire_gauge_var.trace_add('write', lambda *args: (self._mark_stale(), self._schedule_autosave()))
+        
+        # Row 5: Topology-dependent distance inputs
+        distance_row = ttk.Frame(settings_frame)
+        distance_row.pack(fill='x', pady=(5, 0))
+        
+        ttk.Label(distance_row, text="Avg DC Feeder Run (ft):").pack(side='left', padx=(0, 5))
+        self.dc_feeder_distance_var = tk.StringVar(value='500')
+        ttk.Spinbox(distance_row, from_=0, to=5000, increment=50,
+                     textvariable=self.dc_feeder_distance_var, width=8).pack(side='left', padx=(0, 15))
+        self.dc_feeder_distance_var.trace_add('write', lambda *args: (self._mark_stale(), self._schedule_autosave()))
+        
+        ttk.Label(distance_row, text="Avg AC Homerun (ft):").pack(side='left', padx=(0, 5))
+        self.ac_homerun_distance_var = tk.StringVar(value='500')
+        ttk.Spinbox(distance_row, from_=0, to=5000, increment=50,
+                     textvariable=self.ac_homerun_distance_var, width=8).pack(side='left', padx=(0, 15))
+        self.ac_homerun_distance_var.trace_add('write', lambda *args: (self._mark_stale(), self._schedule_autosave()))
+        
+        # Topology hint label
+        self.distance_hint_label = ttk.Label(distance_row, text="", foreground='gray')
+        self.distance_hint_label.pack(side='left', padx=(5, 0))
+        self._update_distance_hints()
         
         # Button row
         button_row = ttk.Frame(bottom_frame)
@@ -1578,73 +1764,79 @@ class QuickEstimate(ttk.Frame):
             self._schedule_autosave()
         name_var.trace_add('write', update_name)
         
-        # Block Type
-        ttk.Label(form_frame, text="Type:").grid(row=1, column=0, sticky='w', pady=5)
-        type_var = tk.StringVar(value=block['type'])
-        type_combo = ttk.Combobox(form_frame, textvariable=type_var, values=['combiner', 'string_inverter'], state='readonly', width=15)
-        type_combo.grid(row=1, column=1, sticky='w', pady=5, padx=(10, 0))
-        self.disable_combobox_scroll(type_combo)
+        # Topology-driven combiner controls
+        topology = self.topology_var.get()
+        current_row = 1
         
-        def update_type(*args):
-            block['type'] = type_var.get()
-            self._mark_stale()
-            self._schedule_autosave()
-        type_var.trace_add('write', update_type)
+        if topology == 'Central Inverter':
+            # Central Inverter: user specifies combiner count manually
+            ttk.Label(form_frame, text="# Combiner Boxes:").grid(row=current_row, column=0, sticky='w', pady=5)
+            num_cb_var = tk.StringVar(value=str(block.get('num_combiners', 1)))
+            num_cb_spinbox = ttk.Spinbox(form_frame, from_=1, to=50, textvariable=num_cb_var, width=10)
+            num_cb_spinbox.grid(row=current_row, column=1, sticky='w', pady=5, padx=(10, 0))
+            ttk.Label(form_frame, text="(from project drawings)", font=('Helvetica', 8), foreground='gray').grid(row=current_row, column=2, sticky='w', padx=(5, 0))
+            
+            def update_num_cb(*args):
+                try:
+                    block['num_combiners'] = int(num_cb_var.get())
+                except ValueError:
+                    pass
+                self._mark_stale()
+                self._schedule_autosave()
+            num_cb_var.trace_add('write', update_num_cb)
+            current_row += 1
         
-        # Number of Combiner Boxes
-        ttk.Label(form_frame, text="# Combiner Boxes:").grid(row=2, column=0, sticky='w', pady=5)
-        num_cb_var = tk.StringVar(value=str(block.get('num_combiners', 1)))
-        num_cb_spinbox = ttk.Spinbox(form_frame, from_=1, to=20, textvariable=num_cb_var, width=10)
-        num_cb_spinbox.grid(row=2, column=1, sticky='w', pady=5, padx=(10, 0))
-        ttk.Label(form_frame, text="(evenly spaced among tracker rows)", font=('Helvetica', 8), foreground='gray').grid(row=2, column=2, sticky='w', padx=(5, 0))
-        
-        def update_num_cb(*args):
-            try:
-                block['num_combiners'] = int(num_cb_var.get())
-            except ValueError:
-                pass
-            self._mark_stale()
-            self._schedule_autosave()
-        num_cb_var.trace_add('write', update_num_cb)
-        
-        # Breaker Size
-        ttk.Label(form_frame, text="Breaker Size (A):").grid(row=3, column=0, sticky='w', pady=5)
-        breaker_sizes = [100, 125, 150, 175, 200, 225, 250, 300, 350, 400, 450, 500, 600, 700, 800]
-        breaker_var = tk.StringVar(value=str(block.get('breaker_size', 400)))
-        breaker_combo = ttk.Combobox(form_frame, textvariable=breaker_var, values=breaker_sizes, state='readonly', width=10)
-        breaker_combo.grid(row=3, column=1, sticky='w', pady=5, padx=(10, 0))
-        self.disable_combobox_scroll(breaker_combo)
-        
-        def update_breaker(*args):
-            try:
-                block['breaker_size'] = int(breaker_var.get())
-            except ValueError:
-                pass
-            self._mark_stale()
-            self._schedule_autosave()
-        breaker_var.trace_add('write', update_breaker)
-
-        # Combiner Box Override
-        ttk.Label(form_frame, text="Combiner Box:").grid(row=4, column=0, sticky='w', pady=5)
-        combiner_library = self.load_combiner_library()
-        cb_options = ['Auto'] + sorted(
-            [pn for pn in combiner_library.keys() if not pn.startswith('_')],
-            key=lambda pn: (
-                combiner_library[pn].get('max_inputs', 0),
-                combiner_library[pn].get('breaker_size', 0)
+        if topology in ('Centralized String', 'Central Inverter'):
+            # Breaker Size — relevant when combiners exist
+            ttk.Label(form_frame, text="Breaker Size (A):").grid(row=current_row, column=0, sticky='w', pady=5)
+            breaker_sizes = [100, 125, 150, 175, 200, 225, 250, 300, 350, 400, 450, 500, 600, 700, 800]
+            breaker_var = tk.StringVar(value=str(block.get('breaker_size', 400)))
+            breaker_combo = ttk.Combobox(form_frame, textvariable=breaker_var, values=breaker_sizes, state='readonly', width=10)
+            breaker_combo.grid(row=current_row, column=1, sticky='w', pady=5, padx=(10, 0))
+            self.disable_combobox_scroll(breaker_combo)
+            
+            def update_breaker(*args):
+                try:
+                    block['breaker_size'] = int(breaker_var.get())
+                except ValueError:
+                    pass
+                self._mark_stale()
+                self._schedule_autosave()
+            breaker_var.trace_add('write', update_breaker)
+            current_row += 1
+            
+            # Combiner Box Override
+            ttk.Label(form_frame, text="Combiner Box:").grid(row=current_row, column=0, sticky='w', pady=5)
+            combiner_library = self.load_combiner_library()
+            cb_options = ['Auto'] + sorted(
+                [pn for pn in combiner_library.keys() if not pn.startswith('_')],
+                key=lambda pn: (
+                    combiner_library[pn].get('max_inputs', 0),
+                    combiner_library[pn].get('breaker_size', 0)
+                )
             )
-        )
-        cb_override_var = tk.StringVar(value=block.get('cb_override', 'Auto'))
-        cb_override_combo = ttk.Combobox(form_frame, textvariable=cb_override_var, values=cb_options, state='readonly', width=25)
-        cb_override_combo.grid(row=4, column=1, sticky='w', pady=5, padx=(10, 0))
-        self.disable_combobox_scroll(cb_override_combo)
+            cb_override_var = tk.StringVar(value=block.get('cb_override', 'Auto'))
+            cb_override_combo = ttk.Combobox(form_frame, textvariable=cb_override_var, values=cb_options, state='readonly', width=25)
+            cb_override_combo.grid(row=current_row, column=1, sticky='w', pady=5, padx=(10, 0))
+            self.disable_combobox_scroll(cb_override_combo)
 
-        def update_cb_override(*args):
-            val = cb_override_var.get()
-            block['cb_override'] = val if val != 'Auto' else None
-            self._mark_stale()
-            self._schedule_autosave()
-        cb_override_var.trace_add('write', update_cb_override)
+            def update_cb_override(*args):
+                val = cb_override_var.get()
+                block['cb_override'] = val if val != 'Auto' else None
+                self._mark_stale()
+                self._schedule_autosave()
+            cb_override_var.trace_add('write', update_cb_override)
+            current_row += 1
+            
+            if topology == 'Centralized String':
+                ttk.Label(form_frame, text="", foreground='gray', font=('Helvetica', 8)).grid(row=current_row, column=0, columnspan=3, sticky='w', pady=2)
+                # Update hint after allocation runs
+                self._cb_hint_row = current_row
+                self._cb_hint_frame = form_frame
+        
+        if topology == 'Distributed String':
+            ttk.Label(form_frame, text="No combiner boxes — strings connect directly to inverters",
+                      foreground='gray', font=('Helvetica', 9)).grid(row=current_row, column=0, columnspan=3, sticky='w', pady=5)
 
         # Tracker Configurations Section
         tracker_frame = ttk.LabelFrame(scrollable_frame, text="Tracker Configurations", padding="10")
@@ -1781,7 +1973,18 @@ class QuickEstimate(ttk.Frame):
             'extenders_short': 0,
             'extenders_long': 0,
             'total_whip_length': 0,
+            'dc_feeder_total_ft': 0,
+            'dc_feeder_count': 0,
+            'ac_homerun_total_ft': 0,
+            'ac_homerun_count': 0,
         }
+        
+        # Topology and strings-per-inverter (used throughout calculation)
+        topology = self.topology_var.get()
+        try:
+            strings_per_inv = int(self.strings_per_inverter_var.get())
+        except (ValueError, AttributeError):
+            strings_per_inv = 0
         
         # Validate module selection
         if not self.selected_module:
@@ -1802,16 +2005,7 @@ class QuickEstimate(ttk.Frame):
         # Process each subarray and block
         for subarray_id, subarray in self.subarrays.items():
             for block_id, block in subarray['blocks'].items():
-                num_combiners = block.get('num_combiners', 1)
                 breaker_size = block.get('breaker_size', 400)
-                
-                # Count block device types
-                if block['type'] == 'combiner':
-                    if breaker_size not in totals['combiners_by_breaker']:
-                        totals['combiners_by_breaker'][breaker_size] = 0
-                    totals['combiners_by_breaker'][breaker_size] += num_combiners
-                else:
-                    totals['string_inverters'] += 1
                 
                 # Process trackers in this block
                 block_total_strings = 0
@@ -1845,22 +2039,48 @@ class QuickEstimate(ttk.Frame):
                         totals['harnesses_by_size'][size] += qty
                         block_total_harnesses += qty
                 
-                # --- Combiner box sizing ---
-                if block['type'] == 'combiner' and block_total_strings > 0:
-                    import math
-                    strings_per_cb = math.ceil(block_total_strings / num_combiners)
+                # --- Topology-driven device count and combiner sizing ---
+                import math
+                
+                num_devices = 1
+                num_combiners = 0
+                strings_per_cb = 0
+                
+                if topology == 'Distributed String':
+                    # Devices are inverters — no combiners
+                    if strings_per_inv > 0:
+                        num_devices = math.ceil(block_total_strings / strings_per_inv)
+                
+                elif topology == 'Centralized String':
+                    # 1 combiner per inverter, auto-derived
+                    if strings_per_inv > 0:
+                        num_devices = math.ceil(block_total_strings / strings_per_inv)
+                    num_combiners = num_devices
+                    strings_per_cb = strings_per_inv
+                
+                elif topology == 'Central Inverter':
+                    # Manual combiner count from block data
+                    num_combiners = block.get('num_combiners', 1)
+                    num_devices = num_combiners
+                    if num_combiners > 0 and block_total_strings > 0:
+                        strings_per_cb = math.ceil(block_total_strings / num_combiners)
+                
+                # Combiner box sizing (Centralized String and Central Inverter only)
+                if num_combiners > 0 and block_total_strings > 0:
+                    if breaker_size not in totals['combiners_by_breaker']:
+                        totals['combiners_by_breaker'][breaker_size] = 0
+                    totals['combiners_by_breaker'][breaker_size] += num_combiners
                     
-                    # Calculate fuse current: Isc * 1.56 * max harness strings
                     fuse_current = module_isc * 1.56 * max(max_harness_strings, 1)
                     fuse_holder_rating = self.get_fuse_holder_category(fuse_current)
                     
-                    # Use manual override if set, otherwise auto-match
                     cb_override = block.get('cb_override')
                     if cb_override:
                         combiner_library = self.load_combiner_library()
                         matched_cb = combiner_library.get(cb_override)
                     else:
                         matched_cb = self.find_combiner_box(strings_per_cb, breaker_size, fuse_holder_rating)
+                    
                     if matched_cb:
                         totals['combiner_details'].append({
                             'part_number': matched_cb.get('part_number', ''),
@@ -1884,19 +2104,18 @@ class QuickEstimate(ttk.Frame):
                             'block_name': block['name']
                         })
                 
-                # --- Whip calculation with CB placement ---
+                # --- Whip calculation (to nearest device — inverter or combiner) ---
                 try:
                     row_spacing = float(self.row_spacing_var.get())
                 except ValueError:
                     row_spacing = 20.0
                 
-                if block_total_rows > 0:
-                    cb_count = num_combiners if block['type'] == 'combiner' else 1
+                if block_total_rows > 0 and num_devices > 0:
                     whip_distances = self.calculate_cb_whip_distances(
-                        block_total_rows, cb_count, row_spacing
+                        block_total_rows, num_devices, row_spacing
                     )
                     
-                    for distance_ft, cb_idx in whip_distances:
+                    for distance_ft, device_idx in whip_distances:
                         whip_length = self.round_whip_length(distance_ft)
                         whips_at_length = 2  # pos + neg per row
                         
@@ -2027,7 +2246,47 @@ class QuickEstimate(ttk.Frame):
                     'allocations': all_allocations
                 }
         
+        # Adjust harness counts for split trackers
+        self._adjust_harnesses_for_splits(totals)
+        
+        # --- DC Feeder and AC Homerun calculations (topology-driven) ---
+        try:
+            dc_feeder_avg_ft = float(self.dc_feeder_distance_var.get())
+        except (ValueError, AttributeError):
+            dc_feeder_avg_ft = 500.0
+        try:
+            ac_homerun_avg_ft = float(self.ac_homerun_distance_var.get())
+        except (ValueError, AttributeError):
+            ac_homerun_avg_ft = 500.0
+        
+        total_inverters = totals.get('inverter_summary', {}).get('total_inverters', 0)
+        total_combiners = sum(totals['combiners_by_breaker'].values())
+        
+        if topology == 'Distributed String':
+            # No DC feeders; AC homerun from each inverter
+            totals['dc_feeder_count'] = 0
+            totals['dc_feeder_total_ft'] = 0
+            totals['ac_homerun_count'] = total_inverters
+            totals['ac_homerun_total_ft'] = total_inverters * ac_homerun_avg_ft
+        elif topology == 'Centralized String':
+            # DC feeder from each combiner to inverter bank; short AC from bank
+            totals['dc_feeder_count'] = total_combiners
+            totals['dc_feeder_total_ft'] = total_combiners * dc_feeder_avg_ft
+            totals['ac_homerun_count'] = total_inverters
+            totals['ac_homerun_total_ft'] = total_inverters * ac_homerun_avg_ft
+        elif topology == 'Central Inverter':
+            # DC feeder from each combiner to central inverter; minimal AC
+            totals['dc_feeder_count'] = total_combiners
+            totals['dc_feeder_total_ft'] = total_combiners * dc_feeder_avg_ft
+            # Central inverter: typically 1 AC connection per block/subarray
+            num_subarrays = len(self.subarrays)
+            totals['ac_homerun_count'] = max(num_subarrays, 1)
+            totals['ac_homerun_total_ft'] = totals['ac_homerun_count'] * ac_homerun_avg_ft
+
         # ==================== Display Results ====================
+        
+        total_inverters = totals.get('inverter_summary', {}).get('total_inverters', 0)
+        total_combiners = sum(totals['combiners_by_breaker'].values())
 
         # Store totals for Excel export
         self.last_totals = totals
@@ -2104,11 +2363,31 @@ class QuickEstimate(ttk.Frame):
 
         # Whips
         if totals['whips_by_length']:
-            insert_section('WHIPS')
+            whip_label = 'WHIPS (to inverter)' if topology == 'Distributed String' else 'WHIPS (to combiner)'
+            insert_section(whip_label)
             for length in sorted(totals['whips_by_length'].keys()):
                 qty = totals['whips_by_length'][length]
                 w_pn, w_unit, w_ext = self.lookup_part_and_price('whip', polarity='positive', length_ft=length, qty=qty)
                 insert_row(f"Whip {length}ft", w_pn, qty, 'ea', w_unit, w_ext)
+        
+        # Inverters
+        if total_inverters > 0:
+            insert_section('INVERTERS')
+            inv_name = f"{self.selected_inverter.manufacturer} {self.selected_inverter.model}" if self.selected_inverter else "Inverter"
+            inv_summary = totals.get('inverter_summary', {})
+            actual_ratio = inv_summary.get('actual_dc_ac', 0)
+            insert_row(f"{inv_name} (DC:AC {actual_ratio:.2f})", '', total_inverters, 'ea')
+        
+        # DC Feeders (Centralized String and Central Inverter only)
+        if totals['dc_feeder_count'] > 0:
+            insert_section('DC FEEDERS')
+            insert_row(f"DC Feeder — avg {dc_feeder_avg_ft:.0f}ft run × {totals['dc_feeder_count']} runs (pos)", '', f"{totals['dc_feeder_total_ft']:.0f}", 'ft')
+            insert_row(f"DC Feeder — avg {dc_feeder_avg_ft:.0f}ft run × {totals['dc_feeder_count']} runs (neg)", '', f"{totals['dc_feeder_total_ft']:.0f}", 'ft')
+        
+        # AC Homeruns
+        if totals['ac_homerun_count'] > 0:
+            insert_section('AC HOMERUNS')
+            insert_row(f"AC Homerun — avg {ac_homerun_avg_ft:.0f}ft run × {totals['ac_homerun_count']} runs", '', f"{totals['ac_homerun_total_ft']:.0f}", 'ft')
 
     def export_to_excel(self):
         """Export the quick estimate BOM to Excel"""
@@ -2237,9 +2516,14 @@ class QuickEstimate(ttk.Frame):
             cell.font = title_font
             row += 1
             
-            # Block summary headers
-            block_headers = ['Subarray', 'Block', 'Type', '# CBs', 'Breaker (A)', 
-                           'Tracker Configs', 'Total Strings', 'Total Trackers']
+            # Block summary headers (topology-aware)
+            topology = self.topology_var.get()
+            if topology == 'Distributed String':
+                block_headers = ['Subarray', 'Block', 'Tracker Configs', 'Total Strings', 'Total Trackers']
+            elif topology == 'Centralized String':
+                block_headers = ['Subarray', 'Block', 'Breaker (A)', 'Tracker Configs', 'Total Strings', 'Total Trackers']
+            else:  # Central Inverter
+                block_headers = ['Subarray', 'Block', '# CBs', 'Breaker (A)', 'Tracker Configs', 'Total Strings', 'Total Trackers']
             for col, header in enumerate(block_headers, 1):
                 cell = ws.cell(row=row, column=col, value=header)
                 cell.font = header_font
@@ -2259,16 +2543,33 @@ class QuickEstimate(ttk.Frame):
                         for t in block['trackers'] if t['quantity'] > 0
                     )
                     
-                    row_data = [
-                        subarray['name'],
-                        block['name'],
-                        block['type'].title(),
-                        block.get('num_combiners', 1),
-                        block.get('breaker_size', 400),
-                        tracker_summary,
-                        block_strings,
-                        block_trackers
-                    ]
+                    if topology == 'Distributed String':
+                        row_data = [
+                            subarray['name'],
+                            block['name'],
+                            tracker_summary,
+                            block_strings,
+                            block_trackers
+                        ]
+                    elif topology == 'Centralized String':
+                        row_data = [
+                            subarray['name'],
+                            block['name'],
+                            block.get('breaker_size', 400),
+                            tracker_summary,
+                            block_strings,
+                            block_trackers
+                        ]
+                    else:  # Central Inverter
+                        row_data = [
+                            subarray['name'],
+                            block['name'],
+                            block.get('num_combiners', 1),
+                            block.get('breaker_size', 400),
+                            tracker_summary,
+                            block_strings,
+                            block_trackers
+                        ]
                     for col, value in enumerate(row_data, 1):
                         cell = ws.cell(row=row, column=col, value=value)
                         cell.border = thin_border
