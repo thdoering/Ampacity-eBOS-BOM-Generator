@@ -4,8 +4,9 @@ from typing import Optional, Dict, List, Any
 from pathlib import Path
 import json
 import uuid
+import math
 from datetime import datetime
-from src.utils.string_allocation import allocate_strings
+from src.utils.string_allocation import allocate_strings, allocate_strings_sequential
 
 
 class QuickEstimate(ttk.Frame):
@@ -34,8 +35,6 @@ class QuickEstimate(ttk.Frame):
         self.wire_gauge_default = '10 AWG'
         
         # Track currently selected item
-        self.selected_item_id = None
-        self.selected_item_type = None  # 'subarray' or 'block'
         self.checked_items = set()  # Items checked for export
         self._results_stale = True
         self._calc_btn = None  # Reference to calculate button
@@ -228,7 +227,8 @@ class QuickEstimate(ttk.Frame):
         
         idx = sel[0]
         del self.rows[idx]
-        self._refresh_row_listbox()
+        self.selected_row_idx = None
+        self._refresh_row_listbox(preserve_selection=False)
         
         # Select nearest row
         if self.rows:
@@ -286,31 +286,6 @@ class QuickEstimate(ttk.Frame):
         
         if preserve_selection and old_idx is not None and old_idx < len(self.rows):
             self.row_listbox.selection_set(old_idx)
-        self._updating_listbox = False
-    
-    def _update_row_listbox_text(self, row_idx: int):
-        """Schedule a listbox text refresh — deferred to avoid event loop issues"""
-        if hasattr(self, '_listbox_update_pending'):
-            self.after_cancel(self._listbox_update_pending)
-        self._listbox_update_pending = self.after(300, lambda: self._do_update_row_listbox_text(row_idx))
-    
-    def _do_update_row_listbox_text(self, row_idx: int):
-        """Actually update the listbox text"""
-        if row_idx < 0 or row_idx >= len(self.rows):
-            return
-        row = self.rows[row_idx]
-        total_trackers = sum(seg['quantity'] for seg in row['segments'])
-        total_strings = sum(seg['quantity'] * seg['strings_per_tracker'] for seg in row['segments'])
-        display = f"{row['name']}  ({total_trackers}T / {total_strings}S)"
-        self._updating_listbox = True
-        self.row_listbox.delete(row_idx)
-        self.row_listbox.insert(row_idx, display)
-        self.row_listbox.selection_set(row_idx)
-        # Clear flag after event queue drains
-        self.after(50, self._clear_listbox_guard)
-    
-    def _clear_listbox_guard(self):
-        """Clear the listbox update guard after events have processed"""
         self._updating_listbox = False
 
     def round_whip_length(self, raw_length_ft):
@@ -637,6 +612,12 @@ class QuickEstimate(ttk.Frame):
             self.topology_var.set(estimate_data.get('topology', 'Distributed String'))
         if hasattr(self, 'dc_ac_ratio_var'):
             self.dc_ac_ratio_var.set(str(estimate_data.get('dc_ac_ratio', 1.25)))
+        if hasattr(self, 'breaker_size_var'):
+            self.breaker_size_var.set(estimate_data.get('breaker_size', '400'))
+        if hasattr(self, 'dc_feeder_distance_var'):
+            self.dc_feeder_distance_var.set(str(estimate_data.get('dc_feeder_distance', 500)))
+        if hasattr(self, 'ac_homerun_distance_var'):
+            self.ac_homerun_distance_var.set(str(estimate_data.get('ac_homerun_distance', 500)))
         
         # Load rows (new format) or convert from old subarrays format
         saved_subarrays = estimate_data.get('subarrays', {})
@@ -700,7 +681,7 @@ class QuickEstimate(ttk.Frame):
         
         # Update global settings
         if self.selected_module:
-            estimate_data['module_name'] = f"{self.selected_module.manufacturer} {self.selected_module.model}"
+            estimate_data['module_name'] = self.module_select_var.get()
             estimate_data['module_width_mm'] = self.selected_module.width_mm
             estimate_data['module_isc'] = self.selected_module.isc
         
@@ -718,10 +699,19 @@ class QuickEstimate(ttk.Frame):
         
         # Save inverter selection
         if self.selected_inverter:
-            estimate_data['inverter_name'] = f"{self.selected_inverter.manufacturer} {self.selected_inverter.model}"
+            estimate_data['inverter_name'] = self.inverter_select_var.get()
         
         # Save topology and DC:AC ratio
         estimate_data['topology'] = self.topology_var.get()
+        estimate_data['breaker_size'] = self.breaker_size_var.get()
+        try:
+            estimate_data['dc_feeder_distance'] = float(self.dc_feeder_distance_var.get())
+        except (ValueError, AttributeError):
+            pass
+        try:
+            estimate_data['ac_homerun_distance'] = float(self.ac_homerun_distance_var.get())
+        except (ValueError, AttributeError):
+            pass
         try:
             estimate_data['dc_ac_ratio'] = float(self.dc_ac_ratio_var.get())
         except ValueError:
@@ -890,6 +880,8 @@ class QuickEstimate(ttk.Frame):
             self.inverter_info_label.config(text="No inverter selected", foreground='gray')
         if hasattr(self, 'topology_var'):
             self.topology_var.set('Distributed String')
+        if hasattr(self, 'breaker_size_var'):
+            self.breaker_size_var.set(estimate_data.get('breaker_size', '400'))
         if hasattr(self, 'dc_ac_ratio_var'):
             self.dc_ac_ratio_var.set('1.25')
         if hasattr(self, 'strings_per_inverter_var'):
@@ -980,22 +972,13 @@ class QuickEstimate(ttk.Frame):
         """Open the site preview in a pop-out window"""
         inv_summary = getattr(self, 'last_totals', {}).get('inverter_summary', {})
         
-        if not inv_summary or not inv_summary.get('allocations'):
+        if not inv_summary or not inv_summary.get('allocation_result'):
             from tkinter import messagebox
             messagebox.showinfo("No Data", "Run Calculate Estimate first to generate preview data.")
             return
         
         topology = self.topology_var.get()
-        SitePreviewWindow(self, inv_summary, topology, self.INVERTER_COLORS)
-
-    def _refresh_block_details(self):
-        """Re-render the block detail panel if a block is currently selected."""
-        if self.selected_item_type == 'block' and self.selected_item_id:
-            parent_id = self.tree.parent(self.selected_item_id)
-            if parent_id:
-                for widget in self.details_container.winfo_children():
-                    widget.destroy()
-                self.show_block_details(parent_id, self.selected_item_id)
+        SitePreviewWindow(self, inv_summary, topology, self.INVERTER_COLORS, self.rows)
 
     def _on_strings_per_inverter_changed(self, *args):
         """When user manually edits strings/inverter, reverse-calculate DC:AC ratio."""
@@ -1058,73 +1041,66 @@ class QuickEstimate(ttk.Frame):
 
     def _get_harness_config_for_tracker_type(self, strings_per_tracker):
         """Find the harness config used for trackers with the given string count."""
-        for subarray_id, subarray in self.subarrays.items():
-            for block_id, block in subarray['blocks'].items():
-                for tracker in block['trackers']:
-                    if tracker['strings'] == strings_per_tracker and tracker['quantity'] > 0:
-                        return self.parse_harness_config(tracker['harness_config'])
+        for row in self.rows:
+            for seg in row['segments']:
+                if seg['strings_per_tracker'] == strings_per_tracker and seg['quantity'] > 0:
+                    return self.parse_harness_config(seg['harness_config'])
         # Fallback: single harness equal to string count
         return [strings_per_tracker]
 
     def _adjust_harnesses_for_splits(self, totals):
         """Adjust harness counts based on inverter allocation split trackers.
         
-        When a tracker is split between two inverters, its original harness config
-        is replaced by harnesses matching the split amounts.
-        E.g., a 3-string tracker split 1/2 → remove one 3-string harness, 
-              add one 1-string + one 2-string harness.
+        Uses the harness_map from allocate_strings_sequential() to identify
+        split trackers and replace their original harness configs with
+        harnesses matching the split amounts.
+        
+        E.g., a 3-string tracker with harness config '3' split 1/2 →
+              remove one 3-string harness, add one 1-string + one 2-string.
         """
         inv_summary = totals.get('inverter_summary', {})
-        allocations = inv_summary.get('allocations', [])
+        allocation_result = inv_summary.get('allocation_result')
         
-        if not allocations:
+        if not allocation_result:
             return
         
-        for alloc_info in allocations:
-            strings_per_tracker = alloc_info['strings_per_tracker']
-            allocation = alloc_info['allocation']
-            inverters = allocation.get('inverters', [])
+        # Collect split tracker info from harness_map
+        # Each split tracker appears in multiple inverters with position head/tail/middle
+        split_trackers = {}  # tracker_idx -> list of harness_map entries
+        
+        for inv in allocation_result['inverters']:
+            for entry in inv['harness_map']:
+                if entry['is_split']:
+                    tidx = entry['tracker_idx']
+                    if tidx not in split_trackers:
+                        split_trackers[tidx] = []
+                    split_trackers[tidx].append(entry)
+        
+        if not split_trackers:
+            return
+        
+        split_count = 0
+        
+        for tidx, entries in split_trackers.items():
+            spt = entries[0]['strings_per_tracker']
+            original_harness_sizes = self._get_harness_config_for_tracker_type(spt)
             
-            if not inverters:
-                continue
+            # Remove original harness(es) for this one split tracker
+            for size in original_harness_sizes:
+                if size in totals['harnesses_by_size']:
+                    totals['harnesses_by_size'][size] -= 1
+                    if totals['harnesses_by_size'][size] <= 0:
+                        del totals['harnesses_by_size'][size]
             
-            # Find the original harness config for this tracker type
-            original_harness_sizes = self._get_harness_config_for_tracker_type(strings_per_tracker)
+            # Add replacement harnesses based on actual split amounts
+            for entry in entries:
+                split_size = entry['strings_taken']
+                if split_size not in totals['harnesses_by_size']:
+                    totals['harnesses_by_size'][split_size] = 0
+                totals['harnesses_by_size'][split_size] += 1
             
-            split_count = 0
-            
-            # Check each inverter's pattern for split trackers
-            for i, inv_info in enumerate(inverters):
-                pattern = inv_info['pattern']
-                tail = pattern[-1]
-                
-                if tail >= strings_per_tracker:
-                    continue  # Full tracker at boundary, no split
-                
-                # Last inverter with partial load = end of allocation, not a split
-                is_last = (i == len(inverters) - 1)
-                if is_last and allocation['summary'].get('partial_inverter_strings', 0) > 0:
-                    continue
-                
-                complement = strings_per_tracker - tail
-                
-                # Remove original harness(es) for one tracker
-                for size in original_harness_sizes:
-                    if size in totals['harnesses_by_size']:
-                        totals['harnesses_by_size'][size] -= 1
-                        if totals['harnesses_by_size'][size] <= 0:
-                            del totals['harnesses_by_size'][size]
-                
-                # Add split harnesses (one per side of the split)
-                for split_size in [tail, complement]:
-                    if split_size not in totals['harnesses_by_size']:
-                        totals['harnesses_by_size'][split_size] = 0
-                    totals['harnesses_by_size'][split_size] += 1
-                
-                split_count += 1
-            
-            print(f"  Harness adjustment for {strings_per_tracker}-string trackers: {split_count} split trackers adjusted")
-
+            split_count += 1
+        
     def _update_strings_per_inverter(self):
         """Auto-calculate strings per inverter from DC:AC ratio and show Isc warning if needed"""
         if self._updating_spi:
@@ -1324,7 +1300,7 @@ class QuickEstimate(ttk.Frame):
         )
         topology_combo.pack(side='left', padx=(0, 15))
         self.disable_combobox_scroll(topology_combo)
-        self.topology_var.trace_add('write', lambda *args: (self._update_distance_hints(), self._refresh_block_details(), self._mark_stale(), self._schedule_autosave()))
+        self.topology_var.trace_add('write', lambda *args: (self._update_distance_hints(), self._mark_stale(), self._schedule_autosave()))
         
         ttk.Label(topology_row, text="DC:AC Ratio:").pack(side='left', padx=(0, 5))
         self.dc_ac_ratio_var = tk.StringVar(value='1.25')
@@ -1334,6 +1310,19 @@ class QuickEstimate(ttk.Frame):
         ).pack(side='left', padx=(0, 15))
         self.dc_ac_ratio_var.trace_add('write', lambda *args: (self._update_strings_per_inverter(), self._mark_stale(), self._schedule_autosave()))
         
+        ttk.Label(topology_row, text="Breaker Size:").pack(side='left', padx=(0, 5))
+        self.breaker_size_var = tk.StringVar(value='400')
+        breaker_combo = ttk.Combobox(
+            topology_row,
+            textvariable=self.breaker_size_var,
+            values=['200', '300', '400', '600', '800'],
+            state='readonly',
+            width=6
+        )
+        breaker_combo.pack(side='left', padx=(0, 15))
+        self.disable_combobox_scroll(breaker_combo)
+        self.breaker_size_var.trace_add('write', lambda *args: (self._mark_stale(), self._schedule_autosave()))
+
         ttk.Label(topology_row, text="Strings/Inverter:").pack(side='left', padx=(0, 5))
         self.strings_per_inverter_var = tk.StringVar(value='--')
         self._updating_spi = False  # Guard to prevent infinite loop
@@ -1514,18 +1503,30 @@ class QuickEstimate(ttk.Frame):
 
     def on_row_select(self, event):
         """Handle row selection changes"""
-        sel = self.row_listbox.curselection()
-        print(f"[on_row_select] fired. _updating_listbox={getattr(self, '_updating_listbox', False)}, sel={sel}")
         if getattr(self, '_updating_listbox', False):
-            print(f"[on_row_select] BLOCKED by guard")
             return
+        
+        sel = self.row_listbox.curselection()
         if not sel:
-            print(f"[on_row_select] no selection — clearing panel")
-            self.clear_details_panel()
             return
         
-        idx = sel[0]
-        if idx < 0 or idx >= len(self.rows):
+        new_idx = sel[0]
+        
+        # Sync the previous row's listbox text before switching (inline, no selection_set)
+        if self.selected_row_idx is not None and self.selected_row_idx != new_idx and self.selected_row_idx < len(self.rows):
+            prev = self.selected_row_idx
+            row = self.rows[prev]
+            total_trackers = sum(seg['quantity'] for seg in row['segments'])
+            total_strings = sum(seg['quantity'] * seg['strings_per_tracker'] for seg in row['segments'])
+            display = f"{row['name']}  ({total_trackers}T / {total_strings}S)"
+            self._updating_listbox = True
+            self.row_listbox.delete(prev)
+            self.row_listbox.insert(prev, display)
+            self.row_listbox.selection_clear(0, tk.END)
+            self.row_listbox.selection_set(new_idx)
+            self._updating_listbox = False
+        
+        if new_idx < 0 or new_idx >= len(self.rows):
             self.clear_details_panel()
             return
         
@@ -1533,20 +1534,8 @@ class QuickEstimate(ttk.Frame):
         for widget in self.details_container.winfo_children():
             widget.destroy()
         
-        self.selected_row_idx = idx
-        self.show_row_details(idx)
-        
-        idx = sel[0]
-        if idx < 0 or idx >= len(self.rows):
-            self.clear_details_panel()
-            return
-        
-        # Clear existing details
-        for widget in self.details_container.winfo_children():
-            widget.destroy()
-        
-        self.selected_row_idx = idx
-        self.show_row_details(idx)
+        self.selected_row_idx = new_idx
+        self.show_row_details(new_idx)
 
     def show_row_details(self, row_idx: int):
         """Show segment editor for the selected row"""
@@ -1589,7 +1578,6 @@ class QuickEstimate(ttk.Frame):
         
         def update_name(*args):
             row['name'] = name_var.get()
-            self._update_row_listbox_text(row_idx)
             self.details_label.config(text=f"Row: {name_var.get()}")
             self._schedule_autosave()
         name_var.trace_add('write', update_name)
@@ -1670,7 +1658,6 @@ class QuickEstimate(ttk.Frame):
             except ValueError:
                 pass
             self._update_row_string_count(row)
-            self._update_row_listbox_text(row_idx)
             self._mark_stale()
             self._schedule_autosave()
         strings_var.trace_add('write', on_strings_change)
@@ -1681,7 +1668,6 @@ class QuickEstimate(ttk.Frame):
             except ValueError:
                 pass
             self._update_row_string_count(row)
-            self._update_row_listbox_text(row_idx)
             self._mark_stale()
             self._schedule_autosave()
         qty_var.trace_add('write', on_qty_change)
@@ -1712,7 +1698,6 @@ class QuickEstimate(ttk.Frame):
         if len(row['segments']) <= 1:
             return  # Keep at least one segment
         del row['segments'][seg_idx]
-        self._update_row_listbox_text(row_idx)
         # Rebuild segment editor to fix indices
         for widget in self.details_container.winfo_children():
             widget.destroy()
@@ -1729,81 +1714,6 @@ class QuickEstimate(ttk.Frame):
         self.row_string_count_label.config(
             text=f"Total Strings: {total_strings:,}  |  Total Trackers: {total_trackers:,}")
 
-    def add_tracker_row_ui(self, block: dict, index: int, tracker: dict):
-        """Add a tracker configuration row to the UI"""
-        row_frame = ttk.Frame(self.tracker_rows_container)
-        row_frame.pack(fill='x', pady=2)
-        
-        # Strings dropdown
-        strings_var = tk.StringVar(value=str(tracker['strings']))
-        strings_combo = ttk.Combobox(row_frame, textvariable=strings_var, 
-                                     values=["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16"], 
-                                     width=12, state='readonly')
-        strings_combo.pack(side='left', padx=2)
-        self.disable_combobox_scroll(strings_combo)
-        
-        # Quantity
-        qty_var = tk.StringVar(value=str(tracker['quantity']))
-        qty_spinbox = ttk.Spinbox(row_frame, from_=0, to=10000, textvariable=qty_var, width=8)
-        qty_spinbox.pack(side='left', padx=2)
-        
-        # Harness config
-        harness_var = tk.StringVar(value=tracker['harness_config'])
-        harness_options = self.get_harness_options(tracker['strings'])
-        harness_combo = ttk.Combobox(row_frame, textvariable=harness_var, 
-                                     values=harness_options, width=12)
-        harness_combo.pack(side='left', padx=2)
-        self.disable_combobox_scroll(harness_combo)
-        
-        # Update harness options when strings change
-        def on_strings_change(*args):
-            try:
-                new_strings = int(strings_var.get())
-                tracker['strings'] = new_strings
-                new_options = self.get_harness_options(new_strings)
-                harness_combo['values'] = new_options
-                if harness_var.get() not in new_options:
-                    harness_var.set(new_options[0])
-                    tracker['harness_config'] = new_options[0]
-            except ValueError:
-                pass
-            self.update_string_count()
-            self._mark_stale()
-        strings_var.trace_add('write', on_strings_change)
-        
-        # Update data when values change
-        def on_qty_change(*args):
-            try:
-                tracker['quantity'] = int(qty_var.get())
-            except ValueError:
-                pass
-            self.update_string_count()
-            self._mark_stale()
-            self._schedule_autosave()
-        qty_var.trace_add('write', on_qty_change)
-        
-        def on_harness_change(*args):
-            tracker['harness_config'] = harness_var.get()
-            self._mark_stale()
-            self._schedule_autosave()
-        harness_var.trace_add('write', on_harness_change)
-        
-        # Remove button
-        def remove_tracker():
-            if tracker in block['trackers']:
-                block['trackers'].remove(tracker)
-            row_frame.destroy()
-            self.update_string_count()
-        
-        remove_btn = ttk.Button(row_frame, text="✕", width=3, command=remove_tracker)
-        remove_btn.pack(side='left', padx=2)
-
-    def add_new_tracker_to_block(self, block: dict):
-        """Add a new tracker configuration to a block"""
-        new_tracker = {'strings': 2, 'quantity': 0, 'harness_config': '2'}
-        block['trackers'].append(new_tracker)
-        self.add_tracker_row_ui(block, len(block['trackers']) - 1, new_tracker)
-
     # ==================== Calculation Methods ====================
 
     def calculate_estimate(self):
@@ -1812,6 +1722,9 @@ class QuickEstimate(ttk.Frame):
         for item in self.results_tree.get_children():
             self.results_tree.delete(item)
         self.checked_items.clear()
+        
+        # Sync all row listbox text before calculating
+        self._refresh_row_listbox(preserve_selection=True)
         
         # Aggregated totals
         totals = {
@@ -1843,264 +1756,185 @@ class QuickEstimate(ttk.Frame):
             messagebox.showwarning("No Module Selected", "Please select a module in Global Settings before calculating.")
             return
         
-        # Get module info from selected module
-        module_isc = self.selected_module.isc
-        module_width_mm = self.selected_module.width_mm
+        # ==================== Build tracker sequence from rows ====================
         try:
             modules_per_string = int(self.modules_per_string_var.get())
         except ValueError:
             modules_per_string = 28
+
+        tracker_sequence = []
+        total_all_trackers = 0
+        total_all_strings = 0
+        total_all_harnesses = 0
+        max_harness_strings = 0
+
+        for row in self.rows:
+            for seg in row['segments']:
+                qty = seg['quantity']
+                spt = seg['strings_per_tracker']
+                harness_config = seg['harness_config']
+
+                if qty <= 0:
+                    continue
+
+                # Add to flat tracker sequence (one entry per physical tracker)
+                for _ in range(qty):
+                    tracker_sequence.append(spt)
+
+                total_all_trackers += qty
+                total_all_strings += qty * spt
+
+                # Count trackers by string count
+                if spt not in totals['trackers_by_string']:
+                    totals['trackers_by_string'][spt] = 0
+                totals['trackers_by_string'][spt] += qty
+
+                # Count harnesses by size
+                harness_sizes = self.parse_harness_config(harness_config)
+                for size in harness_sizes:
+                    if size > max_harness_strings:
+                        max_harness_strings = size
+                    if size not in totals['harnesses_by_size']:
+                        totals['harnesses_by_size'][size] = 0
+                    totals['harnesses_by_size'][size] += qty
+                    total_all_harnesses += qty
+
+        # ==================== Module geometry ====================
+        module_isc = self.selected_module.isc
+        module_width_mm = self.selected_module.width_mm
         module_width_ft = module_width_mm / 304.8
         string_length_ft = module_width_ft * modules_per_string
-        
-        # Process each subarray and block
-        for subarray_id, subarray in self.subarrays.items():
-            for block_id, block in subarray['blocks'].items():
-                breaker_size = block.get('breaker_size', 400)
-                
-                # Process trackers in this block
-                block_total_strings = 0
-                block_total_rows = 0
-                block_total_harnesses = 0
-                max_harness_strings = 0  # Largest harness group size in block
-                
-                for tracker in block['trackers']:
-                    strings = tracker['strings']
-                    qty = tracker['quantity']
-                    harness_config = tracker['harness_config']
-                    
-                    if qty <= 0:
-                        continue
-                    
-                    block_total_strings += qty * strings
-                    block_total_rows += qty
-                    
-                    # Count trackers by string count
-                    if strings not in totals['trackers_by_string']:
-                        totals['trackers_by_string'][strings] = 0
-                    totals['trackers_by_string'][strings] += qty
-                    
-                    # Count harnesses by size and track max harness group
-                    harness_sizes = self.parse_harness_config(harness_config)
-                    for size in harness_sizes:
-                        if size > max_harness_strings:
-                            max_harness_strings = size
-                        if size not in totals['harnesses_by_size']:
-                            totals['harnesses_by_size'][size] = 0
-                        totals['harnesses_by_size'][size] += qty
-                        block_total_harnesses += qty
-                
-                # --- Topology-driven device count and combiner sizing ---
-                import math
-                
-                num_devices = 1
-                num_combiners = 0
-                strings_per_cb = 0
-                
-                if topology == 'Distributed String':
-                    # Devices are inverters — no combiners
-                    if strings_per_inv > 0:
-                        num_devices = math.ceil(block_total_strings / strings_per_inv)
-                
-                elif topology == 'Centralized String':
-                    # 1 combiner per inverter, auto-derived
-                    if strings_per_inv > 0:
-                        num_devices = math.ceil(block_total_strings / strings_per_inv)
-                    num_combiners = num_devices
-                    strings_per_cb = strings_per_inv
-                
-                elif topology == 'Central Inverter':
-                    # Manual combiner count from block data
-                    num_combiners = block.get('num_combiners', 1)
-                    num_devices = num_combiners
-                    if num_combiners > 0 and block_total_strings > 0:
-                        strings_per_cb = math.ceil(block_total_strings / num_combiners)
-                
-                # Combiner box sizing (Centralized String and Central Inverter only)
-                if num_combiners > 0 and block_total_strings > 0:
-                    if breaker_size not in totals['combiners_by_breaker']:
-                        totals['combiners_by_breaker'][breaker_size] = 0
-                    totals['combiners_by_breaker'][breaker_size] += num_combiners
-                    
-                    fuse_current = module_isc * 1.56 * max(max_harness_strings, 1)
-                    fuse_holder_rating = self.get_fuse_holder_category(fuse_current)
-                    
-                    cb_override = block.get('cb_override')
-                    if cb_override:
-                        combiner_library = self.load_combiner_library()
-                        matched_cb = combiner_library.get(cb_override)
-                    else:
-                        matched_cb = self.find_combiner_box(strings_per_cb, breaker_size, fuse_holder_rating)
-                    
-                    if matched_cb:
-                        totals['combiner_details'].append({
-                            'part_number': matched_cb.get('part_number', ''),
-                            'description': matched_cb.get('description', ''),
-                            'max_inputs': matched_cb.get('max_inputs', 0),
-                            'breaker_size': breaker_size,
-                            'fuse_holder_rating': fuse_holder_rating,
-                            'strings_per_cb': strings_per_cb,
-                            'quantity': num_combiners,
-                            'block_name': block['name']
-                        })
-                    else:
-                        totals['combiner_details'].append({
-                            'part_number': 'NO MATCH',
-                            'description': f'No CB found: {strings_per_cb} inputs, {breaker_size}A, {fuse_holder_rating}',
-                            'max_inputs': strings_per_cb,
-                            'breaker_size': breaker_size,
-                            'fuse_holder_rating': fuse_holder_rating,
-                            'strings_per_cb': strings_per_cb,
-                            'quantity': num_combiners,
-                            'block_name': block['name']
-                        })
-                
-                # --- Whip calculation (to nearest device — inverter or combiner) ---
-                try:
-                    row_spacing = float(self.row_spacing_var.get())
-                except ValueError:
-                    row_spacing = 20.0
-                
-                if block_total_rows > 0 and num_devices > 0:
-                    whip_distances = self.calculate_cb_whip_distances(
-                        block_total_rows, num_devices, row_spacing
-                    )
-                    
-                    for distance_ft, device_idx in whip_distances:
-                        whip_length = self.round_whip_length(distance_ft)
-                        whips_at_length = 2  # pos + neg per row
-                        
-                        if whip_length not in totals['whips_by_length']:
-                            totals['whips_by_length'][whip_length] = 0
-                        totals['whips_by_length'][whip_length] += whips_at_length
-                        totals['total_whip_length'] += whip_length * whips_at_length
-                
-                # Calculate extenders for this block (2 per harness - short and long)
-                totals['extenders_short'] += block_total_harnesses
-                totals['extenders_long'] += block_total_harnesses
-        
-        # Calculate extender lengths
-        short_extender_length = self.round_whip_length(10)  # Standard 10ft short side
+
+        # ==================== Allocation ====================
+        allocation_result = None
+
+        if self.selected_inverter and strings_per_inv > 0 and total_all_strings > 0:
+            allocation_result = allocate_strings_sequential(tracker_sequence, strings_per_inv)
+
+            module_wattage = self.selected_module.wattage
+            actual_dc_ac = self.selected_inverter.dc_ac_ratio(
+                strings_per_inv, module_wattage, modules_per_string
+            )
+
+            totals['string_inverters'] = allocation_result['summary']['total_inverters']
+            totals['inverter_summary'] = {
+                'strings_per_inverter': strings_per_inv,
+                'total_inverters': allocation_result['summary']['total_inverters'],
+                'total_split_trackers': allocation_result['summary']['total_split_trackers'],
+                'total_strings': allocation_result['summary']['total_strings'],
+                'actual_dc_ac': actual_dc_ac,
+                'allocation_result': allocation_result,
+                'allocations': [],  # Backward compat — will be replaced in next update
+            }
+
+        # ==================== Topology-driven device & combiner counting ===================
+
+        total_inverters_count = totals.get('inverter_summary', {}).get('total_inverters', 0)
+        num_devices = 0
+        num_combiners = 0
+        strings_per_cb = 0
+
+        # Global breaker size (will add UI field later, default 400A for now)
+        try:
+            breaker_size = int(self.breaker_size_var.get())
+        except (ValueError, AttributeError):
+            breaker_size = 400
+
+        if topology == 'Distributed String':
+            num_devices = total_inverters_count
+
+        elif topology == 'Centralized String':
+            num_devices = total_inverters_count
+            num_combiners = total_inverters_count
+            strings_per_cb = strings_per_inv
+
+        elif topology == 'Central Inverter':
+            # Find largest matching CB to minimize combiner count
+            fuse_current = module_isc * 1.56 * max(max_harness_strings, 1)
+            fuse_holder_rating = self.get_fuse_holder_category(fuse_current)
+            combiner_library = self.load_combiner_library()
+
+            matching_cbs = [
+                cb_data for cb_data in combiner_library.values()
+                if (cb_data.get('breaker_size', 0) == breaker_size and
+                    cb_data.get('fuse_holder_rating', '') == fuse_holder_rating)
+            ]
+
+            if matching_cbs:
+                matching_cbs.sort(key=lambda c: c.get('max_inputs', 0), reverse=True)
+                max_inputs = matching_cbs[0].get('max_inputs', 24)
+            else:
+                max_inputs = 24  # fallback
+
+            if total_all_strings > 0:
+                num_combiners = math.ceil(total_all_strings / max_inputs)
+                strings_per_cb = math.ceil(total_all_strings / num_combiners)
+            num_devices = num_combiners
+
+        # Combiner box matching
+        if num_combiners > 0:
+            if breaker_size not in totals['combiners_by_breaker']:
+                totals['combiners_by_breaker'][breaker_size] = 0
+            totals['combiners_by_breaker'][breaker_size] += num_combiners
+
+            fuse_current = module_isc * 1.56 * max(max_harness_strings, 1)
+            fuse_holder_rating = self.get_fuse_holder_category(fuse_current)
+
+            matched_cb = self.find_combiner_box(strings_per_cb, breaker_size, fuse_holder_rating)
+            if matched_cb:
+                totals['combiner_details'].append({
+                    'part_number': matched_cb.get('part_number', ''),
+                    'description': matched_cb.get('description', ''),
+                    'max_inputs': matched_cb.get('max_inputs', 0),
+                    'breaker_size': breaker_size,
+                    'fuse_holder_rating': fuse_holder_rating,
+                    'strings_per_cb': strings_per_cb,
+                    'quantity': num_combiners,
+                    'block_name': 'Site Total'
+                })
+            else:
+                totals['combiner_details'].append({
+                    'part_number': 'NO MATCH',
+                    'description': f'No CB found: {strings_per_cb} inputs, {breaker_size}A, {fuse_holder_rating}',
+                    'max_inputs': strings_per_cb,
+                    'breaker_size': breaker_size,
+                    'fuse_holder_rating': fuse_holder_rating,
+                    'strings_per_cb': strings_per_cb,
+                    'quantity': num_combiners,
+                    'block_name': 'Site Total'
+                })
+
+        # ==================== Whip calculation ====================
+        try:
+            row_spacing = float(self.row_spacing_var.get())
+        except ValueError:
+            row_spacing = 20.0
+
+        if total_all_trackers > 0 and num_devices > 0:
+            whip_distances = self.calculate_cb_whip_distances(
+                total_all_trackers, num_devices, row_spacing
+            )
+            for distance_ft, device_idx in whip_distances:
+                whip_length = self.round_whip_length(distance_ft)
+                whips_at_length = 2  # pos + neg per tracker row
+                if whip_length not in totals['whips_by_length']:
+                    totals['whips_by_length'][whip_length] = 0
+                totals['whips_by_length'][whip_length] += whips_at_length
+                totals['total_whip_length'] += whip_length * whips_at_length
+
+        # ==================== Extenders ====================
+        totals['extenders_short'] = total_all_harnesses
+        totals['extenders_long'] = total_all_harnesses
+
+        short_extender_length = self.round_whip_length(10)
         long_extender_length = self.round_whip_length(string_length_ft)
-        
-        # ==================== Inverter Allocation ====================
-        
-        totals['inverter_allocation'] = None
-        totals['inverter_summary'] = {}
-        
-        # DEBUG: Print all relevant design inputs
-        print("\n" + "="*80)
-        print("QUICK ESTIMATE DEBUG - INVERTER ALLOCATION INPUTS")
-        print("="*80)
-        
-        print(f"\n--- MODULE ---")
-        if self.selected_module:
-            print(f"  Module: {self.selected_module.manufacturer} {self.selected_module.model}")
-            print(f"  Wattage: {self.selected_module.wattage} W")
-            print(f"  Isc: {self.selected_module.isc} A")
-            print(f"  Imp: {self.selected_module.imp} A")
-            print(f"  Voc: {self.selected_module.voc} V")
-            print(f"  Vmp: {self.selected_module.vmp} V")
-            print(f"  Width: {self.selected_module.width_mm} mm")
-        else:
-            print("  No module selected")
-        
-        print(f"\n--- INVERTER ---")
-        if self.selected_inverter:
-            inv = self.selected_inverter
-            print(f"  Inverter: {inv.manufacturer} {inv.model}")
-            print(f"  Type: {inv.inverter_type.value}")
-            print(f"  Rated AC Power: {inv.rated_power_kw} kW")
-            print(f"  Max DC Power: {inv.max_dc_power_kw} kW")
-            print(f"  Max DC Voltage: {inv.max_dc_voltage} V")
-            print(f"  Startup Voltage: {inv.startup_voltage} V")
-            print(f"  Total String Inputs: {inv.get_total_string_capacity()}")
-            print(f"  Max Short Circuit Current: {getattr(inv, 'max_short_circuit_current', None)}")
-            print(f"  MPPT Channels: {len(inv.mppt_channels)}")
-            for i, ch in enumerate(inv.mppt_channels):
-                print(f"    Channel {i+1}: max_current={ch.max_input_current}A, voltage={ch.min_voltage}-{ch.max_voltage}V, max_power={ch.max_power}W, inputs={ch.num_string_inputs}")
-        else:
-            print("  No inverter selected")
-        
-        print(f"\n--- GLOBAL SETTINGS ---")
-        print(f"  Modules per String: {modules_per_string}")
-        print(f"  Topology: {self.topology_var.get()}")
-        print(f"  DC:AC Ratio (target): {self.dc_ac_ratio_var.get()}")
-        print(f"  Strings/Inverter (calculated): {self.strings_per_inverter_var.get()}")
-        
-        print(f"\n--- TRACKER TOTALS ---")
-        for strings_count, qty in totals['trackers_by_string'].items():
-            print(f"  {strings_count}-string trackers: {qty} units = {qty * strings_count} total strings")
-        total_all_strings = sum(s * q for s, q in totals['trackers_by_string'].items())
-        total_all_trackers = sum(totals['trackers_by_string'].values())
-        print(f"  TOTAL: {total_all_trackers} trackers, {total_all_strings} strings")
-        
-        print(f"\n--- DERIVED VALUES ---")
-        if self.selected_module and self.selected_inverter:
-            string_power_kw = (self.selected_module.wattage * modules_per_string) / 1000
-            print(f"  String Power: {string_power_kw:.2f} kW")
-            print(f"  String Isc: {self.selected_module.isc} A")
-            try:
-                spi = int(self.strings_per_inverter_var.get())
-                inv_dc_power = spi * string_power_kw
-                print(f"  Inverter DC Power ({spi} strings): {inv_dc_power:.2f} kW")
-                print(f"  Actual DC:AC Ratio: {inv_dc_power / inv.rated_power_kw:.3f}")
-                print(f"  Total Isc ({spi} strings): {spi * self.selected_module.isc:.1f} A")
-                if total_all_strings > 0:
-                    num_inverters = total_all_strings / spi
-                    print(f"  Inverters Needed: {total_all_strings} / {spi} = {num_inverters:.2f}")
-            except ValueError:
-                print(f"  Strings/Inverter is not a valid number: {self.strings_per_inverter_var.get()}")
-        
-        print("="*80 + "\n")
-        
-        if self.selected_inverter:
-            try:
-                strings_per_inv = int(self.strings_per_inverter_var.get())
-            except (ValueError, AttributeError):
-                strings_per_inv = 0
-            
-            if strings_per_inv > 0:
-                # Run allocation per tracker type, then aggregate
-                all_allocations = []
-                total_inverters = 0
-                total_full_inverters = 0
-                total_split_trackers = 0
-                total_strings_allocated = 0
-                
-                for strings_count, qty in totals['trackers_by_string'].items():
-                    if qty > 0:
-                        alloc = allocate_strings(strings_count, strings_per_inv, qty)
-                        all_allocations.append({
-                            'strings_per_tracker': strings_count,
-                            'tracker_count': qty,
-                            'allocation': alloc
-                        })
-                        total_inverters += alloc['summary']['total_inverters']
-                        total_full_inverters += alloc['summary']['full_inverters']
-                        total_split_trackers += alloc['summary']['total_split_trackers']
-                        total_strings_allocated += alloc['summary']['total_strings']
-                
-                # Calculate actual DC:AC ratio
-                module_wattage = self.selected_module.wattage
-                actual_dc_ac = self.selected_inverter.dc_ac_ratio(
-                    strings_per_inv, module_wattage, modules_per_string
-                )
-                
-                totals['inverter_summary'] = {
-                    'strings_per_inverter': strings_per_inv,
-                    'total_inverters': total_inverters,
-                    'full_inverters': total_full_inverters,
-                    'total_split_trackers': total_split_trackers,
-                    'total_strings': total_strings_allocated,
-                    'actual_dc_ac': actual_dc_ac,
-                    'allocations': all_allocations
-                }
-        
-        # Adjust harness counts for split trackers
+
+        # ==================== Harness split adjustment ====================
+        # NOTE: _adjust_harnesses_for_splits will be updated to use harness_map
+        # in the next batch. For now it's a no-op since allocations=[] above.
         self._adjust_harnesses_for_splits(totals)
-        
-        # --- DC Feeder and AC Homerun calculations (topology-driven) ---
+
+        # ==================== DC Feeder and AC Homerun ====================
         try:
             dc_feeder_avg_ft = float(self.dc_feeder_distance_var.get())
         except (ValueError, AttributeError):
@@ -2109,30 +1943,25 @@ class QuickEstimate(ttk.Frame):
             ac_homerun_avg_ft = float(self.ac_homerun_distance_var.get())
         except (ValueError, AttributeError):
             ac_homerun_avg_ft = 500.0
-        
+
         total_inverters = totals.get('inverter_summary', {}).get('total_inverters', 0)
         total_combiners = sum(totals['combiners_by_breaker'].values())
-        
+
         if topology == 'Distributed String':
-            # No DC feeders; AC homerun from each inverter
             totals['dc_feeder_count'] = 0
             totals['dc_feeder_total_ft'] = 0
             totals['ac_homerun_count'] = total_inverters
             totals['ac_homerun_total_ft'] = total_inverters * ac_homerun_avg_ft
         elif topology == 'Centralized String':
-            # DC feeder from each combiner to inverter bank; short AC from bank
             totals['dc_feeder_count'] = total_combiners
             totals['dc_feeder_total_ft'] = total_combiners * dc_feeder_avg_ft
             totals['ac_homerun_count'] = total_inverters
             totals['ac_homerun_total_ft'] = total_inverters * ac_homerun_avg_ft
         elif topology == 'Central Inverter':
-            # DC feeder from each combiner to central inverter; minimal AC
             totals['dc_feeder_count'] = total_combiners
             totals['dc_feeder_total_ft'] = total_combiners * dc_feeder_avg_ft
-            # Central inverter: typically 1 AC connection per block/subarray
-            num_subarrays = len(self.subarrays)
-            totals['ac_homerun_count'] = max(num_subarrays, 1)
-            totals['ac_homerun_total_ft'] = totals['ac_homerun_count'] * ac_homerun_avg_ft
+            totals['ac_homerun_count'] = 1
+            totals['ac_homerun_total_ft'] = ac_homerun_avg_ft
 
         # ==================== Display Results ====================
         
@@ -2176,18 +2005,26 @@ class QuickEstimate(ttk.Frame):
                     )
 
         if totals['string_inverters'] > 0:
-            insert_row('String Inverters', '', totals['string_inverters'], 'ea')
-            # Show allocation pattern per tracker type
-            for alloc_data in inv_summary.get('allocations', []):
-                cycle = alloc_data['allocation']['cycle']
-                spt = alloc_data['strings_per_tracker']
-                if cycle:
-                    patterns = ['  '.join(f'{s}' for s in pattern) for pattern in cycle[:3]]
-                    cycle_str = '  /  '.join(f"[{'-'.join(str(s) for s in p)}]" for p in cycle[:3])
-                    insert_row(
-                        f"  {spt}-String Trackers: {cycle_str}",
-                        '', '', ''
-                    )
+            inv_name = f"{self.selected_inverter.manufacturer} {self.selected_inverter.model}" if self.selected_inverter else "Inverter"
+            inv_summary = totals.get('inverter_summary', {})
+            actual_ratio = inv_summary.get('actual_dc_ac', 0)
+            insert_row(f"{inv_name} (DC:AC {actual_ratio:.2f})", '', totals['string_inverters'], 'ea')
+            # Show allocation summary
+            if allocation_result:
+                summary = allocation_result['summary']
+                split_count = summary.get('total_split_trackers', 0)
+                max_spi = summary.get('max_strings_per_inverter', 0)
+                min_spi = summary.get('min_strings_per_inverter', 0)
+                n_larger = summary.get('num_larger_inverters', 0)
+                n_smaller = summary.get('num_smaller_inverters', 0)
+                if max_spi == min_spi:
+                    size_str = f"all {max_spi} strings"
+                else:
+                    size_str = f"{n_larger}x{max_spi}str + {n_smaller}x{min_spi}str"
+                insert_row(
+                    f"  Allocation: {size_str}, {split_count} split tracker(s)",
+                    '', '', ''
+                )
 
         # Harnesses
         if totals['harnesses_by_size']:
@@ -2220,14 +2057,6 @@ class QuickEstimate(ttk.Frame):
                 qty = totals['whips_by_length'][length]
                 w_pn, w_unit, w_ext = self.lookup_part_and_price('whip', polarity='positive', length_ft=length, qty=qty)
                 insert_row(f"Whip {length}ft", w_pn, qty, 'ea', w_unit, w_ext)
-        
-        # Inverters
-        if total_inverters > 0:
-            insert_section('INVERTERS')
-            inv_name = f"{self.selected_inverter.manufacturer} {self.selected_inverter.model}" if self.selected_inverter else "Inverter"
-            inv_summary = totals.get('inverter_summary', {})
-            actual_ratio = inv_summary.get('actual_dc_ac', 0)
-            insert_row(f"{inv_name} (DC:AC {actual_ratio:.2f})", '', total_inverters, 'ea')
         
         # DC Feeders (Centralized String and Central Inverter only)
         if totals['dc_feeder_count'] > 0:
@@ -2361,21 +2190,15 @@ class QuickEstimate(ttk.Frame):
             
             row += 1
             
-            # ========== BLOCK SUMMARY SECTION ==========
+            # ========== ROW SUMMARY SECTION ==========
             ws.merge_cells(f'A{row}:E{row}')
-            cell = ws.cell(row=row, column=1, value="Block Configuration Summary")
+            cell = ws.cell(row=row, column=1, value="Row Configuration Summary")
             cell.font = title_font
             row += 1
             
-            # Block summary headers (topology-aware)
-            topology = self.topology_var.get()
-            if topology == 'Distributed String':
-                block_headers = ['Subarray', 'Block', 'Tracker Configs', 'Total Strings', 'Total Trackers']
-            elif topology == 'Centralized String':
-                block_headers = ['Subarray', 'Block', 'Breaker (A)', 'Tracker Configs', 'Total Strings', 'Total Trackers']
-            else:  # Central Inverter
-                block_headers = ['Subarray', 'Block', '# CBs', 'Breaker (A)', 'Tracker Configs', 'Total Strings', 'Total Trackers']
-            for col, header in enumerate(block_headers, 1):
+            # Row summary headers
+            row_headers = ['Row', 'Segment Configs', 'Total Strings', 'Total Trackers']
+            for col, header in enumerate(row_headers, 1):
                 cell = ws.cell(row=row, column=col, value=header)
                 cell.font = header_font
                 cell.fill = header_fill
@@ -2383,49 +2206,20 @@ class QuickEstimate(ttk.Frame):
                 cell.border = thin_border
             row += 1
             
-            # Block data rows
-            for subarray_id, subarray in self.subarrays.items():
-                for block_id, block in subarray['blocks'].items():
-                    block_strings = sum(t['quantity'] * t['strings'] for t in block['trackers'] if t['quantity'] > 0)
-                    block_trackers = sum(t['quantity'] for t in block['trackers'] if t['quantity'] > 0)
-                    
-                    tracker_summary = ", ".join(
-                        f"{t['quantity']}x {t['strings']}S ({t['harness_config']})"
-                        for t in block['trackers'] if t['quantity'] > 0
-                    )
-                    
-                    if topology == 'Distributed String':
-                        row_data = [
-                            subarray['name'],
-                            block['name'],
-                            tracker_summary,
-                            block_strings,
-                            block_trackers
-                        ]
-                    elif topology == 'Centralized String':
-                        row_data = [
-                            subarray['name'],
-                            block['name'],
-                            block.get('breaker_size', 400),
-                            tracker_summary,
-                            block_strings,
-                            block_trackers
-                        ]
-                    else:  # Central Inverter
-                        row_data = [
-                            subarray['name'],
-                            block['name'],
-                            block.get('num_combiners', 1),
-                            block.get('breaker_size', 400),
-                            tracker_summary,
-                            block_strings,
-                            block_trackers
-                        ]
-                    for col, value in enumerate(row_data, 1):
-                        cell = ws.cell(row=row, column=col, value=value)
-                        cell.border = thin_border
-                        cell.alignment = center_align
-                    row += 1
+            # Row data
+            for r in self.rows:
+                row_strings = sum(s['quantity'] * s['strings_per_tracker'] for s in r['segments'])
+                row_trackers = sum(s['quantity'] for s in r['segments'])
+                seg_summary = ", ".join(
+                    f"{s['quantity']}x{s['strings_per_tracker']}S({s['harness_config']})"
+                    for s in r['segments'] if s['quantity'] > 0
+                )
+                row_data = [r['name'], seg_summary, row_strings, row_trackers]
+                for col, value in enumerate(row_data, 1):
+                    cell = ws.cell(row=row, column=col, value=value)
+                    cell.border = thin_border
+                    cell.alignment = center_align
+                row += 1
             
             row += 1
             
@@ -2487,16 +2281,13 @@ class QuickEstimate(ttk.Frame):
                     cell.border = thin_border
                 row += 1
                 
-                global_inv_idx = 0
-                for alloc_data in inv_sum.get('allocations', []):
-                    allocation = alloc_data['allocation']
-                    spt = alloc_data['strings_per_tracker']
-                    
-                    for inv in allocation['inverters']:
+                allocation_result = inv_sum.get('allocation_result')
+                if allocation_result:
+                    for inv_idx, inv in enumerate(allocation_result['inverters']):
                         pattern_str = '-'.join(str(s) for s in inv['pattern'])
                         
                         inv_row = [
-                            f"Inverter {global_inv_idx + 1}",
+                            f"Inverter {inv_idx + 1}",
                             inv['total_strings'],
                             len(inv['tracker_indices']),
                             f"[{pattern_str}]"
@@ -2506,7 +2297,6 @@ class QuickEstimate(ttk.Frame):
                             cell.border = thin_border
                             cell.alignment = center_align
                         row += 1
-                        global_inv_idx += 1
                 
                 row += 1
 
@@ -2711,7 +2501,7 @@ class QuickEstimateDialog(tk.Toplevel):
 class SitePreviewWindow(tk.Toplevel):
     """Pop-out window for site layout preview with zoom and pan"""
     
-    def __init__(self, parent, inv_summary, topology, colors):
+    def __init__(self, parent, inv_summary, topology, colors, rows=None):
         super().__init__(parent)
         self.title("Site Preview — Inverter Allocation")
         self.geometry("1100x750")
@@ -2720,6 +2510,7 @@ class SitePreviewWindow(tk.Toplevel):
         self.inv_summary = inv_summary
         self.topology = topology
         self.colors = colors
+        self.rows = rows or []
         
         # Zoom and pan state
         self.scale = 1.0
@@ -2791,72 +2582,86 @@ class SitePreviewWindow(tk.Toplevel):
             ttk.Label(swatch_frame, text=f"... +{num_inv - max_show} more",
                      font=('Helvetica', 8, 'italic'), foreground='gray').pack(side='left', padx=(5, 0))
         
-        # Cycle patterns
-        for alloc_data in self.inv_summary.get('allocations', []):
-            cycle = alloc_data['allocation']['cycle']
-            spt = alloc_data['strings_per_tracker']
-            if cycle:
-                cycle_str = '  →  '.join(f"[{'-'.join(str(s) for s in p)}]" for p in cycle)
-                ttk.Label(legend_frame, text=f"{spt}-String Tracker Pattern: {cycle_str}",
-                         font=('Helvetica', 9), foreground='#555555').pack(anchor='w')
+        # Allocation summary
+        allocation_result = self.inv_summary.get('allocation_result')
+        if allocation_result:
+            summary = allocation_result['summary']
+            max_spi = summary.get('max_strings_per_inverter', 0)
+            min_spi = summary.get('min_strings_per_inverter', 0)
+            n_larger = summary.get('num_larger_inverters', 0)
+            n_smaller = summary.get('num_smaller_inverters', 0)
+            split_count = summary.get('total_split_trackers', 0)
+            if max_spi == min_spi:
+                size_str = f"All inverters: {max_spi} strings"
+            else:
+                size_str = f"{n_larger} inverters × {max_spi} strings + {n_smaller} inverters × {min_spi} strings"
+            ttk.Label(legend_frame, text=f"{size_str}  |  {split_count} split tracker(s)",
+                     font=('Helvetica', 9), foreground='#555555').pack(anchor='w')
     
     def build_layout_data(self):
-        """Build a flat list of trackers in order with their inverter color assignments"""
-        self.tracker_list = []
+        """Build a row-based layout of trackers with their inverter color assignments"""
+        self.row_layout = []  # List of rows, each row is a list of tracker dicts
         
-        for alloc_data in self.inv_summary['allocations']:
-            allocation = alloc_data['allocation']
-            spt = alloc_data['strings_per_tracker']
-            
-            # First pass: build a dict of tracker_idx -> list of assignments
-            tracker_map = {}
-            global_inv_idx = 0
-            
-            # Count previous allocations to get correct global inverter index
-            for prev_alloc in self.inv_summary['allocations']:
-                if prev_alloc is alloc_data:
-                    break
-                global_inv_idx += len(prev_alloc['allocation']['inverters'])
-            
-            for inv in allocation['inverters']:
-                color = self.colors[global_inv_idx % len(self.colors)]
-                
-                for tracker_idx, strings_taken in inv['tracker_indices']:
-                    if tracker_idx not in tracker_map:
-                        tracker_map[tracker_idx] = {
-                            'strings_per_tracker': spt,
-                            'assignments': []
-                        }
-                    tracker_map[tracker_idx]['assignments'].append({
-                        'color': color,
-                        'strings': strings_taken,
-                        'inv_idx': global_inv_idx
-                    })
-                
-                global_inv_idx += 1
-            
-            # Convert to ordered list
-            for t_idx in sorted(tracker_map.keys()):
-                self.tracker_list.append(tracker_map[t_idx])
+        allocation_result = self.inv_summary.get('allocation_result')
+        if not allocation_result:
+            self.world_width = 0
+            self.world_height = 0
+            return
+        
+        # Build tracker_idx -> assignments from harness_map
+        tracker_map = {}
+        for inv_idx, inv in enumerate(allocation_result['inverters']):
+            color = self.colors[inv_idx % len(self.colors)]
+            for entry in inv['harness_map']:
+                tidx = entry['tracker_idx']
+                if tidx not in tracker_map:
+                    tracker_map[tidx] = {
+                        'strings_per_tracker': entry['strings_per_tracker'],
+                        'assignments': []
+                    }
+                tracker_map[tidx]['assignments'].append({
+                    'color': color,
+                    'strings': entry['strings_taken'],
+                    'inv_idx': inv_idx
+                })
+        
+        # Split tracker_map into rows based on self.rows segment data
+        global_idx = 0
+        for row_data in self.rows:
+            row_trackers = []
+            for seg in row_data['segments']:
+                for _ in range(seg['quantity']):
+                    if global_idx in tracker_map:
+                        row_trackers.append(tracker_map[global_idx])
+                    global_idx += 1
+            self.row_layout.append({
+                'name': row_data['name'],
+                'trackers': row_trackers
+            })
+        
+        # Also keep flat list for backward compat
+        self.tracker_list = [tracker_map[i] for i in sorted(tracker_map.keys())]
         
         # World-space dimensions
-        # Each tracker is a vertical bar
-        self.tracker_w = 8     # Width of each tracker column (E-W)
-        self.row_gap = 6       # Gap between tracker columns (row spacing)
-        self.string_h = 30     # Height per string (N-S)
-        self.string_gap = 2    # Gap between strings within a tracker
+        self.tracker_w = 8
+        self.row_gap = 6
+        self.string_h = 30
+        self.string_gap = 2
+        self.row_v_gap = 20  # Vertical gap between rows
         
-        # Calculate world bounds
-        total_trackers = len(self.tracker_list)
-        if total_trackers == 0:
+        if not self.tracker_list:
             self.world_width = 0
             self.world_height = 0
             return
         
         max_strings = max(t['strings_per_tracker'] for t in self.tracker_list)
+        max_trackers_in_row = max(len(r['trackers']) for r in self.row_layout) if self.row_layout else 0
         
-        self.world_width = total_trackers * (self.tracker_w + self.row_gap) - self.row_gap
-        self.world_height = max_strings * (self.string_h + self.string_gap) - self.string_gap
+        self.world_width = max_trackers_in_row * (self.tracker_w + self.row_gap) - self.row_gap
+        
+        tracker_height = max_strings * (self.string_h + self.string_gap) - self.string_gap
+        num_rows = len(self.row_layout)
+        self.world_height = num_rows * (tracker_height + self.row_v_gap) - self.row_v_gap if num_rows > 0 else 0
     
     def fit_to_canvas(self):
         """Calculate scale and pan to fit all content"""
@@ -2938,70 +2743,85 @@ class SitePreviewWindow(tk.Toplevel):
         self.dragging = False
     
     def draw(self):
-        """Draw the site layout on the canvas"""
+        """Draw the site layout on the canvas with rows stacked N-S"""
         self.canvas.delete('all')
         
-        if not self.tracker_list:
+        if not self.row_layout:
             return
         
-        # Draw each tracker as a vertical column of strings
-        for i, tracker in enumerate(self.tracker_list):
-            spt = tracker['strings_per_tracker']
-            assignments = tracker['assignments']
+        max_strings = max(t['strings_per_tracker'] for t in self.tracker_list) if self.tracker_list else 3
+        tracker_height = max_strings * (self.string_h + self.string_gap) - self.string_gap
+        
+        for row_idx, row_data in enumerate(self.row_layout):
+            # Y offset for this row
+            row_y_offset = row_idx * (tracker_height + self.row_v_gap)
             
-            # X position for this tracker column
-            wx = i * (self.tracker_w + self.row_gap)
+            # Draw row label
+            label_x, label_y = self.world_to_canvas(-15, row_y_offset + tracker_height / 2)
+            font_size = max(6, min(10, int(9 * self.scale)))
+            self.canvas.create_text(
+                label_x, label_y,
+                text=row_data['name'], font=('Helvetica', font_size),
+                fill='#333333', anchor='e'
+            )
             
-            # Build a list of string colors from top to bottom
-            string_colors = []
-            for assignment in assignments:
-                for _ in range(assignment['strings']):
-                    string_colors.append(assignment['color'])
-            
-            # Draw each string as a segment of the vertical bar
-            for s_idx in range(spt):
-                if s_idx < len(string_colors):
-                    color = string_colors[s_idx]
-                else:
-                    color = '#D0D0D0'
+            for t_idx, tracker in enumerate(row_data['trackers']):
+                spt = tracker['strings_per_tracker']
+                assignments = tracker['assignments']
                 
-                wy = s_idx * (self.string_h + self.string_gap)
+                # X position for this tracker (E-W)
+                wx = t_idx * (self.tracker_w + self.row_gap)
                 
-                sx1, sy1 = self.world_to_canvas(wx, wy)
-                sx2, sy2 = self.world_to_canvas(wx + self.tracker_w, wy + self.string_h)
+                # Build string colors
+                string_colors = []
+                for assignment in assignments:
+                    for _ in range(assignment['strings']):
+                        string_colors.append(assignment['color'])
+                
+                # Draw each string
+                for s_idx in range(spt):
+                    if s_idx < len(string_colors):
+                        color = string_colors[s_idx]
+                    else:
+                        color = '#D0D0D0'
+                    
+                    wy = row_y_offset + s_idx * (self.string_h + self.string_gap)
+                    
+                    sx1, sy1 = self.world_to_canvas(wx, wy)
+                    sx2, sy2 = self.world_to_canvas(wx + self.tracker_w, wy + self.string_h)
+                    
+                    self.canvas.create_rectangle(
+                        sx1, sy1, sx2, sy2,
+                        fill=color, outline='#444444', width=1
+                    )
+                
+                # Tracker outline
+                ty1_world = row_y_offset
+                ty2_world = row_y_offset + spt * (self.string_h + self.string_gap) - self.string_gap
+                
+                ox1, oy1 = self.world_to_canvas(wx - 1, ty1_world - 1)
+                ox2, oy2 = self.world_to_canvas(wx + self.tracker_w + 1, ty2_world + 1)
                 
                 self.canvas.create_rectangle(
-                    sx1, sy1, sx2, sy2,
-                    fill=color, outline='#444444', width=1
+                    ox1, oy1, ox2, oy2,
+                    fill='', outline='#222222', width=1
                 )
-            
-            # Draw tracker outline around all strings
-            ty1_world = 0
-            ty2_world = spt * (self.string_h + self.string_gap) - self.string_gap
-            
-            ox1, oy1 = self.world_to_canvas(wx - 1, ty1_world - 1)
-            ox2, oy2 = self.world_to_canvas(wx + self.tracker_w + 1, ty2_world + 1)
-            
-            self.canvas.create_rectangle(
-                ox1, oy1, ox2, oy2,
-                fill='', outline='#222222', width=1
-            )
-            
-            # Tracker label below
-            label_x, label_y = self.world_to_canvas(
-                wx + self.tracker_w / 2,
-                ty2_world + 5
-            )
-            
-            bar_width = abs(ox2 - ox1)
-            if bar_width > 12:
-                font_size = max(6, min(9, int(8 * self.scale)))
-                self.canvas.create_text(
-                    label_x, label_y,
-                    text=f"T{i+1}", font=('Helvetica', font_size), fill='#555555'
+                
+                # Tracker label below
+                label_x, label_y = self.world_to_canvas(
+                    wx + self.tracker_w / 2,
+                    ty2_world + 5
                 )
+                
+                bar_width = abs(ox2 - ox1)
+                if bar_width > 12:
+                    font_size = max(6, min(9, int(8 * self.scale)))
+                    self.canvas.create_text(
+                        label_x, label_y,
+                        text=f"T{t_idx+1}", font=('Helvetica', font_size), fill='#555555'
+                    )
         
-        # Draw compass indicator in top-right
+        # Compass indicator
         self.canvas.update_idletasks()
         cw = self.canvas.winfo_width()
         compass_x = cw - 30

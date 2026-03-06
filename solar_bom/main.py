@@ -378,7 +378,7 @@ class SolarBOMApplication:
                 if inverters_data:
                     for name, inverter_data in inverters_data.items():
                         # Create proper inverter object here (simplified)
-                        from src.models.inverter import InverterSpec, MPPTChannel, MPPTConfig
+                        from src.models.inverter import InverterSpec, MPPTChannel, MPPTConfig, InverterType
                         
                         # Create MPPT channels
                         channels = []
@@ -393,21 +393,28 @@ class SolarBOMApplication:
                             channels.append(channel)
                         
                         # Create inverter
+                        rated_power = inverter_data.get('rated_power_kw', inverter_data.get('rated_power', 10.0))
+                        max_dc_power = inverter_data.get('max_dc_power_kw', float(rated_power) * 1.5)
+                        inverter_type_str = inverter_data.get('inverter_type', 'String')
+                        
                         inverters[name] = InverterSpec(
                             manufacturer=inverter_data.get('manufacturer', 'Unknown'),
                             model=inverter_data.get('model', 'Unknown'),
-                            rated_power=float(inverter_data.get('rated_power', 10.0)),
+                            inverter_type=InverterType(inverter_type_str),
+                            rated_power_kw=float(rated_power),
+                            max_dc_power_kw=float(max_dc_power),
                             max_efficiency=float(inverter_data.get('max_efficiency', 98.0)),
                             mppt_channels=channels,
                             mppt_configuration=MPPTConfig(inverter_data.get('mppt_configuration', 'Independent')),
-                            max_dc_voltage=float(inverter_data.get('max_dc_voltage', 1000)),
+                            max_dc_voltage=float(inverter_data.get('max_dc_voltage', 1500)),
                             startup_voltage=float(inverter_data.get('startup_voltage', 200)),
                             nominal_ac_voltage=float(inverter_data.get('nominal_ac_voltage', 400.0)),
                             max_ac_current=float(inverter_data.get('max_ac_current', 40.0)),
                             power_factor=float(inverter_data.get('power_factor', 0.99)),
-                            dimensions_mm=inverter_data.get('dimensions_mm', (1000, 600, 300)),
+                            dimensions_mm=tuple(inverter_data.get('dimensions_mm', (1000, 600, 300))),
                             weight_kg=float(inverter_data.get('weight_kg', 75.0)),
-                            ip_rating=inverter_data.get('ip_rating', "IP65")
+                            ip_rating=inverter_data.get('ip_rating', "IP65"),
+                            max_short_circuit_current=inverter_data.get('max_short_circuit_current')
                         )
                 else:
                     print("No inverters.json file found or empty - using empty inverter list")
