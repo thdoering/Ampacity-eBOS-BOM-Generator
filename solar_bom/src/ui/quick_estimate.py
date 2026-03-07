@@ -24,8 +24,8 @@ class QuickEstimate(ttk.Frame):
         self.available_inverters = self.load_inverter_library()  # {display_name: InverterSpec}
         self.selected_inverter = None  # Currently selected InverterSpec
         
-        self.rows = []
-        self.selected_row_idx = None
+        self.groups = []
+        self.selected_group_idx = None
         self._updating_listbox = False
 
         # Global settings defaults
@@ -167,125 +167,125 @@ class QuickEstimate(ttk.Frame):
         combobox.bind("<Button-5>", _ignore_scroll)
 
     def update_string_count(self):
-        """Legacy method — now handled by _update_row_string_count"""
+        """Legacy method — now handled by _update_group_string_count"""
         pass
 
     # ==================== Data Management ====================
 
-    def add_row(self) -> int:
-        """Add a new row and return its index"""
-        row_num = len(self.rows) + 1
-        row = {
-            'name': f"Row {row_num}",
+    def add_group(self) -> int:
+        """Add a new group and return its index"""
+        group_num = len(self.groups) + 1
+        group = {
+            'name': f"Group {group_num}",
             'segments': [
                 {'quantity': 1, 'strings_per_tracker': 3, 'harness_config': '3', 'template_ref': None}
             ]
         }
-        self.rows.append(row)
-        self._refresh_row_listbox()
+        self.groups.append(group)
+        self._refresh_group_listbox()
         
-        # Select the new row
-        idx = len(self.rows) - 1
-        self.row_listbox.selection_clear(0, tk.END)
-        self.row_listbox.selection_set(idx)
-        self.row_listbox.see(idx)
-        self.on_row_select(None)
+        # Select the new group
+        idx = len(self.groups) - 1
+        self.group_listbox.selection_clear(0, tk.END)
+        self.group_listbox.selection_set(idx)
+        self.group_listbox.see(idx)
+        self.on_group_select(None)
         
         self._mark_stale()
         self._schedule_autosave()
         return idx
     
-    def copy_selected_row(self):
-        """Copy the currently selected row"""
-        sel = self.row_listbox.curselection()
+    def copy_selected_group(self):
+        """Copy the currently selected group"""
+        sel = self.group_listbox.curselection()
         if not sel:
             return
         
         import copy
-        source = self.rows[sel[0]]
-        new_row = copy.deepcopy(source)
-        new_row['name'] = f"{source['name']} (Copy)"
+        source = self.groups[sel[0]]
+        new_group = copy.deepcopy(source)
+        new_group['name'] = f"{source['name']} (Copy)"
         
-        # Insert after the selected row
+        # Insert after the selected group
         insert_idx = sel[0] + 1
-        self.rows.insert(insert_idx, new_row)
-        self._refresh_row_listbox()
+        self.groups.insert(insert_idx, new_group)
+        self._refresh_group_listbox()
         
-        self.row_listbox.selection_clear(0, tk.END)
-        self.row_listbox.selection_set(insert_idx)
-        self.row_listbox.see(insert_idx)
-        self.on_row_select(None)
+        self.group_listbox.selection_clear(0, tk.END)
+        self.group_listbox.selection_set(insert_idx)
+        self.group_listbox.see(insert_idx)
+        self.on_group_select(None)
         
         self._mark_stale()
         self._schedule_autosave()
     
-    def delete_selected_row(self):
-        """Delete the currently selected row"""
-        sel = self.row_listbox.curselection()
+    def delete_selected_group(self):
+        """Delete the currently selected group"""
+        sel = self.group_listbox.curselection()
         if not sel:
             return
         
         idx = sel[0]
-        del self.rows[idx]
-        self.selected_row_idx = None
-        self._refresh_row_listbox(preserve_selection=False)
+        del self.groups[idx]
+        self.selected_group_idx = None
+        self._refresh_group_listbox(preserve_selection=False)
         
-        # Select nearest row
-        if self.rows:
-            new_idx = min(idx, len(self.rows) - 1)
-            self.row_listbox.selection_set(new_idx)
-            self.on_row_select(None)
+        # Select nearest group
+        if self.groups:
+            new_idx = min(idx, len(self.groups) - 1)
+            self.group_listbox.selection_set(new_idx)
+            self.on_group_select(None)
         else:
             self.clear_details_panel()
         
         self._mark_stale()
         self._schedule_autosave()
     
-    def move_row_up(self):
-        """Move selected row up"""
-        sel = self.row_listbox.curselection()
+    def move_group_up(self):
+        """Move selected group up"""
+        sel = self.group_listbox.curselection()
         if not sel or sel[0] == 0:
             return
         
         idx = sel[0]
-        self.rows[idx], self.rows[idx - 1] = self.rows[idx - 1], self.rows[idx]
-        self._refresh_row_listbox()
-        self.row_listbox.selection_set(idx - 1)
-        self.on_row_select(None)
+        self.groups[idx], self.groups[idx - 1] = self.groups[idx - 1], self.groups[idx]
+        self._refresh_group_listbox()
+        self.group_listbox.selection_set(idx - 1)
+        self.on_group_select(None)
         
         self._mark_stale()
         self._schedule_autosave()
     
-    def move_row_down(self):
-        """Move selected row down"""
-        sel = self.row_listbox.curselection()
-        if not sel or sel[0] >= len(self.rows) - 1:
+    def move_group_down(self):
+        """Move selected group down"""
+        sel = self.group_listbox.curselection()
+        if not sel or sel[0] >= len(self.groups) - 1:
             return
         
         idx = sel[0]
-        self.rows[idx], self.rows[idx + 1] = self.rows[idx + 1], self.rows[idx]
-        self._refresh_row_listbox()
-        self.row_listbox.selection_set(idx + 1)
-        self.on_row_select(None)
+        self.groups[idx], self.groups[idx + 1] = self.groups[idx + 1], self.groups[idx]
+        self._refresh_group_listbox()
+        self.group_listbox.selection_set(idx + 1)
+        self.on_group_select(None)
         
         self._mark_stale()
         self._schedule_autosave()
     
-    def _refresh_row_listbox(self, preserve_selection=True):
-        """Refresh the listbox display from self.rows"""
-        sel = self.row_listbox.curselection()
+    def _refresh_group_listbox(self, preserve_selection=True):
+        """Refresh the listbox display from self.groups"""
+        sel = self.group_listbox.curselection()
         old_idx = sel[0] if sel else None
         
         self._updating_listbox = True
-        self.row_listbox.delete(0, tk.END)
-        for row in self.rows:
-            total_trackers = sum(seg['quantity'] for seg in row['segments'])
-            total_strings = sum(seg['quantity'] * seg['strings_per_tracker'] for seg in row['segments'])
-            display = f"{row['name']}  ({total_trackers}T / {total_strings}S)"
-            self.row_listbox.insert(tk.END, display)
+        self.group_listbox.delete(0, tk.END)
+        for group in self.groups:
+            total_trackers = sum(seg['quantity'] for seg in group['segments'])
+            total_strings = sum(seg['quantity'] * seg['strings_per_tracker'] for seg in group['segments'])
+            display = f"{group['name']}  ({total_trackers}T / {total_strings}S)"
+            self.group_listbox.insert(tk.END, display)
         
-        if preserve_selection and old_idx is not None and old_idx < len(self.rows):
-            self.row_listbox.selection_set(old_idx)
+        if preserve_selection and old_idx is not None and old_idx < len(self.groups):
+            self.group_listbox.selection_set(old_idx)
         self._updating_listbox = False
 
     def round_whip_length(self, raw_length_ft):
@@ -372,11 +372,11 @@ class QuickEstimate(ttk.Frame):
         
         # Calculate distance from each row to its assigned CB
         whip_distances = []
-        for row_num in range(1, total_rows + 1):
+        for group_num in range(1, total_rows + 1):
             # Find which group this row belongs to
             for group in groups:
-                if group['row_start'] <= row_num <= group['row_end']:
-                    distance_ft = abs(row_num - group['cb_position']) * row_spacing_ft
+                if group['row_start'] <= group_num <= group['row_end']:
+                    distance_ft = abs(group_num - group['cb_position']) * row_spacing_ft
                     whip_distances.append((distance_ft, group['cb_idx']))
                     break
         
@@ -613,27 +613,27 @@ class QuickEstimate(ttk.Frame):
         if hasattr(self, 'dc_ac_ratio_var'):
             self.dc_ac_ratio_var.set(str(estimate_data.get('dc_ac_ratio', 1.25)))
         if hasattr(self, 'breaker_size_var'):
-            self.breaker_size_var.set(estimate_data.get('breaker_size', '400'))
+            self.breaker_size_var.set('400')
         if hasattr(self, 'dc_feeder_distance_var'):
             self.dc_feeder_distance_var.set(str(estimate_data.get('dc_feeder_distance', 500)))
         if hasattr(self, 'ac_homerun_distance_var'):
             self.ac_homerun_distance_var.set(str(estimate_data.get('ac_homerun_distance', 500)))
         
-        # Load rows (new format) or convert from old subarrays format
+        # Load groups (new format) or convert from old subarrays format
         saved_subarrays = estimate_data.get('subarrays', {})
-        saved_rows = estimate_data.get('rows', [])
+        saved_groups = estimate_data.get('groups', estimate_data.get('rows', []))
         
-        self.rows.clear()
-        self._refresh_row_listbox()
+        self.groups.clear()
+        self._refresh_group_listbox()
         
-        if saved_rows:
-            self.rows = saved_rows
+        if saved_groups:
+            self.groups = saved_groups
         elif saved_subarrays:
-            # Backward compat: convert old subarray/block format to rows
-            row_num = 0
+            # Backward compat: convert old subarray/block format to groups
+            group_num = 0
             for subarray_id, subarray_data in saved_subarrays.items():
                 for block_id, block_data in subarray_data.get('blocks', {}).items():
-                    row_num += 1
+                    group_num += 1
                     segments = []
                     for tracker in block_data.get('trackers', []):
                         segments.append({
@@ -644,21 +644,21 @@ class QuickEstimate(ttk.Frame):
                         })
                     if not segments:
                         segments = [{'quantity': 1, 'strings_per_tracker': 3, 'harness_config': '3', 'template_ref': None}]
-                    self.rows.append({
-                        'name': block_data.get('name', f"Row {row_num}"),
+                    self.groups.append({
+                        'name': block_data.get('name', f"Group {group_num}"),
                         'segments': segments
                     })
         else:
             self._loading = False
-            self.add_row()
+            self.add_group()
             return
         
-        self._refresh_row_listbox()
+        self._refresh_group_listbox()
         
-        # Select first row
-        if self.rows:
-            self.row_listbox.selection_set(0)
-            self.on_row_select(None)
+        # Select first group
+        if self.groups:
+            self.group_listbox.selection_set(0)
+            self.on_group_select(None)
         
         self._loading = False
 
@@ -720,8 +720,8 @@ class QuickEstimate(ttk.Frame):
         # Update modified date
         estimate_data['modified_date'] = datetime.now().isoformat()
         
-        # Save rows (new format)
-        estimate_data['rows'] = self.rows
+        # Save groups (new format)
+        estimate_data['groups'] = self.groups
         estimate_data['subarrays'] = {}
         
         # Notify callback
@@ -820,7 +820,7 @@ class QuickEstimate(ttk.Frame):
             'topology': 'Distributed String',
             'dc_ac_ratio': 1.25,
             'subarrays': {},
-            'rows': self.rows
+            'groups': self.groups
         }
         
         self.current_project.quick_estimates[estimate_id] = new_estimate
@@ -831,7 +831,7 @@ class QuickEstimate(ttk.Frame):
         
         # Clear and set up fresh
         self._clear_estimate_ui()
-        self.add_row()
+        self.add_group()
         
         if self.on_save:
             self.on_save()
@@ -858,11 +858,11 @@ class QuickEstimate(ttk.Frame):
                 self.on_save()
 
     def _clear_estimate_ui(self):
-        """Clear the rows and details when switching/deleting estimates"""
-        # Clear rows
-        self.rows.clear()
-        if hasattr(self, 'row_listbox'):
-            self._refresh_row_listbox()
+        """Clear the groups and details when switching/deleting estimates"""
+        # Clear groups
+        self.groups.clear()
+        if hasattr(self, 'group_listbox'):
+            self._refresh_group_listbox()
         
         # Clear details panel
         if hasattr(self, 'details_container'):
@@ -978,7 +978,7 @@ class QuickEstimate(ttk.Frame):
             return
         
         topology = self.topology_var.get()
-        SitePreviewWindow(self, inv_summary, topology, self.INVERTER_COLORS, self.rows)
+        SitePreviewWindow(self, inv_summary, topology, self.INVERTER_COLORS, self.groups)
 
     def _on_strings_per_inverter_changed(self, *args):
         """When user manually edits strings/inverter, reverse-calculate DC:AC ratio."""
@@ -1041,8 +1041,8 @@ class QuickEstimate(ttk.Frame):
 
     def _get_harness_config_for_tracker_type(self, strings_per_tracker):
         """Find the harness config used for trackers with the given string count."""
-        for row in self.rows:
-            for seg in row['segments']:
+        for group in self.groups:
+            for seg in group['segments']:
                 if seg['strings_per_tracker'] == strings_per_tracker and seg['quantity'] > 0:
                     return self.parse_harness_config(seg['harness_config'])
         # Fallback: single harness equal to string count
@@ -1473,37 +1473,37 @@ class QuickEstimate(ttk.Frame):
     def setup_tree_panel(self, parent):
         """Setup the left row list panel"""
         # Label
-        tree_label = ttk.Label(parent, text="Tracker Rows", font=('Helvetica', 10, 'bold'))
+        tree_label = ttk.Label(parent, text="Tracker Groups", font=('Helvetica', 10, 'bold'))
         tree_label.pack(anchor='w', pady=(0, 5))
         
         # Listbox frame
         list_frame = ttk.Frame(parent)
         list_frame.pack(fill='both', expand=True)
         
-        self.row_listbox = tk.Listbox(list_frame, selectmode='browse', font=('Helvetica', 10))
-        self.row_listbox.pack(side='left', fill='both', expand=True)
+        self.group_listbox = tk.Listbox(list_frame, selectmode='browse', font=('Helvetica', 10))
+        self.group_listbox.pack(side='left', fill='both', expand=True)
         
         # Scrollbar
-        list_scroll = ttk.Scrollbar(list_frame, orient='vertical', command=self.row_listbox.yview)
+        list_scroll = ttk.Scrollbar(list_frame, orient='vertical', command=self.group_listbox.yview)
         list_scroll.pack(side='right', fill='y')
-        self.row_listbox.configure(yscrollcommand=list_scroll.set)
+        self.group_listbox.configure(yscrollcommand=list_scroll.set)
         
         # Bind selection
-        self.row_listbox.bind('<<ListboxSelect>>', self.on_row_select)
+        self.group_listbox.bind('<<ListboxSelect>>', self.on_group_select)
         
         # Buttons frame
         btn_frame = ttk.Frame(parent)
         btn_frame.pack(fill='x', pady=(10, 0))
         
-        ttk.Button(btn_frame, text="+ Row", command=self.add_row).pack(side='left', padx=(0, 5))
-        ttk.Button(btn_frame, text="Copy", command=self.copy_selected_row).pack(side='left', padx=(0, 5))
-        ttk.Button(btn_frame, text="Delete", command=self.delete_selected_row).pack(side='left', padx=(0, 5))
+        ttk.Button(btn_frame, text="+ Group", command=self.add_group).pack(side='left', padx=(0, 5))
+        ttk.Button(btn_frame, text="Copy", command=self.copy_selected_group).pack(side='left', padx=(0, 5))
+        ttk.Button(btn_frame, text="Delete", command=self.delete_selected_group).pack(side='left', padx=(0, 5))
         
         # Move buttons
         move_frame = ttk.Frame(parent)
         move_frame.pack(fill='x', pady=(5, 0))
-        ttk.Button(move_frame, text="▲ Up", command=self.move_row_up).pack(side='left', padx=(0, 5))
-        ttk.Button(move_frame, text="▼ Down", command=self.move_row_down).pack(side='left')
+        ttk.Button(move_frame, text="▲ Up", command=self.move_group_up).pack(side='left', padx=(0, 5))
+        ttk.Button(move_frame, text="▼ Down", command=self.move_group_down).pack(side='left')
 
     def setup_details_panel(self, parent):
         """Setup the right details panel"""
@@ -1516,7 +1516,7 @@ class QuickEstimate(ttk.Frame):
         self.details_container.pack(fill='both', expand=True)
         
         # Placeholder
-        self.placeholder_label = ttk.Label(self.details_container, text="Select a row to view details", foreground='gray')
+        self.placeholder_label = ttk.Label(self.details_container, text="Select a group to view details", foreground='gray')
         self.placeholder_label.pack(pady=20)
 
     def clear_details_panel(self):
@@ -1524,37 +1524,37 @@ class QuickEstimate(ttk.Frame):
         for widget in self.details_container.winfo_children():
             widget.destroy()
         
-        self.placeholder_label = ttk.Label(self.details_container, text="Select a row to view details", foreground='gray')
+        self.placeholder_label = ttk.Label(self.details_container, text="Select a group to view details", foreground='gray')
         self.placeholder_label.pack(pady=20)
         
         self.details_label.config(text="Details")
 
-    def on_row_select(self, event):
+    def on_group_select(self, event):
         """Handle row selection changes"""
         if getattr(self, '_updating_listbox', False):
             return
         
-        sel = self.row_listbox.curselection()
+        sel = self.group_listbox.curselection()
         if not sel:
             return
         
         new_idx = sel[0]
         
         # Sync the previous row's listbox text before switching (inline, no selection_set)
-        if self.selected_row_idx is not None and self.selected_row_idx != new_idx and self.selected_row_idx < len(self.rows):
-            prev = self.selected_row_idx
-            row = self.rows[prev]
-            total_trackers = sum(seg['quantity'] for seg in row['segments'])
-            total_strings = sum(seg['quantity'] * seg['strings_per_tracker'] for seg in row['segments'])
-            display = f"{row['name']}  ({total_trackers}T / {total_strings}S)"
+        if self.selected_group_idx is not None and self.selected_group_idx != new_idx and self.selected_group_idx < len(self.groups):
+            prev = self.selected_group_idx
+            group = self.groups[prev]
+            total_trackers = sum(seg['quantity'] for seg in group['segments'])
+            total_strings = sum(seg['quantity'] * seg['strings_per_tracker'] for seg in group['segments'])
+            display = f"{group['name']}  ({total_trackers}T / {total_strings}S)"
             self._updating_listbox = True
-            self.row_listbox.delete(prev)
-            self.row_listbox.insert(prev, display)
-            self.row_listbox.selection_clear(0, tk.END)
-            self.row_listbox.selection_set(new_idx)
+            self.group_listbox.delete(prev)
+            self.group_listbox.insert(prev, display)
+            self.group_listbox.selection_clear(0, tk.END)
+            self.group_listbox.selection_set(new_idx)
             self._updating_listbox = False
         
-        if new_idx < 0 or new_idx >= len(self.rows):
+        if new_idx < 0 or new_idx >= len(self.groups):
             self.clear_details_panel()
             return
         
@@ -1562,16 +1562,16 @@ class QuickEstimate(ttk.Frame):
         for widget in self.details_container.winfo_children():
             widget.destroy()
         
-        self.selected_row_idx = new_idx
-        self.show_row_details(new_idx)
+        self.selected_group_idx = new_idx
+        self.show_group_details(new_idx)
 
-    def show_row_details(self, row_idx: int):
-        """Show segment editor for the selected row"""
-        if row_idx < 0 or row_idx >= len(self.rows):
+    def show_group_details(self, group_idx: int):
+        """Show segment editor for the selected group"""
+        if group_idx < 0 or group_idx >= len(self.groups):
             return
         
-        row = self.rows[row_idx]
-        self.details_label.config(text=f"Row: {row['name']}")
+        group = self.groups[group_idx]
+        self.details_label.config(text=f"Group: {group['name']}")
         
         # Create scrollable frame
         canvas = tk.Canvas(self.details_container, highlightthickness=0)
@@ -1599,14 +1599,14 @@ class QuickEstimate(ttk.Frame):
         form_frame = ttk.Frame(scrollable_frame, padding="10")
         form_frame.pack(fill='x')
         
-        ttk.Label(form_frame, text="Row Name:").grid(row=0, column=0, sticky='w', pady=5)
-        name_var = tk.StringVar(value=row['name'])
+        ttk.Label(form_frame, text="Group Name:").grid(row=0, column=0, sticky='w', pady=5)
+        name_var = tk.StringVar(value=group['name'])
         name_entry = ttk.Entry(form_frame, textvariable=name_var, width=25)
         name_entry.grid(row=0, column=1, sticky='w', pady=5, padx=(10, 0))
         
         def update_name(*args):
-            row['name'] = name_var.get()
-            self.details_label.config(text=f"Row: {name_var.get()}")
+            group['name'] = name_var.get()
+            self.details_label.config(text=f"Group: {name_var.get()}")
             self._schedule_autosave()
         name_var.trace_add('write', update_name)
         
@@ -1615,8 +1615,8 @@ class QuickEstimate(ttk.Frame):
         seg_frame.pack(fill='x', pady=(10, 0), padx=10)
         
         # String count display
-        self.row_string_count_label = ttk.Label(seg_frame, text="", font=('Helvetica', 10, 'bold'))
-        self.row_string_count_label.pack(anchor='w', pady=(0, 10))
+        self.group_string_count_label = ttk.Label(seg_frame, text="", font=('Helvetica', 10, 'bold'))
+        self.group_string_count_label.pack(anchor='w', pady=(0, 10))
         
         # Headers
         header_frame = ttk.Frame(seg_frame)
@@ -1631,18 +1631,18 @@ class QuickEstimate(ttk.Frame):
         self.segment_rows_container.pack(fill='x', pady=(5, 0))
         
         # Add existing segment rows
-        for i, seg in enumerate(row['segments']):
-            self._add_segment_row_ui(row, row_idx, i, seg)
+        for i, seg in enumerate(group['segments']):
+            self._add_segment_ui(group, group_idx, i, seg)
         
         # Update count
-        self._update_row_string_count(row)
+        self._update_group_string_count(group)
         
         # Add segment button
         add_btn = ttk.Button(seg_frame, text="+ Add Segment",
-                            command=lambda: self._add_segment_to_row(row, row_idx))
+                            command=lambda: self._add_segment_to_group(group, group_idx))
         add_btn.pack(anchor='w', pady=(10, 0))
     
-    def _add_segment_row_ui(self, row: dict, row_idx: int, seg_idx: int, segment: dict):
+    def _add_segment_ui(self, group: dict, group_idx: int, seg_idx: int, segment: dict):
         """Add a segment configuration row to the UI"""
         row_frame = ttk.Frame(self.segment_rows_container)
         row_frame.pack(fill='x', pady=2)
@@ -1670,7 +1670,7 @@ class QuickEstimate(ttk.Frame):
         
         # Delete button
         del_btn = ttk.Button(row_frame, text="×", width=3,
-                            command=lambda: self._delete_segment(row, row_idx, seg_idx))
+                            command=lambda: self._delete_segment(group, group_idx, seg_idx))
         del_btn.pack(side='left', padx=2)
         
         # Callbacks
@@ -1685,7 +1685,7 @@ class QuickEstimate(ttk.Frame):
                     segment['harness_config'] = new_options[0]
             except ValueError:
                 pass
-            self._update_row_string_count(row)
+            self._update_group_string_count(group)
             self._mark_stale()
             self._schedule_autosave()
         strings_var.trace_add('write', on_strings_change)
@@ -1695,7 +1695,7 @@ class QuickEstimate(ttk.Frame):
                 segment['quantity'] = max(1, int(qty_var.get()))
             except ValueError:
                 pass
-            self._update_row_string_count(row)
+            self._update_group_string_count(group)
             self._mark_stale()
             self._schedule_autosave()
         qty_var.trace_add('write', on_qty_change)
@@ -1706,9 +1706,9 @@ class QuickEstimate(ttk.Frame):
             self._schedule_autosave()
         harness_var.trace_add('write', on_harness_change)
     
-    def _add_segment_to_row(self, row: dict, row_idx: int):
-        """Add a new segment to the row and refresh UI"""
-        row['segments'].append({
+    def _add_segment_to_group(self, group: dict, group_idx: int):
+        """Add a new segment to the group and refresh UI"""
+        group['segments'].append({
             'quantity': 1,
             'strings_per_tracker': 3,
             'harness_config': '3',
@@ -1717,29 +1717,29 @@ class QuickEstimate(ttk.Frame):
         # Rebuild the details panel to show the new segment
         for widget in self.details_container.winfo_children():
             widget.destroy()
-        self.show_row_details(row_idx)
+        self.show_group_details(group_idx)
         self._mark_stale()
         self._schedule_autosave()
     
-    def _delete_segment(self, row: dict, row_idx: int, seg_idx: int):
-        """Delete a segment from the row"""
-        if len(row['segments']) <= 1:
+    def _delete_segment(self, group: dict, group_idx: int, seg_idx: int):
+        """Delete a segment from the group"""
+        if len(group['segments']) <= 1:
             return  # Keep at least one segment
-        del row['segments'][seg_idx]
+        del group['segments'][seg_idx]
         # Rebuild segment editor to fix indices
         for widget in self.details_container.winfo_children():
             widget.destroy()
-        self.show_row_details(row_idx)
+        self.show_group_details(group_idx)
         self._mark_stale()
         self._schedule_autosave()
     
-    def _update_row_string_count(self, row: dict):
-        """Update the string/tracker count label for a row"""
-        if not hasattr(self, 'row_string_count_label'):
+    def _update_group_string_count(self, group: dict):
+        """Update the string/tracker count label for a group"""
+        if not hasattr(self, 'group_string_count_label'):
             return
-        total_trackers = sum(seg['quantity'] for seg in row['segments'])
-        total_strings = sum(seg['quantity'] * seg['strings_per_tracker'] for seg in row['segments'])
-        self.row_string_count_label.config(
+        total_trackers = sum(seg['quantity'] for seg in group['segments'])
+        total_strings = sum(seg['quantity'] * seg['strings_per_tracker'] for seg in group['segments'])
+        self.group_string_count_label.config(
             text=f"Total Strings: {total_strings:,}  |  Total Trackers: {total_trackers:,}")
 
     # ==================== Calculation Methods ====================
@@ -1751,8 +1751,8 @@ class QuickEstimate(ttk.Frame):
             self.results_tree.delete(item)
         self.checked_items.clear()
         
-        # Sync all row listbox text before calculating
-        self._refresh_row_listbox(preserve_selection=True)
+        # Sync all group listbox text before calculating
+        self._refresh_group_listbox(preserve_selection=True)
         
         # Aggregated totals
         totals = {
@@ -1784,7 +1784,7 @@ class QuickEstimate(ttk.Frame):
             messagebox.showwarning("No Module Selected", "Please select a module in Global Settings before calculating.")
             return
         
-        # ==================== Build tracker sequence from rows ====================
+        # ==================== Build tracker sequence from groups ====================
         try:
             modules_per_string = int(self.modules_per_string_var.get())
         except ValueError:
@@ -1796,8 +1796,8 @@ class QuickEstimate(ttk.Frame):
         total_all_harnesses = 0
         max_harness_strings = 0
 
-        for row in self.rows:
-            for seg in row['segments']:
+        for group in self.groups:
+            for seg in group['segments']:
                 qty = seg['quantity']
                 spt = seg['strings_per_tracker']
                 harness_config = seg['harness_config']
@@ -1944,7 +1944,7 @@ class QuickEstimate(ttk.Frame):
             )
             for distance_ft, device_idx in whip_distances:
                 whip_length = self.round_whip_length(distance_ft)
-                whips_at_length = 2  # pos + neg per tracker row
+                whips_at_length = 2  # pos + neg per tracker group
                 if whip_length not in totals['whips_by_length']:
                     totals['whips_by_length'][whip_length] = 0
                 totals['whips_by_length'][whip_length] += whips_at_length
@@ -2220,12 +2220,12 @@ class QuickEstimate(ttk.Frame):
             
             # ========== ROW SUMMARY SECTION ==========
             ws.merge_cells(f'A{row}:E{row}')
-            cell = ws.cell(row=row, column=1, value="Row Configuration Summary")
+            cell = ws.cell(row=row, column=1, value="Group Configuration Summary")
             cell.font = title_font
             row += 1
             
             # Row summary headers
-            row_headers = ['Row', 'Segment Configs', 'Total Strings', 'Total Trackers']
+            row_headers = ['Group', 'Segment Configs', 'Total Strings', 'Total Trackers']
             for col, header in enumerate(row_headers, 1):
                 cell = ws.cell(row=row, column=col, value=header)
                 cell.font = header_font
@@ -2234,16 +2234,16 @@ class QuickEstimate(ttk.Frame):
                 cell.border = thin_border
             row += 1
             
-            # Row data
-            for r in self.rows:
-                row_strings = sum(s['quantity'] * s['strings_per_tracker'] for s in r['segments'])
-                row_trackers = sum(s['quantity'] for s in r['segments'])
+            # Group data
+            for r in self.groups:
+                group_strings = sum(s['quantity'] * s['strings_per_tracker'] for s in r['segments'])
+                group_trackers = sum(s['quantity'] for s in r['segments'])
                 seg_summary = ", ".join(
                     f"{s['quantity']}x{s['strings_per_tracker']}S({s['harness_config']})"
                     for s in r['segments'] if s['quantity'] > 0
                 )
-                row_data = [r['name'], seg_summary, row_strings, row_trackers]
-                for col, value in enumerate(row_data, 1):
+                group_data = [r['name'], seg_summary, group_strings, group_trackers]
+                for col, value in enumerate(group_data, 1):
                     cell = ws.cell(row=row, column=col, value=value)
                     cell.border = thin_border
                     cell.alignment = center_align
@@ -2529,7 +2529,7 @@ class QuickEstimateDialog(tk.Toplevel):
 class SitePreviewWindow(tk.Toplevel):
     """Pop-out window for site layout preview with zoom and pan"""
     
-    def __init__(self, parent, inv_summary, topology, colors, rows=None):
+    def __init__(self, parent, inv_summary, topology, colors, groups=None):
         super().__init__(parent)
         self.title("Site Preview — Inverter Allocation")
         self.geometry("1100x750")
@@ -2538,7 +2538,7 @@ class SitePreviewWindow(tk.Toplevel):
         self.inv_summary = inv_summary
         self.topology = topology
         self.colors = colors
-        self.rows = rows or []
+        self.groups = groups or []
         
         # Zoom and pan state
         self.scale = 1.0
@@ -2594,7 +2594,7 @@ class SitePreviewWindow(tk.Toplevel):
         legend_frame = ttk.Frame(self, padding="5")
         legend_frame.pack(fill='x')
         
-        # Color swatches row
+        # Color swatches group
         swatch_frame = ttk.Frame(legend_frame)
         swatch_frame.pack(anchor='w')
         
@@ -2627,8 +2627,8 @@ class SitePreviewWindow(tk.Toplevel):
                      font=('Helvetica', 9), foreground='#555555').pack(anchor='w')
     
     def build_layout_data(self):
-        """Build a row-based layout of trackers with their inverter color assignments"""
-        self.row_layout = []  # List of rows, each row is a list of tracker dicts
+        """Build a group-based layout of trackers with their inverter color assignments"""
+        self.group_layout = []  # List of groups, each group is a list of tracker dicts
         
         allocation_result = self.inv_summary.get('allocation_result')
         if not allocation_result:
@@ -2653,18 +2653,18 @@ class SitePreviewWindow(tk.Toplevel):
                     'inv_idx': inv_idx
                 })
         
-        # Split tracker_map into rows based on self.rows segment data
+        # Split tracker_map into groups based on self.groups segment data
         global_idx = 0
-        for row_data in self.rows:
-            row_trackers = []
-            for seg in row_data['segments']:
+        for group_data in self.groups:
+            group_trackers = []
+            for seg in group_data['segments']:
                 for _ in range(seg['quantity']):
                     if global_idx in tracker_map:
-                        row_trackers.append(tracker_map[global_idx])
+                        group_trackers.append(tracker_map[global_idx])
                     global_idx += 1
-            self.row_layout.append({
-                'name': row_data['name'],
-                'trackers': row_trackers
+            self.group_layout.append({
+                'name': group_data['name'],
+                'trackers': group_trackers
             })
         
         # Also keep flat list for backward compat
@@ -2672,10 +2672,10 @@ class SitePreviewWindow(tk.Toplevel):
         
         # World-space dimensions
         self.tracker_w = 8
-        self.row_gap = 6
+        self.group_gap = 6
         self.string_h = 30
         self.string_gap = 2
-        self.row_v_gap = 20  # Vertical gap between rows
+        self.group_v_gap = 20  # Vertical gap between groups
         
         if not self.tracker_list:
             self.world_width = 0
@@ -2683,13 +2683,13 @@ class SitePreviewWindow(tk.Toplevel):
             return
         
         max_strings = max(t['strings_per_tracker'] for t in self.tracker_list)
-        max_trackers_in_row = max(len(r['trackers']) for r in self.row_layout) if self.row_layout else 0
+        max_trackers_in_group = max(len(r['trackers']) for r in self.group_layout) if self.group_layout else 0
         
-        self.world_width = max_trackers_in_row * (self.tracker_w + self.row_gap) - self.row_gap
+        self.world_width = max_trackers_in_group * (self.tracker_w + self.group_gap) - self.group_gap
         
         tracker_height = max_strings * (self.string_h + self.string_gap) - self.string_gap
-        num_rows = len(self.row_layout)
-        self.world_height = num_rows * (tracker_height + self.row_v_gap) - self.row_v_gap if num_rows > 0 else 0
+        num_groups = len(self.group_layout)
+        self.world_height = num_groups * (tracker_height + self.group_v_gap) - self.group_v_gap if num_groups > 0 else 0
     
     def fit_to_canvas(self):
         """Calculate scale and pan to fit all content"""
@@ -2771,34 +2771,34 @@ class SitePreviewWindow(tk.Toplevel):
         self.dragging = False
     
     def draw(self):
-        """Draw the site layout on the canvas with rows stacked N-S"""
+        """Draw the site layout on the canvas with groups stacked N-S"""
         self.canvas.delete('all')
         
-        if not self.row_layout:
+        if not self.group_layout:
             return
         
         max_strings = max(t['strings_per_tracker'] for t in self.tracker_list) if self.tracker_list else 3
         tracker_height = max_strings * (self.string_h + self.string_gap) - self.string_gap
         
-        for row_idx, row_data in enumerate(self.row_layout):
-            # Y offset for this row
-            row_y_offset = row_idx * (tracker_height + self.row_v_gap)
+        for group_idx, group_data in enumerate(self.group_layout):
+            # Y offset for this group
+            group_y_offset = group_idx * (tracker_height + self.group_v_gap)
             
-            # Draw row label
-            label_x, label_y = self.world_to_canvas(-15, row_y_offset + tracker_height / 2)
+            # Draw group label
+            label_x, label_y = self.world_to_canvas(-15, group_y_offset + tracker_height / 2)
             font_size = max(6, min(10, int(9 * self.scale)))
             self.canvas.create_text(
                 label_x, label_y,
-                text=row_data['name'], font=('Helvetica', font_size),
+                text=group_data['name'], font=('Helvetica', font_size),
                 fill='#333333', anchor='e'
             )
             
-            for t_idx, tracker in enumerate(row_data['trackers']):
+            for t_idx, tracker in enumerate(group_data['trackers']):
                 spt = tracker['strings_per_tracker']
                 assignments = tracker['assignments']
                 
                 # X position for this tracker (E-W)
-                wx = t_idx * (self.tracker_w + self.row_gap)
+                wx = t_idx * (self.tracker_w + self.group_gap)
                 
                 # Build string colors
                 string_colors = []
@@ -2813,7 +2813,7 @@ class SitePreviewWindow(tk.Toplevel):
                     else:
                         color = '#D0D0D0'
                     
-                    wy = row_y_offset + s_idx * (self.string_h + self.string_gap)
+                    wy = group_y_offset + s_idx * (self.string_h + self.string_gap)
                     
                     sx1, sy1 = self.world_to_canvas(wx, wy)
                     sx2, sy2 = self.world_to_canvas(wx + self.tracker_w, wy + self.string_h)
@@ -2824,8 +2824,8 @@ class SitePreviewWindow(tk.Toplevel):
                     )
                 
                 # Tracker outline
-                ty1_world = row_y_offset
-                ty2_world = row_y_offset + spt * (self.string_h + self.string_gap) - self.string_gap
+                ty1_world = group_y_offset
+                ty2_world = group_y_offset + spt * (self.string_h + self.string_gap) - self.string_gap
                 
                 ox1, oy1 = self.world_to_canvas(wx - 1, ty1_world - 1)
                 ox2, oy2 = self.world_to_canvas(wx + self.tracker_w + 1, ty2_world + 1)

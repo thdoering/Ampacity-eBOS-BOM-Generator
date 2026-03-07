@@ -242,8 +242,8 @@ class SolarBOMApplication:
         # Add tabs to notebook
         notebook.add(project_info_frame, text='Project Info')
         notebook.add(module_frame, text='Equipment')
-        notebook.add(quick_estimate_frame, text='Quick Estimate')
         notebook.add(tracker_frame, text='Tracker Templates')
+        notebook.add(quick_estimate_frame, text='Quick Estimate')
         notebook.add(block_frame, text='Block Layout')
         notebook.add(device_frame, text='Configure Device')
         notebook.add(bom_frame, text='BOM Generator')
