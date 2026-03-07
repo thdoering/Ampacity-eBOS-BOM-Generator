@@ -6,7 +6,7 @@ import json
 import uuid
 import math
 from datetime import datetime
-from src.utils.string_allocation import allocate_strings, allocate_strings_sequential
+from src.utils.string_allocation import allocate_strings, allocate_strings_sequential, allocate_strings_spatial
 
 
 class QuickEstimate(ttk.Frame):
@@ -1304,6 +1304,51 @@ class QuickEstimate(ttk.Frame):
         else:
             self.distance_hint_label.config(text="")
 
+    def _get_tracker_dims_ft(self, template_ref):
+        """Get (width_ft, length_ft) for a tracker from its template reference.
+        
+        Width = E-W dimension (across tracker row).
+        Length = N-S dimension (along tracker).
+        
+        Returns (width_ft, length_ft) or None if template not found.
+        """
+        if not template_ref or template_ref not in self.enabled_templates:
+            return None
+        
+        tdata = self.enabled_templates[template_ref]
+        ms = tdata.get('module_spec', {})
+        mps = tdata.get('modules_per_string', 28)
+        strings_per_tracker = tdata.get('strings_per_tracker', 1)
+        orientation = tdata.get('module_orientation', 'Portrait')
+        module_spacing_m = tdata.get('module_spacing_m', 0.02)
+        string_spacing_m = tdata.get('string_spacing_m', 0.15)
+        
+        mod_w_m = ms.get('width_mm', 1134) / 1000.0
+        mod_l_m = ms.get('length_mm', 2278) / 1000.0
+        
+        if orientation == 'Portrait':
+            mod_across = mod_l_m   # E-W (width of tracker)
+            mod_along = mod_w_m    # N-S (length of tracker)
+        else:
+            mod_across = mod_w_m
+            mod_along = mod_l_m
+        
+        # Width (E-W): one module across × string count + string gaps
+        width_m = mod_across * strings_per_tracker + string_spacing_m * max(strings_per_tracker - 1, 0)
+        
+        # Length (N-S): modules_per_string along + module gaps
+        length_m = mod_along * mps + module_spacing_m * max(mps - 1, 0)
+        
+        # Check for motor gap
+        motor_gap_m = tdata.get('motor_gap_m', 0)
+        if motor_gap_m > 0:
+            length_m += motor_gap_m
+        
+        width_ft = width_m * 3.28084
+        length_ft = length_m * 3.28084
+        
+        return (width_ft, length_ft)
+
     def _get_harness_config_for_tracker_type(self, strings_per_tracker):
         """Find the harness config used for trackers with the given string count."""
         for group in self.groups:
@@ -2182,11 +2227,105 @@ class QuickEstimate(ttk.Frame):
         module_width_ft = module_width_mm / 304.8
         string_length_ft = module_width_ft * modules_per_string
 
+        # ==================== Build spatial tracker entries ====================
+        try:
+            row_spacing_ft = float(self.row_spacing_var.get())
+        except (ValueError, AttributeError):
+            row_spacing_ft = 20.0
+
+        fallback_width_ft = 6.0
+        fallback_length_ft = 180.0
+
+        # Pre-compute tracker count per group for auto-layout fallback
+        group_tracker_counts = []
+        for group in self.groups:
+            count = sum(seg['quantity'] for seg in group['segments'] if seg['quantity'] > 0)
+            group_tracker_counts.append(count)
+
+        tracker_entries = []
+        flat_idx = 0
+        auto_x_cursor = 0.0  # Running X for auto-layout
+
+        for grp_idx, group in enumerate(self.groups):
+            saved_x = group.get('position_x')
+            saved_y = group.get('position_y')
+
+            if saved_x is not None and saved_y is not None:
+                group_x = saved_x
+                group_y = saved_y
+            else:
+                # Auto-layout: stack groups left-to-right at y=0
+                group_x = auto_x_cursor
+                group_y = 0.0
+
+
+            # Compute group reference motor Y (same as SitePreviewWindow uses)
+            # This is the motor_y of the FIRST segment's template in the group
+            group_ref_motor_y_ft = 0.0
+            for seg in group['segments']:
+                ref_check = seg.get('template_ref')
+                if ref_check and ref_check in self.enabled_templates:
+                    tdata_check = self.enabled_templates[ref_check]
+                    if tdata_check.get('has_motor', True):
+                        # Compute this template's motor_y using same logic
+                        ms_c = tdata_check.get('module_spec', {})
+                        orient_c = tdata_check.get('module_orientation', 'Portrait')
+                        mps_c = tdata_check.get('modules_per_string', 28)
+                        spacing_c = tdata_check.get('module_spacing_m', 0.02)
+                        placement_c = tdata_check.get('motor_placement_type', 'between_strings')
+                        pos_after_c = tdata_check.get('motor_position_after_string', None)
+                        str_idx_c = tdata_check.get('motor_string_index', None)
+                        split_n_c = tdata_check.get('motor_split_north', mps_c // 2)
+                        mod_along_c = (ms_c.get('width_mm', 1000) if orient_c == 'Portrait' else ms_c.get('length_mm', 2000)) / 1000
+                        
+                        if placement_c == 'between_strings':
+                            p = pos_after_c if pos_after_c is not None else (str_idx_c if str_idx_c is not None else 1)
+                            mn = p * mps_c
+                            group_ref_motor_y_ft = (mn * mod_along_c + (mn - 1) * spacing_c + spacing_c) * 3.28084 if mn > 0 else 0.0
+                        elif placement_c == 'middle_of_string':
+                            s = str_idx_c if str_idx_c is not None else 1
+                            mb = (s - 1) * mps_c + split_n_c
+                            group_ref_motor_y_ft = (mb * mod_along_c + (mb - 1) * spacing_c + spacing_c) * 3.28084
+                        break  # Use first template's motor as reference
+
+            tracker_within_group = 0
+            for seg in group['segments']:
+                qty = seg['quantity']
+                spt = seg['strings_per_tracker']
+                if qty <= 0:
+                    continue
+
+                ref = seg.get('template_ref')
+                dims = self._get_tracker_dims_ft(ref)
+                t_length = dims[1] if dims else fallback_length_ft
+
+                for _ in range(qty):
+                    tracker_entries.append({
+                        'original_idx': flat_idx,
+                        'spt': spt,
+                        'x': group_x + tracker_within_group * row_spacing_ft,
+                        'y': group_y,
+                        'length_ft': t_length,
+                        'motor_y_ft': group_ref_motor_y_ft,
+                    })
+                    flat_idx += 1
+                    tracker_within_group += 1
+
+            # Advance auto-layout cursor for next group
+            group_width = group_tracker_counts[grp_idx] * row_spacing_ft
+            auto_x_cursor += group_width + row_spacing_ft * 2  # Extra gap between groups
+
         # ==================== Allocation ====================
         allocation_result = None
 
         if self.selected_inverter and strings_per_inv > 0 and total_all_strings > 0:
-            allocation_result = allocate_strings_sequential(tracker_sequence, strings_per_inv)
+            if tracker_entries:
+                allocation_result = allocate_strings_spatial(
+                    tracker_entries, strings_per_inv, row_spacing_ft
+                )
+                spatial_runs = allocation_result.get('spatial_runs', 1)
+            else:
+                allocation_result = allocate_strings_sequential(tracker_sequence, strings_per_inv)
 
             module_wattage = self.selected_module.wattage
             actual_dc_ac = self.selected_inverter.dc_ac_ratio(
@@ -2994,10 +3133,6 @@ class SitePreviewWindow(tk.Toplevel):
         motor_string_index_raw = tdata.get('motor_string_index', None)
         motor_split_north = tdata.get('motor_split_north', modules_per_string // 2)
         
-        print(f"  [MOTOR] template='{template_ref}'")
-        print(f"    placement={motor_placement}, motor_position_after_string={motor_position_after_string}, motor_string_index_raw={motor_string_index_raw}")
-        print(f"    spt={strings_per_tracker}, mps={modules_per_string}, split_north={motor_split_north}")
-        
         if orientation == 'Portrait':
             mod_along_m = module_width_mm / 1000
         else:
@@ -3015,7 +3150,6 @@ class SitePreviewWindow(tk.Toplevel):
                             module_spacing_m)
             else:
                 motor_y_m = 0
-            print(f"    [between_strings] pos_after={pos_after}, modules_north={modules_north}, motor_y_ft={motor_y_m * m_to_ft:.1f}")
         elif motor_placement == 'middle_of_string':
             # motor_string_index: which string the motor splits (1-based)
             string_idx = motor_string_index_raw if motor_string_index_raw is not None else 1
@@ -3023,7 +3157,6 @@ class SitePreviewWindow(tk.Toplevel):
             motor_y_m = (modules_before_split * mod_along_m + 
                         (modules_before_split - 1) * module_spacing_m +
                         module_spacing_m)
-            print(f"    [middle_of_string] string_idx={string_idx}, modules_before_split={modules_before_split}, motor_y_ft={motor_y_m * m_to_ft:.1f}")
         else:
             # Fallback: center
             dims = self.get_tracker_dimensions_ft(template_ref)
@@ -3043,6 +3176,7 @@ class SitePreviewWindow(tk.Toplevel):
         ttk.Button(top_bar, text="Zoom In", command=lambda: self.zoom(1.3)).pack(side='left', padx=2)
         ttk.Button(top_bar, text="Zoom Out", command=lambda: self.zoom(0.7)).pack(side='left', padx=2)
         ttk.Button(top_bar, text="Reset Positions", command=self._reset_positions).pack(side='left', padx=2)
+        ttk.Button(top_bar, text="Refresh Allocation", command=self._refresh_allocation).pack(side='left', padx=2)
         
         ttk.Separator(top_bar, orient='vertical').pack(side='left', fill='y', padx=8, pady=2)
         
@@ -3063,7 +3197,8 @@ class SitePreviewWindow(tk.Toplevel):
         split = self.inv_summary.get('total_split_trackers', 0)
         
         summary_text = f"{num_inv} Inverters  |  {total_str} Strings  |  DC:AC: {actual_ratio:.2f}  |  {split} Split Trackers  |  {self.topology}"
-        ttk.Label(top_bar, text=summary_text, foreground='#333333').pack(side='right', padx=10)
+        self.summary_label = ttk.Label(top_bar, text=summary_text, foreground='#333333')
+        self.summary_label.pack(side='right', padx=10)
         
         # Canvas
         canvas_frame = ttk.Frame(self)
@@ -3086,12 +3221,19 @@ class SitePreviewWindow(tk.Toplevel):
         self.canvas.bind('<ButtonRelease-2>', self.on_pan_release)
         self.canvas.bind('<Configure>', lambda e: self.draw())
         
-        # Bottom legend
-        legend_frame = ttk.Frame(self, padding="5")
-        legend_frame.pack(fill='x')
+        # Bottom legend (rebuildable)
+        self.legend_frame = ttk.Frame(self, padding="5")
+        self.legend_frame.pack(fill='x')
+        self._build_legend()
+    
+    def _build_legend(self):
+        """Build or rebuild the bottom legend with color swatches and allocation summary."""
+        # Clear existing legend contents
+        for child in self.legend_frame.winfo_children():
+            child.destroy()
         
-        # Color swatches group
-        swatch_frame = ttk.Frame(legend_frame)
+        # Color swatches
+        swatch_frame = ttk.Frame(self.legend_frame)
         swatch_frame.pack(anchor='w')
         
         num_inv = self.inv_summary.get('total_inverters', 0)
@@ -3119,9 +3261,11 @@ class SitePreviewWindow(tk.Toplevel):
                 size_str = f"All inverters: {max_spi} strings"
             else:
                 size_str = f"{n_larger} inverters × {max_spi} strings + {n_smaller} inverters × {min_spi} strings"
-            ttk.Label(legend_frame, text=f"{size_str}  |  {split_count} split tracker(s)",
+            spatial_runs = allocation_result.get('spatial_runs', 1)
+            runs_str = f"  |  {spatial_runs} spatial run(s)" if spatial_runs > 1 else ""
+            ttk.Label(self.legend_frame, text=f"{size_str}  |  {split_count} split tracker(s){runs_str}",
                      font=('Helvetica', 9), foreground='#555555').pack(anchor='w')
-    
+
     def build_layout_data(self):
         """Build a group-based layout of trackers with physical dimensions from templates.
         
@@ -3200,7 +3344,8 @@ class SitePreviewWindow(tk.Toplevel):
             # Group dimensions (bounding box of all its trackers laid out E-W)
             num_trackers = len(group_trackers)
             if num_trackers > 0:
-                group_width = max_tracker_width_ft + (num_trackers - 1) * self.row_spacing_ft
+                group_max_width = max(t['width_ft'] for t in group_trackers)
+                group_width = group_max_width + (num_trackers - 1) * self.row_spacing_ft
                 group_length = max(t['length_ft'] for t in group_trackers)
             else:
                 group_width = 0
@@ -3223,6 +3368,22 @@ class SitePreviewWindow(tk.Toplevel):
                     string_length_ft = (mps * mod_along_m + (mps - 1) * spacing_m) * 3.28084
                     break
             
+            # Compute visual bounding box offsets considering motor alignment
+            # When align_on_motor is active, trackers shift vertically so their
+            # motors match the group's reference motor_y. This affects the actual
+            # visual extent of the group.
+            ref_motor = group_motor_y or 0
+            visual_min_y_offset = 0.0
+            visual_max_y_offset = 0.0
+            
+            if group_trackers and ref_motor is not None:
+                for t in group_trackers:
+                    t_motor = t.get('motor_y_ft', 0)
+                    t_length_val = t.get('length_ft', group_length)
+                    y_offset = ref_motor - t_motor  # How far this tracker shifts from gy
+                    visual_min_y_offset = min(visual_min_y_offset, y_offset)
+                    visual_max_y_offset = max(visual_max_y_offset, y_offset + t_length_val)
+            
             self.group_layout.append({
                 'name': group_data['name'],
                 'trackers': group_trackers,
@@ -3231,12 +3392,9 @@ class SitePreviewWindow(tk.Toplevel):
                 'motor_y_ft': group_motor_y or 0,
                 'string_length_ft': string_length_ft,
                 'group_idx': grp_idx,
+                'visual_min_y': visual_min_y_offset,
+                'visual_max_y': visual_max_y_offset,
             })
-        
-        print(f"Group '{group_data['name']}': motor_y_ft={group_motor_y}, has_motor={group_motor_y is not None}, num_trackers={len(group_trackers)}")
-        if group_trackers:
-            for t in group_trackers[:3]:
-                print(f"  tracker spt={t['strings_per_tracker']}, motor_y={t.get('motor_y_ft', '?')}, has_motor={t.get('has_motor', '?')}, ref={t.get('template_ref', '?')}")
 
         # Flat list for backward compat
         self.tracker_list = [tracker_map[i] for i in sorted(tracker_map.keys())]
@@ -3375,8 +3533,10 @@ class SitePreviewWindow(tk.Toplevel):
         # Check in reverse order so topmost (last drawn) is hit first
         for i in range(len(self.group_layout) - 1, -1, -1):
             g = self.group_layout[i]
+            vis_min = g.get('visual_min_y', 0)
+            vis_max = g.get('visual_max_y', g['length_ft'])
             if (g['x'] <= wx <= g['x'] + g['width_ft'] and
-                g['y'] <= wy <= g['y'] + g['length_ft']):
+                g['y'] + vis_min <= wy <= g['y'] + vis_max):
                 return i
         return None
     
@@ -3432,6 +3592,15 @@ class SitePreviewWindow(tk.Toplevel):
         if getattr(self, 'dragging_group', False) and self._drag_moved:
             self._update_world_bounds()
             self._save_group_positions()
+            
+            # Check for overlaps and warn
+            overlaps = self._check_overlaps()
+            if overlaps:
+                names = set()
+                for i, j in overlaps:
+                    names.add(self.group_layout[i].get('name', f'Group {i+1}'))
+                    names.add(self.group_layout[j].get('name', f'Group {j+1}'))
+                print(f"[Overlap Warning] Groups overlapping: {', '.join(sorted(names))}")
         
         self.dragging_group = False
         self.dragging_canvas = False
@@ -3460,22 +3629,13 @@ class SitePreviewWindow(tk.Toplevel):
     def _snap_group_position(self, group_idx, raw_x, raw_y):
         """Apply snapping to a group's proposed position.
         
-        EW (X): Snap to row-spacing pitch grid relative to the left neighbor.
-        NS (Y): Snap motor to align with left neighbor's motor.
+        EW (X): Snap to row-spacing pitch grid.
+        NS (Y): Snap motor to align with ANY nearby group's motor.
+        Checks all groups and picks the closest snap candidate.
         """
         group = self.group_layout[group_idx]
-        
-        # Find the nearest group to the left (lower X)
-        left_neighbor = None
-        left_neighbor_dist = float('inf')
-        for i, g in enumerate(self.group_layout):
-            if i == group_idx:
-                continue
-            if g['x'] + g['width_ft'] <= raw_x + group['width_ft']:
-                dist = abs(raw_x - (g['x'] + g['width_ft']))
-                if dist < left_neighbor_dist:
-                    left_neighbor = g
-                    left_neighbor_dist = dist
+        my_motor_offset = group.get('motor_y_ft', 0)
+        string_len = group.get('string_length_ft', 0)
         
         snapped_x = raw_x
         snapped_y = raw_y
@@ -3485,31 +3645,35 @@ class SitePreviewWindow(tk.Toplevel):
         if pitch > 0:
             snapped_x = round(raw_x / pitch) * pitch
         
-        # NS snap: motor alignment with left neighbor
-        if left_neighbor is not None:
-            left_motor_world_y = left_neighbor['y'] + left_neighbor.get('motor_y_ft', 0)
-            my_motor_offset = group.get('motor_y_ft', 0)
+        # NS snap: check motor alignment against ALL other groups
+        snap_threshold = self.max_tracker_length_ft * 0.15
+        best_snap_y = None
+        best_snap_dist = float('inf')
+        
+        for i, g in enumerate(self.group_layout):
+            if i == group_idx:
+                continue
+            
+            neighbor_motor_world_y = g['y'] + g.get('motor_y_ft', 0)
             
             # Target Y so motors align
-            motor_aligned_y = left_motor_world_y - my_motor_offset
+            motor_aligned_y = neighbor_motor_world_y - my_motor_offset
             
-            # Also compute string-offset position
-            string_len = group.get('string_length_ft', 0)
-            string_offset_y = motor_aligned_y + string_len
-            string_offset_y_neg = motor_aligned_y - string_len
-            
-            # Snap to whichever is closest
+            # Also compute string-offset positions
             candidates = [
-                motor_aligned_y,       # motor alignment
-                string_offset_y,       # offset +1 string south
-                string_offset_y_neg,   # offset +1 string north
+                motor_aligned_y,                     # motor alignment
+                motor_aligned_y + string_len,        # offset +1 string south
+                motor_aligned_y - string_len,        # offset +1 string north
             ]
             
-            closest = min(candidates, key=lambda cy: abs(raw_y - cy))
-            snap_threshold = self.max_tracker_length_ft * 0.08
-            
-            if abs(raw_y - closest) < snap_threshold:
-                snapped_y = closest
+            for candidate_y in candidates:
+                dist = abs(raw_y - candidate_y)
+                if dist < best_snap_dist and dist < snap_threshold:
+                    best_snap_dist = dist
+                    best_snap_y = candidate_y
+        
+        if best_snap_y is not None:
+            snapped_y = best_snap_y
         
         return snapped_x, snapped_y
     
@@ -3533,13 +3697,15 @@ class SitePreviewWindow(tk.Toplevel):
             gy = group_data['y']
             is_selected = (group_idx == self.selected_group_idx)
             
-            # Draw selection highlight behind group
+            # Draw selection highlight behind group (using visual bounds)
             if is_selected:
                 pad = max_width * 0.3
-                hx1, hy1 = self.world_to_canvas(gx - pad, gy - pad)
+                vis_min = group_data.get('visual_min_y', 0)
+                vis_max = group_data.get('visual_max_y', group_data['length_ft'])
+                hx1, hy1 = self.world_to_canvas(gx - pad, gy + vis_min - pad)
                 hx2, hy2 = self.world_to_canvas(
                     gx + group_data['width_ft'] + pad,
-                    gy + group_data['length_ft'] + pad
+                    gy + vis_max + pad
                 )
                 self.canvas.create_rectangle(
                     hx1, hy1, hx2, hy2,
@@ -3574,16 +3740,11 @@ class SitePreviewWindow(tk.Toplevel):
                     # Motor alignment: offset so this tracker's motor Y matches group's reference motor Y
                     reference_motor_y = group_data['motor_y_ft']
                     ty = gy + (reference_motor_y - tracker['motor_y_ft'])
-                    if t_idx == 0:
-                        print(f"  [ALIGN] Group '{group_data['name']}' T{t_idx+1}: ref_motor={reference_motor_y:.1f}, tracker_motor={tracker['motor_y_ft']:.1f}, ty={ty:.1f}")
                 else:
                     # Center alignment fallback
                     max_group_length = group_data['length_ft']
                     ty_offset = (max_group_length - t_length) / 2
-                    ty = gy + ty_offset
-                    if t_idx == 0:
-                        print(f"  [CENTER] Group '{group_data['name']}' T{t_idx+1}: align_on_motor={getattr(self, 'align_on_motor', False)}, has_motor={tracker.get('has_motor', False)}, group_motor_y={group_data.get('motor_y_ft', 0)}")
-                
+                    ty = gy + ty_offset                
                 # Per-string height
                 string_height = t_length / spt if spt > 0 else t_length
                 
@@ -3658,6 +3819,9 @@ class SitePreviewWindow(tk.Toplevel):
         if getattr(self, 'align_on_motor', False):
             self._draw_motor_alignment_lines()
         
+        # Overlap warnings
+        self._draw_overlap_warnings()
+
         # Scale bar
         self._draw_scale_bar()
         
@@ -3705,15 +3869,114 @@ class SitePreviewWindow(tk.Toplevel):
     
     def _reset_positions(self):
         """Reset all group positions to auto-layout and clear saved positions."""
-        for grp_idx in range(len(self.groups)):
-            if 'position_x' in self.groups[grp_idx]:
-                del self.groups[grp_idx]['position_x']
-            if 'position_y' in self.groups[grp_idx]:
-                del self.groups[grp_idx]['position_y']
+        from tkinter import messagebox
+        if not messagebox.askyesno("Reset Positions",
+                                    "This will reset all group positions to the default layout. Continue?"):
+            return
         
-        self._assign_group_positions()
+        for grp_idx, layout in enumerate(self.group_layout):
+            group_spacing = self.max_tracker_length_ft * 0.1
+            layout['x'] = grp_idx * (layout['width_ft'] + group_spacing)
+            layout['y'] = 0
+        
         self._update_world_bounds()
+        self._save_group_positions()
         self.fit_and_redraw()
+
+    def _refresh_allocation(self):
+        """Re-run string allocation using current group positions, then refresh preview."""
+        self._save_group_positions()
+        
+        parent = self.master
+        if hasattr(parent, 'calculate_estimate'):
+            parent.calculate_estimate()
+            
+            inv_summary = getattr(parent, 'last_totals', {}).get('inverter_summary', {})
+            if inv_summary and inv_summary.get('allocation_result'):
+                self.inv_summary = inv_summary
+                self.build_layout_data()
+                self._build_legend()
+                
+                # Update top bar summary
+                num_inv = inv_summary.get('total_inverters', 0)
+                total_str = inv_summary.get('total_strings', 0)
+                actual_ratio = inv_summary.get('actual_dc_ac', 0)
+                split = inv_summary.get('total_split_trackers', 0)
+                spatial_runs = inv_summary.get('allocation_result', {}).get('spatial_runs', 1)
+                self.summary_label.config(
+                    text=f"{num_inv} Inverters  |  {total_str} Strings  |  DC:AC: {actual_ratio:.2f}  |  "
+                         f"{split} Split Trackers  |  {spatial_runs} Run(s)  |  {self.topology}"
+                )
+                
+                self.draw()
+
+    def _check_overlaps(self):
+        """Check for overlapping groups and return list of overlapping pair indices."""
+        overlaps = []
+        
+        for i in range(len(self.group_layout)):
+            for j in range(i + 1, len(self.group_layout)):
+                gi = self.group_layout[i]
+                gj = self.group_layout[j]
+                
+                # Use visual bounds for accurate overlap detection
+                i_x1 = gi['x']
+                i_x2 = gi['x'] + gi['width_ft']
+                i_y1 = gi['y'] + gi.get('visual_min_y', 0)
+                i_y2 = gi['y'] + gi.get('visual_max_y', gi['length_ft'])
+                
+                j_x1 = gj['x']
+                j_x2 = gj['x'] + gj['width_ft']
+                j_y1 = gj['y'] + gj.get('visual_min_y', 0)
+                j_y2 = gj['y'] + gj.get('visual_max_y', gj['length_ft'])
+                
+                # Check for rectangle overlap
+                if i_x1 < j_x2 and i_x2 > j_x1 and i_y1 < j_y2 and i_y2 > j_y1:
+                    overlaps.append((i, j))
+        
+        return overlaps
+    
+    def _draw_overlap_warnings(self):
+        """Draw red warning highlights around overlapping groups."""
+        overlaps = self._check_overlaps()
+        if not overlaps:
+            return
+        
+        # Collect unique group indices that are involved in overlaps
+        overlap_indices = set()
+        for i, j in overlaps:
+            overlap_indices.add(i)
+            overlap_indices.add(j)
+        
+        max_width = getattr(self, 'max_tracker_width_ft', 6)
+        pad = max_width * 0.3
+        
+        for idx in overlap_indices:
+            g = self.group_layout[idx]
+            vis_min = g.get('visual_min_y', 0)
+            vis_max = g.get('visual_max_y', g['length_ft'])
+            
+            hx1, hy1 = self.world_to_canvas(g['x'] - pad, g['y'] + vis_min - pad)
+            hx2, hy2 = self.world_to_canvas(
+                g['x'] + g['width_ft'] + pad,
+                g['y'] + vis_max + pad
+            )
+            
+            self.canvas.create_rectangle(
+                hx1, hy1, hx2, hy2,
+                fill='', outline='#FF0000', width=3, dash=(8, 4),
+                tags='overlap_warning'
+            )
+            
+            # Warning label
+            label_x = (hx1 + hx2) / 2
+            label_y = hy1 - 8
+            font_size = max(7, min(10, int(9 * self.scale)))
+            self.canvas.create_text(
+                label_x, label_y,
+                text=f"⚠ Overlap", font=('Helvetica', font_size, 'bold'),
+                fill='#FF0000', tags='overlap_warning'
+            )
 
     def _draw_scale_bar(self):
         """Draw a scale bar in the bottom-left corner showing real-world distance."""
