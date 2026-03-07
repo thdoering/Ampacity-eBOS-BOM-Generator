@@ -1085,6 +1085,35 @@ class QuickEstimate(ttk.Frame):
             spt = entries[0]['strings_per_tracker']
             original_harness_sizes = self._get_harness_config_for_tracker_type(spt)
             
+            # Determine new harness sizes after split by distributing
+            # strings_taken across existing harnesses, keeping whole
+            # harnesses intact when possible.
+            split_amounts = sorted([e['strings_taken'] for e in entries], reverse=True)
+            remaining_harnesses = sorted(original_harness_sizes, reverse=True)
+            
+            new_harnesses = []
+            for amount in split_amounts:
+                assigned = 0
+                while assigned < amount and remaining_harnesses:
+                    h = remaining_harnesses[0]
+                    if assigned + h <= amount:
+                        # Whole harness fits in this split portion
+                        new_harnesses.append(h)
+                        remaining_harnesses.pop(0)
+                        assigned += h
+                    else:
+                        # Must split this harness at the boundary
+                        needed = amount - assigned
+                        new_harnesses.append(needed)
+                        leftover = h - needed
+                        remaining_harnesses.pop(0)
+                        if leftover > 0:
+                            remaining_harnesses.insert(0, leftover)
+                        assigned = amount
+            
+            # Add any remaining harnesses that weren't consumed
+            new_harnesses.extend(remaining_harnesses)
+            
             # Remove original harness(es) for this one split tracker
             for size in original_harness_sizes:
                 if size in totals['harnesses_by_size']:
@@ -1092,12 +1121,11 @@ class QuickEstimate(ttk.Frame):
                     if totals['harnesses_by_size'][size] <= 0:
                         del totals['harnesses_by_size'][size]
             
-            # Add replacement harnesses based on actual split amounts
-            for entry in entries:
-                split_size = entry['strings_taken']
-                if split_size not in totals['harnesses_by_size']:
-                    totals['harnesses_by_size'][split_size] = 0
-                totals['harnesses_by_size'][split_size] += 1
+            # Add the new (possibly unchanged) harnesses
+            for size in new_harnesses:
+                if size not in totals['harnesses_by_size']:
+                    totals['harnesses_by_size'][size] = 0
+                totals['harnesses_by_size'][size] += 1
             
             split_count += 1
         
