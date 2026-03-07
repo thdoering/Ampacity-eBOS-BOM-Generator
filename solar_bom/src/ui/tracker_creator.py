@@ -1109,6 +1109,27 @@ class TrackerTemplateCreator(ttk.Frame):
         
         # Toggle the state
         if current_enabled:
+            # Check if template is in use before allowing disable
+            used_in_blocks, block_count = self._is_template_used_in_blocks(template_key)
+            used_in_estimates, estimate_names = self._is_template_used_in_estimates(template_key)
+            
+            if used_in_blocks or used_in_estimates:
+                from tkinter import messagebox
+                reasons = []
+                if used_in_blocks:
+                    reasons.append(f"{block_count} placed tracker(s) in Block Layout")
+                if used_in_estimates:
+                    names_str = ", ".join(estimate_names)
+                    reasons.append(f"Quick Estimate(s): {names_str}")
+                
+                messagebox.showwarning(
+                    "Cannot Disable Template",
+                    f"This template is currently referenced by:\n\n"
+                    f"{'  •  '.join(reasons)}\n\n"
+                    "Please remove those references first before disabling."
+                )
+                return
+            
             self._remove_enabled_template(template_key)
             # Update UI
             values[0] = '☐'
@@ -1138,3 +1159,53 @@ class TrackerTemplateCreator(ttk.Frame):
         if not self.current_project:
             return True  # Default to enabled if no project
         return template_key in self.current_project.enabled_templates
+    
+    def _is_template_used_in_blocks(self, template_key):
+        """Check if any block has placed trackers using this template.
+        Returns (is_used, count) tuple."""
+        if not self.current_project or not self.current_project.blocks:
+            return False, 0
+        
+        # Extract the template display name (without manufacturer prefix) for matching
+        # Template key format: "Manufacturer - Template Name"
+        # Placed tracker template_name is just the template name portion
+        if ' - ' in template_key:
+            template_name = template_key.split(' - ', 1)[1]
+        else:
+            template_name = template_key
+        
+        count = 0
+        blocks = self.current_project.blocks
+        
+        for block_id, block_data in blocks.items():
+            # Handle both serialized dicts and live BlockConfig objects
+            if isinstance(block_data, dict):
+                positions = block_data.get('tracker_positions', [])
+                for pos in positions:
+                    if pos.get('template_name') == template_name:
+                        count += 1
+            elif hasattr(block_data, 'tracker_positions'):
+                for pos in block_data.tracker_positions:
+                    if pos.template and pos.template.template_name == template_name:
+                        count += 1
+        
+        return count > 0, count
+
+    def _is_template_used_in_estimates(self, template_key):
+        """Check if any quick estimate segment references this template.
+        Returns (is_used, estimate_names) tuple."""
+        if not self.current_project or not hasattr(self.current_project, 'quick_estimates'):
+            return False, []
+        
+        referencing_estimates = []
+        
+        for est_id, est_data in self.current_project.quick_estimates.items():
+            est_name = est_data.get('name', 'Unnamed')
+            groups = est_data.get('groups', est_data.get('rows', []))
+            for group in groups:
+                for seg in group.get('segments', []):
+                    if seg.get('template_ref') == template_key:
+                        if est_name not in referencing_estimates:
+                            referencing_estimates.append(est_name)
+        
+        return len(referencing_estimates) > 0, referencing_estimates

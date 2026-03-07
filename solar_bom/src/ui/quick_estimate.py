@@ -27,6 +27,7 @@ class QuickEstimate(ttk.Frame):
         self.groups = []
         self.selected_group_idx = None
         self._updating_listbox = False
+        self.enabled_templates = self.load_enabled_templates()
 
         # Global settings defaults
         self.module_width_default = 1134
@@ -152,6 +153,263 @@ class QuickEstimate(ttk.Frame):
             print(f"Error loading inverter library: {e}")
         return inverters
 
+    def load_enabled_templates(self):
+        """Load tracker templates that are enabled for the current project.
+        Returns {template_key: template_data_dict} for enabled templates only."""
+        templates = {}
+        try:
+            template_path = Path('data/tracker_templates.json')
+            if not template_path.exists():
+                return templates
+            
+            with open(template_path, 'r') as f:
+                data = json.load(f)
+            
+            if not data:
+                return templates
+            
+            # Parse hierarchical format
+            all_templates = {}
+            first_value = next(iter(data.values()))
+            if isinstance(first_value, dict) and not any(key in first_value for key in ['module_orientation', 'modules_per_string']):
+                for manufacturer, template_group in data.items():
+                    for template_name, template_data in template_group.items():
+                        unique_name = f"{manufacturer} - {template_name}"
+                        all_templates[unique_name] = template_data
+            else:
+                all_templates = data
+            
+            # Filter to enabled only
+            if self.current_project and hasattr(self.current_project, 'enabled_templates'):
+                for key in self.current_project.enabled_templates:
+                    if key in all_templates:
+                        templates[key] = all_templates[key]
+            else:
+                templates = all_templates
+                
+        except Exception as e:
+            print(f"Error loading enabled templates: {e}")
+        
+        return templates
+
+    def get_template_display_name(self, template_key):
+        """Build a short display name for a template key.
+        E.g. 'JA Solar - JAM72S30-550/MR 2x28 3S' -> 'JAM72S30-550/MR 2x28 3S (3-string)'
+        """
+        template_data = self.enabled_templates.get(template_key)
+        if not template_data:
+            return template_key
+        
+        spt = template_data.get('strings_per_tracker', '?')
+        # Strip manufacturer prefix for shorter display
+        if ' - ' in template_key:
+            short_name = template_key.split(' - ', 1)[1]
+        else:
+            short_name = template_key
+        return f"{short_name} ({spt}S)"
+
+    def get_template_module_id(self, template_key):
+        """Get a module identity string from a template for consistency checking.
+        Returns 'Manufacturer Model' or None."""
+        template_data = self.enabled_templates.get(template_key)
+        if not template_data:
+            return None
+        module_spec = template_data.get('module_spec', {})
+        manufacturer = module_spec.get('manufacturer', '')
+        model = module_spec.get('model', '')
+        if manufacturer and model:
+            return f"{manufacturer} {model}"
+        return None
+
+    def get_group_module_id(self, group):
+        """Get the module identity for a group based on its first segment's template.
+        Returns module_id string or None if no segments have templates."""
+        for seg in group.get('segments', []):
+            ref = seg.get('template_ref')
+            if ref:
+                return self.get_template_module_id(ref)
+        return None
+
+    def get_compatible_templates(self, group):
+        """Get template keys compatible with the group's existing module.
+        If group has no template-linked segments, all enabled templates are compatible."""
+        group_module = self.get_group_module_id(group)
+        
+        if group_module is None:
+            # No module constraint yet — all enabled templates are valid
+            return list(self.enabled_templates.keys())
+        
+        # Filter to templates with the same module
+        compatible = []
+        for key in self.enabled_templates:
+            if self.get_template_module_id(key) == group_module:
+                compatible.append(key)
+        return compatible
+    
+    def refresh_templates(self):
+        """Reload enabled templates from disk. Call when templates may have changed."""
+        self.enabled_templates = self.load_enabled_templates()
+
+    def _derive_module_from_templates(self):
+        """Derive the active module and modules_per_string from linked templates.
+        Sets self.selected_module and updates modules_per_string_var.
+        Returns True if a module was found."""
+        from ..models.module import ModuleSpec, ModuleType
+        
+        # Scan all groups for the first template-linked segment
+        for group in self.groups:
+            for seg in group.get('segments', []):
+                ref = seg.get('template_ref')
+                if ref and ref in self.enabled_templates:
+                    tdata = self.enabled_templates[ref]
+                    module_data = tdata.get('module_spec', {})
+                    mps = tdata.get('modules_per_string', 28)
+                    
+                    try:
+                        self.selected_module = ModuleSpec(
+                            manufacturer=module_data.get('manufacturer', 'Unknown'),
+                            model=module_data.get('model', 'Unknown'),
+                            type=ModuleType(module_data.get('type', 'Mono PERC')),
+                            length_mm=float(module_data.get('length_mm', 2000)),
+                            width_mm=float(module_data.get('width_mm', 1000)),
+                            depth_mm=float(module_data.get('depth_mm', 40)),
+                            weight_kg=float(module_data.get('weight_kg', 25)),
+                            wattage=float(module_data.get('wattage', 400)),
+                            vmp=float(module_data.get('vmp', 40)),
+                            imp=float(module_data.get('imp', 10)),
+                            voc=float(module_data.get('voc', 48)),
+                            isc=float(module_data.get('isc', 10.5)),
+                            max_system_voltage=float(module_data.get('max_system_voltage', 1500))
+                        )
+                    except Exception as e:
+                        print(f"Error creating ModuleSpec from template: {e}")
+                        return False
+                    
+                    # Update modules_per_string from template
+                    if hasattr(self, 'modules_per_string_var'):
+                        self.modules_per_string_var.set(str(mps))
+                    
+                    # Update module info label
+                    if hasattr(self, 'module_info_label'):
+                        self.module_info_label.config(
+                            text=f"{self.selected_module.manufacturer} {self.selected_module.model} ({self.selected_module.wattage}W)  |  Isc: {self.selected_module.isc}A  |  Width: {self.selected_module.width_mm}mm",
+                            foreground='black'
+                        )
+                    
+                    self._update_strings_per_inverter()
+                    return True
+        
+        # No templates linked — try fallback from saved estimate data
+        if self.current_project and self.estimate_id:
+            estimate_data = self.current_project.quick_estimates.get(self.estimate_id, {})
+            saved_module_name = estimate_data.get('module_name', '')
+            
+            if saved_module_name and saved_module_name in self.available_modules:
+                self.selected_module = self.available_modules[saved_module_name]
+                saved_mps = estimate_data.get('modules_per_string', 28)
+                if hasattr(self, 'modules_per_string_var'):
+                    self.modules_per_string_var.set(str(saved_mps))
+                if hasattr(self, 'module_info_label'):
+                    self.module_info_label.config(
+                        text=f"(Legacy) {self.selected_module.manufacturer} {self.selected_module.model} ({self.selected_module.wattage}W)  —  link templates to update",
+                        foreground='orange'
+                    )
+                self._update_strings_per_inverter()
+                return True
+            
+            # Try matching by partial name (old format might not match exactly)
+            if saved_module_name:
+                for display_name, mod in self.available_modules.items():
+                    if (mod.manufacturer in saved_module_name and 
+                        mod.model in saved_module_name):
+                        self.selected_module = mod
+                        saved_mps = estimate_data.get('modules_per_string', 28)
+                        if hasattr(self, 'modules_per_string_var'):
+                            self.modules_per_string_var.set(str(saved_mps))
+                        if hasattr(self, 'module_info_label'):
+                            self.module_info_label.config(
+                                text=f"(Legacy) {mod.manufacturer} {mod.model} ({mod.wattage}W)  —  link templates to update",
+                                foreground='orange'
+                            )
+                        self._update_strings_per_inverter()
+                        return True
+        
+        # Truly no module available
+        self.selected_module = None
+        if hasattr(self, 'module_info_label'):
+            self.module_info_label.config(
+                text="No templates linked — link a tracker template to a segment",
+                foreground='gray'
+            )
+        return False
+
+    def get_group_summary_info(self, group):
+        """Build summary info lines for a group based on its linked templates.
+        Returns a list of (label, value) tuples."""
+        info = []
+        
+        # Collect unique templates used in this group
+        template_refs = set()
+        for seg in group.get('segments', []):
+            ref = seg.get('template_ref')
+            if ref and ref in self.enabled_templates:
+                template_refs.add(ref)
+        
+        if not template_refs:
+            info.append(("Templates", "No templates linked (unlinked segments)"))
+            return info
+        
+        # Module info (should be consistent within a group)
+        first_ref = next(iter(template_refs))
+        first_data = self.enabled_templates[first_ref]
+        module_spec = first_data.get('module_spec', {})
+        
+        module_str = f"{module_spec.get('manufacturer', '?')} {module_spec.get('model', '?')} ({module_spec.get('wattage', '?')}W)"
+        info.append(("Module", module_str))
+        info.append(("Module Isc", f"{module_spec.get('isc', '?')} A"))
+        info.append(("Module Width", f"{module_spec.get('width_mm', '?')} mm"))
+        
+        # Per-template info
+        for ref in sorted(template_refs):
+            tdata = self.enabled_templates[ref]
+            spt = tdata.get('strings_per_tracker', '?')
+            mps = tdata.get('modules_per_string', '?')
+            modules_high = tdata.get('modules_high', 1)
+            orientation = tdata.get('module_orientation', 'Portrait')
+            has_motor = tdata.get('has_motor', True)
+            motor_type = tdata.get('motor_placement_type', 'between_strings')
+            
+            # Calculate physical width
+            width_mm = module_spec.get('width_mm', 1000)
+            length_mm = module_spec.get('length_mm', 2000)
+            spacing_m = tdata.get('module_spacing_m', 0.02)
+            motor_gap_m = tdata.get('motor_gap_m', 1.0) if has_motor else 0
+            
+            if orientation == 'Portrait':
+                module_dim_along_tracker = length_mm / 1000  # meters
+            else:
+                module_dim_along_tracker = width_mm / 1000
+            
+            total_modules = int(spt) * int(mps) if isinstance(spt, int) and isinstance(mps, int) else '?'
+            tracker_length_m = (int(mps) * int(spt) * module_dim_along_tracker + 
+                               (int(mps) * int(spt) - 1) * spacing_m +
+                               (motor_gap_m if has_motor else 0)) if isinstance(spt, int) and isinstance(mps, int) else None
+            tracker_length_ft = f"{tracker_length_m * 3.28084:.1f} ft" if tracker_length_m else '?'
+            
+            short_name = ref.split(' - ', 1)[1] if ' - ' in ref else ref
+            info.append(("", ""))  # spacer
+            info.append(("Template", short_name))
+            info.append(("  Strings/Tracker", str(spt)))
+            info.append(("  Modules/String", str(mps)))
+            info.append(("  Modules High", str(modules_high)))
+            info.append(("  Orientation", orientation))
+            info.append(("  Total Modules", str(total_modules)))
+            info.append(("  Tracker Length", tracker_length_ft))
+            if has_motor:
+                info.append(("  Motor", motor_type.replace('_', ' ').title()))
+        
+        return info
+
     def generate_id(self, prefix: str) -> str:
         """Generate a unique ID with a prefix"""
         return f"{prefix}_{uuid.uuid4().hex[:8]}"
@@ -175,10 +433,20 @@ class QuickEstimate(ttk.Frame):
     def add_group(self) -> int:
         """Add a new group and return its index"""
         group_num = len(self.groups) + 1
+        
+        # Default to first enabled template if available
+        enabled_keys = list(self.enabled_templates.keys())
+        if enabled_keys:
+            default_ref = enabled_keys[0]
+            default_spt = self.enabled_templates[default_ref].get('strings_per_tracker', 3)
+        else:
+            default_ref = None
+            default_spt = 3
+        
         group = {
             'name': f"Group {group_num}",
             'segments': [
-                {'quantity': 1, 'strings_per_tracker': 3, 'harness_config': '3', 'template_ref': None}
+                {'quantity': 1, 'strings_per_tracker': default_spt, 'harness_config': str(default_spt), 'template_ref': default_ref}
             ]
         }
         self.groups.append(group)
@@ -585,16 +853,14 @@ class QuickEstimate(ttk.Frame):
         
         self._loading = True
         
-        # Restore module selection
-        saved_module_name = estimate_data.get('module_name', '')
-        if saved_module_name and hasattr(self, 'module_combo'):
-            if saved_module_name in self.available_modules:
-                self.module_select_var.set(saved_module_name)
-                self._on_module_selected()
+        # Module is now derived from templates — skip old module dropdown restore
+        # (module will be set by _derive_module_from_templates after groups load)
         
         # Restore numeric fields
+        # modules_per_string: store saved value as fallback; templates will override if linked
+        self._saved_modules_per_string = estimate_data.get('modules_per_string', 28)
         if hasattr(self, 'modules_per_string_var'):
-            self.modules_per_string_var.set(str(estimate_data.get('modules_per_string', 28)))
+            self.modules_per_string_var.set(str(self._saved_modules_per_string))
         if hasattr(self, 'row_spacing_var'):
             self.row_spacing_var.set(str(estimate_data.get('row_spacing_ft', 20.0)))
         if hasattr(self, 'wire_gauge_var'):
@@ -627,6 +893,11 @@ class QuickEstimate(ttk.Frame):
         self._refresh_group_listbox()
         
         if saved_groups:
+            # Ensure all segments have template_ref field (backward compat)
+            for group in saved_groups:
+                for seg in group.get('segments', []):
+                    if 'template_ref' not in seg:
+                        seg['template_ref'] = None
             self.groups = saved_groups
         elif saved_subarrays:
             # Backward compat: convert old subarray/block format to groups
@@ -662,6 +933,9 @@ class QuickEstimate(ttk.Frame):
         
         self._loading = False
 
+        # Derive module from templates
+        self._derive_module_from_templates()
+
         # Auto-calculate on load
         self.after(100, self.calculate_estimate)
 
@@ -681,7 +955,7 @@ class QuickEstimate(ttk.Frame):
         
         # Update global settings
         if self.selected_module:
-            estimate_data['module_name'] = self.module_select_var.get()
+            estimate_data['module_name'] = f"{self.selected_module.manufacturer} {self.selected_module.model} ({self.selected_module.wattage}W)"
             estimate_data['module_width_mm'] = self.selected_module.width_mm
             estimate_data['module_isc'] = self.selected_module.isc
         
@@ -814,8 +1088,6 @@ class QuickEstimate(ttk.Frame):
             'name': estimate_name,
             'created_date': datetime.now().isoformat(),
             'modified_date': datetime.now().isoformat(),
-            'module_width_mm': 1134,
-            'modules_per_string': 28,
             'row_spacing_ft': 20.0,
             'topology': 'Distributed String',
             'dc_ac_ratio': 1.25,
@@ -832,6 +1104,7 @@ class QuickEstimate(ttk.Frame):
         # Clear and set up fresh
         self._clear_estimate_ui()
         self.add_group()
+        self._derive_module_from_templates()
         
         if self.on_save:
             self.on_save()
@@ -881,7 +1154,7 @@ class QuickEstimate(ttk.Frame):
         if hasattr(self, 'topology_var'):
             self.topology_var.set('Distributed String')
         if hasattr(self, 'breaker_size_var'):
-            self.breaker_size_var.set(estimate_data.get('breaker_size', '400'))
+            self.breaker_size_var.set('400')
         if hasattr(self, 'dc_ac_ratio_var'):
             self.dc_ac_ratio_var.set('1.25')
         if hasattr(self, 'strings_per_inverter_var'):
@@ -909,23 +1182,8 @@ class QuickEstimate(ttk.Frame):
             self._calc_btn.config(state='normal')
 
     def _on_module_selected(self, event=None):
-        """Handle module selection from dropdown"""
-        selected_name = self.module_select_var.get()
-        if selected_name in self.available_modules:
-            self.selected_module = self.available_modules[selected_name]
-            self.module_info_label.config(
-                text=f"Isc: {self.selected_module.isc}A  |  Width: {self.selected_module.width_mm}mm  |  Voc: {self.selected_module.voc}V",
-                foreground='black'
-            )
-            # Recalculate strings per inverter with new module
-            self._update_strings_per_inverter()
-            # Auto-save when module changes (but not during load)
-            if not getattr(self, '_loading', False):
-                self._mark_stale()
-                self.save_estimate()
-        else:
-            self.selected_module = None
-            self.module_info_label.config(text="No module selected", foreground='gray')
+        """Legacy — module is now derived from templates. Kept for backward compat."""
+        pass
 
     def _on_inverter_selected(self, event=None):
         """Handle inverter selection from dropdown"""
@@ -1271,25 +1529,12 @@ class QuickEstimate(ttk.Frame):
         settings_frame = ttk.LabelFrame(bottom_frame, text="Global Settings", padding="5")
         settings_frame.pack(fill='x', pady=(0, 10))
         
-        # Row 1: Module selection
+        # Row 1: Module display (derived from templates)
         module_row = ttk.Frame(settings_frame)
         module_row.pack(fill='x', pady=(0, 5))
         
-        ttk.Label(module_row, text="Module:").pack(side='left', padx=(0, 5))
-        self.module_select_var = tk.StringVar()
-        self.module_combo = ttk.Combobox(
-            module_row,
-            textvariable=self.module_select_var,
-            values=sorted(self.available_modules.keys()),
-            state='readonly',
-            width=50
-        )
-        self.module_combo.pack(side='left', padx=(0, 15))
-        self.module_combo.bind('<<ComboboxSelected>>', self._on_module_selected)
-        self.disable_combobox_scroll(self.module_combo)
-        
-        # Module info display
-        self.module_info_label = ttk.Label(module_row, text="No module selected", foreground='gray')
+        ttk.Label(module_row, text="Module:", font=('Helvetica', 9, 'bold')).pack(side='left', padx=(0, 5))
+        self.module_info_label = ttk.Label(module_row, text="No templates linked — link a tracker template to a segment", foreground='gray')
         self.module_info_label.pack(side='left', padx=(5, 0))
         
         # Row 2: Inverter selection
@@ -1370,9 +1615,8 @@ class QuickEstimate(ttk.Frame):
         settings_inner = ttk.Frame(settings_frame)
         settings_inner.pack(fill='x')
         
-        ttk.Label(settings_inner, text="Modules per String:").pack(side='left', padx=(0, 5))
+        # Modules per string — hidden var, derived from template
         self.modules_per_string_var = tk.StringVar(value=str(getattr(self, 'modules_per_string_default', 28)))
-        ttk.Spinbox(settings_inner, from_=1, to=100, textvariable=self.modules_per_string_var, width=6).pack(side='left', padx=(0, 15))
         self.modules_per_string_var.trace_add('write', lambda *args: (self._update_strings_per_inverter(), self._mark_stale(), self._schedule_autosave()))
         
         ttk.Label(settings_inner, text="Row Spacing (ft):").pack(side='left', padx=(0, 5))
@@ -1610,9 +1854,28 @@ class QuickEstimate(ttk.Frame):
             self._schedule_autosave()
         name_var.trace_add('write', update_name)
         
-        # Segments section
-        seg_frame = ttk.LabelFrame(scrollable_frame, text="Segments (left to right)", padding="10")
-        seg_frame.pack(fill='x', pady=(10, 0), padx=10)
+        # Horizontal container for segments (left) and template info (right)
+        content_row = ttk.Frame(scrollable_frame)
+        content_row.pack(fill='both', expand=True, pady=(10, 0), padx=10)
+        
+        # Segments section (left side)
+        seg_frame = ttk.LabelFrame(content_row, text="Segments (left to right)", padding="10")
+        seg_frame.pack(side='left', fill='both', expand=True)
+        
+        # Summary card — template info (right side)
+        summary_info = self.get_group_summary_info(group)
+        if summary_info:
+            summary_frame = ttk.LabelFrame(content_row, text="Template Info", padding="10")
+            summary_frame.pack(side='left', fill='y', padx=(10, 0))
+            
+            for label, value in summary_info:
+                if label == "" and value == "":
+                    ttk.Separator(summary_frame, orient='horizontal').pack(fill='x', pady=5)
+                    continue
+                info_row = ttk.Frame(summary_frame)
+                info_row.pack(fill='x', pady=1)
+                ttk.Label(info_row, text=label, font=('Helvetica', 9, 'bold'), width=18, anchor='e').pack(side='left')
+                ttk.Label(info_row, text=value, font=('Helvetica', 9), foreground='#333333').pack(side='left', padx=(8, 0))
         
         # String count display
         self.group_string_count_label = ttk.Label(seg_frame, text="", font=('Helvetica', 10, 'bold'))
@@ -1622,7 +1885,7 @@ class QuickEstimate(ttk.Frame):
         header_frame = ttk.Frame(seg_frame)
         header_frame.pack(fill='x')
         ttk.Label(header_frame, text="Qty", width=6).pack(side='left', padx=2)
-        ttk.Label(header_frame, text="Strings/Tracker", width=14).pack(side='left', padx=2)
+        ttk.Label(header_frame, text="Tracker Template", width=30).pack(side='left', padx=2)
         ttk.Label(header_frame, text="Harness Config", width=14).pack(side='left', padx=2)
         ttk.Label(header_frame, text="", width=4).pack(side='left', padx=2)
         
@@ -1652,17 +1915,37 @@ class QuickEstimate(ttk.Frame):
         qty_spinbox = ttk.Spinbox(row_frame, from_=1, to=10000, textvariable=qty_var, width=6)
         qty_spinbox.pack(side='left', padx=2)
         
-        # Strings/tracker dropdown
-        strings_var = tk.StringVar(value=str(segment['strings_per_tracker']))
-        strings_combo = ttk.Combobox(row_frame, textvariable=strings_var,
-                                     values=["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16"],
-                                     width=12, state='readonly')
-        strings_combo.pack(side='left', padx=2)
-        self.disable_combobox_scroll(strings_combo)
+        # Template dropdown
+        compatible_keys = self.get_compatible_templates(group)
+        template_display_map = {}  # display_name -> template_key
+        display_names = []
         
-        # Harness config
+        # Add "Unlinked" option for backward compat
+        unlinked_label = f"Unlinked ({segment.get('strings_per_tracker', 3)}S)"
+        display_names.append(unlinked_label)
+        template_display_map[unlinked_label] = None
+        
+        for key in compatible_keys:
+            display = self.get_template_display_name(key)
+            display_names.append(display)
+            template_display_map[display] = key
+        
+        # Determine current selection
+        current_ref = segment.get('template_ref')
+        if current_ref and current_ref in self.enabled_templates:
+            current_display = self.get_template_display_name(current_ref)
+        else:
+            current_display = unlinked_label
+        
+        template_var = tk.StringVar(value=current_display)
+        template_combo = ttk.Combobox(row_frame, textvariable=template_var,
+                                      values=display_names, width=28, state='readonly')
+        template_combo.pack(side='left', padx=2)
+        self.disable_combobox_scroll(template_combo)
+        
+        # Harness config (still user-specified)
         harness_var = tk.StringVar(value=segment['harness_config'])
-        harness_options = self.get_harness_options(segment['strings_per_tracker'])
+        harness_options = self.get_harness_options(segment.get('strings_per_tracker', 3))
         harness_combo = ttk.Combobox(row_frame, textvariable=harness_var,
                                      values=harness_options, width=12)
         harness_combo.pack(side='left', padx=2)
@@ -1674,21 +1957,36 @@ class QuickEstimate(ttk.Frame):
         del_btn.pack(side='left', padx=2)
         
         # Callbacks
-        def on_strings_change(*args):
-            try:
-                new_strings = int(strings_var.get())
-                segment['strings_per_tracker'] = new_strings
-                new_options = self.get_harness_options(new_strings)
+        def on_template_change(*args):
+            selected_display = template_var.get()
+            selected_key = template_display_map.get(selected_display)
+            segment['template_ref'] = selected_key
+            
+            if selected_key and selected_key in self.enabled_templates:
+                # Derive strings_per_tracker from template
+                tdata = self.enabled_templates[selected_key]
+                new_spt = tdata.get('strings_per_tracker', 3)
+                segment['strings_per_tracker'] = new_spt
+                
+                # Update harness options for new string count
+                new_options = self.get_harness_options(new_spt)
                 harness_combo['values'] = new_options
                 if harness_var.get() not in new_options:
                     harness_var.set(new_options[0])
                     segment['harness_config'] = new_options[0]
-            except ValueError:
-                pass
+            
             self._update_group_string_count(group)
             self._mark_stale()
             self._schedule_autosave()
-        strings_var.trace_add('write', on_strings_change)
+            
+            # Update derived module from templates
+            self._derive_module_from_templates()
+            
+            # Rebuild details panel to refresh summary card
+            for widget in self.details_container.winfo_children():
+                widget.destroy()
+            self.show_group_details(group_idx)
+        template_combo.bind('<<ComboboxSelected>>', on_template_change)
         
         def on_qty_change(*args):
             try:
@@ -1708,11 +2006,20 @@ class QuickEstimate(ttk.Frame):
     
     def _add_segment_to_group(self, group: dict, group_idx: int):
         """Add a new segment to the group and refresh UI"""
+        # Default to first compatible template if available
+        compatible = self.get_compatible_templates(group)
+        if compatible:
+            default_ref = compatible[0]
+            default_spt = self.enabled_templates[default_ref].get('strings_per_tracker', 3)
+        else:
+            default_ref = None
+            default_spt = 3
+        
         group['segments'].append({
             'quantity': 1,
-            'strings_per_tracker': 3,
-            'harness_config': '3',
-            'template_ref': None
+            'strings_per_tracker': default_spt,
+            'harness_config': str(default_spt),
+            'template_ref': default_ref
         })
         # Rebuild the details panel to show the new segment
         for widget in self.details_container.winfo_children():
@@ -1778,10 +2085,15 @@ class QuickEstimate(ttk.Frame):
         except (ValueError, AttributeError):
             strings_per_inv = 0
         
-        # Validate module selection
+        # Validate — need at least one linked template or a legacy fallback module
+        self._derive_module_from_templates()
         if not self.selected_module:
             from tkinter import messagebox
-            messagebox.showwarning("No Module Selected", "Please select a module in Global Settings before calculating.")
+            messagebox.showwarning(
+                "No Module Available",
+                "No tracker templates are linked and no legacy module data was found.\n\n"
+                "Please link a tracker template to at least one segment before calculating."
+            )
             return
         
         # ==================== Build tracker sequence from groups ====================
@@ -1795,6 +2107,12 @@ class QuickEstimate(ttk.Frame):
         total_all_strings = 0
         total_all_harnesses = 0
         max_harness_strings = 0
+        
+        # Track unique modules across all groups
+        unique_modules = {}  # "Manufacturer Model (WattageW)" -> module_spec_dict
+        
+        # Per-segment module data for geometry calculations
+        segment_module_data = []  # list of {module_spec_dict, modules_per_string, qty, spt}
 
         for group in self.groups:
             for seg in group['segments']:
@@ -1804,6 +2122,27 @@ class QuickEstimate(ttk.Frame):
 
                 if qty <= 0:
                     continue
+                
+                # Resolve module from template
+                seg_module = None
+                seg_mps = modules_per_string
+                ref = seg.get('template_ref')
+                if ref and ref in self.enabled_templates:
+                    tdata = self.enabled_templates[ref]
+                    seg_module = tdata.get('module_spec', {})
+                    seg_mps = tdata.get('modules_per_string', modules_per_string)
+                    
+                    # Track unique modules
+                    mod_key = f"{seg_module.get('manufacturer', '?')} {seg_module.get('model', '?')} ({seg_module.get('wattage', '?')}W)"
+                    if mod_key not in unique_modules:
+                        unique_modules[mod_key] = seg_module
+                
+                segment_module_data.append({
+                    'module_spec': seg_module,
+                    'modules_per_string': seg_mps,
+                    'qty': qty,
+                    'spt': spt
+                })
 
                 # Add to flat tracker sequence (one entry per physical tracker)
                 for _ in range(qty):
@@ -1826,8 +2165,11 @@ class QuickEstimate(ttk.Frame):
                         totals['harnesses_by_size'][size] = 0
                     totals['harnesses_by_size'][size] += qty
                     total_all_harnesses += qty
+        
+        # Store unique modules for Excel export
+        totals['segment_module_data'] = segment_module_data
 
-        # ==================== Module geometry ====================
+        # ==================== Module geometry (primary module for global calcs) ====================
         module_isc = self.selected_module.isc
         module_width_mm = self.selected_module.width_mm
         module_width_ft = module_width_mm / 304.8
@@ -2189,10 +2531,22 @@ class QuickEstimate(ttk.Frame):
                 if meta.location:
                     info_items.append(("Location:", meta.location))
             
-            info_items.append(("Module:", f"{self.selected_module.manufacturer} {self.selected_module.model} ({self.selected_module.wattage}W)"))
-            info_items.append(("Module Isc:", f"{module_isc} A"))
-            info_items.append(("Module Width:", f"{module_width_mm} mm"))
-            info_items.append(("Modules per String:", str(modules_per_string)))
+            # List all unique modules used
+            if hasattr(self, 'last_totals') and self.last_totals.get('unique_modules'):
+                seg_mod_data = self.last_totals.get('segment_module_data', [])
+                for i, (mod_key, mod_data) in enumerate(self.last_totals['unique_modules'].items()):
+                    prefix = "Module:" if i == 0 else f"Module {i+1}:"
+                    info_items.append((prefix, mod_key))
+                    info_items.append(("  Isc:", f"{mod_data.get('isc', '?')} A"))
+                    info_items.append(("  Width:", f"{mod_data.get('width_mm', '?')} mm"))
+                    for smd in seg_mod_data:
+                        if smd.get('module_spec') == mod_data:
+                            info_items.append(("  Modules/String:", str(smd['modules_per_string'])))
+                            break
+            else:
+                info_items.append(("Module:", f"{self.selected_module.manufacturer} {self.selected_module.model} ({self.selected_module.wattage}W)"))
+                info_items.append(("Module Isc:", f"{module_isc} A"))
+                info_items.append(("Module Width:", f"{module_width_mm} mm"))
             info_items.append(("Row Spacing:", f"{row_spacing} ft"))
             
             if self.selected_inverter:

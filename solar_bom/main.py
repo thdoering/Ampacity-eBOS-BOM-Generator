@@ -176,6 +176,9 @@ class SolarBOMApplication:
             # Refresh templates in block configurator to show only enabled ones
             if hasattr(block_configurator, 'reload_templates'):
                 block_configurator.reload_templates()
+            # Refresh templates in quick estimate
+            if hasattr(self, 'quick_estimate_widget') and self.quick_estimate_widget:
+                self.quick_estimate_widget.refresh_templates()
             # Mark project as modified
             if self.current_project:
                 self.current_project.update_modified_date()
