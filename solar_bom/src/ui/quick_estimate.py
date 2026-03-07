@@ -1686,9 +1686,9 @@ class QuickEstimate(ttk.Frame):
             'harness_config': '3',
             'template_ref': None
         })
-        self._refresh_row_listbox()
-        self.row_listbox.selection_clear(0, tk.END)
-        self.row_listbox.selection_set(row_idx)
+        # Rebuild the details panel to show the new segment
+        for widget in self.details_container.winfo_children():
+            widget.destroy()
         self.show_row_details(row_idx)
         self._mark_stale()
         self._schedule_autosave()
