@@ -2947,13 +2947,13 @@ class SitePreviewWindow(tk.Toplevel):
         
         # Module dimensions along vs across the tracker
         if orientation == 'Portrait':
-            # Module length runs N-S (along tracker), width runs E-W (across)
-            mod_along_m = module_length_mm / 1000
-            mod_across_m = module_width_mm / 1000
-        else:
-            # Landscape: width runs N-S, length runs E-W
+            # Portrait: module width runs N-S (along tracker), length runs E-W (across)
             mod_along_m = module_width_mm / 1000
             mod_across_m = module_length_mm / 1000
+        else:
+            # Landscape: module length runs N-S (along tracker), width runs E-W (across)
+            mod_along_m = module_length_mm / 1000
+            mod_across_m = module_width_mm / 1000
         
         # N-S length: all modules in one string laid end-to-end, times strings, plus gaps and motor
         modules_in_row = modules_per_string * strings_per_tracker
@@ -2999,9 +2999,9 @@ class SitePreviewWindow(tk.Toplevel):
         print(f"    spt={strings_per_tracker}, mps={modules_per_string}, split_north={motor_split_north}")
         
         if orientation == 'Portrait':
-            mod_along_m = module_length_mm / 1000
-        else:
             mod_along_m = module_width_mm / 1000
+        else:
+            mod_along_m = module_length_mm / 1000
         
         m_to_ft = 3.28084
         
@@ -3076,9 +3076,14 @@ class SitePreviewWindow(tk.Toplevel):
         self.canvas.bind('<MouseWheel>', self.on_mousewheel)
         self.canvas.bind('<Button-4>', lambda e: self.zoom(1.1))
         self.canvas.bind('<Button-5>', lambda e: self.zoom(0.9))
+        # Left-click: group select/drag only
         self.canvas.bind('<ButtonPress-1>', self.on_press)
         self.canvas.bind('<B1-Motion>', self.on_motion)
         self.canvas.bind('<ButtonRelease-1>', self.on_release)
+        # Middle-click: pan canvas
+        self.canvas.bind('<ButtonPress-2>', self.on_pan_press)
+        self.canvas.bind('<B2-Motion>', self.on_pan_motion)
+        self.canvas.bind('<ButtonRelease-2>', self.on_pan_release)
         self.canvas.bind('<Configure>', lambda e: self.draw())
         
         # Bottom legend
@@ -3211,9 +3216,9 @@ class SitePreviewWindow(tk.Toplevel):
                     mps = tdata.get('modules_per_string', 28)
                     orientation = tdata.get('module_orientation', 'Portrait')
                     if orientation == 'Portrait':
-                        mod_along_m = ms.get('length_mm', 2000) / 1000
-                    else:
                         mod_along_m = ms.get('width_mm', 1000) / 1000
+                    else:
+                        mod_along_m = ms.get('length_mm', 2000) / 1000
                     spacing_m = tdata.get('module_spacing_m', 0.02)
                     string_length_ft = (mps * mod_along_m + (mps - 1) * spacing_m) * 3.28084
                     break
@@ -3376,7 +3381,7 @@ class SitePreviewWindow(tk.Toplevel):
         return None
     
     def on_press(self, event):
-        """Handle mouse press — select group or start panning."""
+        """Handle left mouse press — select/drag group only."""
         self.drag_start_x = event.x
         self.drag_start_y = event.y
         self._drag_moved = False
@@ -3385,8 +3390,6 @@ class SitePreviewWindow(tk.Toplevel):
         if hit is not None:
             self.selected_group_idx = hit
             self.dragging_group = True
-            self.dragging_canvas = False
-            # Store group's starting world position
             g = self.group_layout[hit]
             self._drag_group_start_x = g['x']
             self._drag_group_start_y = g['y']
@@ -3394,7 +3397,6 @@ class SitePreviewWindow(tk.Toplevel):
         else:
             self.selected_group_idx = None
             self.dragging_group = False
-            self.dragging_canvas = True
             self.draw()
     
     def on_motion(self, event):
@@ -3424,13 +3426,6 @@ class SitePreviewWindow(tk.Toplevel):
             self.group_layout[self.selected_group_idx]['y'] = new_y
             
             self.draw()
-        
-        elif getattr(self, 'dragging_canvas', False):
-            self.pan_x += dx_px
-            self.pan_y += dy_px
-            self.drag_start_x = event.x
-            self.drag_start_y = event.y
-            self.draw()
     
     def on_release(self, event):
         """Handle mouse release — finalize group position."""
@@ -3439,6 +3434,27 @@ class SitePreviewWindow(tk.Toplevel):
             self._save_group_positions()
         
         self.dragging_group = False
+        self.dragging_canvas = False
+
+    def on_pan_press(self, event):
+        """Handle middle mouse press — start panning."""
+        self.dragging_canvas = True
+        self.drag_start_x = event.x
+        self.drag_start_y = event.y
+
+    def on_pan_motion(self, event):
+        """Handle middle mouse drag — pan canvas."""
+        if self.dragging_canvas:
+            dx_px = event.x - self.drag_start_x
+            dy_px = event.y - self.drag_start_y
+            self.pan_x += dx_px
+            self.pan_y += dy_px
+            self.drag_start_x = event.x
+            self.drag_start_y = event.y
+            self.draw()
+
+    def on_pan_release(self, event):
+        """Handle middle mouse release — stop panning."""
         self.dragging_canvas = False
     
     def _snap_group_position(self, group_idx, raw_x, raw_y):
