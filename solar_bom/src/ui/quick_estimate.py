@@ -559,10 +559,12 @@ class QuickEstimate(ttk.Frame):
         self._updating_listbox = False
 
     def round_whip_length(self, raw_length_ft):
-        """Apply 5% waste factor and round up to nearest 5ft increment (min 10ft)"""
+        """Apply 5% waste factor and round up to nearest 10ft increment (min 10ft)"""
+        import math
         WASTE_FACTOR = 1.05
+        INCREMENT = 10
         length_with_waste = raw_length_ft * WASTE_FACTOR
-        rounded = 5 * ((length_with_waste + 5 - 0.1) // 5 + 1)
+        rounded = INCREMENT * math.ceil(length_with_waste / INCREMENT)
         return max(10, int(rounded))
     
     def load_combiner_library(self):
@@ -670,7 +672,13 @@ class QuickEstimate(ttk.Frame):
             old_distances = self.calculate_cb_whip_distances(
                 total_trackers, num_devices, row_spacing_ft
             )
-            return [d[0] for d in old_distances]
+            # Build flat spt list matching tracker order
+            spt_list = []
+            for group in self.groups:
+                for seg in group['segments']:
+                    for _ in range(seg['quantity']):
+                        spt_list.append(seg['strings_per_tracker'])
+            return [(d[0], spt_list[i] if i < len(spt_list) else 0) for i, d in enumerate(old_distances)]
         
         # Build world X for every global tracker index
         # Uses saved group positions or auto-layout, same as site preview
@@ -742,7 +750,9 @@ class QuickEstimate(ttk.Frame):
             return 6.5  # 5ft offset + half device height
         
         # Compute distance for each tracker to its assigned device
+        # Deduplicate: each physical tracker generates whips once, even if split across inverters
         whip_distances = []
+        seen_trackers = set()
         
         for inv_idx, inv in enumerate(inverters):
             if inv_idx >= len(device_info) or device_info[inv_idx] is None:
@@ -753,13 +763,17 @@ class QuickEstimate(ttk.Frame):
             
             for entry in inv['harness_map']:
                 tidx = entry['tracker_idx']
+                if tidx in seen_trackers:
+                    continue
+                seen_trackers.add(tidx)
                 if tidx >= len(tracker_world_x):
                     continue
                 
                 ew_distance = abs(tracker_world_x[tidx] - dev_x)
                 total_distance = (ew_distance**2 + ns_offset**2) ** 0.5
                 
-                whip_distances.append(total_distance)
+                spt = entry.get('strings_per_tracker', 0)
+                whip_distances.append((total_distance, spt))
         
         return whip_distances
     
@@ -1098,6 +1112,207 @@ class QuickEstimate(ttk.Frame):
         except:
             return []
         
+    def calculate_extender_lengths_per_segment(self, seg, device_position):
+        """Calculate per-harness positive and negative extender lengths for a segment.
+        
+        Returns a list of (pos_length_ft, neg_length_ft) tuples, one per harness in the config.
+        Multiply each by seg['quantity'] for total counts.
+        """
+        template_ref = seg.get('template_ref')
+        harness_config = seg.get('harness_config', str(seg['strings_per_tracker']))
+        harness_sizes = self.parse_harness_config(harness_config)
+        spt = seg['strings_per_tracker']
+        
+        if not harness_sizes:
+            return []
+        
+        m_to_ft = 3.28084
+        
+        # Get template geometry
+        tracker_length_ft = None
+        string_length_ft = None
+        motor_y_ft = None
+        motor_gap_ft = 0
+        has_motor = False
+        
+        if template_ref and template_ref in self.enabled_templates:
+            tdata = self.enabled_templates[template_ref]
+            mod_spec = tdata.get('module_spec', {})
+            orientation = tdata.get('module_orientation', 'Portrait')
+            mps = tdata.get('modules_per_string', 28)
+            spacing_m = tdata.get('module_spacing_m', 0.02)
+            has_motor = tdata.get('has_motor', True)
+            motor_gap_m = tdata.get('motor_gap_m', 1.0) if has_motor else 0
+            
+            if orientation == 'Portrait':
+                mod_along_m = mod_spec.get('width_mm', 1000) / 1000
+            else:
+                mod_along_m = mod_spec.get('length_mm', 2000) / 1000
+            
+            string_length_ft = (mps * mod_along_m + (mps - 1) * spacing_m) * m_to_ft
+            motor_gap_ft = motor_gap_m * m_to_ft
+            
+            # Total tracker length
+            total_modules = mps * spt
+            tracker_length_m = (total_modules * mod_along_m + 
+                               (total_modules - 1) * spacing_m + 
+                               (motor_gap_m if has_motor else 0))
+            tracker_length_ft = tracker_length_m * m_to_ft
+            
+            # Motor Y position from north end
+            if has_motor:
+                motor_placement = tdata.get('motor_placement_type', 'between_strings')
+                motor_pos_after = tdata.get('motor_position_after_string', None)
+                motor_string_idx = tdata.get('motor_string_index', None)
+                motor_split_north = tdata.get('motor_split_north', mps // 2)
+                
+                if motor_placement == 'between_strings':
+                    if motor_pos_after is not None:
+                        strings_before = motor_pos_after
+                    else:
+                        strings_before = 1  # default: after first string
+                    modules_before = strings_before * mps
+                    motor_y_m = (modules_before * mod_along_m + 
+                                (modules_before - 1) * spacing_m + spacing_m)
+                    motor_y_ft = motor_y_m * m_to_ft
+                elif motor_placement == 'middle_of_string':
+                    if motor_string_idx is not None:
+                        strings_before = motor_string_idx - 1  # 1-based
+                    else:
+                        strings_before = 0
+                    modules_before = strings_before * mps + motor_split_north
+                    motor_y_m = (modules_before * mod_along_m + 
+                                max(modules_before - 1, 0) * spacing_m + spacing_m)
+                    motor_y_ft = motor_y_m * m_to_ft
+                else:
+                    motor_y_ft = tracker_length_ft / 2
+            else:
+                motor_y_ft = tracker_length_ft / 2
+        
+        # Fallback if template not found
+        if tracker_length_ft is None:
+            module_width_ft = (self.selected_module.width_mm / 304.8) if self.selected_module else 3.3
+            try:
+                mps = int(self.modules_per_string_var.get())
+            except ValueError:
+                mps = 28
+            string_length_ft = module_width_ft * mps
+            motor_gap_ft = 3.28
+            tracker_length_ft = string_length_ft * spt + motor_gap_ft
+            motor_y_ft = tracker_length_ft / 2
+            has_motor = True
+        
+        # Determine extender target Y based on device position
+        device_offset_ft = 5.0
+        if device_position == 'north':
+            target_y = -device_offset_ft
+        elif device_position == 'south':
+            target_y = tracker_length_ft + device_offset_ft
+        else:  # middle
+            target_y = motor_y_ft
+        
+        # Resolve polarity convention
+        polarity = self.polarity_convention_var.get()
+        
+        # Determine which absolute string index the motor gap follows
+        motor_after_string = None  # 0-based absolute string index
+        if has_motor and template_ref and template_ref in self.enabled_templates:
+            tdata_motor = self.enabled_templates[template_ref]
+            motor_placement = tdata_motor.get('motor_placement_type', 'between_strings')
+            if motor_placement == 'between_strings':
+                pos_after = tdata_motor.get('motor_position_after_string', None)
+                if pos_after is not None:
+                    motor_after_string = pos_after - 1 if pos_after > 0 else 0
+                else:
+                    motor_after_string = 0
+            elif motor_placement == 'middle_of_string':
+                # Motor is inside a string — gap is effectively after (string_index - 1)
+                # but for extender purposes, treat it as between string boundaries
+                idx = tdata_motor.get('motor_string_index', 1)
+                motor_after_string = idx - 1 if idx > 0 else 0
+        elif has_motor:
+            motor_after_string = 0  # default fallback
+        
+        # Build string boundary positions N→S
+        string_positions = []  # list of (north_edge, south_edge, harness_idx)
+        y_cursor = 0.0
+        abs_string_idx = 0
+        inter_string_gap = (spacing_m if (template_ref and template_ref in self.enabled_templates) else 0.02) * m_to_ft
+        
+        for h_idx, h_size in enumerate(harness_sizes):
+            for s in range(h_size):
+                north_edge = y_cursor
+                south_edge = y_cursor + string_length_ft
+                string_positions.append((north_edge, south_edge, h_idx))
+                y_cursor = south_edge
+                
+                # Add motor gap after the correct absolute string
+                if has_motor and motor_after_string is not None and abs_string_idx == motor_after_string:
+                    y_cursor += motor_gap_ft
+                elif abs_string_idx < spt - 1:
+                    # Add inter-string spacing (not after last string)
+                    y_cursor += inter_string_gap
+                
+                abs_string_idx += 1
+        
+        # Calculate per-harness extender lengths
+        result = []
+        for h_idx, h_size in enumerate(harness_sizes):
+            harness_strings = [(n, s) for n, s, hi in string_positions if hi == h_idx]
+            
+            if not harness_strings:
+                result.append((10.0, 10.0))
+                continue
+            
+            harness_north = harness_strings[0][0]
+            harness_south = harness_strings[-1][1]
+            
+            # Determine which end is positive and which is negative
+            if polarity == 'Negative Always South':
+                pos_y = harness_north
+                neg_y = harness_south
+            elif polarity == 'Negative Always North':
+                pos_y = harness_south
+                neg_y = harness_north
+            elif polarity == 'Negative Toward Device':
+                if device_position == 'north':
+                    neg_y = harness_north
+                    pos_y = harness_south
+                elif device_position == 'south':
+                    neg_y = harness_south
+                    pos_y = harness_north
+                else:
+                    if harness_north < motor_y_ft:
+                        neg_y = harness_south
+                        pos_y = harness_north
+                    else:
+                        neg_y = harness_north
+                        pos_y = harness_south
+            elif polarity == 'Positive Toward Device':
+                if device_position == 'north':
+                    pos_y = harness_north
+                    neg_y = harness_south
+                elif device_position == 'south':
+                    pos_y = harness_south
+                    neg_y = harness_north
+                else:
+                    if harness_north < motor_y_ft:
+                        pos_y = harness_south
+                        neg_y = harness_north
+                    else:
+                        pos_y = harness_north
+                        neg_y = harness_south
+            else:
+                pos_y = harness_north
+                neg_y = harness_south
+            
+            pos_extender = max(abs(pos_y - target_y), 5.0)
+            neg_extender = max(abs(neg_y - target_y), 5.0)
+            
+            result.append((pos_extender, neg_extender))
+
+        return result
+        
     def load_estimate(self):
         """Load estimate data from the project"""
         if not self.current_project or not self.estimate_id:
@@ -1138,6 +1353,8 @@ class QuickEstimate(ttk.Frame):
             self.breaker_size_var.set('400')
         if hasattr(self, 'dc_feeder_distance_var'):
             self.dc_feeder_distance_var.set(str(estimate_data.get('dc_feeder_distance', 500)))
+        if hasattr(self, 'polarity_convention_var'):
+            self.polarity_convention_var.set(estimate_data.get('polarity_convention', 'Negative Always South'))
         if hasattr(self, 'ac_homerun_distance_var'):
             self.ac_homerun_distance_var.set(str(estimate_data.get('ac_homerun_distance', 500)))
         
@@ -1238,6 +1455,7 @@ class QuickEstimate(ttk.Frame):
         estimate_data['inspect_mode'] = getattr(self, '_last_inspect_mode', False)
         estimate_data['use_routed_distances'] = self.use_routed_var.get()
         estimate_data['breaker_size'] = self.breaker_size_var.get()
+        estimate_data['polarity_convention'] = self.polarity_convention_var.get()
         try:
             estimate_data['dc_feeder_distance'] = float(self.dc_feeder_distance_var.get())
         except (ValueError, AttributeError):
@@ -1997,6 +2215,24 @@ class QuickEstimate(ttk.Frame):
         self.disable_combobox_scroll(wire_gauge_combo)
         self.wire_gauge_var.trace_add('write', lambda *args: (self._mark_stale(), self._schedule_autosave()))
         
+        ttk.Label(settings_inner, text="Polarity:").pack(side='left', padx=(10, 5))
+        self.polarity_convention_var = tk.StringVar(value='Negative Always South')
+        polarity_combo = ttk.Combobox(
+            settings_inner,
+            textvariable=self.polarity_convention_var,
+            values=[
+                'Negative Always South',
+                'Negative Always North',
+                'Negative Toward Device',
+                'Positive Toward Device'
+            ],
+            state='readonly',
+            width=22
+        )
+        polarity_combo.pack(side='left')
+        self.disable_combobox_scroll(polarity_combo)
+        self.polarity_convention_var.trace_add('write', lambda *args: (self._mark_stale(), self._schedule_autosave()))
+        
         # Row 5: Topology-dependent distance inputs
         distance_row = ttk.Frame(settings_frame)
         distance_row.pack(fill='x', pady=(5, 0))
@@ -2451,8 +2687,8 @@ class QuickEstimate(ttk.Frame):
             'trackers_by_string': {},  # {num_strings: quantity}
             'harnesses_by_size': {},   # {num_strings: quantity}
             'whips_by_length': {},     # {length_ft: quantity}
-            'extenders_short': 0,
-            'extenders_long': 0,
+            'extenders_pos_by_length': {},  # {length_ft: quantity}
+            'extenders_neg_by_length': {},  # {length_ft: quantity}
             'total_whip_length': 0,
             'dc_feeder_total_ft': 0,
             'dc_feeder_count': 0,
@@ -2548,6 +2784,15 @@ class QuickEstimate(ttk.Frame):
                     totals['harnesses_by_size'][size] += qty
                     total_all_harnesses += qty
         
+        # Build harness-count-per-spt lookup for whip calculation
+        harness_count_by_spt = {}
+        for group in self.groups:
+            for seg in group['segments']:
+                spt = seg['strings_per_tracker']
+                if spt not in harness_count_by_spt:
+                    harness_sizes = self.parse_harness_config(seg['harness_config'])
+                    harness_count_by_spt[spt] = len(harness_sizes)
+
         # Store unique modules for Excel export
         totals['segment_module_data'] = segment_module_data
 
@@ -2760,20 +3005,32 @@ class QuickEstimate(ttk.Frame):
             whip_distances = self.calculate_whip_distances_from_positions(
                 allocation_result, topology, num_devices, row_spacing
             )
-            for distance_ft in whip_distances:
+
+            for distance_ft, spt in whip_distances:
                 whip_length = self.round_whip_length(distance_ft)
-                whips_at_length = 2  # pos + neg per tracker
+                num_harnesses = harness_count_by_spt.get(spt, 1)
+                whips_at_length = 2 * num_harnesses  # pos + neg per harness
                 if whip_length not in totals['whips_by_length']:
                     totals['whips_by_length'][whip_length] = 0
                 totals['whips_by_length'][whip_length] += whips_at_length
                 totals['total_whip_length'] += whip_length * whips_at_length
 
         # ==================== Extenders ====================
-        totals['extenders_short'] = total_all_harnesses
-        totals['extenders_long'] = total_all_harnesses
-
-        short_extender_length = self.round_whip_length(10)
-        long_extender_length = self.round_whip_length(string_length_ft)
+        for group in self.groups:
+            device_position = group.get('device_position', 'middle')
+            for seg in group['segments']:
+                if seg['quantity'] <= 0:
+                    continue
+                extender_pairs = self.calculate_extender_lengths_per_segment(seg, device_position)
+                for pos_len, neg_len in extender_pairs:
+                    pos_rounded = self.round_whip_length(pos_len)
+                    neg_rounded = self.round_whip_length(neg_len)
+                    if pos_rounded not in totals['extenders_pos_by_length']:
+                        totals['extenders_pos_by_length'][pos_rounded] = 0
+                    totals['extenders_pos_by_length'][pos_rounded] += seg['quantity']
+                    if neg_rounded not in totals['extenders_neg_by_length']:
+                        totals['extenders_neg_by_length'][neg_rounded] = 0
+                    totals['extenders_neg_by_length'][neg_rounded] += seg['quantity']
 
         # ==================== Harness split adjustment ====================
         # NOTE: _adjust_harnesses_for_splits will be updated to use harness_map
@@ -2888,6 +3145,7 @@ class QuickEstimate(ttk.Frame):
                     )
 
         if totals['string_inverters'] > 0:
+            insert_section('INVERTERS')
             inv_name = f"{self.selected_inverter.manufacturer} {self.selected_inverter.model}" if self.selected_inverter else "Inverter"
             inv_summary = totals.get('inverter_summary', {})
             actual_ratio = inv_summary.get('actual_dc_ac', 0)
@@ -2923,23 +3181,38 @@ class QuickEstimate(ttk.Frame):
                     insert_row(f"{size}-String Harness (Pos)", pos_pn, qty, 'ea', pos_unit, pos_ext)
                     insert_row(f"{size}-String Harness (Neg)", neg_pn, qty, 'ea', neg_unit, neg_ext)
 
-        # Extenders
-        total_extenders = totals['extenders_short'] + totals['extenders_long']
-        if total_extenders > 0:
-            insert_section('EXTENDERS')
-            s_pn, s_unit, s_ext = self.lookup_part_and_price('extender', polarity='positive', length_ft=short_extender_length, qty=totals['extenders_short'])
-            insert_row(f"Extender {short_extender_length}ft (short side, Pos)", s_pn, totals['extenders_short'], 'ea', s_unit, s_ext)
-            l_pn, l_unit, l_ext = self.lookup_part_and_price('extender', polarity='negative', length_ft=long_extender_length, qty=totals['extenders_long'])
-            insert_row(f"Extender {long_extender_length}ft (long side, Neg)", l_pn, totals['extenders_long'], 'ea', l_unit, l_ext)
+        # Extenders — split into positive and negative sections
+        if totals['extenders_pos_by_length']:
+            insert_section('EXTENDERS — POSITIVE')
+            for length in sorted(totals['extenders_pos_by_length'].keys()):
+                qty = totals['extenders_pos_by_length'][length]
+                e_pn, e_unit, e_ext = self.lookup_part_and_price('extender', polarity='positive', length_ft=length, qty=qty)
+                insert_row(f"Extender {length}ft (Pos)", e_pn, qty, 'ea', e_unit, e_ext)
+        
+        if totals['extenders_neg_by_length']:
+            insert_section('EXTENDERS — NEGATIVE')
+            for length in sorted(totals['extenders_neg_by_length'].keys()):
+                qty = totals['extenders_neg_by_length'][length]
+                e_pn, e_unit, e_ext = self.lookup_part_and_price('extender', polarity='negative', length_ft=length, qty=qty)
+                insert_row(f"Extender {length}ft (Neg)", e_pn, qty, 'ea', e_unit, e_ext)
 
-        # Whips
+        # Whips — split into positive and negative sections
         if totals['whips_by_length']:
-            whip_label = 'WHIPS (to inverter)' if topology == 'Distributed String' else 'WHIPS (to combiner)'
-            insert_section(whip_label)
+            device_label = 'to inverter' if topology == 'Distributed String' else 'to combiner'
+            
+            # Positive whips (half of each length bucket)
+            insert_section(f'WHIPS — POSITIVE ({device_label})')
             for length in sorted(totals['whips_by_length'].keys()):
-                qty = totals['whips_by_length'][length]
+                qty = totals['whips_by_length'][length] // 2
                 w_pn, w_unit, w_ext = self.lookup_part_and_price('whip', polarity='positive', length_ft=length, qty=qty)
-                insert_row(f"Whip {length}ft", w_pn, qty, 'ea', w_unit, w_ext)
+                insert_row(f"Whip {length}ft (Pos)", w_pn, qty, 'ea', w_unit, w_ext)
+            
+            # Negative whips (half of each length bucket)
+            insert_section(f'WHIPS — NEGATIVE ({device_label})')
+            for length in sorted(totals['whips_by_length'].keys()):
+                qty = totals['whips_by_length'][length] // 2
+                w_pn, w_unit, w_ext = self.lookup_part_and_price('whip', polarity='negative', length_ft=length, qty=qty)
+                insert_row(f"Whip {length}ft (Neg)", w_pn, qty, 'ea', w_unit, w_ext)
         
         # DC Feeders (Centralized String and Central Inverter only)
         if totals['dc_feeder_count'] > 0:
@@ -3020,8 +3293,9 @@ class QuickEstimate(ttk.Frame):
             from openpyxl.utils import get_column_letter
             
             wb = Workbook()
-            ws = wb.active
-            ws.title = "Quick Estimate BOM"
+            info_ws = wb.active
+            info_ws.title = "Project Info"
+            ws = wb.create_sheet("Quick Estimate BOM")
             
             # Define styles
             title_font = Font(bold=True, size=14)
@@ -3038,12 +3312,12 @@ class QuickEstimate(ttk.Frame):
             wrap_align = Alignment(horizontal='left', vertical='center', wrap_text=True)
             warning_fill = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type="solid")
             
-            row = 1
+            # ========== PROJECT INFO SHEET ==========
+            info_row = 1
             
-            # ========== PROJECT INFO SECTION ==========
-            ws.merge_cells(f'A{row}:E{row}')
-            ws.cell(row=row, column=1, value="Quick Estimate BOM").font = title_font
-            row += 2
+            info_ws.merge_cells(f'A{info_row}:E{info_row}')
+            info_ws.cell(row=info_row, column=1, value="Quick Estimate — Project Info").font = title_font
+            info_row += 2
             
             # Project info pairs
             info_items = []
@@ -3091,29 +3365,26 @@ class QuickEstimate(ttk.Frame):
                 info_items.append(("Estimate:", est_data.get('name', '')))
             
             for label, value in info_items:
-                ws.cell(row=row, column=1, value=label).font = label_font
-                ws.cell(row=row, column=2, value=value)
-                row += 1
+                info_ws.cell(row=info_row, column=1, value=label).font = label_font
+                info_ws.cell(row=info_row, column=2, value=value)
+                info_row += 1
             
-            row += 1
+            info_row += 1
             
-            # ========== ROW SUMMARY SECTION ==========
-            ws.merge_cells(f'A{row}:E{row}')
-            cell = ws.cell(row=row, column=1, value="Group Configuration Summary")
-            cell.font = title_font
-            row += 1
+            # ========== GROUP CONFIGURATION SUMMARY (info sheet) ==========
+            info_ws.merge_cells(f'A{info_row}:E{info_row}')
+            info_ws.cell(row=info_row, column=1, value="Group Configuration Summary").font = title_font
+            info_row += 1
             
-            # Row summary headers
             row_headers = ['Group', 'Segment Configs', 'Total Strings', 'Total Trackers']
             for col, header in enumerate(row_headers, 1):
-                cell = ws.cell(row=row, column=col, value=header)
+                cell = info_ws.cell(row=info_row, column=col, value=header)
                 cell.font = header_font
                 cell.fill = header_fill
                 cell.alignment = center_align
                 cell.border = thin_border
-            row += 1
+            info_row += 1
             
-            # Group data
             for r in self.groups:
                 group_strings = sum(s['quantity'] * s['strings_per_tracker'] for s in r['segments'])
                 group_trackers = sum(s['quantity'] for s in r['segments'])
@@ -3123,70 +3394,69 @@ class QuickEstimate(ttk.Frame):
                 )
                 group_data = [r['name'], seg_summary, group_strings, group_trackers]
                 for col, value in enumerate(group_data, 1):
-                    cell = ws.cell(row=row, column=col, value=value)
+                    cell = info_ws.cell(row=info_row, column=col, value=value)
                     cell.border = thin_border
                     cell.alignment = center_align
-                row += 1
+                info_row += 1
             
-            row += 1
+            info_row += 1
             
-            # ========== TRACKER SUMMARY SECTION ==========
+            # ========== TRACKER SUMMARY (info sheet) ==========
             if hasattr(self, 'last_totals') and self.last_totals.get('trackers_by_string'):
-                ws.merge_cells(f'A{row}:E{row}')
-                ws.cell(row=row, column=1, value="Tracker Summary").font = title_font
-                row += 1
+                info_ws.merge_cells(f'A{info_row}:E{info_row}')
+                info_ws.cell(row=info_row, column=1, value="Tracker Summary").font = title_font
+                info_row += 1
                 
                 tracker_headers = ['Tracker Type', 'Quantity', 'Unit']
                 for col, header in enumerate(tracker_headers, 1):
-                    cell = ws.cell(row=row, column=col, value=header)
+                    cell = info_ws.cell(row=info_row, column=col, value=header)
                     cell.font = header_font
                     cell.fill = header_fill
                     cell.alignment = center_align
                     cell.border = thin_border
-                row += 1
+                info_row += 1
                 
                 total_trackers = 0
                 for strings in sorted(self.last_totals['trackers_by_string'].keys()):
                     qty = self.last_totals['trackers_by_string'][strings]
                     total_trackers += qty
-                    ws.cell(row=row, column=1, value=f"{strings}-String Trackers").border = thin_border
-                    cell_qty = ws.cell(row=row, column=2, value=qty)
+                    info_ws.cell(row=info_row, column=1, value=f"{strings}-String Trackers").border = thin_border
+                    cell_qty = info_ws.cell(row=info_row, column=2, value=qty)
                     cell_qty.border = thin_border
                     cell_qty.alignment = center_align
-                    cell_unit = ws.cell(row=row, column=3, value='ea')
+                    cell_unit = info_ws.cell(row=info_row, column=3, value='ea')
                     cell_unit.border = thin_border
                     cell_unit.alignment = center_align
-                    row += 1
+                    info_row += 1
                 
-                # Total row
-                total_label = ws.cell(row=row, column=1, value="Total Trackers")
+                total_label = info_ws.cell(row=info_row, column=1, value="Total Trackers")
                 total_label.font = label_font
                 total_label.border = thin_border
-                total_qty = ws.cell(row=row, column=2, value=total_trackers)
+                total_qty = info_ws.cell(row=info_row, column=2, value=total_trackers)
                 total_qty.font = label_font
                 total_qty.border = thin_border
                 total_qty.alignment = center_align
-                total_unit = ws.cell(row=row, column=3, value='ea')
+                total_unit = info_ws.cell(row=info_row, column=3, value='ea')
                 total_unit.border = thin_border
                 total_unit.alignment = center_align
-                row += 2
+                info_row += 2
             
-            # ========== INVERTER ALLOCATION SECTION ==========
+            # ========== INVERTER ALLOCATION (info sheet) ==========
             if hasattr(self, 'last_totals') and self.last_totals.get('inverter_summary'):
                 inv_sum = self.last_totals['inverter_summary']
                 
-                ws.merge_cells(f'A{row}:E{row}')
-                ws.cell(row=row, column=1, value="Inverter Allocation Summary").font = title_font
-                row += 1
+                info_ws.merge_cells(f'A{info_row}:E{info_row}')
+                info_ws.cell(row=info_row, column=1, value="Inverter Allocation Summary").font = title_font
+                info_row += 1
                 
                 alloc_headers = ['Inverter', 'Strings', 'Trackers', 'Pattern']
                 for col, header in enumerate(alloc_headers, 1):
-                    cell = ws.cell(row=row, column=col, value=header)
+                    cell = info_ws.cell(row=info_row, column=col, value=header)
                     cell.font = header_font
                     cell.fill = header_fill
                     cell.alignment = center_align
                     cell.border = thin_border
-                row += 1
+                info_row += 1
                 
                 allocation_result = inv_sum.get('allocation_result')
                 if allocation_result:
@@ -3200,14 +3470,22 @@ class QuickEstimate(ttk.Frame):
                             f"[{pattern_str}]"
                         ]
                         for col, value in enumerate(inv_row, 1):
-                            cell = ws.cell(row=row, column=col, value=value)
+                            cell = info_ws.cell(row=info_row, column=col, value=value)
                             cell.border = thin_border
                             cell.alignment = center_align
-                        row += 1
-                
-                row += 1
-
-            # ========== BOM RESULTS SECTION ==========
+                        info_row += 1
+            
+            # Auto-fit columns on info sheet
+            for col_idx in range(1, 6):
+                max_length = 0
+                col_letter = get_column_letter(col_idx)
+                for cell in info_ws[col_letter]:
+                    if cell.value:
+                        max_length = max(max_length, len(str(cell.value)))
+                info_ws.column_dimensions[col_letter].width = min(max_length + 4, 55)
+            
+            # ========== BOM RESULTS SECTION (BOM sheet) ==========
+            row = 1
             ws.merge_cells(f'A{row}:F{row}')
             ws.cell(row=row, column=1, value="Estimated Bill of Materials").font = title_font
             row += 1
@@ -3245,9 +3523,26 @@ class QuickEstimate(ttk.Frame):
 
                 cell_item = ws.cell(row=row, column=1, value=str(item_name).replace('---', '').strip() if is_section else item_name)
                 cell_pn = ws.cell(row=row, column=2, value=part_number if not is_section else '')
-                cell_qty = ws.cell(row=row, column=3, value=qty if qty else '')
+                # Convert qty to number for Excel
+                qty_val = ''
+                if qty:
+                    try:
+                        qty_val = int(qty) if '.' not in str(qty) else float(qty)
+                    except (ValueError, TypeError):
+                        qty_val = qty
+                cell_qty = ws.cell(row=row, column=3, value=qty_val)
                 cell_unit = ws.cell(row=row, column=4, value=unit if unit else '')
-                cell_unit_cost = ws.cell(row=row, column=5, value=unit_cost if unit_cost else '')
+                # Convert unit_cost to number for Excel
+                unit_cost_val = ''
+                if unit_cost:
+                    try:
+                        cleaned = str(unit_cost).replace('$', '').replace(',', '').strip()
+                        unit_cost_val = float(cleaned) if cleaned else ''
+                    except (ValueError, TypeError):
+                        unit_cost_val = unit_cost
+                cell_unit_cost = ws.cell(row=row, column=5, value=unit_cost_val)
+                if isinstance(unit_cost_val, float):
+                    cell_unit_cost.number_format = '"$"#,##0.00'
 
                 # Ext. Cost: formula for all non-section rows
                 if not is_section:
@@ -3287,7 +3582,7 @@ class QuickEstimate(ttk.Frame):
                 total_cell.alignment = center_align
                 row += 1
             
-            # ========== AUTO-FIT COLUMNS ==========
+            # ========== AUTO-FIT COLUMNS (BOM sheet) ==========
             for col_idx in range(1, 9):
                 max_length = 0
                 col_letter = get_column_letter(col_idx)
