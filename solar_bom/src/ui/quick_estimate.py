@@ -2794,7 +2794,6 @@ class QuickEstimate(ttk.Frame):
         total_combiners = sum(totals['combiners_by_breaker'].values())
         
         use_routed = self.use_routed_var.get() if hasattr(self, 'use_routed_var') else False
-        print(f"[Feeder Debug] use_routed={use_routed}, pads={len(self.pads)}, alloc={'yes' if allocation_result else 'no'}")
         
         if use_routed and self.pads and allocation_result:
             # Use routed Manhattan distances from devices to pads
@@ -2808,12 +2807,6 @@ class QuickEstimate(ttk.Frame):
                 traceback.print_exc()
                 routed = {'feeder_distances': [], 'feeder_total_ft': 0, 'feeder_count': 0}
             
-            print(f"[Routed Result] count={routed['feeder_count']}, total_ft={routed['feeder_total_ft']:.1f}")
-            for label, dist in routed['feeder_distances'][:5]:
-                print(f"  {label}: {dist:.1f} ft")
-            if len(routed['feeder_distances']) > 5:
-                print(f"  ... and {len(routed['feeder_distances']) - 5} more")
-            print(f"[Routed] topology='{topology}'")
             if topology == 'Distributed String':
                 # Devices are SIs, cables are AC homeruns
                 # Devices are SIs, cables are AC homeruns
@@ -2950,14 +2943,26 @@ class QuickEstimate(ttk.Frame):
         
         # DC Feeders (Centralized String and Central Inverter only)
         if totals['dc_feeder_count'] > 0:
+            if totals['dc_feeder_count'] > 0:
+                routed_dc_avg = totals['dc_feeder_total_ft'] / totals['dc_feeder_count']
+            else:
+                routed_dc_avg = dc_feeder_avg_ft
+            dc_avg_display = routed_dc_avg if use_routed else dc_feeder_avg_ft
+            dc_label_suffix = " (routed)" if use_routed else ""
             insert_section('DC FEEDERS')
-            insert_row(f"DC Feeder — avg {dc_feeder_avg_ft:.0f}ft run × {totals['dc_feeder_count']} runs (pos)", '', f"{totals['dc_feeder_total_ft']:.0f}", 'ft')
-            insert_row(f"DC Feeder — avg {dc_feeder_avg_ft:.0f}ft run × {totals['dc_feeder_count']} runs (neg)", '', f"{totals['dc_feeder_total_ft']:.0f}", 'ft')
+            insert_row(f"DC Feeder — avg {dc_avg_display:.0f}ft{dc_label_suffix} × {totals['dc_feeder_count']} runs (pos)", '', f"{totals['dc_feeder_total_ft']:.0f}", 'ft')
+            insert_row(f"DC Feeder — avg {dc_avg_display:.0f}ft{dc_label_suffix} × {totals['dc_feeder_count']} runs (neg)", '', f"{totals['dc_feeder_total_ft']:.0f}", 'ft')
         
         # AC Homeruns
         if totals['ac_homerun_count'] > 0:
+            if totals['ac_homerun_count'] > 0:
+                routed_ac_avg = totals['ac_homerun_total_ft'] / totals['ac_homerun_count']
+            else:
+                routed_ac_avg = ac_homerun_avg_ft
+            ac_avg_display = routed_ac_avg if use_routed else ac_homerun_avg_ft
+            ac_label_suffix = " (routed)" if use_routed else ""
             insert_section('AC HOMERUNS')
-            insert_row(f"AC Homerun — avg {ac_homerun_avg_ft:.0f}ft run × {totals['ac_homerun_count']} runs", '', f"{totals['ac_homerun_total_ft']:.0f}", 'ft')
+            insert_row(f"AC Homerun — avg {ac_avg_display:.0f}ft{ac_label_suffix} × {totals['ac_homerun_count']} runs", '', f"{totals['ac_homerun_total_ft']:.0f}", 'ft')
 
     def export_to_excel(self):
         """Export the quick estimate BOM to Excel"""
