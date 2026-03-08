@@ -90,6 +90,26 @@ class SolarBOMApplication:
         for widget in self.main_frame.winfo_children():
             widget.destroy()
         
+        # Add status bar with project info
+        status_frame = ttk.Frame(self.main_frame, relief=tk.SUNKEN, borderwidth=1)
+        status_frame.pack(fill=tk.X, side=tk.BOTTOM)
+        
+        project_label = ttk.Label(
+            status_frame, 
+            text=f"Project: {project.metadata.name} | Client: {project.metadata.client or 'N/A'}"
+        )
+        project_label.pack(side=tk.LEFT, padx=5, pady=2)
+        
+        dashboard_btn = ttk.Button(
+            status_frame, text="Dashboard", command=self.show_dashboard, width=10
+        )
+        dashboard_btn.pack(side=tk.RIGHT, padx=5, pady=2)
+        
+        save_btn = ttk.Button(
+            status_frame, text="Save Project", command=self.save_project, width=12
+        )
+        save_btn.pack(side=tk.RIGHT, padx=5, pady=2)
+
         # Create main notebook
         notebook = ttk.Notebook(self.main_frame)
         notebook.pack(fill='both', expand=True, padx=10, pady=10)
@@ -461,26 +481,6 @@ class SolarBOMApplication:
 
         # Store reference for menu actions
         self.block_configurator = block_configurator
-        
-        # Add status bar with project info
-        status_frame = ttk.Frame(self.main_frame, relief=tk.SUNKEN, borderwidth=1)
-        status_frame.pack(fill=tk.X, side=tk.BOTTOM)
-        
-        project_label = ttk.Label(
-            status_frame, 
-            text=f"Project: {project.metadata.name} | Client: {project.metadata.client or 'N/A'}"
-        )
-        project_label.pack(side=tk.LEFT, padx=5, pady=2)
-        
-        dashboard_btn = ttk.Button(
-            status_frame, text="Dashboard", command=self.show_dashboard, width=10
-        )
-        dashboard_btn.pack(side=tk.RIGHT, padx=5, pady=2)
-        
-        save_btn = ttk.Button(
-            status_frame, text="Save Project", command=self.save_project, width=12
-        )
-        save_btn.pack(side=tk.RIGHT, padx=5, pady=2)
     
     def new_project(self):
         """Create a new project"""

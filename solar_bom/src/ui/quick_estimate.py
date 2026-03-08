@@ -3263,19 +3263,22 @@ class QuickEstimate(ttk.Frame):
         module_width_ft = module_width_mm / 304.8
         string_length_ft = module_width_ft * modules_per_string
         
-        # Build suggested filename
-        project_name = "Quick_Estimate"
+        # Build suggested filename (matching BOM Generator convention)
+        def clean_filename(s):
+            return "".join(c for c in s if c.isalnum() or c in (' ', '-', '_')).strip()
+        
+        client = "Unknown_Client"
+        project_name = "Unknown_Project"
         estimate_name = "Estimate"
+        
         if self.current_project and self.current_project.metadata:
-            project_name = self.current_project.metadata.name or "Quick_Estimate"
+            client = clean_filename(self.current_project.metadata.client or "Unknown_Client")
+            project_name = clean_filename(self.current_project.metadata.name or "Unknown_Project")
         if self.estimate_id and self.current_project:
             est_data = self.current_project.quick_estimates.get(self.estimate_id, {})
-            estimate_name = est_data.get('name', 'Estimate')
+            estimate_name = clean_filename(est_data.get('name', 'Estimate'))
         
-        # Clean filename
-        safe_project = "".join(c for c in project_name if c.isalnum() or c in (' ', '-', '_')).strip()
-        safe_estimate = "".join(c for c in estimate_name if c.isalnum() or c in (' ', '-', '_')).strip()
-        suggested_filename = f"{safe_project}_{safe_estimate}_Quick_BOM.xlsx"
+        suggested_filename = f"{client}_{project_name}_Ampacity Quick eBOM_{estimate_name}.xlsx"
         
         filepath = filedialog.asksaveasfilename(
             defaultextension=".xlsx",
