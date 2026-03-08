@@ -25,6 +25,7 @@ class QuickEstimate(ttk.Frame):
         self.selected_inverter = None  # Currently selected InverterSpec
         
         self.groups = []
+        self.pads = []  # Collection points (inverter pads)
         self.selected_group_idx = None
         self._updating_listbox = False
         self.enabled_templates = self.load_enabled_templates()
@@ -445,6 +446,7 @@ class QuickEstimate(ttk.Frame):
         
         group = {
             'name': f"Group {group_num}",
+            'device_position': 'middle',
             'segments': [
                 {'quantity': 1, 'strings_per_tracker': default_spt, 'harness_config': str(default_spt), 'template_ref': default_ref}
             ]
@@ -649,6 +651,260 @@ class QuickEstimate(ttk.Frame):
                     break
         
         return whip_distances
+
+    def calculate_whip_distances_from_positions(self, allocation_result, topology, num_devices, row_spacing_ft):
+        """Calculate whip distances using device positions derived from allocation.
+        
+        For Distributed String and Centralized String: uses allocation result
+        to map each inverter's trackers to a device, computing real E-W + N-S distance.
+        
+        For Central Inverter: falls back to the abstract even-spacing method.
+        
+        Returns a flat list of distance_ft values, one per tracker.
+        """
+        if topology == 'Central Inverter' or not allocation_result:
+            total_trackers = sum(
+                sum(seg['quantity'] for seg in group['segments'])
+                for group in self.groups
+            )
+            old_distances = self.calculate_cb_whip_distances(
+                total_trackers, num_devices, row_spacing_ft
+            )
+            return [d[0] for d in old_distances]
+        
+        # Build world X for every global tracker index
+        # Uses saved group positions or auto-layout, same as site preview
+        tracker_world_x = []
+        tracker_group = []
+        auto_x_cursor = 0.0
+        
+        for grp_idx, group in enumerate(self.groups):
+            saved_x = group.get('position_x')
+            if saved_x is not None:
+                group_x = saved_x
+            else:
+                group_x = auto_x_cursor
+            
+            local_idx = 0
+            for seg in group['segments']:
+                for _ in range(seg['quantity']):
+                    tracker_world_x.append(group_x + local_idx * row_spacing_ft)
+                    tracker_group.append(grp_idx)
+                    local_idx += 1
+            
+            # Advance auto cursor
+            group_tracker_count = sum(seg['quantity'] for seg in group['segments'])
+            auto_x_cursor += group_tracker_count * row_spacing_ft + row_spacing_ft * 2
+        
+        # Compute device world X and metadata for each inverter
+        inverters = allocation_result.get('inverters', [])
+        device_info = []  # list of (world_x, device_position) per inverter
+        
+        for inv_idx, inv in enumerate(inverters):
+            harness_map = inv.get('harness_map', [])
+            if not harness_map:
+                device_info.append(None)
+                continue
+            
+            # Find majority group
+            group_counts = {}
+            for entry in harness_map:
+                tidx = entry['tracker_idx']
+                if tidx < len(tracker_group):
+                    grp = tracker_group[tidx]
+                    group_counts[grp] = group_counts.get(grp, 0) + 1
+            
+            if not group_counts:
+                device_info.append(None)
+                continue
+            
+            primary_grp = max(group_counts, key=group_counts.get)
+            group_source = self.groups[primary_grp] if primary_grp < len(self.groups) else {}
+            device_position = group_source.get('device_position', 'middle')
+            
+            # Device X = average of its trackers' world X positions in the primary group
+            inv_tracker_xs = []
+            for entry in harness_map:
+                tidx = entry['tracker_idx']
+                if tidx < len(tracker_world_x) and tracker_group[tidx] == primary_grp:
+                    inv_tracker_xs.append(tracker_world_x[tidx])
+            
+            if inv_tracker_xs:
+                device_x = (min(inv_tracker_xs) + max(inv_tracker_xs)) / 2.0
+            else:
+                device_x = 0
+            
+            device_info.append((device_x, device_position))
+        
+        def get_ns_offset(device_position):
+            if device_position == 'middle':
+                return 0.0
+            return 6.5  # 5ft offset + half device height
+        
+        # Compute distance for each tracker to its assigned device
+        whip_distances = []
+        
+        for inv_idx, inv in enumerate(inverters):
+            if inv_idx >= len(device_info) or device_info[inv_idx] is None:
+                continue
+            
+            dev_x, dev_position = device_info[inv_idx]
+            ns_offset = get_ns_offset(dev_position)
+            
+            for entry in inv['harness_map']:
+                tidx = entry['tracker_idx']
+                if tidx >= len(tracker_world_x):
+                    continue
+                
+                ew_distance = abs(tracker_world_x[tidx] - dev_x)
+                total_distance = (ew_distance**2 + ns_offset**2) ** 0.5
+                
+                whip_distances.append(total_distance)
+        
+        return whip_distances
+    
+    def calculate_routed_feeder_distances(self, allocation_result, topology, row_spacing_ft):
+        """Calculate Manhattan feeder distances from each device to its assigned pad.
+        
+        Returns a dict with:
+            'feeder_distances': list of (device_label, distance_ft) tuples
+            'feeder_total_ft': total feeder cable
+            'feeder_count': number of feeder runs
+            'homerun_distances': list of (pad_label, distance_ft) for AC homeruns (stub)
+        """
+        result = {
+            'feeder_distances': [],
+            'feeder_total_ft': 0,
+            'feeder_count': 0,
+        }
+        
+        if not self.pads or not allocation_result:
+            return result
+        
+        inverters = allocation_result.get('inverters', [])
+        if not inverters:
+            return result
+        
+        # Build device world X positions (same as whip calc)
+        device_world_x = []
+        device_group = []
+        auto_x_cursor = 0.0
+        
+        for grp_idx, group in enumerate(self.groups):
+            saved_x = group.get('position_x')
+            group_x = saved_x if saved_x is not None else auto_x_cursor
+            
+            local_idx = 0
+            tracker_info_local = []
+            for seg in group['segments']:
+                for _ in range(seg['quantity']):
+                    tracker_info_local.append((grp_idx, local_idx))
+                    local_idx += 1
+            
+            group_tracker_count = sum(seg['quantity'] for seg in group['segments'])
+            auto_x_cursor += group_tracker_count * row_spacing_ft + row_spacing_ft * 2
+        
+        # Recompute device centers (same logic as whip calc and site preview)
+        tracker_world_x = []
+        tracker_grp = []
+        auto_x_cursor = 0.0
+        
+        for grp_idx, group in enumerate(self.groups):
+            saved_x = group.get('position_x')
+            group_x = saved_x if saved_x is not None else auto_x_cursor
+            
+            local_idx = 0
+            for seg in group['segments']:
+                for _ in range(seg['quantity']):
+                    tracker_world_x.append(group_x + local_idx * row_spacing_ft)
+                    tracker_grp.append(grp_idx)
+                    local_idx += 1
+            
+            group_tracker_count = sum(seg['quantity'] for seg in group['segments'])
+            auto_x_cursor += group_tracker_count * row_spacing_ft + row_spacing_ft * 2
+        
+        # Compute device positions (center X, Y based on device_position)
+        device_positions = []
+        for inv_idx, inv in enumerate(inverters):
+            harness_map = inv.get('harness_map', [])
+            if not harness_map:
+                device_positions.append(None)
+                continue
+            
+            group_counts = {}
+            for entry in harness_map:
+                tidx = entry['tracker_idx']
+                if tidx < len(tracker_grp):
+                    g = tracker_grp[tidx]
+                    group_counts[g] = group_counts.get(g, 0) + 1
+            
+            if not group_counts:
+                device_positions.append(None)
+                continue
+            
+            primary_grp = max(group_counts, key=group_counts.get)
+            group_source = self.groups[primary_grp] if primary_grp < len(self.groups) else {}
+            device_position = group_source.get('device_position', 'middle')
+            
+            inv_xs = [tracker_world_x[e['tracker_idx']] for e in harness_map 
+                      if e['tracker_idx'] < len(tracker_world_x) and tracker_grp[e['tracker_idx']] == primary_grp]
+            
+            dev_x = (min(inv_xs) + max(inv_xs)) / 2.0 if inv_xs else 0
+            
+            # Approximate device Y from group position
+            saved_y = group_source.get('position_y', 0)
+            group_y = saved_y if saved_y is not None else 0
+            
+            # Get tracker length for Y offset calculation
+            first_ref = None
+            for seg in group_source.get('segments', []):
+                ref = seg.get('template_ref')
+                if ref and ref in self.enabled_templates:
+                    first_ref = ref
+                    break
+            
+            tracker_length_ft = 180.0  # fallback
+            if first_ref:
+                dims = self._get_tracker_dims_ft(first_ref)
+                if dims:
+                    tracker_length_ft = dims[1]
+            
+            if device_position == 'north':
+                dev_y = group_y - 5.0
+            elif device_position == 'south':
+                dev_y = group_y + tracker_length_ft + 5.0
+            else:
+                dev_y = group_y + tracker_length_ft / 2.0
+            
+            device_positions.append((dev_x, dev_y))
+        
+        # Build device -> pad lookup
+        device_to_pad = {}
+        for pad_idx, pad in enumerate(self.pads):
+            for dev_idx in pad.get('assigned_devices', []):
+                device_to_pad[dev_idx] = pad_idx
+        
+        # Compute Manhattan distance from each device to its pad
+        for dev_idx, dev_pos in enumerate(device_positions):
+            if dev_pos is None:
+                continue
+            
+            pad_idx = device_to_pad.get(dev_idx)
+            if pad_idx is None or pad_idx >= len(self.pads):
+                continue
+            
+            pad = self.pads[pad_idx]
+            pad_cx = pad['x'] + pad.get('width_ft', 10.0) / 2
+            pad_cy = pad['y'] + pad.get('height_ft', 8.0) / 2
+            
+            manhattan = abs(dev_pos[0] - pad_cx) + abs(dev_pos[1] - pad_cy)
+            
+            label = f"Dev-{dev_idx+1:02d}"
+            result['feeder_distances'].append((label, manhattan))
+            result['feeder_total_ft'] += manhattan
+            result['feeder_count'] += 1
+        
+        return result
 
     def lookup_part_and_price(self, item_type, **kwargs):
         """Look up part number and unit price for a BOM item.
@@ -931,7 +1187,10 @@ class QuickEstimate(ttk.Frame):
             self.group_listbox.selection_set(0)
             self.on_group_select(None)
         
-        self._loading = False
+        self._last_inspect_mode = estimate_data.get('inspect_mode', False)
+        if hasattr(self, 'use_routed_var'):
+                    self.use_routed_var.set(estimate_data.get('use_routed_distances', False))
+        self.pads = estimate_data.get('pads', [])
 
         # Derive module from templates
         self._derive_module_from_templates()
@@ -976,7 +1235,8 @@ class QuickEstimate(ttk.Frame):
             estimate_data['inverter_name'] = self.inverter_select_var.get()
         
         # Save topology and DC:AC ratio
-        estimate_data['topology'] = self.topology_var.get()
+        estimate_data['inspect_mode'] = getattr(self, '_last_inspect_mode', False)
+        estimate_data['use_routed_distances'] = self.use_routed_var.get()
         estimate_data['breaker_size'] = self.breaker_size_var.get()
         try:
             estimate_data['dc_feeder_distance'] = float(self.dc_feeder_distance_var.get())
@@ -997,6 +1257,9 @@ class QuickEstimate(ttk.Frame):
         # Save groups (new format)
         estimate_data['groups'] = self.groups
         estimate_data['subarrays'] = {}
+        
+        # Save pads
+        estimate_data['pads'] = self.pads
         
         # Notify callback
         if self.on_save:
@@ -1092,7 +1355,8 @@ class QuickEstimate(ttk.Frame):
             'topology': 'Distributed String',
             'dc_ac_ratio': 1.25,
             'subarrays': {},
-            'groups': self.groups
+            'groups': self.groups,
+            'pads': []
         }
         
         self.current_project.quick_estimates[estimate_id] = new_estimate
@@ -1132,8 +1396,9 @@ class QuickEstimate(ttk.Frame):
 
     def _clear_estimate_ui(self):
         """Clear the groups and details when switching/deleting estimates"""
-        # Clear groups
+        # Clear groups and pads
         self.groups.clear()
+        self.pads.clear()
         if hasattr(self, 'group_listbox'):
             self._refresh_group_listbox()
         
@@ -1240,10 +1505,35 @@ class QuickEstimate(ttk.Frame):
         except ValueError:
             row_spacing_ft = 20.0
         
-        SitePreviewWindow(
+        # Compute device info for preview
+        totals = getattr(self, 'last_totals', {})
+        total_combiners = sum(totals.get('combiners_by_breaker', {}).values())
+        
+        if topology == 'Distributed String':
+            num_devices = totals.get('string_inverters', 0)
+            device_label = 'SI'
+        else:
+            # Central Inverter and Centralized String show combiner boxes
+            num_devices = total_combiners
+            device_label = 'CB'
+        
+        # Restore inspect mode from previous session
+        initial_inspect = getattr(self, '_last_inspect_mode', False)
+        
+        preview = SitePreviewWindow(
             self, inv_summary, topology, self.INVERTER_COLORS,
-            self.groups, self.enabled_templates, row_spacing_ft
+            self.groups, self.enabled_templates, row_spacing_ft,
+            num_devices=num_devices, device_label=device_label,
+            initial_inspect=initial_inspect, pads=self.pads
         )
+        
+        # When window closes, save state back
+        def _on_preview_close():
+            self._last_inspect_mode = preview.inspect_mode
+            self.pads = preview.pads  # Save pad positions back
+            self._schedule_autosave()
+            preview.destroy()
+        preview.protocol("WM_DELETE_WINDOW", _on_preview_close)
 
     def _on_strings_per_inverter_changed(self, *args):
         """When user manually edits strings/inverter, reverse-calculate DC:AC ratio."""
@@ -1294,15 +1584,33 @@ class QuickEstimate(ttk.Frame):
         """Update the hint text next to distance inputs based on topology."""
         if not hasattr(self, 'distance_hint_label'):
             return
+        
+        use_routed = self.use_routed_var.get() if hasattr(self, 'use_routed_var') else False
+        
+        
+        if use_routed:
+            if not self.pads:
+                self.distance_hint_label.config(
+                    text="⚠ No pads placed — add pads in Site Preview first",
+                    foreground='orange'
+                )
+            else:
+                num_pads = len(self.pads)
+                self.distance_hint_label.config(
+                    text=f"✓ Using routed distances from {num_pads} pad{'s' if num_pads > 1 else ''} (avg inputs ignored)",
+                    foreground='green'
+                )
+            return
+        
         topology = self.topology_var.get()
         if topology == 'Distributed String':
-            self.distance_hint_label.config(text="(DC feeders N/A for distributed — AC homeruns are primary cable)")
+            self.distance_hint_label.config(text="(DC feeders N/A for distributed — AC homeruns are primary cable)", foreground='gray')
         elif topology == 'Central Inverter':
-            self.distance_hint_label.config(text="(Long DC feeders to central pad — short AC from inverter)")
+            self.distance_hint_label.config(text="(Long DC feeders to central pad — short AC from inverter)", foreground='gray')
         elif topology == 'Centralized String':
-            self.distance_hint_label.config(text="(DC feeders to inverter bank — short AC from bank)")
+            self.distance_hint_label.config(text="(DC feeders to inverter bank — short AC from bank)", foreground='gray')
         else:
-            self.distance_hint_label.config(text="")
+            self.distance_hint_label.config(text="", foreground='gray')
 
     def _get_tracker_dims_ft(self, template_ref):
         """Get (width_ft, length_ft) for a tracker from its template reference.
@@ -1705,6 +2013,14 @@ class QuickEstimate(ttk.Frame):
                      textvariable=self.ac_homerun_distance_var, width=8).pack(side='left', padx=(0, 15))
         self.ac_homerun_distance_var.trace_add('write', lambda *args: (self._mark_stale(), self._schedule_autosave()))
         
+        self.use_routed_var = tk.BooleanVar(value=False)
+        self.use_routed_cb = ttk.Checkbutton(
+            distance_row, text="Use Routed Distances",
+            variable=self.use_routed_var,
+            command=lambda: (self._mark_stale(), self._update_distance_hints(), self._schedule_autosave())
+        )
+        self.use_routed_cb.pack(side='left', padx=(10, 0))
+        
         # Topology hint label
         self.distance_hint_label = ttk.Label(distance_row, text="", foreground='gray')
         self.distance_hint_label.pack(side='left', padx=(5, 0))
@@ -1905,6 +2221,20 @@ class QuickEstimate(ttk.Frame):
             self.details_label.config(text=f"Group: {name_var.get()}")
             self._schedule_autosave()
         name_var.trace_add('write', update_name)
+        
+        # Device Position dropdown
+        ttk.Label(form_frame, text="Device Position:").grid(row=1, column=0, sticky='w', pady=5)
+        device_pos_var = tk.StringVar(value=group.get('device_position', 'middle'))
+        device_pos_combo = ttk.Combobox(form_frame, textvariable=device_pos_var,
+                                         values=['north', 'middle', 'south'],
+                                         state='readonly', width=10)
+        device_pos_combo.grid(row=1, column=1, sticky='w', pady=5, padx=(10, 0))
+        
+        def on_device_position_change(*args):
+            group['device_position'] = device_pos_var.get()
+            self._mark_stale()
+            self._schedule_autosave()
+        device_pos_combo.bind('<<ComboboxSelected>>', on_device_position_change)
         
         # Horizontal container for segments (left) and template info (right)
         content_row = ttk.Frame(scrollable_frame)
@@ -2427,12 +2757,12 @@ class QuickEstimate(ttk.Frame):
             row_spacing = 20.0
 
         if total_all_trackers > 0 and num_devices > 0:
-            whip_distances = self.calculate_cb_whip_distances(
-                total_all_trackers, num_devices, row_spacing
+            whip_distances = self.calculate_whip_distances_from_positions(
+                allocation_result, topology, num_devices, row_spacing
             )
-            for distance_ft, device_idx in whip_distances:
+            for distance_ft in whip_distances:
                 whip_length = self.round_whip_length(distance_ft)
-                whips_at_length = 2  # pos + neg per tracker group
+                whips_at_length = 2  # pos + neg per tracker
                 if whip_length not in totals['whips_by_length']:
                     totals['whips_by_length'][whip_length] = 0
                 totals['whips_by_length'][whip_length] += whips_at_length
@@ -2462,22 +2792,66 @@ class QuickEstimate(ttk.Frame):
 
         total_inverters = totals.get('inverter_summary', {}).get('total_inverters', 0)
         total_combiners = sum(totals['combiners_by_breaker'].values())
-
-        if topology == 'Distributed String':
-            totals['dc_feeder_count'] = 0
-            totals['dc_feeder_total_ft'] = 0
-            totals['ac_homerun_count'] = total_inverters
-            totals['ac_homerun_total_ft'] = total_inverters * ac_homerun_avg_ft
-        elif topology == 'Centralized String':
-            totals['dc_feeder_count'] = total_combiners
-            totals['dc_feeder_total_ft'] = total_combiners * dc_feeder_avg_ft
-            totals['ac_homerun_count'] = total_inverters
-            totals['ac_homerun_total_ft'] = total_inverters * ac_homerun_avg_ft
-        elif topology == 'Central Inverter':
-            totals['dc_feeder_count'] = total_combiners
-            totals['dc_feeder_total_ft'] = total_combiners * dc_feeder_avg_ft
-            totals['ac_homerun_count'] = 1
-            totals['ac_homerun_total_ft'] = ac_homerun_avg_ft
+        
+        use_routed = self.use_routed_var.get() if hasattr(self, 'use_routed_var') else False
+        print(f"[Feeder Debug] use_routed={use_routed}, pads={len(self.pads)}, alloc={'yes' if allocation_result else 'no'}")
+        
+        if use_routed and self.pads and allocation_result:
+            # Use routed Manhattan distances from devices to pads
+            try:
+                routed = self.calculate_routed_feeder_distances(
+                    allocation_result, topology, row_spacing
+                )
+            except Exception as e:
+                print(f"[Routed distance error] {e}")
+                import traceback
+                traceback.print_exc()
+                routed = {'feeder_distances': [], 'feeder_total_ft': 0, 'feeder_count': 0}
+            
+            print(f"[Routed Result] count={routed['feeder_count']}, total_ft={routed['feeder_total_ft']:.1f}")
+            for label, dist in routed['feeder_distances'][:5]:
+                print(f"  {label}: {dist:.1f} ft")
+            if len(routed['feeder_distances']) > 5:
+                print(f"  ... and {len(routed['feeder_distances']) - 5} more")
+            print(f"[Routed] topology='{topology}'")
+            if topology == 'Distributed String':
+                # Devices are SIs, cables are AC homeruns
+                # Devices are SIs, cables are AC homeruns
+                totals['dc_feeder_count'] = 0
+                totals['dc_feeder_total_ft'] = 0
+                totals['ac_homerun_count'] = routed['feeder_count']
+                totals['ac_homerun_total_ft'] = routed['feeder_total_ft']
+            elif topology == 'Centralized String':
+                # CBs route DC feeders to pads, inverters at pads have short AC
+                totals['dc_feeder_count'] = routed['feeder_count']
+                totals['dc_feeder_total_ft'] = routed['feeder_total_ft']
+                totals['ac_homerun_count'] = total_inverters
+                totals['ac_homerun_total_ft'] = total_inverters * ac_homerun_avg_ft
+            elif topology == 'Central Inverter':
+                totals['dc_feeder_count'] = routed['feeder_count']
+                totals['dc_feeder_total_ft'] = routed['feeder_total_ft']
+                totals['ac_homerun_count'] = 1
+                totals['ac_homerun_total_ft'] = ac_homerun_avg_ft
+            
+            # Store routed details for potential export
+            totals['routed_feeder_details'] = routed['feeder_distances']
+        else:
+            # Use average distance inputs
+            if topology == 'Distributed String':
+                totals['dc_feeder_count'] = 0
+                totals['dc_feeder_total_ft'] = 0
+                totals['ac_homerun_count'] = total_inverters
+                totals['ac_homerun_total_ft'] = total_inverters * ac_homerun_avg_ft
+            elif topology == 'Centralized String':
+                totals['dc_feeder_count'] = total_combiners
+                totals['dc_feeder_total_ft'] = total_combiners * dc_feeder_avg_ft
+                totals['ac_homerun_count'] = total_inverters
+                totals['ac_homerun_total_ft'] = total_inverters * ac_homerun_avg_ft
+            elif topology == 'Central Inverter':
+                totals['dc_feeder_count'] = total_combiners
+                totals['dc_feeder_total_ft'] = total_combiners * dc_feeder_avg_ft
+                totals['ac_homerun_count'] = 1
+                totals['ac_homerun_total_ft'] = ac_homerun_avg_ft
 
         # ==================== Display Results ====================
         
@@ -3029,7 +3403,7 @@ class QuickEstimateDialog(tk.Toplevel):
 class SitePreviewWindow(tk.Toplevel):
     """Pop-out window for site layout preview with zoom and pan"""
     
-    def __init__(self, parent, inv_summary, topology, colors, groups=None, enabled_templates=None, row_spacing_ft=20.0):
+    def __init__(self, parent, inv_summary, topology, colors, groups=None, enabled_templates=None, row_spacing_ft=20.0, num_devices=0, device_label='CB', initial_inspect=False, pads=None):
         super().__init__(parent)
         self.title("Site Preview — Inverter Allocation")
         self.geometry("1100x750")
@@ -3041,6 +3415,13 @@ class SitePreviewWindow(tk.Toplevel):
         self.groups = groups or []
         self.enabled_templates = enabled_templates or {}
         self.row_spacing_ft = row_spacing_ft
+        self.num_devices = num_devices
+        self.device_label = device_label
+        self.inspect_mode = initial_inspect
+        self.selected_device_idx = None
+        self.pads = list(pads) if pads else []  # Deep copy so we don't mutate caller's list
+        self.selected_pad_idx = None
+        self.placing_pad = False  # True when in "click to place" mode
         
         # Zoom and pan state
         self.scale = 1.0
@@ -3187,6 +3568,44 @@ class SitePreviewWindow(tk.Toplevel):
             command=self._on_alignment_toggle
         ).pack(side='left', padx=4)
         
+        ttk.Separator(top_bar, orient='vertical').pack(side='left', fill='y', padx=8, pady=2)
+        
+        ttk.Label(top_bar, text="Mode:").pack(side='left', padx=(0, 4))
+        
+        self.inspect_mode_var = tk.BooleanVar(value=self.inspect_mode)
+        
+        toggle_frame = ttk.Frame(top_bar)
+        toggle_frame.pack(side='left', padx=4)
+        
+        self.toggle_canvas = tk.Canvas(toggle_frame, width=52, height=24,
+                                        highlightthickness=0, bg=top_bar.winfo_toplevel().cget('bg'))
+        self.toggle_canvas.pack(side='left')
+        self.toggle_canvas.bind('<Button-1>', self._on_toggle_click)
+        
+        self.toggle_label = ttk.Label(toggle_frame, text="Layout", foreground='#333333')
+        self.toggle_label.pack(side='left', padx=(4, 0))
+        
+        self._draw_toggle()
+
+        # Sync label to initial state
+        if self.inspect_mode:
+            self.toggle_label.config(text="Inspect", foreground='#4CAF50')
+        
+        ttk.Separator(top_bar, orient='vertical').pack(side='left', fill='y', padx=8, pady=2)
+        
+        self.add_pad_btn = ttk.Button(top_bar, text="+ Add Pad", command=self._add_pad)
+        self.add_pad_btn.pack(side='left', padx=4)
+        
+        self.assign_btn = ttk.Button(top_bar, text="Assign Devices", command=self._show_assignment_dialog)
+        self.assign_btn.pack(side='left', padx=4)
+
+        self.show_routes_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            top_bar, text="Show Routes",
+            variable=self.show_routes_var,
+            command=self.draw
+        ).pack(side='left', padx=4)
+        
         self.zoom_label = ttk.Label(top_bar, text="100%")
         self.zoom_label.pack(side='left', padx=10)
         
@@ -3219,6 +3638,7 @@ class SitePreviewWindow(tk.Toplevel):
         self.canvas.bind('<ButtonPress-2>', self.on_pan_press)
         self.canvas.bind('<B2-Motion>', self.on_pan_motion)
         self.canvas.bind('<ButtonRelease-2>', self.on_pan_release)
+        self.canvas.bind('<Button-3>', self._on_pad_right_click)
         self.canvas.bind('<Configure>', lambda e: self.draw())
         
         # Bottom legend (rebuildable)
@@ -3409,7 +3829,10 @@ class SitePreviewWindow(tk.Toplevel):
         # Assign initial positions from saved data or auto-layout
         self._assign_group_positions()
         
-        # Compute world bounds from actual positions
+        # Compute device (CB/SI) positions per group
+        self._compute_device_positions()
+        
+        # Compute world bounds from actual positions (including devices)
         self._update_world_bounds()
     
     def _assign_group_positions(self):
@@ -3431,6 +3854,226 @@ class SitePreviewWindow(tk.Toplevel):
                 layout['x'] = grp_idx * (layout['width_ft'] + group_spacing)
                 layout['y'] = 0
     
+    def _compute_device_positions(self):
+        """Compute world-space positions for combiner boxes / string inverters.
+        
+        For Distributed String and Centralized String: derives placement from
+        the allocation result so each device maps 1:1 to an inverter.
+        
+        For Central Inverter: distributes CBs proportionally across groups
+        by tracker count.
+        
+        Device Y is determined by the group's device_position setting:
+          - 'north': offset above northernmost tracker edge
+          - 'south': offset below southernmost tracker edge  
+          - 'middle': at the motor/driveline Y
+        """
+        self.device_positions = []
+        
+        if not self.group_layout:
+            return
+        
+        device_width_ft = 4.0
+        device_height_ft = 3.0
+        offset_ft = 5.0
+        
+        alloc = self.inv_summary.get('allocation_result', {}) if hasattr(self, 'inv_summary') else {}
+        inverters = alloc.get('inverters', [])
+        
+        if self.topology in ('Distributed String', 'Centralized String') and inverters:
+            self._compute_devices_from_allocation(
+                inverters, device_width_ft, device_height_ft, offset_ft
+            )
+        elif self.topology == 'Central Inverter':
+            self._compute_devices_proportional(
+                device_width_ft, device_height_ft, offset_ft
+            )
+    
+    def _compute_devices_from_allocation(self, inverters, device_width_ft, device_height_ft, offset_ft):
+        """Place one device per inverter, positioned at the center of that inverter's trackers."""
+        pitch = self.tracker_pitch_ft
+        max_width = self.max_tracker_width_ft
+        
+        # Build a lookup: global_tracker_idx -> (group_idx, local_tracker_idx)
+        tracker_to_group = {}
+        running = 0
+        for grp_idx, grp in enumerate(self.group_layout):
+            for local_idx in range(len(grp['trackers'])):
+                tracker_to_group[running] = (grp_idx, local_idx)
+                running += 1
+        
+        for inv_idx, inv in enumerate(inverters):
+            harness_map = inv.get('harness_map', [])
+            if not harness_map:
+                continue
+            
+            # Find which trackers this inverter uses
+            inv_tracker_indices = [entry['tracker_idx'] for entry in harness_map]
+            
+            # Determine majority group
+            group_counts = {}
+            for tidx in inv_tracker_indices:
+                if tidx in tracker_to_group:
+                    grp_idx = tracker_to_group[tidx][0]
+                    group_counts[grp_idx] = group_counts.get(grp_idx, 0) + 1
+            
+            if not group_counts:
+                continue
+            
+            primary_grp_idx = max(group_counts, key=group_counts.get)
+            group_data = self.group_layout[primary_grp_idx]
+            group_source = self.groups[primary_grp_idx] if primary_grp_idx < len(self.groups) else {}
+            device_position = group_source.get('device_position', 'middle')
+            
+            gx = group_data['x']
+            gy = group_data['y']
+            
+            # Compute X from the center of this inverter's trackers within the primary group
+            local_indices = []
+            for tidx in inv_tracker_indices:
+                if tidx in tracker_to_group and tracker_to_group[tidx][0] == primary_grp_idx:
+                    local_indices.append(tracker_to_group[tidx][1])
+            
+            if local_indices:
+                center_local = (min(local_indices) + max(local_indices)) / 2.0
+                device_x = gx + center_local * pitch + (max_width - device_width_ft) / 2
+            else:
+                device_x = gx
+            
+            # Compute Y based on position setting
+            if device_position == 'north':
+                vis_min = group_data.get('visual_min_y', 0)
+                device_y = gy + vis_min - offset_ft - device_height_ft
+            elif device_position == 'south':
+                vis_max = group_data.get('visual_max_y', group_data['length_ft'])
+                device_y = gy + vis_max + offset_ft
+            else:  # 'middle'
+                motor_y = group_data.get('motor_y_ft', group_data['length_ft'] / 2)
+                device_y = gy + motor_y - device_height_ft / 2
+            
+            # Build assigned_strings from this inverter's harness_map
+            assigned_strings = {}
+            for entry in harness_map:
+                tidx = entry['tracker_idx']
+                strings_taken = entry['strings_taken']
+                spt = entry['strings_per_tracker']
+                is_split = entry.get('is_split', False)
+                split_pos = entry.get('split_position', 'full')
+                
+                if tidx not in assigned_strings:
+                    assigned_strings[tidx] = set()
+                
+                if is_split and split_pos == 'tail':
+                    # Tail of a split: strings are at the END of the tracker
+                    start_idx = spt - strings_taken
+                    for s in range(start_idx, spt):
+                        assigned_strings[tidx].add(s)
+                else:
+                    # Head of split or full tracker: strings from the front
+                    existing = len(assigned_strings[tidx])
+                    for s in range(existing, existing + strings_taken):
+                        assigned_strings[tidx].add(s)
+            
+            label = f"{self.device_label}-{inv_idx + 1:02d}"
+            
+            self.device_positions.append({
+                'x': device_x,
+                'y': device_y,
+                'width_ft': device_width_ft,
+                'height_ft': device_height_ft,
+                'label': label,
+                'group_idx': primary_grp_idx,
+                'device_position': device_position,
+                'assigned_strings': assigned_strings,
+            })
+    
+    def _compute_devices_proportional(self, device_width_ft, device_height_ft, offset_ft):
+        """Distribute devices proportionally across groups for Central Inverter topology."""
+        pitch = self.tracker_pitch_ft
+        max_width = self.max_tracker_width_ft
+        
+        total_trackers = sum(len(g['trackers']) for g in self.group_layout)
+        if total_trackers <= 0 or self.num_devices <= 0:
+            return
+        
+        global_device_idx = 0
+        
+        for grp_idx, group_data in enumerate(self.group_layout):
+            group_trackers = group_data['trackers']
+            num_trackers_in_group = len(group_trackers)
+            if num_trackers_in_group == 0:
+                continue
+            
+            group_share = num_trackers_in_group / total_trackers
+            group_device_count = max(1, round(group_share * self.num_devices))
+            remaining = self.num_devices - global_device_idx
+            group_device_count = min(group_device_count, remaining)
+            
+            if group_device_count <= 0:
+                continue
+            
+            group_source = self.groups[grp_idx] if grp_idx < len(self.groups) else {}
+            device_position = group_source.get('device_position', 'middle')
+            
+            gx = group_data['x']
+            gy = group_data['y']
+            
+            # Compute Y
+            if device_position == 'north':
+                vis_min = group_data.get('visual_min_y', 0)
+                device_y = gy + vis_min - offset_ft - device_height_ft
+            elif device_position == 'south':
+                vis_max = group_data.get('visual_max_y', group_data['length_ft'])
+                device_y = gy + vis_max + offset_ft
+            else:
+                motor_y = group_data.get('motor_y_ft', group_data['length_ft'] / 2)
+                device_y = gy + motor_y - device_height_ft / 2
+            
+            # Even spacing within group
+            group_global_start = sum(len(self.group_layout[g]['trackers']) for g in range(grp_idx))
+            base_group_size = num_trackers_in_group // group_device_count
+            extra = num_trackers_in_group % group_device_count
+            
+            tracker_start = 0
+            for dev_i in range(group_device_count):
+                sub_size = base_group_size + (1 if dev_i < extra else 0)
+                if sub_size <= 0:
+                    continue
+                
+                center_tracker = tracker_start + sub_size / 2.0 - 0.5
+                device_x = gx + center_tracker * pitch + (max_width - device_width_ft) / 2
+                
+                # All strings in tracker range belong to this CB
+                assigned_strings = {}
+                for local_idx in range(tracker_start, tracker_start + sub_size):
+                    global_idx = group_global_start + local_idx
+                    if local_idx < len(group_trackers):
+                        spt = group_trackers[local_idx].get('strings_per_tracker', 0)
+                        assigned_strings[global_idx] = set(range(spt))
+                
+                self.device_positions.append({
+                    'x': device_x,
+                    'y': device_y,
+                    'width_ft': device_width_ft,
+                    'height_ft': device_height_ft,
+                    'label': f"CB-{global_device_idx + 1:02d}",
+                    'group_idx': grp_idx,
+                    'device_position': device_position,
+                    'assigned_strings': assigned_strings,
+                })
+                
+                global_device_idx += 1
+                tracker_start += sub_size
+        
+        # Fill any remaining devices
+        while global_device_idx < self.num_devices and self.device_positions:
+            last = self.device_positions[-1].copy()
+            last['label'] = f"CB-{global_device_idx + 1:02d}"
+            last['x'] += device_width_ft + 2
+            last['assigned_strings'] = {}
+            self.device_positions.append(last)
+            global_device_idx += 1
+
     def _update_world_bounds(self):
         """Recompute world_width and world_height from actual group positions."""
         if not self.group_layout:
@@ -3442,6 +4085,24 @@ class SitePreviewWindow(tk.Toplevel):
         max_x = max(g['x'] + g['width_ft'] for g in self.group_layout)
         min_y = min(g['y'] for g in self.group_layout)
         max_y = max(g['y'] + g['length_ft'] for g in self.group_layout)
+        
+        # Include device positions in bounds
+        if hasattr(self, 'device_positions') and self.device_positions:
+            for dev in self.device_positions:
+                min_x = min(min_x, dev['x'])
+                max_x = max(max_x, dev['x'] + dev['width_ft'])
+                min_y = min(min_y, dev['y'])
+                max_y = max(max_y, dev['y'] + dev['height_ft'])
+
+        # Include pads in bounds
+        if hasattr(self, 'pads') and self.pads:
+            for pad in self.pads:
+                pw = pad.get('width_ft', 10.0)
+                ph = pad.get('height_ft', 8.0)
+                min_x = min(min_x, pad['x'])
+                max_x = max(max_x, pad['x'] + pw)
+                min_y = min(min_y, pad['y'])
+                max_y = max(max_y, pad['y'] + ph)
         
         # Add margin
         margin = self.max_tracker_width_ft * 2
@@ -3541,10 +4202,46 @@ class SitePreviewWindow(tk.Toplevel):
         return None
     
     def on_press(self, event):
-        """Handle left mouse press — select/drag group only."""
+        """Handle left mouse press — place pad, select/drag group or pad, or select device."""
         self.drag_start_x = event.x
         self.drag_start_y = event.y
         self._drag_moved = False
+        self._dragging_pad = False
+        
+        # Pad placement mode — click to place
+        if self.placing_pad:
+            wx, wy = self.canvas_to_world(event.x, event.y)
+            self._place_pad_at(wx, wy)
+            return
+        
+        if self.inspect_mode:
+            # In inspect mode, clicking selects/deselects devices
+            hit_dev = self.hit_test_device(event.x, event.y)
+            if hit_dev is not None:
+                if self.selected_device_idx == hit_dev:
+                    self.selected_device_idx = None
+                else:
+                    self.selected_device_idx = hit_dev
+            else:
+                self.selected_device_idx = None
+            self.dragging_group = False
+            self.draw()
+            return
+        
+        # Layout mode — check pads first (they're on top visually)
+        hit_pad = self.hit_test_pad(event.x, event.y)
+        if hit_pad is not None:
+            self.selected_pad_idx = hit_pad
+            self._dragging_pad = True
+            pad = self.pads[hit_pad]
+            self._drag_pad_start_x = pad['x']
+            self._drag_pad_start_y = pad['y']
+            self.selected_group_idx = None
+            self.dragging_group = False
+            self.draw()
+            return
+        
+        self.selected_pad_idx = None
         
         hit = self.hit_test_group(event.x, event.y)
         if hit is not None:
@@ -3560,22 +4257,26 @@ class SitePreviewWindow(tk.Toplevel):
             self.draw()
     
     def on_motion(self, event):
-        """Handle mouse drag — move group or pan canvas."""
+        """Handle mouse drag — move group, move pad, or pan canvas."""
         dx_px = event.x - self.drag_start_x
         dy_px = event.y - self.drag_start_y
         
         if abs(dx_px) > 3 or abs(dy_px) > 3:
             self._drag_moved = True
         
-        if getattr(self, 'dragging_group', False) and self.selected_group_idx is not None:
-            # Convert pixel delta to world delta
+        if getattr(self, '_dragging_pad', False) and self.selected_pad_idx is not None:
+            dx_world = dx_px / self.scale if self.scale != 0 else 0
+            dy_world = dy_px / self.scale if self.scale != 0 else 0
+            self.pads[self.selected_pad_idx]['x'] = self._drag_pad_start_x + dx_world
+            self.pads[self.selected_pad_idx]['y'] = self._drag_pad_start_y + dy_world
+            self.draw()
+        elif getattr(self, 'dragging_group', False) and self.selected_group_idx is not None:
             dx_world = dx_px / self.scale if self.scale != 0 else 0
             dy_world = dy_px / self.scale if self.scale != 0 else 0
             
             new_x = self._drag_group_start_x + dx_world
             new_y = self._drag_group_start_y + dy_world
             
-            # Apply snapping (unless SHIFT held)
             shift_held = event.state & 0x1
             if not shift_held:
                 new_x, new_y = self._snap_group_position(
@@ -3588,12 +4289,14 @@ class SitePreviewWindow(tk.Toplevel):
             self.draw()
     
     def on_release(self, event):
-        """Handle mouse release — finalize group position."""
+        """Handle mouse release — finalize group or pad position."""
+        if getattr(self, '_dragging_pad', False) and self._drag_moved:
+            self._update_world_bounds()
+        
         if getattr(self, 'dragging_group', False) and self._drag_moved:
             self._update_world_bounds()
             self._save_group_positions()
             
-            # Check for overlaps and warn
             overlaps = self._check_overlaps()
             if overlaps:
                 names = set()
@@ -3604,6 +4307,7 @@ class SitePreviewWindow(tk.Toplevel):
         
         self.dragging_group = False
         self.dragging_canvas = False
+        self._dragging_pad = False
 
     def on_pan_press(self, event):
         """Handle middle mouse press — start panning."""
@@ -3754,9 +4458,38 @@ class SitePreviewWindow(tk.Toplevel):
                     for _ in range(assignment['strings']):
                         string_colors.append(assignment['color'])
                 
+                # Determine global tracker index for device highlighting
+                global_tracker_idx = sum(
+                    len(self.group_layout[g]['trackers']) for g in range(group_idx)
+                ) + t_idx
+                
+                # Check if we're highlighting a selected device
+                highlighting = (self.inspect_mode and self.selected_device_idx is not None
+                                and hasattr(self, 'device_positions') and self.device_positions)
+                
+                selected_strings = set()
+                if highlighting:
+                    dev = self.device_positions[self.selected_device_idx]
+                    assigned = dev.get('assigned_strings', {})
+                    selected_strings = assigned.get(global_tracker_idx, set())
+                
                 # Draw each string
                 for s_idx in range(spt):
                     color = string_colors[s_idx] if s_idx < len(string_colors) else '#D0D0D0'
+                    
+                    if highlighting:
+                        if s_idx in selected_strings:
+                            outline_color = '#FF6600'
+                            outline_width = 2
+                        else:
+                            # Dim unselected strings
+                            color = '#E0E0E0'
+                            outline_color = '#CCCCCC'
+                            outline_width = 1
+                    else:
+                        outline_color = '#555555'
+                        outline_width = 1
+                    
                     sy = ty + s_idx * string_height
                     
                     sx1, sy1 = self.world_to_canvas(tx + tx_offset, sy)
@@ -3764,7 +4497,7 @@ class SitePreviewWindow(tk.Toplevel):
                     
                     self.canvas.create_rectangle(
                         sx1, sy1, sx2, sy2,
-                        fill=color, outline='#555555', width=1
+                        fill=color, outline=outline_color, width=outline_width
                     )
                 
                 # Tracker outline
@@ -3814,6 +4547,15 @@ class SitePreviewWindow(tk.Toplevel):
                         label_cx, label_cy,
                         text=f"T{t_idx+1}", font=('Helvetica', lbl_size), fill='#555555'
                     )
+        
+        # Draw devices (CB/SI)
+        self._draw_devices()
+
+        # Draw routes (behind pads)
+        self._draw_routes()
+        
+        # Draw pads
+        self._draw_pads()
         
         # Motor alignment line (if groups share a motor Y and alignment is on)
         if getattr(self, 'align_on_motor', False):
@@ -3866,6 +4608,70 @@ class SitePreviewWindow(tk.Toplevel):
         """Handle motor alignment checkbox toggle."""
         self.align_on_motor = self.align_motor_var.get()
         self.draw()
+
+    def _on_inspect_toggle(self):
+        """Handle inspect mode toggle."""
+        self.selected_device_idx = None
+        if self.inspect_mode:
+            self.selected_group_idx = None
+        self.draw()
+
+    def _draw_toggle(self):
+        """Draw the slider toggle switch on the canvas."""
+        self.toggle_canvas.delete('all')
+        w, h = 52, 24
+        r = h // 2  # radius for rounded ends
+        
+        if self.inspect_mode:
+            # ON state — green track
+            track_color = '#4CAF50'
+            knob_x = w - r
+        else:
+            # OFF state — gray track
+            track_color = '#BDBDBD'
+            knob_x = r
+        
+        # Draw rounded track
+        self.toggle_canvas.create_oval(0, 0, h, h, fill=track_color, outline=track_color)
+        self.toggle_canvas.create_oval(w - h, 0, w, h, fill=track_color, outline=track_color)
+        self.toggle_canvas.create_rectangle(r, 0, w - r, h, fill=track_color, outline=track_color)
+        
+        # Draw knob
+        knob_r = r - 2
+        self.toggle_canvas.create_oval(
+            knob_x - knob_r, 2, knob_x + knob_r, h - 2,
+            fill='white', outline='#999999', width=1
+        )
+    
+    def _on_toggle_click(self, event=None):
+        """Handle click on the toggle switch."""
+        if self.inspect_mode:
+            # Switching back to Layout — confirm
+            from tkinter import messagebox
+            if not messagebox.askyesno("Switch Mode",
+                                        "Switch back to Layout mode? Groups will be draggable again.",
+                                        parent=self):
+                return
+        
+        self.inspect_mode = not self.inspect_mode
+        self.inspect_mode_var.set(self.inspect_mode)
+        self._draw_toggle()
+        self.toggle_label.config(
+            text="Inspect" if self.inspect_mode else "Layout",
+            foreground='#4CAF50' if self.inspect_mode else '#333333'
+        )
+        self._on_inspect_toggle()
+    
+    def hit_test_device(self, cx, cy):
+        """Return the index of the device under canvas coords (cx, cy), or None."""
+        if not hasattr(self, 'device_positions') or not self.device_positions:
+            return None
+        wx, wy = self.canvas_to_world(cx, cy)
+        for i, dev in enumerate(self.device_positions):
+            if (dev['x'] <= wx <= dev['x'] + dev['width_ft'] and
+                dev['y'] <= wy <= dev['y'] + dev['height_ft']):
+                return i
+        return None
     
     def _reset_positions(self):
         """Reset all group positions to auto-layout and clear saved positions."""
@@ -3978,6 +4784,66 @@ class SitePreviewWindow(tk.Toplevel):
                 fill='#FF0000', tags='overlap_warning'
             )
 
+    def _draw_devices(self):
+        """Draw combiner box / string inverter rectangles on the canvas."""
+        if not hasattr(self, 'device_positions') or not self.device_positions:
+            return
+        
+        # Build device_idx -> pad_idx lookup
+        device_to_pad = {}
+        if self.pads:
+            for pad_idx, pad in enumerate(self.pads):
+                for dev_idx in pad.get('assigned_devices', []):
+                    device_to_pad[dev_idx] = pad_idx
+        
+        # Pad colors for device outlines (when pads exist)
+        PAD_COLORS = ['#C62828', '#1565C0', '#2E7D32', '#E65100', '#6A1B9A',
+                      '#00838F', '#AD1457', '#4E342E']
+        
+        for dev_idx, dev in enumerate(self.device_positions):
+            dx = dev['x']
+            dy = dev['y']
+            dw = dev['width_ft']
+            dh = dev['height_ft']
+            label = dev['label']
+            is_selected = (self.selected_device_idx == dev_idx)
+            
+            x1, y1 = self.world_to_canvas(dx, dy)
+            x2, y2 = self.world_to_canvas(dx + dw, dy + dh)
+            
+            # Device fill color
+            if self.device_label == 'CB':
+                fill_color = '#FFB74D' if is_selected else '#FF9800'
+            else:
+                fill_color = '#64B5F6' if is_selected else '#2196F3'
+            
+            # Outline color: pad color if assigned, else default
+            if dev_idx in device_to_pad and self.pads:
+                pad_idx = device_to_pad[dev_idx]
+                outline_color = PAD_COLORS[pad_idx % len(PAD_COLORS)]
+                outline_width = 3
+            else:
+                outline_color = '#E65100' if self.device_label == 'CB' else '#0D47A1'
+                outline_width = 3 if is_selected else 2
+            
+            if is_selected:
+                outline_width = 4
+            
+            self.canvas.create_rectangle(
+                x1, y1, x2, y2,
+                fill=fill_color, outline=outline_color, width=outline_width
+            )
+            
+            # Label — dark text
+            cx = (x1 + x2) / 2
+            cy = (y1 + y2) / 2
+            font_size = max(5, min(9, int(7 * self.scale)))
+            self.canvas.create_text(
+                cx, cy,
+                text=label, font=('Helvetica', font_size, 'bold'),
+                fill='#333333'
+            )
+
     def _draw_scale_bar(self):
         """Draw a scale bar in the bottom-left corner showing real-world distance."""
         if self.scale <= 0:
@@ -4013,3 +4879,360 @@ class SitePreviewWindow(tk.Toplevel):
             (x1 + x2) / 2, y1 - 10,
             text=f"{bar_ft} ft", font=('Helvetica', 9), fill='#333333'
         )
+
+    def _add_pad(self):
+        """Enter pad placement mode — next click on canvas places a new pad."""
+        if self.inspect_mode:
+            from tkinter import messagebox
+            messagebox.showinfo("Locked", "Switch to Layout mode to add pads.", parent=self)
+            return
+        
+        self.placing_pad = True
+        self.canvas.config(cursor='crosshair')
+        self.add_pad_btn.config(state='disabled')
+    
+    def _place_pad_at(self, wx, wy):
+        """Create a new pad at the given world coordinates."""
+        pad_num = len(self.pads) + 1
+        # Auto-assign all devices to the first pad if it's the only one
+        if len(self.pads) == 0:
+            all_device_indices = list(range(len(self.device_positions)))
+        else:
+            all_device_indices = []
+        
+        label_char = chr(ord('A') + (pad_num - 1) % 26)
+        
+        self.pads.append({
+            'label': f"Pad {label_char}",
+            'x': wx - 5,  # Center the 10ft-wide pad on click
+            'y': wy - 4,  # Center the 8ft-tall pad on click
+            'width_ft': 10.0,
+            'height_ft': 8.0,
+            'assigned_devices': all_device_indices,
+        })
+        
+        self.placing_pad = False
+        self.canvas.config(cursor='')
+        self.add_pad_btn.config(state='normal')
+        self.draw()
+    
+    def _draw_pads(self):
+        """Draw inverter pad rectangles on the canvas."""
+        if not self.pads:
+            return
+        
+        PAD_COLORS = ['#C62828', '#1565C0', '#2E7D32', '#E65100', '#6A1B9A',
+                      '#00838F', '#AD1457', '#4E342E']
+        
+        for pad_idx, pad in enumerate(self.pads):
+            px = pad['x']
+            py = pad['y']
+            pw = pad.get('width_ft', 10.0)
+            ph = pad.get('height_ft', 8.0)
+            label = pad.get('label', f'Pad {pad_idx+1}')
+            is_selected = (self.selected_pad_idx == pad_idx)
+            
+            x1, y1 = self.world_to_canvas(px, py)
+            x2, y2 = self.world_to_canvas(px + pw, py + ph)
+            
+            base_color = PAD_COLORS[pad_idx % len(PAD_COLORS)]
+            outline_width = 3 if is_selected else 2
+            
+            self.canvas.create_rectangle(
+                x1, y1, x2, y2,
+                fill=base_color, outline='#222222', width=outline_width
+            )
+            
+            # Label
+            cx = (x1 + x2) / 2
+            cy = (y1 + y2) / 2
+            font_size = max(6, min(10, int(8 * self.scale)))
+            self.canvas.create_text(
+                cx, cy,
+                text=label, font=('Helvetica', font_size, 'bold'),
+                fill='white'
+            )
+            
+            # Device count subtitle
+            num_assigned = len(pad.get('assigned_devices', []))
+            if num_assigned > 0:
+                sub_size = max(5, min(8, int(6 * self.scale)))
+                self.canvas.create_text(
+                    cx, cy + font_size + 2,
+                    text=f"({num_assigned} devices)", font=('Helvetica', sub_size),
+                    fill='#CCCCCC'
+                )
+    
+    def hit_test_pad(self, cx, cy):
+        """Return the index of the pad under canvas coords, or None."""
+        if not self.pads:
+            return None
+        wx, wy = self.canvas_to_world(cx, cy)
+        for i, pad in enumerate(self.pads):
+            pw = pad.get('width_ft', 10.0)
+            ph = pad.get('height_ft', 8.0)
+            if (pad['x'] <= wx <= pad['x'] + pw and
+                pad['y'] <= wy <= pad['y'] + ph):
+                return i
+        return None
+    
+    def _show_assignment_dialog(self):
+        """Show a dialog to assign devices to pads."""
+        if not self.pads:
+            from tkinter import messagebox
+            messagebox.showinfo("No Pads", "Add at least one pad first.", parent=self)
+            return
+        
+        if not hasattr(self, 'device_positions') or not self.device_positions:
+            from tkinter import messagebox
+            messagebox.showinfo("No Devices", "No devices to assign. Run Calculate Estimate first.", parent=self)
+            return
+        
+        dialog = tk.Toplevel(self)
+        dialog.title("Assign Devices to Pads")
+        dialog.transient(self)
+        dialog.grab_set()
+        
+        # Size based on device count
+        num_devices = len(self.device_positions)
+        dialog_height = min(600, 120 + num_devices * 28)
+        dialog.geometry(f"500x{dialog_height}")
+        dialog.minsize(400, 200)
+        
+        # Instructions
+        ttk.Label(dialog, text="Assign each device to a collection pad:",
+                  font=('Helvetica', 10)).pack(anchor='w', padx=10, pady=(10, 5))
+        
+        # Build pad label list for dropdowns
+        pad_labels = [pad.get('label', f'Pad {i+1}') for i, pad in enumerate(self.pads)]
+        
+        # Build reverse lookup: device_idx -> pad_idx
+        device_to_pad = {}
+        for pad_idx, pad in enumerate(self.pads):
+            for dev_idx in pad.get('assigned_devices', []):
+                device_to_pad[dev_idx] = pad_idx
+        
+        # Scrollable frame
+        container = ttk.Frame(dialog)
+        container.pack(fill='both', expand=True, padx=10, pady=5)
+        
+        canvas = tk.Canvas(container, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(container, orient='vertical', command=canvas.yview)
+        scroll_frame = ttk.Frame(canvas)
+        
+        scroll_frame.bind('<Configure>', lambda e: canvas.configure(scrollregion=canvas.bbox('all')))
+        canvas.create_window((0, 0), window=scroll_frame, anchor='nw')
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side='left', fill='both', expand=True)
+        scrollbar.pack(side='right', fill='y')
+        
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), 'units')
+        canvas.bind('<Enter>', lambda e: canvas.bind_all('<MouseWheel>', _on_mousewheel))
+        canvas.bind('<Leave>', lambda e: canvas.unbind_all('<MouseWheel>'))
+        
+        # Headers
+        header = ttk.Frame(scroll_frame)
+        header.pack(fill='x', pady=(0, 5))
+        ttk.Label(header, text="Device", font=('Helvetica', 9, 'bold'), width=12).pack(side='left', padx=5)
+        ttk.Label(header, text="Strings", font=('Helvetica', 9, 'bold'), width=8).pack(side='left', padx=5)
+        ttk.Label(header, text="Group", font=('Helvetica', 9, 'bold'), width=12).pack(side='left', padx=5)
+        ttk.Label(header, text="Pad", font=('Helvetica', 9, 'bold'), width=12).pack(side='left', padx=5)
+        
+        ttk.Separator(scroll_frame, orient='horizontal').pack(fill='x', pady=2)
+        
+        # One row per device
+        pad_vars = []
+        for dev_idx, dev in enumerate(self.device_positions):
+            row = ttk.Frame(scroll_frame)
+            row.pack(fill='x', pady=1)
+            
+            # Device label
+            ttk.Label(row, text=dev['label'], width=12).pack(side='left', padx=5)
+            
+            # String count
+            num_strings = sum(len(v) for v in dev.get('assigned_strings', {}).values())
+            ttk.Label(row, text=str(num_strings), width=8).pack(side='left', padx=5)
+            
+            # Group name
+            grp_idx = dev.get('group_idx', 0)
+            grp_name = self.groups[grp_idx]['name'] if grp_idx < len(self.groups) else '?'
+            ttk.Label(row, text=grp_name, width=12).pack(side='left', padx=5)
+            
+            # Pad dropdown
+            current_pad = device_to_pad.get(dev_idx, 0)
+            if current_pad >= len(pad_labels):
+                current_pad = 0
+            var = tk.StringVar(value=pad_labels[current_pad])
+            combo = ttk.Combobox(row, textvariable=var, values=pad_labels,
+                                 state='readonly', width=12)
+            combo.pack(side='left', padx=5)
+            pad_vars.append(var)
+        
+        # Buttons
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(fill='x', padx=10, pady=10)
+        
+        def _assign_all_to(pad_label):
+            for var in pad_vars:
+                var.set(pad_label)
+        
+        if len(self.pads) > 1:
+            ttk.Label(btn_frame, text="Quick assign all:").pack(side='left', padx=(0, 5))
+            for label in pad_labels:
+                ttk.Button(btn_frame, text=label,
+                           command=lambda l=label: _assign_all_to(l)).pack(side='left', padx=2)
+        
+        def _apply():
+            # Rebuild pad assignments from dropdown values
+            for pad in self.pads:
+                pad['assigned_devices'] = []
+            
+            for dev_idx, var in enumerate(pad_vars):
+                selected_label = var.get()
+                for pad_idx, pad in enumerate(self.pads):
+                    if pad.get('label', f'Pad {pad_idx+1}') == selected_label:
+                        pad['assigned_devices'].append(dev_idx)
+                        break
+            
+            self.draw()
+            dialog.destroy()
+        
+        def _cancel():
+            dialog.destroy()
+        
+        ttk.Button(btn_frame, text="Apply", command=_apply).pack(side='right', padx=(5, 0))
+        ttk.Button(btn_frame, text="Cancel", command=_cancel).pack(side='right')
+        
+        # Center on parent
+        dialog.update_idletasks()
+        px = self.winfo_rootx()
+        py = self.winfo_rooty()
+        pw = self.winfo_width()
+        ph = self.winfo_height()
+        dw = dialog.winfo_width()
+        dh = dialog.winfo_height()
+        dialog.geometry(f"+{px + (pw - dw) // 2}+{py + (ph - dh) // 2}")
+
+    def _on_pad_right_click(self, event):
+        """Show context menu for pads."""
+        hit = self.hit_test_pad(event.x, event.y)
+        if hit is None:
+            return
+        
+        self.selected_pad_idx = hit
+        self.draw()
+        
+        menu = tk.Menu(self, tearoff=0)
+        
+        def _rename():
+            from tkinter import simpledialog
+            current = self.pads[hit].get('label', f'Pad {hit+1}')
+            new_name = simpledialog.askstring("Rename Pad", "New label:", 
+                                              initialvalue=current, parent=self)
+            if new_name and new_name.strip():
+                self.pads[hit]['label'] = new_name.strip()
+                self.draw()
+        
+        def _delete():
+            from tkinter import messagebox
+            label = self.pads[hit].get('label', f'Pad {hit+1}')
+            if not messagebox.askyesno("Delete Pad", f"Delete '{label}'?", parent=self):
+                return
+            
+            # Reassign devices to first remaining pad if any
+            orphaned = self.pads[hit].get('assigned_devices', [])
+            del self.pads[hit]
+            
+            if self.pads and orphaned:
+                self.pads[0]['assigned_devices'] = list(
+                    set(self.pads[0].get('assigned_devices', []) + orphaned)
+                )
+            
+            # Fix device indices in remaining pads (indices > hit shift down)
+            # Not needed — pad indices don't change, only the list position
+            
+            self.selected_pad_idx = None
+            self.draw()
+        
+        menu.add_command(label="Rename", command=_rename)
+        menu.add_command(label="Delete", command=_delete)
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _draw_routes(self):
+        """Draw L-shaped Manhattan routes from each device to its assigned pad."""
+        if not self.show_routes_var.get():
+            return
+        if not self.pads or not hasattr(self, 'device_positions') or not self.device_positions:
+            return
+        
+        PAD_COLORS = ['#C62828', '#1565C0', '#2E7D32', '#E65100', '#6A1B9A',
+                      '#00838F', '#AD1457', '#4E342E']
+        
+        # Build device -> pad lookup
+        device_to_pad = {}
+        for pad_idx, pad in enumerate(self.pads):
+            for dev_idx in pad.get('assigned_devices', []):
+                device_to_pad[dev_idx] = pad_idx
+        
+        for dev_idx, dev in enumerate(self.device_positions):
+            pad_idx = device_to_pad.get(dev_idx)
+            if pad_idx is None or pad_idx >= len(self.pads):
+                continue
+            
+            pad = self.pads[pad_idx]
+            
+            # Device center
+            dev_cx = dev['x'] + dev['width_ft'] / 2
+            dev_cy = dev['y'] + dev['height_ft'] / 2
+            
+            # Pad center
+            pad_cx = pad['x'] + pad.get('width_ft', 10.0) / 2
+            pad_cy = pad['y'] + pad.get('height_ft', 8.0) / 2
+            
+            # L-shaped route: go E-W first, then N-S
+            corner_x = pad_cx
+            corner_y = dev_cy
+            
+            # Convert to canvas coords
+            cx1, cy1 = self.world_to_canvas(dev_cx, dev_cy)
+            cx_corner, cy_corner = self.world_to_canvas(corner_x, corner_y)
+            cx2, cy2 = self.world_to_canvas(pad_cx, pad_cy)
+            
+            color = PAD_COLORS[pad_idx % len(PAD_COLORS)]
+            
+            # Determine line style based on topology
+            if self.topology == 'Distributed String':
+                dash_pattern = (4, 4)  # Dashed for AC
+            else:
+                dash_pattern = ()  # Solid for DC
+            
+            line_width = 1
+            
+            # Draw E-W leg
+            self.canvas.create_line(
+                cx1, cy1, cx_corner, cy_corner,
+                fill=color, width=line_width, dash=dash_pattern
+            )
+            
+            # Draw N-S leg
+            self.canvas.create_line(
+                cx_corner, cy_corner, cx2, cy2,
+                fill=color, width=line_width, dash=dash_pattern
+            )
+
+            # Show distance label if this device is selected in inspect mode
+            if self.inspect_mode and self.selected_device_idx == dev_idx:
+                ew_dist = abs(dev_cx - pad_cx)
+                ns_dist = abs(dev_cy - pad_cy)
+                total_dist = ew_dist + ns_dist  # Manhattan
+                
+                # Place label at the corner of the L
+                font_size = max(6, min(10, int(8 * self.scale)))
+                self.canvas.create_text(
+                    cx_corner, cy_corner - 8,
+                    text=f"{total_dist:.0f} ft",
+                    font=('Helvetica', font_size, 'bold'),
+                    fill=color
+                )
