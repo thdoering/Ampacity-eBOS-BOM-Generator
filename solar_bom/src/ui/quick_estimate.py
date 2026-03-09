@@ -5,6 +5,7 @@ from pathlib import Path
 import json
 import uuid
 import math
+import copy
 from datetime import datetime
 from src.utils.string_allocation import allocate_strings, allocate_strings_sequential, allocate_strings_spatial
 
@@ -472,7 +473,6 @@ class QuickEstimate(ttk.Frame):
         if not sel:
             return
         
-        import copy
         source = self.groups[sel[0]]
         new_group = copy.deepcopy(source)
         new_group['name'] = f"{source['name']} (Copy)"
@@ -1386,7 +1386,7 @@ class QuickEstimate(ttk.Frame):
                 for seg in group.get('segments', []):
                     if 'template_ref' not in seg:
                         seg['template_ref'] = None
-            self.groups = saved_groups
+            self.groups = copy.deepcopy(saved_groups)
         elif saved_subarrays:
             # Backward compat: convert old subarray/block format to groups
             group_num = 0
@@ -1422,7 +1422,7 @@ class QuickEstimate(ttk.Frame):
         self._last_inspect_mode = estimate_data.get('inspect_mode', False)
         if hasattr(self, 'use_routed_var'):
                     self.use_routed_var.set(estimate_data.get('use_routed_distances', False))
-        self.pads = estimate_data.get('pads', [])
+        self.pads = copy.deepcopy(estimate_data.get('pads', []))
 
         # Derive module from templates
         self._derive_module_from_templates()
@@ -1492,12 +1492,12 @@ class QuickEstimate(ttk.Frame):
         # Update modified date
         estimate_data['modified_date'] = datetime.now().isoformat()
         
-        # Save groups (new format)
-        estimate_data['groups'] = self.groups
+        # Save groups (new format) — deep copy to avoid reference aliasing
+        estimate_data['groups'] = copy.deepcopy(self.groups)
         estimate_data['subarrays'] = {}
         
         # Save pads
-        estimate_data['pads'] = self.pads
+        estimate_data['pads'] = copy.deepcopy(self.pads)
         
         # Notify callback
         if self.on_save:
@@ -1593,7 +1593,7 @@ class QuickEstimate(ttk.Frame):
             'topology': 'Distributed String',
             'dc_ac_ratio': 1.25,
             'subarrays': {},
-            'groups': self.groups,
+            'groups': [],
             'pads': []
         }
         
@@ -1607,6 +1607,43 @@ class QuickEstimate(ttk.Frame):
         self._clear_estimate_ui()
         self.add_group()
         self._derive_module_from_templates()
+        
+        if self.on_save:
+            self.on_save()
+
+    def copy_estimate(self):
+        """Duplicate the currently selected estimate"""
+        if not self.current_project or not self.estimate_id:
+            from tkinter import messagebox
+            messagebox.showinfo("No Estimate", "No estimate selected to copy.")
+            return
+        
+        # Save current estimate first so we capture latest state
+        self.save_estimate()
+        
+        # Get current estimate data
+        source_data = self.current_project.quick_estimates.get(self.estimate_id)
+        if not source_data:
+            return
+        
+        # Deep copy the estimate data
+        new_data = copy.deepcopy(source_data)
+        
+        # Generate new ID and name
+        new_id = f"estimate_{uuid.uuid4().hex[:8]}"
+        source_name = source_data.get('name', 'Unnamed')
+        new_data['name'] = f"{source_name} (Copy)"
+        new_data['created_date'] = datetime.now().isoformat()
+        new_data['modified_date'] = datetime.now().isoformat()
+        
+        # Store in project
+        self.current_project.quick_estimates[new_id] = new_data
+        
+        # Switch to the new copy
+        self.estimate_id = new_id
+        self._refresh_estimate_dropdown()
+        self.estimate_var.set(new_data['name'])
+        self.load_estimate()
         
         if self.on_save:
             self.on_save()
@@ -2124,6 +2161,7 @@ class QuickEstimate(ttk.Frame):
         self.estimate_combo.bind('<FocusOut>', self._on_estimate_name_changed)
         
         ttk.Button(top_bar, text="New", command=self.new_estimate, width=6).pack(side='left', padx=2)
+        ttk.Button(top_bar, text="Copy", command=self.copy_estimate, width=6).pack(side='left', padx=2)
         ttk.Button(top_bar, text="Delete", command=self.delete_estimate, width=6).pack(side='left', padx=2)
         
         # Description
@@ -3165,7 +3203,7 @@ class QuickEstimate(ttk.Frame):
         total_combiners = sum(totals['combiners_by_breaker'].values())
         
         use_routed = self.use_routed_var.get() if hasattr(self, 'use_routed_var') else False
-        
+
         if use_routed and self.pads and allocation_result:
             # Use routed Manhattan distances from devices to pads
             try:
@@ -3488,6 +3526,18 @@ class QuickEstimate(ttk.Frame):
                 info_ws.cell(row=info_row, column=2, value=value)
                 info_row += 1
             
+            # Add copper price from pricing manager
+            try:
+                from src.utils.pricing_lookup import PricingLookup
+                _pricing = PricingLookup()
+                copper_price = _pricing.get_current_copper_price()
+                active_tier = _pricing.get_active_tier()
+                info_ws.cell(row=info_row, column=1, value="Copper Price:").font = label_font
+                info_ws.cell(row=info_row, column=2, value=f"${copper_price:.2f}/lb")
+                info_row += 1
+            except Exception:
+                pass
+            
             info_row += 1
             
             # ========== GROUP CONFIGURATION SUMMARY (info sheet) ==========
@@ -3603,8 +3653,76 @@ class QuickEstimate(ttk.Frame):
                         max_length = max(max_length, len(str(cell.value)))
                 info_ws.column_dimensions[col_letter].width = min(max_length + 4, 55)
             
-            # ========== BOM RESULTS SECTION (BOM sheet) ==========
+            # ========== PROJECT INFO HEADER (BOM sheet) ==========
             row = 1
+            ws.merge_cells(f'A{row}:F{row}')
+            ws.cell(row=row, column=1, value="Quick Estimate — Project Info").font = title_font
+            row += 2
+            
+            # Build the same info_items list used on the Project Info sheet
+            bom_info_items = []
+            if self.current_project and self.current_project.metadata:
+                meta = self.current_project.metadata
+                if meta.name:
+                    bom_info_items.append(("Project Name:", meta.name))
+                if meta.client:
+                    bom_info_items.append(("Customer:", meta.client))
+                if meta.location:
+                    bom_info_items.append(("Location:", meta.location))
+            
+            if hasattr(self, 'last_totals') and self.last_totals.get('unique_modules'):
+                seg_mod_data = self.last_totals.get('segment_module_data', [])
+                for i, (mod_key, mod_data) in enumerate(self.last_totals['unique_modules'].items()):
+                    prefix = "Module:" if i == 0 else f"Module {i+1}:"
+                    bom_info_items.append((prefix, mod_key))
+                    bom_info_items.append(("  Isc:", f"{mod_data.get('isc', '?')} A"))
+                    bom_info_items.append(("  Width:", f"{mod_data.get('width_mm', '?')} mm"))
+                    for smd in seg_mod_data:
+                        if smd.get('module_spec') == mod_data:
+                            bom_info_items.append(("  Modules/String:", str(smd['modules_per_string'])))
+                            break
+            elif self.selected_module:
+                bom_info_items.append(("Module:", f"{self.selected_module.manufacturer} {self.selected_module.model} ({self.selected_module.wattage}W)"))
+                bom_info_items.append(("Module Isc:", f"{module_isc} A"))
+                bom_info_items.append(("Module Width:", f"{module_width_mm} mm"))
+            bom_info_items.append(("Row Spacing:", f"{row_spacing} ft"))
+            
+            if self.selected_inverter:
+                inv = self.selected_inverter
+                bom_info_items.append(("Inverter:", f"{inv.manufacturer} {inv.model} ({inv.rated_power_kw}kW AC)"))
+                bom_info_items.append(("Topology:", self.topology_var.get()))
+                bom_info_items.append(("DC:AC Ratio (target):", self.dc_ac_ratio_var.get()))
+                if hasattr(self, 'last_totals') and self.last_totals.get('inverter_summary'):
+                    inv_sum = self.last_totals['inverter_summary']
+                    bom_info_items.append(("DC:AC Ratio (actual):", f"{inv_sum.get('actual_dc_ac', 0):.2f}"))
+                    bom_info_items.append(("Strings per Inverter:", str(inv_sum.get('strings_per_inverter', ''))))
+                    bom_info_items.append(("Total Inverters:", str(inv_sum.get('total_inverters', ''))))
+                    bom_info_items.append(("Split Trackers:", str(inv_sum.get('total_split_trackers', ''))))
+            
+            if self.estimate_id and self.current_project:
+                est_data = self.current_project.quick_estimates.get(self.estimate_id, {})
+                bom_info_items.append(("Estimate:", est_data.get('name', '')))
+            
+            bom_info_items.append(("Date:", datetime.now().strftime('%Y-%m-%d')))
+            
+            # Add copper price from pricing manager
+            try:
+                from src.utils.pricing_lookup import PricingLookup
+                _pricing = PricingLookup()
+                copper_price = _pricing.get_current_copper_price()
+                active_tier = _pricing.get_active_tier()
+                bom_info_items.append(("Copper Price:", f"${copper_price:.2f}/lb"))
+            except Exception:
+                pass
+            
+            for label, value in bom_info_items:
+                ws.cell(row=row, column=1, value=label).font = label_font
+                ws.cell(row=row, column=2, value=value)
+                row += 1
+            
+            row += 1
+            
+            # ========== BOM RESULTS SECTION (BOM sheet) ==========
             ws.merge_cells(f'A{row}:F{row}')
             ws.cell(row=row, column=1, value="Estimated Bill of Materials").font = title_font
             row += 1
