@@ -976,5 +976,29 @@
       "default_orientation": "Portrait",
       "cells_per_module": 72
     }
+  },
+  "Talesun": {
+    "BIPRO TM7G72M 590": {
+      "manufacturer": "Talesun",
+      "model": "BIPRO TM7G72M 590",
+      "type": "Bifacial",
+      "length_mm": 2278.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 590.0,
+      "vmp": 44.43,
+      "imp": 10.62,
+      "voc": 52.38,
+      "isc": 13.94,
+      "max_system_voltage": 1500,
+      "efficiency": null,
+      "temperature_coefficient_pmax": -0.29,
+      "temperature_coefficient_voc": -0.24,
+      "temperature_coefficient_isc": 0.043,
+      "bifaciality_factor": null,
+      "default_orientation": "Portrait",
+      "cells_per_module": 72
+    }
   }
 }

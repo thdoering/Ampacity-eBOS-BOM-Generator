@@ -679,7 +679,7 @@ class QuickEstimate(ttk.Frame):
                 for seg in group['segments']:
                     for _ in range(seg['quantity']):
                         spt_list.append(seg['strings_per_tracker'])
-            return [(d[0], spt_list[i] if i < len(spt_list) else 0) for i, d in enumerate(old_distances)]
+            return [(d[0], spt_list[i] if i < len(spt_list) else 0, i, -1) for i, d in enumerate(old_distances)]
         
         # Build world X for every global tracker index
         # Uses saved group positions or auto-layout, same as site preview
@@ -764,9 +764,21 @@ class QuickEstimate(ttk.Frame):
             
             for entry in inv['harness_map']:
                 tidx = entry['tracker_idx']
-                if tidx in seen_trackers:
+                is_split = entry.get('is_split', False)
+                
+                # Allow split tracker portions through (they appear in multiple inverters)
+                if tidx in seen_trackers and not is_split:
                     continue
                 seen_trackers.add(tidx)
+                
+                if tidx >= len(tracker_world_x):
+                    continue
+                
+                ew_distance = abs(tracker_world_x[tidx] - dev_x)
+                total_distance = (ew_distance**2 + ns_offset**2) ** 0.5
+                
+                spt = entry.get('strings_per_tracker', 0)
+                whip_distances.append((total_distance, spt, tidx, inv_idx))
                 if tidx >= len(tracker_world_x):
                     continue
                 
@@ -1970,83 +1982,114 @@ class QuickEstimate(ttk.Frame):
     def _adjust_harnesses_for_splits(self, totals):
         """Adjust harness counts based on inverter allocation split trackers.
         
-        Uses the harness_map from allocate_strings_sequential() to identify
-        split trackers and replace their original harness configs with
-        harnesses matching the split amounts.
-        
-        E.g., a 3-string tracker with harness config '3' split 1/2 →
-              remove one 3-string harness, add one 1-string + one 2-string.
+        Also builds self._split_tracker_details for use by whip and extender
+        calculations — maps each split tracker to per-device harness assignments.
         """
+        self._split_tracker_details = {}  # tracker_idx -> split info
+        
         inv_summary = totals.get('inverter_summary', {})
         allocation_result = inv_summary.get('allocation_result')
         
         if not allocation_result:
+            print("[HARNESS SPLIT] No allocation result — skipping")
             return
         
         # Collect split tracker info from harness_map
-        # Each split tracker appears in multiple inverters with position head/tail/middle
-        split_trackers = {}  # tracker_idx -> list of harness_map entries
+        split_trackers = {}
         
-        for inv in allocation_result['inverters']:
+        for inv_idx, inv in enumerate(allocation_result['inverters']):
             for entry in inv['harness_map']:
                 if entry['is_split']:
                     tidx = entry['tracker_idx']
                     if tidx not in split_trackers:
                         split_trackers[tidx] = []
-                    split_trackers[tidx].append(entry)
+                    # Tag with which inverter/device this portion belongs to
+                    entry_with_inv = dict(entry)
+                    entry_with_inv['inv_idx'] = inv_idx
+                    split_trackers[tidx].append(entry_with_inv)
         
         if not split_trackers:
+            print("[HARNESS SPLIT] No split trackers found — no adjustment needed")
             return
         
-        split_count = 0
+        print(f"\n{'='*60}")
+        print(f"[HARNESS SPLIT] Found {len(split_trackers)} split tracker(s)")
+        print(f"[HARNESS SPLIT] BEFORE adjustment: harnesses_by_size = {dict(totals['harnesses_by_size'])}")
         
         for tidx, entries in split_trackers.items():
             spt = entries[0]['strings_per_tracker']
             original_harness_sizes = self._get_harness_config_for_tracker_type(spt)
             
-            # Determine new harness sizes after split by distributing
-            # strings_taken across existing harnesses, keeping whole
-            # harnesses intact when possible.
-            split_amounts = sorted([e['strings_taken'] for e in entries], reverse=True)
+            # Sort portions largest-first for greedy harness distribution
+            portions = sorted(entries, key=lambda e: e['strings_taken'], reverse=True)
             remaining_harnesses = sorted(original_harness_sizes, reverse=True)
             
-            new_harnesses = []
-            for amount in split_amounts:
+            print(f"\n  Tracker {tidx}: {spt}S, original harness config = {original_harness_sizes}")
+            
+            # Build per-portion harness assignments
+            portion_details = []
+            for portion in portions:
+                amount = portion['strings_taken']
+                inv_idx = portion['inv_idx']
+                assigned_harnesses = []
                 assigned = 0
+                
                 while assigned < amount and remaining_harnesses:
                     h = remaining_harnesses[0]
                     if assigned + h <= amount:
-                        # Whole harness fits in this split portion
-                        new_harnesses.append(h)
+                        # Whole harness fits in this portion
+                        assigned_harnesses.append(h)
                         remaining_harnesses.pop(0)
                         assigned += h
                     else:
                         # Must split this harness at the boundary
                         needed = amount - assigned
-                        new_harnesses.append(needed)
+                        assigned_harnesses.append(needed)
                         leftover = h - needed
                         remaining_harnesses.pop(0)
                         if leftover > 0:
                             remaining_harnesses.insert(0, leftover)
                         assigned = amount
+                
+                portion_details.append({
+                    'inv_idx': inv_idx,
+                    'strings_taken': amount,
+                    'harnesses': assigned_harnesses,
+                })
+                print(f"    Portion → Device {inv_idx}: {amount} strings, harnesses={assigned_harnesses}")
             
-            # Add any remaining harnesses that weren't consumed
-            new_harnesses.extend(remaining_harnesses)
+            # Any remaining harnesses (shouldn't happen but be safe)
+            if remaining_harnesses:
+                print(f"    WARNING: leftover harnesses not assigned: {remaining_harnesses}")
+                portion_details[-1]['harnesses'].extend(remaining_harnesses)
             
-            # Remove original harness(es) for this one split tracker
+            # Store for whip and extender calculations
+            self._split_tracker_details[tidx] = {
+                'spt': spt,
+                'original_config': original_harness_sizes,
+                'portions': portion_details,
+            }
+            
+            # Adjust harness totals: remove originals, add new
             for size in original_harness_sizes:
                 if size in totals['harnesses_by_size']:
                     totals['harnesses_by_size'][size] -= 1
                     if totals['harnesses_by_size'][size] <= 0:
                         del totals['harnesses_by_size'][size]
             
-            # Add the new (possibly unchanged) harnesses
-            for size in new_harnesses:
+            all_new = []
+            for p in portion_details:
+                all_new.extend(p['harnesses'])
+            for size in all_new:
                 if size not in totals['harnesses_by_size']:
                     totals['harnesses_by_size'][size] = 0
                 totals['harnesses_by_size'][size] += 1
             
-            split_count += 1
+            print(f"    Removed: {original_harness_sizes}, Added: {all_new}")
+        
+        print(f"\n[HARNESS SPLIT] AFTER adjustment: harnesses_by_size = {dict(totals['harnesses_by_size'])}")
+        print(f"[HARNESS SPLIT] Split tracker details stored for {len(self._split_tracker_details)} tracker(s)")
+        print(f"{'='*60}\n")
         
     def _update_strings_per_inverter(self):
         """Auto-calculate strings per inverter from DC:AC ratio and show Isc warning if needed"""
@@ -2870,6 +2913,7 @@ class QuickEstimate(ttk.Frame):
         total_all_strings = 0
         total_all_harnesses = 0
         max_harness_strings = 0
+        self._tracker_to_segment = []
         
         # Track unique modules across all groups
         unique_modules = {}  # "Manufacturer Model (WattageW)" -> module_spec_dict
@@ -2910,6 +2954,12 @@ class QuickEstimate(ttk.Frame):
                 # Add to flat tracker sequence (one entry per physical tracker)
                 for _ in range(qty):
                     tracker_sequence.append(spt)
+                    # Track which group/segment each global tracker belongs to
+                    self._tracker_to_segment.append({
+                        'group_idx': self.groups.index(group),
+                        'seg': seg,
+                        'device_position': group.get('device_position', 'middle'),
+                    })
 
                 total_all_trackers += qty
                 total_all_strings += qty * spt
@@ -2928,6 +2978,8 @@ class QuickEstimate(ttk.Frame):
                         totals['harnesses_by_size'][size] = 0
                     totals['harnesses_by_size'][size] += qty
                     total_all_harnesses += qty
+
+                print(f"[HARNESS COUNT] Seg: {qty}x {spt}S tracker, config='{harness_config}' → sizes={harness_sizes} → +{qty} each")
         
         # Build harness-count-per-spt lookup for whip calculation
         harness_count_by_spt = {}
@@ -3147,6 +3199,11 @@ class QuickEstimate(ttk.Frame):
                     'block_name': 'Site Total'
                 })
 
+        # ==================== Harness split adjustment ====================
+        # NOTE: _adjust_harnesses_for_splits will be updated to use harness_map
+        # in the next batch. For now it's a no-op since allocations=[] above.
+        self._adjust_harnesses_for_splits(totals)
+
         # ==================== Whip calculation ====================
         try:
             row_spacing = float(self.row_spacing_var.get())
@@ -3158,9 +3215,40 @@ class QuickEstimate(ttk.Frame):
                 allocation_result, topology, num_devices, row_spacing
             )
 
-            for distance_ft, spt in whip_distances:
+            split_details = getattr(self, '_split_tracker_details', {})
+            seen_whip_trackers = set()
+            
+            print(f"\n[WHIPS] Processing {len(whip_distances)} whip entries, {len(split_details)} split tracker(s) known")
+            
+            for entry in whip_distances:
+                if len(entry) == 4:
+                    distance_ft, spt, tidx, inv_idx = entry
+                else:
+                    distance_ft, spt = entry[0], entry[1]
+                    tidx, inv_idx = -1, -1
                 whip_length = self.round_whip_length(distance_ft)
-                num_harnesses = harness_count_by_spt.get(spt, 1)
+                
+                if tidx in split_details:
+                    # Split tracker — find this portion's harness count
+                    portion_harnesses = 0
+                    for portion in split_details[tidx]['portions']:
+                        if portion['inv_idx'] == inv_idx:
+                            portion_harnesses = len(portion['harnesses'])
+                            break
+                    
+                    if portion_harnesses == 0:
+                        print(f"  [WHIP WARN] Split tracker {tidx} portion for inv {inv_idx} not found in details — skipping")
+                        continue
+                    
+                    num_harnesses = portion_harnesses
+                    print(f"  [WHIP SPLIT] Tracker {tidx} → Device {inv_idx}: dist={distance_ft:.1f}ft, rounded={whip_length}ft, {num_harnesses} harness(es) → {2*num_harnesses} whips")
+                else:
+                    # Non-split tracker — skip duplicates, use original harness count
+                    if tidx in seen_whip_trackers:
+                        continue
+                    seen_whip_trackers.add(tidx)
+                    num_harnesses = harness_count_by_spt.get(spt, 1)
+                
                 whips_at_length = 2 * num_harnesses  # pos + neg per harness
                 if whip_length not in totals['whips_by_length']:
                     totals['whips_by_length'][whip_length] = 0
@@ -3168,26 +3256,77 @@ class QuickEstimate(ttk.Frame):
                 totals['total_whip_length'] += whip_length * whips_at_length
 
         # ==================== Extenders ====================
-        for group in self.groups:
+        split_details = getattr(self, '_split_tracker_details', {})
+        tracker_seg_map = getattr(self, '_tracker_to_segment', [])
+        
+        # Count how many split trackers exist per (group_idx, seg identity) so we can reduce bulk qty
+        split_tracker_seg_counts = {}  # (group_idx, id(seg)) -> count of split trackers
+        for tidx in split_details:
+            if tidx < len(tracker_seg_map):
+                info = tracker_seg_map[tidx]
+                key = (info['group_idx'], id(info['seg']))
+                split_tracker_seg_counts[key] = split_tracker_seg_counts.get(key, 0) + 1
+        
+        print(f"\n[EXTENDERS] Calculating extenders — {len(split_details)} split tracker(s) handled individually")
+        
+        # Process non-split trackers in bulk (original logic minus split count)
+        for group_idx, group in enumerate(self.groups):
             device_position = group.get('device_position', 'middle')
             for seg in group['segments']:
                 if seg['quantity'] <= 0:
                     continue
-                extender_pairs = self.calculate_extender_lengths_per_segment(seg, device_position)
+                
+                key = (group_idx, id(seg))
+                num_splits_in_seg = split_tracker_seg_counts.get(key, 0)
+                non_split_qty = seg['quantity'] - num_splits_in_seg
+                
+                if non_split_qty > 0:
+                    extender_pairs = self.calculate_extender_lengths_per_segment(seg, device_position)
+                    print(f"  {group['name']} seg {seg['strings_per_tracker']}S config='{seg['harness_config']}' x{non_split_qty} (non-split): {len(extender_pairs)} pair(s) → {extender_pairs}")
+                    for pos_len, neg_len in extender_pairs:
+                        pos_rounded = self.round_whip_length(pos_len)
+                        neg_rounded = self.round_whip_length(neg_len)
+                        if pos_rounded not in totals['extenders_pos_by_length']:
+                            totals['extenders_pos_by_length'][pos_rounded] = 0
+                        totals['extenders_pos_by_length'][pos_rounded] += non_split_qty
+                        if neg_rounded not in totals['extenders_neg_by_length']:
+                            totals['extenders_neg_by_length'][neg_rounded] = 0
+                        totals['extenders_neg_by_length'][neg_rounded] += non_split_qty
+                
+                if num_splits_in_seg > 0:
+                    print(f"  {group['name']} seg {seg['strings_per_tracker']}S: {num_splits_in_seg} split tracker(s) — handled below")
+        
+        # Process split trackers individually — each portion gets its own extenders
+        for tidx, details in split_details.items():
+            if tidx >= len(tracker_seg_map):
+                continue
+            
+            seg_info = tracker_seg_map[tidx]
+            seg = seg_info['seg']
+            device_position = seg_info['device_position']
+            
+            for portion in details['portions']:
+                # Build a temporary segment matching this portion's harness config
+                portion_config = '+'.join(str(h) for h in portion['harnesses'])
+                temp_seg = dict(seg)
+                temp_seg['harness_config'] = portion_config
+                temp_seg['quantity'] = 1
+                
+                extender_pairs = self.calculate_extender_lengths_per_segment(temp_seg, device_position)
+                
+                print(f"  [SPLIT EXTENDER] Tracker {tidx} → Device {portion['inv_idx']}: "
+                      f"config='{portion_config}' ({portion['strings_taken']} strings), "
+                      f"extender pairs={extender_pairs}")
+                
                 for pos_len, neg_len in extender_pairs:
                     pos_rounded = self.round_whip_length(pos_len)
                     neg_rounded = self.round_whip_length(neg_len)
                     if pos_rounded not in totals['extenders_pos_by_length']:
                         totals['extenders_pos_by_length'][pos_rounded] = 0
-                    totals['extenders_pos_by_length'][pos_rounded] += seg['quantity']
+                    totals['extenders_pos_by_length'][pos_rounded] += 1
                     if neg_rounded not in totals['extenders_neg_by_length']:
                         totals['extenders_neg_by_length'][neg_rounded] = 0
-                    totals['extenders_neg_by_length'][neg_rounded] += seg['quantity']
-
-        # ==================== Harness split adjustment ====================
-        # NOTE: _adjust_harnesses_for_splits will be updated to use harness_map
-        # in the next batch. For now it's a no-op since allocations=[] above.
-        self._adjust_harnesses_for_splits(totals)
+                    totals['extenders_neg_by_length'][neg_rounded] += 1
 
         # ==================== DC Feeder and AC Homerun ====================
         try:
