@@ -26,6 +26,7 @@ class QuickEstimate(ttk.Frame):
         
         self.groups = []
         self.pads = []  # Collection points (inverter pads)
+        self._harness_combos = []  # Track harness combo widgets for LV collection disabling
         self.selected_group_idx = None
         self._updating_listbox = False
         self.enabled_templates = self.load_enabled_templates()
@@ -1112,6 +1113,18 @@ class QuickEstimate(ttk.Frame):
         except:
             return []
         
+    def _get_effective_harness_config(self, seg):
+        """Get the effective harness config for a segment, considering LV Collection Method.
+        
+        When 'String HR' is selected, override to all 1-string harnesses (1+1+...+1).
+        Otherwise, return the segment's stored harness_config.
+        """
+        lv_method = self.lv_collection_var.get() if hasattr(self, 'lv_collection_var') else 'Wire Harness'
+        if lv_method == 'String HR':
+            spt = seg.get('strings_per_tracker', 1)
+            return '+'.join(['1'] * spt)
+        return seg.get('harness_config', str(seg.get('strings_per_tracker', 1)))
+        
     def calculate_extender_lengths_per_segment(self, seg, device_position):
         """Calculate per-harness positive and negative extender lengths for a segment.
         
@@ -1119,7 +1132,7 @@ class QuickEstimate(ttk.Frame):
         Multiply each by seg['quantity'] for total counts.
         """
         template_ref = seg.get('template_ref')
-        harness_config = seg.get('harness_config', str(seg['strings_per_tracker']))
+        harness_config = self._get_effective_harness_config(seg)
         harness_sizes = self.parse_harness_config(harness_config)
         spt = seg['strings_per_tracker']
         
@@ -1355,6 +1368,8 @@ class QuickEstimate(ttk.Frame):
             self.dc_feeder_distance_var.set(str(estimate_data.get('dc_feeder_distance', 500)))
         if hasattr(self, 'polarity_convention_var'):
             self.polarity_convention_var.set(estimate_data.get('polarity_convention', 'Negative Always South'))
+        if hasattr(self, 'lv_collection_var'):
+            self.lv_collection_var.set(estimate_data.get('lv_collection_method', 'Wire Harness'))
         if hasattr(self, 'ac_homerun_distance_var'):
             self.ac_homerun_distance_var.set(str(estimate_data.get('ac_homerun_distance', 500)))
         
@@ -1460,6 +1475,7 @@ class QuickEstimate(ttk.Frame):
         estimate_data['use_routed_distances'] = self.use_routed_var.get()
         estimate_data['breaker_size'] = self.breaker_size_var.get()
         estimate_data['polarity_convention'] = self.polarity_convention_var.get()
+        estimate_data['lv_collection_method'] = self.lv_collection_var.get()
         try:
             estimate_data['dc_feeder_distance'] = float(self.dc_feeder_distance_var.get())
         except (ValueError, AttributeError):
@@ -1640,6 +1656,8 @@ class QuickEstimate(ttk.Frame):
             self.inverter_info_label.config(text="No inverter selected", foreground='gray')
         if hasattr(self, 'topology_var'):
             self.topology_var.set('Distributed String')
+        if hasattr(self, 'lv_collection_var'):
+            self.lv_collection_var.set('Wire Harness')
         if hasattr(self, 'breaker_size_var'):
             self.breaker_size_var.set('400')
         if hasattr(self, 'dc_ac_ratio_var'):
@@ -1667,6 +1685,30 @@ class QuickEstimate(ttk.Frame):
         self._results_stale = True
         if self._calc_btn:
             self._calc_btn.config(state='normal')
+
+    def _on_lv_collection_changed(self, *args):
+        """Handle LV Collection Method change — update harness combo states in details panel"""
+        lv_method = self.lv_collection_var.get()
+        
+        # Update any currently displayed harness combos
+        if hasattr(self, '_harness_combos'):
+            for combo, harness_var, segment in self._harness_combos:
+                try:
+                    if lv_method == 'String HR':
+                        spt = segment.get('strings_per_tracker', 1)
+                        override_display = '+'.join(['1'] * spt)
+                        original_config = segment['harness_config']
+                        harness_var.set(override_display)
+                        segment['harness_config'] = original_config  # restore saved config
+                        combo.config(state='disabled')
+                    elif lv_method == 'Trunk Bus':
+                        combo.config(state='disabled')
+                    else:
+                        # Wire Harness — restore the real config and re-enable
+                        harness_var.set(segment['harness_config'])
+                        combo.config(state='readonly')
+                except tk.TclError:
+                    pass  # Widget may have been destroyed
 
     def _on_module_selected(self, event=None):
         """Legacy — module is now derived from templates. Kept for backward compat."""
@@ -1884,7 +1926,7 @@ class QuickEstimate(ttk.Frame):
         for group in self.groups:
             for seg in group['segments']:
                 if seg['strings_per_tracker'] == strings_per_tracker and seg['quantity'] > 0:
-                    return self.parse_harness_config(seg['harness_config'])
+                    return self.parse_harness_config(self._get_effective_harness_config(seg))
         # Fallback: single harness equal to string count
         return [strings_per_tracker]
 
@@ -2165,6 +2207,19 @@ class QuickEstimate(ttk.Frame):
         ).pack(side='left', padx=(0, 15))
         self.dc_ac_ratio_var.trace_add('write', lambda *args: (self._update_strings_per_inverter(), self._mark_stale(), self._schedule_autosave()))
         
+        ttk.Label(topology_row, text="LV Collection:").pack(side='left', padx=(0, 5))
+        self.lv_collection_var = tk.StringVar(value='Wire Harness')
+        lv_collection_combo = ttk.Combobox(
+            topology_row,
+            textvariable=self.lv_collection_var,
+            values=['String HR', 'Wire Harness', 'Trunk Bus'],
+            state='readonly',
+            width=14
+        )
+        lv_collection_combo.pack(side='left', padx=(0, 15))
+        self.disable_combobox_scroll(lv_collection_combo)
+        self.lv_collection_var.trace_add('write', lambda *args: (self._on_lv_collection_changed(), self._mark_stale(), self._schedule_autosave()))
+
         ttk.Label(topology_row, text="Breaker Size:").pack(side='left', padx=(0, 5))
         self.breaker_size_var = tk.StringVar(value='400')
         breaker_combo = ttk.Combobox(
@@ -2373,6 +2428,7 @@ class QuickEstimate(ttk.Frame):
 
     def clear_details_panel(self):
         """Clear the details panel"""
+        self._harness_combos = []
         for widget in self.details_container.winfo_children():
             widget.destroy()
         
@@ -2411,6 +2467,7 @@ class QuickEstimate(ttk.Frame):
             return
         
         # Clear existing details
+        self._harness_combos = []
         for widget in self.details_container.winfo_children():
             widget.destroy()
         
@@ -2509,7 +2566,7 @@ class QuickEstimate(ttk.Frame):
         ttk.Label(header_frame, text="Qty", width=6).pack(side='left', padx=2)
         ttk.Label(header_frame, text="Tracker Template", width=30).pack(side='left', padx=2)
         ttk.Label(header_frame, text="Harness Config", width=14).pack(side='left', padx=2)
-        ttk.Label(header_frame, text="", width=4).pack(side='left', padx=2)
+        ttk.Label(header_frame, text="", width=9).pack(side='left', padx=2)
         
         # Container for segment rows
         self.segment_rows_container = ttk.Frame(seg_frame)
@@ -2572,6 +2629,32 @@ class QuickEstimate(ttk.Frame):
                                      values=harness_options, width=12)
         harness_combo.pack(side='left', padx=2)
         self.disable_combobox_scroll(harness_combo)
+        
+        # Track combo for LV collection method disabling
+        self._harness_combos.append((harness_combo, harness_var, segment))
+        if self.lv_collection_var.get() == 'String HR':
+            spt = segment.get('strings_per_tracker', 1)
+            override_display = '+'.join(['1'] * spt)
+            original_config = segment['harness_config']
+            harness_var.set(override_display)
+            segment['harness_config'] = original_config  # restore — don't overwrite saved config
+            harness_combo.config(state='disabled')
+        elif self.lv_collection_var.get() == 'Trunk Bus':
+            harness_combo.config(state='disabled')
+        
+        # Move up button
+        up_btn = ttk.Button(row_frame, text="▲", width=2,
+                           command=lambda si=seg_idx: self._move_segment(group, group_idx, si, -1))
+        up_btn.pack(side='left', padx=(2, 0))
+        if seg_idx == 0:
+            up_btn.config(state='disabled')
+        
+        # Move down button
+        down_btn = ttk.Button(row_frame, text="▼", width=2,
+                             command=lambda si=seg_idx: self._move_segment(group, group_idx, si, 1))
+        down_btn.pack(side='left', padx=(0, 2))
+        if seg_idx == len(group['segments']) - 1:
+            down_btn.config(state='disabled')
         
         # Delete button
         del_btn = ttk.Button(row_frame, text="×", width=3,
@@ -2650,6 +2733,20 @@ class QuickEstimate(ttk.Frame):
         self._mark_stale()
         self._schedule_autosave()
     
+    def _move_segment(self, group: dict, group_idx: int, seg_idx: int, direction: int):
+        """Move a segment up (-1) or down (+1) within the group"""
+        new_idx = seg_idx + direction
+        if new_idx < 0 or new_idx >= len(group['segments']):
+            return
+        group['segments'][seg_idx], group['segments'][new_idx] = group['segments'][new_idx], group['segments'][seg_idx]
+        # Rebuild segment editor to fix indices
+        self._harness_combos = []
+        for widget in self.details_container.winfo_children():
+            widget.destroy()
+        self.show_group_details(group_idx)
+        self._mark_stale()
+        self._schedule_autosave()
+
     def _delete_segment(self, group: dict, group_idx: int, seg_idx: int):
         """Delete a segment from the group"""
         if len(group['segments']) <= 1:
@@ -2709,6 +2806,12 @@ class QuickEstimate(ttk.Frame):
         
         # Validate — need at least one linked template or a legacy fallback module
         self._derive_module_from_templates()
+        # Check for Trunk Bus — not yet implemented
+        lv_method = self.lv_collection_var.get() if hasattr(self, 'lv_collection_var') else 'Wire Harness'
+        if lv_method == 'Trunk Bus':
+            from tkinter import messagebox
+            messagebox.showinfo("Not Yet Implemented", "Trunk Bus collection method is not yet implemented.")
+            return
         if not self.selected_module:
             from tkinter import messagebox
             messagebox.showwarning(
@@ -2740,7 +2843,7 @@ class QuickEstimate(ttk.Frame):
             for seg in group['segments']:
                 qty = seg['quantity']
                 spt = seg['strings_per_tracker']
-                harness_config = seg['harness_config']
+                harness_config = self._get_effective_harness_config(seg)
 
                 if qty <= 0:
                     continue
@@ -2794,7 +2897,7 @@ class QuickEstimate(ttk.Frame):
             for seg in group['segments']:
                 spt = seg['strings_per_tracker']
                 if spt not in harness_count_by_spt:
-                    harness_sizes = self.parse_harness_config(seg['harness_config'])
+                    harness_sizes = self.parse_harness_config(self._get_effective_harness_config(seg))
                     harness_count_by_spt[spt] = len(harness_sizes)
 
         # Store unique modules for Excel export
@@ -3289,7 +3392,8 @@ class QuickEstimate(ttk.Frame):
             est_data = self.current_project.quick_estimates.get(self.estimate_id, {})
             estimate_name = clean_filename(est_data.get('name', 'Estimate'))
         
-        suggested_filename = f"{client}_{project_name}_Ampacity Quick eBOM_{estimate_name}.xlsx"
+        lv_method_tag = clean_filename(self.lv_collection_var.get() if hasattr(self, 'lv_collection_var') else 'Wire Harness')
+        suggested_filename = f"{client}_{project_name}_Ampacity Quick eBOM_{estimate_name}_{lv_method_tag}.xlsx"
         
         filepath = filedialog.asksaveasfilename(
             defaultextension=".xlsx",
@@ -3361,6 +3465,7 @@ class QuickEstimate(ttk.Frame):
                 info_items.append(("Module Isc:", f"{module_isc} A"))
                 info_items.append(("Module Width:", f"{module_width_mm} mm"))
             info_items.append(("Row Spacing:", f"{row_spacing} ft"))
+            info_items.append(("LV Collection Method:", self.lv_collection_var.get() if hasattr(self, 'lv_collection_var') else 'Wire Harness'))
             
             if self.selected_inverter:
                 inv = self.selected_inverter
@@ -3370,7 +3475,7 @@ class QuickEstimate(ttk.Frame):
                 if hasattr(self, 'last_totals') and self.last_totals.get('inverter_summary'):
                     inv_sum = self.last_totals['inverter_summary']
                     info_items.append(("DC:AC Ratio (actual):", f"{inv_sum.get('actual_dc_ac', 0):.2f}"))
-                    info_items.append(("Strings per Inverter:", str(inv_sum.get('strings_per_inverter', ''))))
+                    info_items.append(("Strings per Inverter (target):", str(inv_sum.get('strings_per_inverter', ''))))
                     info_items.append(("Total Inverters:", str(inv_sum.get('total_inverters', ''))))
                     info_items.append(("Split Trackers:", str(inv_sum.get('total_split_trackers', ''))))
             
@@ -3733,9 +3838,11 @@ class SitePreviewWindow(tk.Toplevel):
         self.device_label = device_label
         self.inspect_mode = initial_inspect
         self.selected_device_idx = None
+        self.selected_pad_inspect_idx = None  # Pad selected in inspect mode
         self.pads = list(pads) if pads else []  # Deep copy so we don't mutate caller's list
         self.selected_pad_idx = None
         self.placing_pad = False  # True when in "click to place" mode
+        self.assigning_devices = False  # True when Assign Devices dialog is open
         
         # Zoom and pan state
         self.scale = 1.0
@@ -4529,17 +4636,36 @@ class SitePreviewWindow(tk.Toplevel):
             return
         
         if self.inspect_mode:
-            # In inspect mode, clicking selects/deselects devices
+            # Check pads first (drawn on top)
+            hit_pad = self.hit_test_pad(event.x, event.y)
+            if hit_pad is not None:
+                if self.selected_pad_inspect_idx == hit_pad:
+                    self.selected_pad_inspect_idx = None
+                else:
+                    self.selected_pad_inspect_idx = hit_pad
+                self.selected_device_idx = None
+                self.dragging_canvas = False
+                self.draw()
+                self.dragging_group = False
+                return
+            
+            # Then check devices
             hit_dev = self.hit_test_device(event.x, event.y)
             if hit_dev is not None:
                 if self.selected_device_idx == hit_dev:
                     self.selected_device_idx = None
                 else:
                     self.selected_device_idx = hit_dev
+                self.selected_pad_inspect_idx = None
+                self.dragging_canvas = False
+                self.draw()
             else:
+                # Empty space — clear selections and start panning
                 self.selected_device_idx = None
+                self.selected_pad_inspect_idx = None
+                self.dragging_canvas = True
+                self.draw()
             self.dragging_group = False
-            self.draw()
             return
         
         # Layout mode — check pads first (they're on top visually)
@@ -4621,7 +4747,6 @@ class SitePreviewWindow(tk.Toplevel):
                 for i, j in overlaps:
                     names.add(self.group_layout[i].get('name', f'Group {i+1}'))
                     names.add(self.group_layout[j].get('name', f'Group {j+1}'))
-                print(f"[Overlap Warning] Groups overlapping: {', '.join(sorted(names))}")
         
         self.dragging_group = False
         self.dragging_canvas = False
@@ -4781,15 +4906,26 @@ class SitePreviewWindow(tk.Toplevel):
                     len(self.group_layout[g]['trackers']) for g in range(group_idx)
                 ) + t_idx
                 
-                # Check if we're highlighting a selected device
-                highlighting = (self.inspect_mode and self.selected_device_idx is not None
-                                and hasattr(self, 'device_positions') and self.device_positions)
-                
+                # Check if we're highlighting a selected device or pad
+                highlighting = False
                 selected_strings = set()
-                if highlighting:
-                    dev = self.device_positions[self.selected_device_idx]
-                    assigned = dev.get('assigned_strings', {})
-                    selected_strings = assigned.get(global_tracker_idx, set())
+                
+                if self.inspect_mode and hasattr(self, 'device_positions') and self.device_positions:
+                    if self.selected_device_idx is not None:
+                        highlighting = True
+                        dev = self.device_positions[self.selected_device_idx]
+                        assigned = dev.get('assigned_strings', {})
+                        selected_strings = assigned.get(global_tracker_idx, set())
+                    elif self.selected_pad_inspect_idx is not None:
+                        highlighting = True
+                        # Collect strings from ALL devices assigned to this pad
+                        pad = self.pads[self.selected_pad_inspect_idx] if self.selected_pad_inspect_idx < len(self.pads) else None
+                        if pad:
+                            for dev_idx in pad.get('assigned_devices', []):
+                                if dev_idx < len(self.device_positions):
+                                    dev = self.device_positions[dev_idx]
+                                    assigned = dev.get('assigned_strings', {})
+                                    selected_strings.update(assigned.get(global_tracker_idx, set()))
                 
                 # Draw each string
                 for s_idx in range(spt):
@@ -4804,6 +4940,11 @@ class SitePreviewWindow(tk.Toplevel):
                             color = '#E0E0E0'
                             outline_color = '#CCCCCC'
                             outline_width = 1
+                    elif self.assigning_devices:
+                        # Grey out all trackers while Assign Devices dialog is open
+                        color = '#E0E0E0'
+                        outline_color = '#CCCCCC'
+                        outline_width = 1
                     else:
                         outline_color = '#555555'
                         outline_width = 1
@@ -4930,6 +5071,7 @@ class SitePreviewWindow(tk.Toplevel):
     def _on_inspect_toggle(self):
         """Handle inspect mode toggle."""
         self.selected_device_idx = None
+        self.selected_pad_inspect_idx = None
         if self.inspect_mode:
             self.selected_group_idx = None
         self.draw()
@@ -5152,14 +5294,14 @@ class SitePreviewWindow(tk.Toplevel):
                 fill=fill_color, outline=outline_color, width=outline_width
             )
             
-            # Label — dark text
+            # Label — offset above device for readability
             cx = (x1 + x2) / 2
-            cy = (y1 + y2) / 2
-            font_size = max(5, min(9, int(7 * self.scale)))
+            font_size = max(7, min(14, int(10 * self.scale)))
+            label_y = y1 - font_size - 2
             self.canvas.create_text(
-                cx, cy,
+                cx, label_y,
                 text=label, font=('Helvetica', font_size, 'bold'),
-                fill='#333333'
+                fill='#333333', anchor='s'
             )
 
     def _draw_scale_bar(self):
@@ -5309,7 +5451,10 @@ class SitePreviewWindow(tk.Toplevel):
         dialog = tk.Toplevel(self)
         dialog.title("Assign Devices to Pads")
         dialog.transient(self)
-        dialog.grab_set()
+        # No grab_set() — allow pan/zoom on canvas behind dialog
+        
+        self.assigning_devices = True
+        self.draw()
         
         # Size based on device count
         num_devices = len(self.device_positions)
@@ -5317,9 +5462,12 @@ class SitePreviewWindow(tk.Toplevel):
         dialog.geometry(f"500x{dialog_height}")
         dialog.minsize(400, 200)
         
+
         # Instructions
         ttk.Label(dialog, text="Assign each device to a collection pad:",
-                  font=('Helvetica', 10)).pack(anchor='w', padx=10, pady=(10, 5))
+                  font=('Helvetica', 10)).pack(anchor='w', padx=10, pady=(10, 0))
+        ttk.Label(dialog, text="Tip: Drag the blue handle to fill multiple rows with the same pad",
+                  font=('Helvetica', 8), foreground='gray').pack(anchor='w', padx=10, pady=(0, 5))
         
         # Build pad label list for dropdowns
         pad_labels = [pad.get('label', f'Pad {i+1}') for i, pad in enumerate(self.pads)]
@@ -5357,11 +5505,52 @@ class SitePreviewWindow(tk.Toplevel):
         ttk.Label(header, text="Strings", font=('Helvetica', 9, 'bold'), width=8).pack(side='left', padx=5)
         ttk.Label(header, text="Group", font=('Helvetica', 9, 'bold'), width=12).pack(side='left', padx=5)
         ttk.Label(header, text="Pad", font=('Helvetica', 9, 'bold'), width=12).pack(side='left', padx=5)
+        ttk.Label(header, text="", width=1).pack(side='left', padx=2)
         
         ttk.Separator(scroll_frame, orient='horizontal').pack(fill='x', pady=2)
         
         # One row per device
         pad_vars = []
+        pad_combos = []
+        
+        # Drag-fill handle state
+        _fill = {'active': False, 'source_idx': None, 'value': None}
+        _fill_handles = []
+        
+        def _handle_press(event, idx):
+            """Start fill-drag from this row's handle"""
+            _fill['active'] = True
+            _fill['source_idx'] = idx
+            _fill['value'] = pad_vars[idx].get()
+            event.widget.config(cursor='sb_v_double_arrow')
+        
+        def _handle_motion(event):
+            """Fill combos as drag passes over handles"""
+            if not _fill['active']:
+                return
+            my = event.y_root
+            src = _fill['source_idx']
+            for i, handle in enumerate(_fill_handles):
+                try:
+                    hy = handle.winfo_rooty()
+                    hh = handle.winfo_height()
+                    row_center = hy + hh / 2
+                    src_center = _fill_handles[src].winfo_rooty() + _fill_handles[src].winfo_height() / 2
+                    in_range = min(my, src_center) <= row_center <= max(my, src_center)
+                    if in_range:
+                        pad_vars[i].set(_fill['value'])
+                        pad_combos[i].focus_set()
+                except tk.TclError:
+                    pass
+        
+        def _handle_release(event):
+            """End fill-drag"""
+            if _fill['active']:
+                event.widget.config(cursor='')
+            _fill['active'] = False
+            _fill['source_idx'] = None
+            _fill['value'] = None
+
         for dev_idx, dev in enumerate(self.device_positions):
             row = ttk.Frame(scroll_frame)
             row.pack(fill='x', pady=1)
@@ -5387,6 +5576,16 @@ class SitePreviewWindow(tk.Toplevel):
                                  state='readonly', width=12)
             combo.pack(side='left', padx=5)
             pad_vars.append(var)
+            pad_combos.append(combo)
+            
+            # Fill handle — small draggable square
+            handle = tk.Frame(row, width=10, height=18, bg='#4A90D9', cursor='sb_v_double_arrow')
+            handle.pack(side='left', padx=(2, 0))
+            handle.pack_propagate(False)
+            handle.bind('<ButtonPress-1>', lambda e, i=dev_idx: _handle_press(e, i))
+            handle.bind('<B1-Motion>', _handle_motion)
+            handle.bind('<ButtonRelease-1>', _handle_release)
+            _fill_handles.append(handle)
         
         # Buttons
         btn_frame = ttk.Frame(dialog)
@@ -5414,11 +5613,16 @@ class SitePreviewWindow(tk.Toplevel):
                         pad['assigned_devices'].append(dev_idx)
                         break
             
+            self.assigning_devices = False
             self.draw()
             dialog.destroy()
         
         def _cancel():
+            self.assigning_devices = False
+            self.draw()
             dialog.destroy()
+        
+        dialog.protocol("WM_DELETE_WINDOW", _cancel)
         
         ttk.Button(btn_frame, text="Apply", command=_apply).pack(side='right', padx=(5, 0))
         ttk.Button(btn_frame, text="Cancel", command=_cancel).pack(side='right')

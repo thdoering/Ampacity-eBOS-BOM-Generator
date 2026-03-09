@@ -952,5 +952,29 @@
       "default_orientation": "Portrait",
       "cells_per_module": 72
     }
+  },
+  "Elite Solar": {
+    "ET-N778TBH640GL 640": {
+      "manufacturer": "Elite Solar",
+      "model": "ET-N778TBH640GL 640",
+      "type": "Bifacial",
+      "length_mm": 2465.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 640.0,
+      "vmp": 48.75,
+      "imp": 13.13,
+      "voc": 56.89,
+      "isc": 13.84,
+      "max_system_voltage": 1500,
+      "efficiency": null,
+      "temperature_coefficient_pmax": -0.3,
+      "temperature_coefficient_voc": -0.22,
+      "temperature_coefficient_isc": 0.042,
+      "bifaciality_factor": null,
+      "default_orientation": "Portrait",
+      "cells_per_module": 72
+    }
   }
 }
