@@ -66,40 +66,49 @@ class InverterManager(ttk.Frame):
         mppt_frame = ttk.LabelFrame(editor_frame, text="MPPT Configuration", padding="5")
         mppt_frame.grid(row=5, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
         
-        ttk.Label(mppt_frame, text="Configuration:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
-        self.mppt_config_var = tk.StringVar(value=MPPTConfig.INDEPENDENT.value)
-        config_combo = ttk.Combobox(mppt_frame, textvariable=self.mppt_config_var)
-        config_combo['values'] = [t.value for t in MPPTConfig]
-        config_combo.grid(row=0, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        ttk.Label(mppt_frame, text="Number of MPPTs:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
+        self.num_mppts_var = tk.StringVar(value="1")
+        ttk.Entry(mppt_frame, textvariable=self.num_mppts_var, width=8).grid(row=0, column=1, padx=5, pady=2, sticky=tk.W)
         
-        # MPPT Channels
-        channels_frame = ttk.LabelFrame(mppt_frame, text="MPPT Channels", padding="5")
-        channels_frame.grid(row=1, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
+        ttk.Label(mppt_frame, text="Inputs per MPPT:").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
+        self.inputs_per_mppt_var = tk.StringVar(value="1")
+        ttk.Entry(mppt_frame, textvariable=self.inputs_per_mppt_var, width=8).grid(row=1, column=1, padx=5, pady=2, sticky=tk.W)
         
-        # Add channel button
-        self.channels_container = ttk.Frame(channels_frame)
-        self.channels_container.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        ttk.Label(mppt_frame, text="Max Current per MPPT (A):").grid(row=2, column=0, padx=5, pady=2, sticky=tk.W)
+        self.mppt_current_var = tk.StringVar(value="180")
+        ttk.Entry(mppt_frame, textvariable=self.mppt_current_var, width=8).grid(row=2, column=1, padx=5, pady=2, sticky=tk.W)
         
-        ttk.Button(channels_frame, text="Add MPPT Channel", 
-                  command=self.add_mppt_channel).grid(row=1, column=0, pady=5)
+        # Total inputs display (auto-calculated)
+        self.total_inputs_label = ttk.Label(mppt_frame, text="Total String Inputs: 1", foreground="gray")
+        self.total_inputs_label.grid(row=0, column=2, padx=(15, 5), pady=2, sticky=tk.W)
         
-        self.channel_frames = []  # Store references to channel frames
+        # Bind auto-update of total inputs
+        self.num_mppts_var.trace_add('write', lambda *_: self._update_total_inputs())
+        self.inputs_per_mppt_var.trace_add('write', lambda *_: self._update_total_inputs())
         
-        # Voltage and Current Limits
+        # Voltage Limits
         voltage_frame = ttk.LabelFrame(editor_frame, text="Voltage & Current Limits", padding="5")
         voltage_frame.grid(row=6, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
         
-        ttk.Label(voltage_frame, text="Max DC Voltage (V):").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(voltage_frame, text="Max System Voltage (Vdc):").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
         self.max_dc_voltage_var = tk.StringVar(value="1500")
         ttk.Entry(voltage_frame, textvariable=self.max_dc_voltage_var).grid(row=0, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         
-        ttk.Label(voltage_frame, text="Max Short Circuit Current (A):").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
-        self.max_isc_var = tk.StringVar(value="")
-        ttk.Entry(voltage_frame, textvariable=self.max_isc_var).grid(row=1, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        ttk.Label(voltage_frame, text="MPPT Voltage Min (V):").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
+        self.mppt_voltage_min_var = tk.StringVar(value="855")
+        ttk.Entry(voltage_frame, textvariable=self.mppt_voltage_min_var).grid(row=1, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         
-        ttk.Label(voltage_frame, text="Nominal AC Voltage (V):").grid(row=2, column=0, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(voltage_frame, text="MPPT Voltage Max (V):").grid(row=2, column=0, padx=5, pady=2, sticky=tk.W)
+        self.mppt_voltage_max_var = tk.StringVar(value="1425")
+        ttk.Entry(voltage_frame, textvariable=self.mppt_voltage_max_var).grid(row=2, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        
+        ttk.Label(voltage_frame, text="Max Short Circuit Current (A):").grid(row=3, column=0, padx=5, pady=2, sticky=tk.W)
+        self.max_isc_var = tk.StringVar(value="")
+        ttk.Entry(voltage_frame, textvariable=self.max_isc_var).grid(row=3, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        
+        ttk.Label(voltage_frame, text="Nominal AC Voltage (V):").grid(row=4, column=0, padx=5, pady=2, sticky=tk.W)
         self.nominal_ac_voltage_var = tk.StringVar(value="480")
-        ttk.Entry(voltage_frame, textvariable=self.nominal_ac_voltage_var).grid(row=2, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        ttk.Entry(voltage_frame, textvariable=self.nominal_ac_voltage_var).grid(row=4, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         
         # Buttons
         btn_frame = ttk.Frame(editor_frame)
@@ -107,90 +116,49 @@ class InverterManager(ttk.Frame):
         
         ttk.Button(btn_frame, text="Save Inverter", command=self.save_inverter).pack(side='left', padx=5)
         ttk.Button(btn_frame, text="New / Clear", command=self.clear_form).pack(side='left', padx=5)
-        
-        # Add one default MPPT channel
-        self.add_mppt_channel()
 
-    def add_mppt_channel(self):
-        """Add a new MPPT channel input frame"""
-        channel_idx = len(self.channel_frames)
-        frame = ttk.LabelFrame(self.channels_container, text=f"MPPT {channel_idx + 1}", padding="3")
-        frame.grid(row=channel_idx, column=0, pady=3, sticky=(tk.W, tk.E))
-        
-        # Row 1: Current and string inputs
-        row1 = ttk.Frame(frame)
-        row1.pack(fill='x', pady=1)
-        
-        current_var = tk.StringVar(value="180")
-        ttk.Label(row1, text="Max Current (A):").pack(side='left', padx=2)
-        ttk.Entry(row1, textvariable=current_var, width=8).pack(side='left', padx=(0, 10))
-        
-        inputs_var = tk.StringVar(value="1")
-        ttk.Label(row1, text="String Inputs:").pack(side='left', padx=2)
-        ttk.Entry(row1, textvariable=inputs_var, width=5).pack(side='left', padx=(0, 10))
-        
-        power_var = tk.StringVar(value="225000")
-        ttk.Label(row1, text="Max Power (W):").pack(side='left', padx=2)
-        ttk.Entry(row1, textvariable=power_var, width=10).pack(side='left', padx=(0, 10))
-        
-        # Delete button on right
-        ttk.Button(row1, text="✕", width=3,
-                  command=lambda f=frame: self.delete_mppt_channel(f)).pack(side='right', padx=2)
-        
-        # Row 2: Voltage range
-        row2 = ttk.Frame(frame)
-        row2.pack(fill='x', pady=1)
-        
-        voltage_min_var = tk.StringVar(value="855")
-        ttk.Label(row2, text="Min Voltage (V):").pack(side='left', padx=2)
-        ttk.Entry(row2, textvariable=voltage_min_var, width=8).pack(side='left', padx=(0, 10))
-        
-        voltage_max_var = tk.StringVar(value="1425")
-        ttk.Label(row2, text="Max Voltage (V):").pack(side='left', padx=2)
-        ttk.Entry(row2, textvariable=voltage_max_var, width=8).pack(side='left')
-        
-        # Store frame and variables
-        self.channel_frames.append({
-            'frame': frame,
-            'vars': {
-                'current': current_var,
-                'voltage_min': voltage_min_var,
-                'voltage_max': voltage_max_var,
-                'power': power_var,
-                'inputs': inputs_var
-            }
-        })
-        
-    def delete_mppt_channel(self, frame):
-        """Remove an MPPT channel input frame"""
-        for i, ch_frame in enumerate(self.channel_frames):
-            if ch_frame['frame'] == frame:
-                self.channel_frames.pop(i)
-                break
-        
-        frame.destroy()
-        
-        # Relabel remaining channels
-        for i, ch_frame in enumerate(self.channel_frames):
-            ch_frame['frame'].config(text=f"MPPT {i + 1}")
-            ch_frame['frame'].grid(row=i, column=0)
+    def _update_total_inputs(self):
+        """Update the total string inputs display label"""
+        try:
+            num_mppts = int(self.num_mppts_var.get())
+            inputs_per = int(self.inputs_per_mppt_var.get())
+            total = num_mppts * inputs_per
+            self.total_inputs_label.config(text=f"Total String Inputs: {total}")
+        except (ValueError, TypeError):
+            self.total_inputs_label.config(text="Total String Inputs: --")
             
     def create_inverter_spec(self) -> Optional[InverterSpec]:
         """Create InverterSpec from current UI values"""
         try:
-            # Create MPPT channels
+            # Build MPPT channel list from simplified inputs
+            num_mppts = int(self.num_mppts_var.get())
+            inputs_per_mppt = int(self.inputs_per_mppt_var.get())
+            mppt_current = float(self.mppt_current_var.get())
+            mppt_v_min = float(self.mppt_voltage_min_var.get())
+            mppt_v_max = float(self.mppt_voltage_max_var.get())
+            rated_power_kw = float(self.power_var.get())
+            
+            # Auto-calculate max DC power if left blank
+            max_dc_power_str = self.max_dc_power_var.get().strip()
+            if max_dc_power_str:
+                max_dc_power_kw = float(max_dc_power_str)
+            else:
+                # Default: rated AC / 0.985 (CEC efficiency estimate)
+                max_dc_power_kw = round(rated_power_kw / 0.985, 1)
+            
+            # Per-MPPT max power = total max DC power / num MPPTs
+            per_mppt_power_w = (max_dc_power_kw * 1000) / num_mppts
+            
             channels = []
-            for channel in self.channel_frames:
-                vars = channel['vars']
+            for _ in range(num_mppts):
                 channels.append(MPPTChannel(
-                    max_input_current=float(vars['current'].get()),
-                    min_voltage=float(vars['voltage_min'].get()),
-                    max_voltage=float(vars['voltage_max'].get()),
-                    max_power=float(vars['power'].get()),
-                    num_string_inputs=int(vars['inputs'].get())
+                    max_input_current=mppt_current,
+                    min_voltage=mppt_v_min,
+                    max_voltage=mppt_v_max,
+                    max_power=per_mppt_power_w,
+                    num_string_inputs=inputs_per_mppt
                 ))
             
-            # Create inverter spec
             # Parse optional max short circuit current
             max_isc_str = self.max_isc_var.get().strip()
             max_isc = float(max_isc_str) if max_isc_str else None
@@ -199,19 +167,19 @@ class InverterManager(ttk.Frame):
                 manufacturer=self.manufacturer_var.get(),
                 model=self.model_var.get(),
                 inverter_type=InverterType(self.inverter_type_var.get()),
-                rated_power_kw=float(self.power_var.get()),
-                max_dc_power_kw=float(self.max_dc_power_var.get()),
-                max_efficiency=98.0,  # Default value
+                rated_power_kw=rated_power_kw,
+                max_dc_power_kw=max_dc_power_kw,
+                max_efficiency=98.0,
                 mppt_channels=channels,
-                mppt_configuration=MPPTConfig(self.mppt_config_var.get()),
+                mppt_configuration=MPPTConfig.INDEPENDENT,
                 max_dc_voltage=float(self.max_dc_voltage_var.get()),
-                startup_voltage=float(self.max_dc_voltage_var.get()) * 0.57,  # Default to ~57% of max DC voltage
+                startup_voltage=mppt_v_min,
                 nominal_ac_voltage=float(self.nominal_ac_voltage_var.get()),
-                max_ac_current=40.0,  # Default value
-                power_factor=0.99,  # Default value
-                dimensions_mm=(1000, 600, 300),  # Default values
-                weight_kg=75.0,  # Default value
-                ip_rating="IP65",  # Default value
+                max_ac_current=40.0,
+                power_factor=0.99,
+                dimensions_mm=(1000, 600, 300),
+                weight_kg=75.0,
+                ip_rating="IP65",
                 max_short_circuit_current=max_isc
             )
             
@@ -352,16 +320,15 @@ class InverterManager(ttk.Frame):
         self.inverter_type_var.set(InverterType.STRING.value)
         self.power_var.set('')
         self.max_dc_power_var.set('')
-        self.mppt_config_var.set(MPPTConfig.INDEPENDENT.value)
+        self.num_mppts_var.set('1')
+        self.inputs_per_mppt_var.set('1')
+        self.mppt_current_var.set('180')
         self.max_dc_voltage_var.set('1500')
+        self.mppt_voltage_min_var.set('855')
+        self.mppt_voltage_max_var.set('1425')
         self.max_isc_var.set('')
         self.nominal_ac_voltage_var.set('480')
-        
-        # Clear existing channels and add one fresh one
-        for frame in self.channel_frames:
-            frame['frame'].destroy()
-        self.channel_frames.clear()
-        self.add_mppt_channel()
+        self._update_total_inputs()
         
         # Deselect from listbox
         self.inverter_listbox.selection_clear(0, tk.END)
@@ -381,23 +348,20 @@ class InverterManager(ttk.Frame):
         self.inverter_type_var.set(inverter.inverter_type.value if hasattr(inverter, 'inverter_type') and inverter.inverter_type else InverterType.STRING.value)
         self.power_var.set(str(inverter.rated_power_kw))
         self.max_dc_power_var.set(str(inverter.max_dc_power_kw))
-        self.mppt_config_var.set(inverter.mppt_configuration.value)
         self.max_dc_voltage_var.set(str(inverter.max_dc_voltage))
         max_isc = getattr(inverter, 'max_short_circuit_current', None)
         self.max_isc_var.set(str(max_isc) if max_isc else "")
         self.nominal_ac_voltage_var.set(str(getattr(inverter, 'nominal_ac_voltage', 480.0)))
         
-        # Clear existing channels
-        for frame in self.channel_frames:
-            frame['frame'].destroy()
-        self.channel_frames.clear()
+        # Derive simplified MPPT fields from channel list
+        channels = inverter.mppt_channels
+        num_mppts = len(channels)
+        self.num_mppts_var.set(str(num_mppts))
         
-        # Add channels from inverter
-        for channel in inverter.mppt_channels:
-            self.add_mppt_channel()
-            vars = self.channel_frames[-1]['vars']
-            vars['current'].set(str(channel.max_input_current))
-            vars['voltage_min'].set(str(channel.min_voltage))
-            vars['voltage_max'].set(str(channel.max_voltage))
-            vars['power'].set(str(channel.max_power))
-            vars['inputs'].set(str(channel.num_string_inputs))
+        if channels:
+            self.inputs_per_mppt_var.set(str(channels[0].num_string_inputs))
+            self.mppt_current_var.set(str(channels[0].max_input_current))
+            self.mppt_voltage_min_var.set(str(channels[0].min_voltage))
+            self.mppt_voltage_max_var.set(str(channels[0].max_voltage))
+        
+        self._update_total_inputs()

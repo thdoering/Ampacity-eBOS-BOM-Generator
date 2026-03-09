@@ -29,5 +29,113 @@
     "weight_kg": 75.0,
     "ip_rating": "IP65",
     "max_short_circuit_current": 325.0
+  },
+  "CPS SCH250KTL-DO/US-800-36": {
+    "manufacturer": "CPS",
+    "model": "SCH250KTL-DO/US-800-36",
+    "inverter_type": "String",
+    "rated_power_kw": 250.0,
+    "max_dc_power_kw": 253.8,
+    "max_efficiency": 98.0,
+    "mppt_channels": [
+      {
+        "max_input_current": 26.0,
+        "min_voltage": 900.0,
+        "max_voltage": 1300.0,
+        "max_power": 21150.0,
+        "num_string_inputs": 3
+      },
+      {
+        "max_input_current": 26.0,
+        "min_voltage": 900.0,
+        "max_voltage": 1300.0,
+        "max_power": 21150.0,
+        "num_string_inputs": 3
+      },
+      {
+        "max_input_current": 26.0,
+        "min_voltage": 900.0,
+        "max_voltage": 1300.0,
+        "max_power": 21150.0,
+        "num_string_inputs": 3
+      },
+      {
+        "max_input_current": 26.0,
+        "min_voltage": 900.0,
+        "max_voltage": 1300.0,
+        "max_power": 21150.0,
+        "num_string_inputs": 3
+      },
+      {
+        "max_input_current": 26.0,
+        "min_voltage": 900.0,
+        "max_voltage": 1300.0,
+        "max_power": 21150.0,
+        "num_string_inputs": 3
+      },
+      {
+        "max_input_current": 26.0,
+        "min_voltage": 900.0,
+        "max_voltage": 1300.0,
+        "max_power": 21150.0,
+        "num_string_inputs": 3
+      },
+      {
+        "max_input_current": 26.0,
+        "min_voltage": 900.0,
+        "max_voltage": 1300.0,
+        "max_power": 21150.0,
+        "num_string_inputs": 3
+      },
+      {
+        "max_input_current": 26.0,
+        "min_voltage": 900.0,
+        "max_voltage": 1300.0,
+        "max_power": 21150.0,
+        "num_string_inputs": 3
+      },
+      {
+        "max_input_current": 26.0,
+        "min_voltage": 900.0,
+        "max_voltage": 1300.0,
+        "max_power": 21150.0,
+        "num_string_inputs": 3
+      },
+      {
+        "max_input_current": 26.0,
+        "min_voltage": 900.0,
+        "max_voltage": 1300.0,
+        "max_power": 21150.0,
+        "num_string_inputs": 3
+      },
+      {
+        "max_input_current": 26.0,
+        "min_voltage": 900.0,
+        "max_voltage": 1300.0,
+        "max_power": 21150.0,
+        "num_string_inputs": 3
+      },
+      {
+        "max_input_current": 26.0,
+        "min_voltage": 900.0,
+        "max_voltage": 1300.0,
+        "max_power": 21150.0,
+        "num_string_inputs": 3
+      }
+    ],
+    "mppt_configuration": "Independent",
+    "max_dc_voltage": 1500.0,
+    "startup_voltage": 900.0,
+    "nominal_ac_voltage": 800.0,
+    "max_ac_current": 40.0,
+    "power_factor": 0.99,
+    "dimensions_mm": [
+      1000,
+      600,
+      300
+    ],
+    "weight_kg": 75.0,
+    "ip_rating": "IP65",
+    "max_short_circuit_current": 600.0
   }
 }
