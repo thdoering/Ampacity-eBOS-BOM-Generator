@@ -454,13 +454,15 @@ def allocate_strings_spatial(tracker_entries: List[Dict],
     current_row_y = sorted_by_y[0]['driveline_y']
     
     for entry in sorted_by_y[1:]:
-        y_diff = abs(entry['driveline_y'] - current_row_y)
+        # Compare to the LAST entry added to the row (nearest neighbor chaining)
+        # instead of the first entry, so rows can gradually span a wider Y range
+        last_in_row_y = current_row[-1]['driveline_y']
+        y_diff = abs(entry['driveline_y'] - last_in_row_y)
         if y_diff <= row_threshold_ft:
             current_row.append(entry)
         else:
             rows.append(current_row)
             current_row = [entry]
-            current_row_y = entry['driveline_y']
     rows.append(current_row)
     
     for r_idx, row in enumerate(rows):

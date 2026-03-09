@@ -1350,7 +1350,7 @@ class QuickEstimate(ttk.Frame):
         if hasattr(self, 'dc_ac_ratio_var'):
             self.dc_ac_ratio_var.set(str(estimate_data.get('dc_ac_ratio', 1.25)))
         if hasattr(self, 'breaker_size_var'):
-            self.breaker_size_var.set('400')
+            self.breaker_size_var.set(estimate_data.get('breaker_size', '400'))
         if hasattr(self, 'dc_feeder_distance_var'):
             self.dc_feeder_distance_var.set(str(estimate_data.get('dc_feeder_distance', 500)))
         if hasattr(self, 'polarity_convention_var'):
@@ -1412,6 +1412,9 @@ class QuickEstimate(ttk.Frame):
         # Derive module from templates
         self._derive_module_from_templates()
 
+        # Re-enable autosave now that loading is complete
+        self._loading = False
+
         # Auto-calculate on load
         self.after(100, self.calculate_estimate)
 
@@ -1452,6 +1455,7 @@ class QuickEstimate(ttk.Frame):
             estimate_data['inverter_name'] = self.inverter_select_var.get()
         
         # Save topology and DC:AC ratio
+        estimate_data['topology'] = self.topology_var.get()
         estimate_data['inspect_mode'] = getattr(self, '_last_inspect_mode', False)
         estimate_data['use_routed_distances'] = self.use_routed_var.get()
         estimate_data['breaker_size'] = self.breaker_size_var.get()
@@ -1998,20 +2002,18 @@ class QuickEstimate(ttk.Frame):
         target_dc_kw = target_ratio * self.selected_inverter.rated_power_kw
         power_based_strings = round(target_dc_kw / string_power_kw)
         
-        # Also check DC power limit
-        dc_power_limited = int(self.selected_inverter.max_dc_power_kw / string_power_kw)
-        
         if topology == 'Distributed String':
             # Physical input count matters — strings connect directly to inverter
             input_limited = self.selected_inverter.get_total_string_capacity()
-            strings_per_inv = min(power_based_strings, dc_power_limited, input_limited)
+            strings_per_inv = min(power_based_strings, input_limited)
         else:
             # Centralized String or Central Inverter — combiners aggregate strings
-            # Only power limits apply, not physical input count
-            strings_per_inv = min(power_based_strings, dc_power_limited)
+            # Only power/ratio target applies, not physical input count
+            strings_per_inv = power_based_strings
         
         strings_per_inv = max(strings_per_inv, 1)  # At least 1
         self._updating_spi = True
+
         self.strings_per_inverter_var.set(str(strings_per_inv))
         self._updating_spi = False
         
@@ -2020,19 +2022,21 @@ class QuickEstimate(ttk.Frame):
             strings_per_inv, module_wattage, modules_per_string
         )
         
-        # Show warning if DC power limit or input limit is capping the ratio
-        if strings_per_inv < power_based_strings:
-            max_achievable_ratio = self.selected_inverter.max_dc_power_kw / self.selected_inverter.rated_power_kw
-            if topology == 'Distributed String' and self.selected_inverter.get_total_string_capacity() < dc_power_limited:
-                self.inverter_info_label.config(
-                    text=f"{self.selected_inverter.rated_power_kw}kW AC  |  Capped by string inputs ({self.selected_inverter.get_total_string_capacity()})  |  Max DC:AC ≈ {actual_ratio:.2f}",
-                    foreground='orange'
-                )
-            else:
-                self.inverter_info_label.config(
-                    text=f"{self.selected_inverter.rated_power_kw}kW AC  |  Capped by DC power ({self.selected_inverter.max_dc_power_kw}kW)  |  Max DC:AC = {max_achievable_ratio:.2f}",
-                    foreground='orange'
-                )
+
+        # Show warning if input limit is capping the ratio (Distributed String only)
+        if topology == 'Distributed String' and strings_per_inv < power_based_strings:
+            self.inverter_info_label.config(
+                text=f"{self.selected_inverter.rated_power_kw}kW AC  |  Capped by string inputs ({self.selected_inverter.get_total_string_capacity()})  |  Max DC:AC ≈ {actual_ratio:.2f}",
+                foreground='orange'
+            )
+        else:
+            # No capping — reset to normal inverter info
+            inv = self.selected_inverter
+            type_str = inv.inverter_type.value if hasattr(inv, 'inverter_type') else 'String'
+            self.inverter_info_label.config(
+                text=f"{inv.rated_power_kw}kW AC  |  {inv.max_dc_power_kw}kW DC  |  {inv.get_total_string_capacity()} inputs  |  {type_str}",
+                foreground='black'
+            )
         
         # Check Isc hard limit
         module_isc = self.selected_module.isc
@@ -2903,9 +2907,16 @@ class QuickEstimate(ttk.Frame):
                 allocation_result = allocate_strings_sequential(tracker_sequence, strings_per_inv)
 
             module_wattage = self.selected_module.wattage
-            actual_dc_ac = self.selected_inverter.dc_ac_ratio(
-                strings_per_inv, module_wattage, modules_per_string
-            )
+            # Use site-level DC:AC (total DC power / total AC capacity)
+            # Not per-inverter nominal, since allocation doesn't give every inverter the same count
+            total_alloc_strings = allocation_result['summary']['total_strings']
+            total_alloc_invs = allocation_result['summary']['total_inverters']
+            if total_alloc_invs > 0:
+                total_dc_kw = (total_alloc_strings * modules_per_string * module_wattage) / 1000
+                total_ac_kw = total_alloc_invs * self.selected_inverter.rated_power_kw
+                actual_dc_ac = round(total_dc_kw / total_ac_kw, 3)
+            else:
+                actual_dc_ac = 0.0            
 
             totals['string_inverters'] = allocation_result['summary']['total_inverters']
             totals['inverter_summary'] = {
@@ -4581,7 +4592,11 @@ class SitePreviewWindow(tk.Toplevel):
             new_y = self._drag_group_start_y + dy_world
             
             shift_held = event.state & 0x1
-            if not shift_held:
+            if shift_held:
+                # Shift held — constrain to N/S movement only (lock X)
+                new_x = self._drag_group_start_x
+            else:
+                # Normal drag — apply snapping
                 new_x, new_y = self._snap_group_position(
                     self.selected_group_idx, new_x, new_y
                 )
