@@ -1991,7 +1991,6 @@ class QuickEstimate(ttk.Frame):
         allocation_result = inv_summary.get('allocation_result')
         
         if not allocation_result:
-            print("[HARNESS SPLIT] No allocation result — skipping")
             return
         
         # Collect split tracker info from harness_map
@@ -2009,13 +2008,8 @@ class QuickEstimate(ttk.Frame):
                     split_trackers[tidx].append(entry_with_inv)
         
         if not split_trackers:
-            print("[HARNESS SPLIT] No split trackers found — no adjustment needed")
             return
-        
-        print(f"\n{'='*60}")
-        print(f"[HARNESS SPLIT] Found {len(split_trackers)} split tracker(s)")
-        print(f"[HARNESS SPLIT] BEFORE adjustment: harnesses_by_size = {dict(totals['harnesses_by_size'])}")
-        
+                
         for tidx, entries in split_trackers.items():
             spt = entries[0]['strings_per_tracker']
             original_harness_sizes = self._get_harness_config_for_tracker_type(spt)
@@ -2023,9 +2017,7 @@ class QuickEstimate(ttk.Frame):
             # Sort portions largest-first for greedy harness distribution
             portions = sorted(entries, key=lambda e: e['strings_taken'], reverse=True)
             remaining_harnesses = sorted(original_harness_sizes, reverse=True)
-            
-            print(f"\n  Tracker {tidx}: {spt}S, original harness config = {original_harness_sizes}")
-            
+                        
             # Build per-portion harness assignments
             portion_details = []
             for portion in portions:
@@ -2056,11 +2048,9 @@ class QuickEstimate(ttk.Frame):
                     'strings_taken': amount,
                     'harnesses': assigned_harnesses,
                 })
-                print(f"    Portion → Device {inv_idx}: {amount} strings, harnesses={assigned_harnesses}")
             
             # Any remaining harnesses (shouldn't happen but be safe)
             if remaining_harnesses:
-                print(f"    WARNING: leftover harnesses not assigned: {remaining_harnesses}")
                 portion_details[-1]['harnesses'].extend(remaining_harnesses)
             
             # Store for whip and extender calculations
@@ -2084,13 +2074,7 @@ class QuickEstimate(ttk.Frame):
                 if size not in totals['harnesses_by_size']:
                     totals['harnesses_by_size'][size] = 0
                 totals['harnesses_by_size'][size] += 1
-            
-            print(f"    Removed: {original_harness_sizes}, Added: {all_new}")
-        
-        print(f"\n[HARNESS SPLIT] AFTER adjustment: harnesses_by_size = {dict(totals['harnesses_by_size'])}")
-        print(f"[HARNESS SPLIT] Split tracker details stored for {len(self._split_tracker_details)} tracker(s)")
-        print(f"{'='*60}\n")
-        
+                    
     def _update_strings_per_inverter(self):
         """Auto-calculate strings per inverter from DC:AC ratio and show Isc warning if needed"""
         if self._updating_spi:
@@ -2978,8 +2962,6 @@ class QuickEstimate(ttk.Frame):
                         totals['harnesses_by_size'][size] = 0
                     totals['harnesses_by_size'][size] += qty
                     total_all_harnesses += qty
-
-                print(f"[HARNESS COUNT] Seg: {qty}x {spt}S tracker, config='{harness_config}' → sizes={harness_sizes} → +{qty} each")
         
         # Build harness-count-per-spt lookup for whip calculation
         harness_count_by_spt = {}
@@ -3218,8 +3200,6 @@ class QuickEstimate(ttk.Frame):
             split_details = getattr(self, '_split_tracker_details', {})
             seen_whip_trackers = set()
             
-            print(f"\n[WHIPS] Processing {len(whip_distances)} whip entries, {len(split_details)} split tracker(s) known")
-            
             for entry in whip_distances:
                 if len(entry) == 4:
                     distance_ft, spt, tidx, inv_idx = entry
@@ -3237,11 +3217,9 @@ class QuickEstimate(ttk.Frame):
                             break
                     
                     if portion_harnesses == 0:
-                        print(f"  [WHIP WARN] Split tracker {tidx} portion for inv {inv_idx} not found in details — skipping")
                         continue
                     
                     num_harnesses = portion_harnesses
-                    print(f"  [WHIP SPLIT] Tracker {tidx} → Device {inv_idx}: dist={distance_ft:.1f}ft, rounded={whip_length}ft, {num_harnesses} harness(es) → {2*num_harnesses} whips")
                 else:
                     # Non-split tracker — skip duplicates, use original harness count
                     if tidx in seen_whip_trackers:
@@ -3266,9 +3244,7 @@ class QuickEstimate(ttk.Frame):
                 info = tracker_seg_map[tidx]
                 key = (info['group_idx'], id(info['seg']))
                 split_tracker_seg_counts[key] = split_tracker_seg_counts.get(key, 0) + 1
-        
-        print(f"\n[EXTENDERS] Calculating extenders — {len(split_details)} split tracker(s) handled individually")
-        
+                
         # Process non-split trackers in bulk (original logic minus split count)
         for group_idx, group in enumerate(self.groups):
             device_position = group.get('device_position', 'middle')
@@ -3282,7 +3258,6 @@ class QuickEstimate(ttk.Frame):
                 
                 if non_split_qty > 0:
                     extender_pairs = self.calculate_extender_lengths_per_segment(seg, device_position)
-                    print(f"  {group['name']} seg {seg['strings_per_tracker']}S config='{seg['harness_config']}' x{non_split_qty} (non-split): {len(extender_pairs)} pair(s) → {extender_pairs}")
                     for pos_len, neg_len in extender_pairs:
                         pos_rounded = self.round_whip_length(pos_len)
                         neg_rounded = self.round_whip_length(neg_len)
@@ -3292,10 +3267,7 @@ class QuickEstimate(ttk.Frame):
                         if neg_rounded not in totals['extenders_neg_by_length']:
                             totals['extenders_neg_by_length'][neg_rounded] = 0
                         totals['extenders_neg_by_length'][neg_rounded] += non_split_qty
-                
-                if num_splits_in_seg > 0:
-                    print(f"  {group['name']} seg {seg['strings_per_tracker']}S: {num_splits_in_seg} split tracker(s) — handled below")
-        
+                        
         # Process split trackers individually — each portion gets its own extenders
         for tidx, details in split_details.items():
             if tidx >= len(tracker_seg_map):
@@ -3313,10 +3285,6 @@ class QuickEstimate(ttk.Frame):
                 temp_seg['quantity'] = 1
                 
                 extender_pairs = self.calculate_extender_lengths_per_segment(temp_seg, device_position)
-                
-                print(f"  [SPLIT EXTENDER] Tracker {tidx} → Device {portion['inv_idx']}: "
-                      f"config='{portion_config}' ({portion['strings_taken']} strings), "
-                      f"extender pairs={extender_pairs}")
                 
                 for pos_len, neg_len in extender_pairs:
                     pos_rounded = self.round_whip_length(pos_len)
