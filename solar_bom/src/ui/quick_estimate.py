@@ -436,14 +436,9 @@ class QuickEstimate(ttk.Frame):
         """Add a new group and return its index"""
         group_num = len(self.groups) + 1
         
-        # Default to first enabled template if available
-        enabled_keys = list(self.enabled_templates.keys())
-        if enabled_keys:
-            default_ref = enabled_keys[0]
-            default_spt = self.enabled_templates[default_ref].get('strings_per_tracker', 3)
-        else:
-            default_ref = None
-            default_spt = 3
+        # Start unconstrained — let the user pick a template
+        default_ref = None
+        default_spt = 3
         
         group = {
             'name': f"Group {group_num}",
