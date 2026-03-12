@@ -27,6 +27,7 @@ class QuickEstimate(ttk.Frame):
         
         self.groups = []
         self.pads = []  # Collection points (inverter pads)
+        self.device_names = {}  # {device_idx: "custom_name"} for CB/SI renaming
         self._harness_combos = []  # Track harness combo widgets for LV collection disabling
         self.selected_group_idx = None
         self._updating_listbox = False
@@ -1919,6 +1920,10 @@ class QuickEstimate(ttk.Frame):
         if hasattr(self, 'use_routed_var'):
                     self.use_routed_var.set(estimate_data.get('use_routed_distances', False))
         self.pads = copy.deepcopy(estimate_data.get('pads', []))
+        
+        # Load device names (convert str keys back to int)
+        saved_names = estimate_data.get('device_names', {})
+        self.device_names = {int(k): v for k, v in saved_names.items()}
 
         # Derive module from templates
         self._derive_module_from_templates()
@@ -1998,6 +2003,9 @@ class QuickEstimate(ttk.Frame):
         
         # Save pads
         estimate_data['pads'] = copy.deepcopy(self.pads)
+        
+        # Save device names (convert int keys to str for JSON)
+        estimate_data['device_names'] = {str(k): v for k, v in self.device_names.items()}
         
         # Notify callback
         if self.on_save:
@@ -2174,6 +2182,7 @@ class QuickEstimate(ttk.Frame):
         # Clear groups and pads
         self.groups.clear()
         self.pads.clear()
+        self.device_names.clear()
         if hasattr(self, 'group_listbox'):
             self._refresh_group_listbox()
         
@@ -2329,13 +2338,15 @@ class QuickEstimate(ttk.Frame):
             self, inv_summary, topology, self.INVERTER_COLORS,
             self.groups, self.enabled_templates, row_spacing_ft,
             num_devices=num_devices, device_label=device_label,
-            initial_inspect=initial_inspect, pads=self.pads
+            initial_inspect=initial_inspect, pads=self.pads,
+            device_names=self.device_names
         )
         
         # When window closes, save state back
         def _on_preview_close():
             self._last_inspect_mode = preview.inspect_mode
             self.pads = preview.pads  # Save pad positions back
+            self.device_names = dict(preview.device_names)  # Save renamed devices back
             self._schedule_autosave()
             preview.destroy()
         preview.protocol("WM_DELETE_WINDOW", _on_preview_close)
@@ -4588,7 +4599,8 @@ class QuickEstimateDialog(tk.Toplevel):
 class SitePreviewWindow(tk.Toplevel):
     """Pop-out window for site layout preview with zoom and pan"""
     
-    def __init__(self, parent, inv_summary, topology, colors, groups=None, enabled_templates=None, row_spacing_ft=20.0, num_devices=0, device_label='CB', initial_inspect=False, pads=None):
+    def __init__(self, parent, inv_summary, topology, colors, groups, enabled_templates, row_spacing_ft,
+                 num_devices=0, device_label='CB', initial_inspect=False, pads=None, device_names=None):
         super().__init__(parent)
         self.title("Site Preview — Inverter Allocation")
         self.geometry("1100x750")
@@ -4606,6 +4618,7 @@ class SitePreviewWindow(tk.Toplevel):
         self.selected_device_idx = None
         self.selected_pad_inspect_idx = None  # Pad selected in inspect mode
         self.pads = list(pads) if pads else []  # Deep copy so we don't mutate caller's list
+        self.device_names = dict(device_names) if device_names else {}  # {device_idx: "custom_name"}
         self.selected_pad_idx = None
         self.placing_pad = False  # True when in "click to place" mode
         self.assigning_devices = False  # True when Assign Devices dialog is open
@@ -4819,6 +4832,7 @@ class SitePreviewWindow(tk.Toplevel):
         self.canvas.bind('<Button-5>', lambda e: self.zoom(0.9))
         # Left-click: group select/drag only
         self.canvas.bind('<ButtonPress-1>', self.on_press)
+        self.canvas.bind('<Double-Button-1>', self._on_device_double_click)
         self.canvas.bind('<B1-Motion>', self.on_motion)
         self.canvas.bind('<ButtonRelease-1>', self.on_release)
         # Middle-click: pan canvas
@@ -5161,7 +5175,8 @@ class SitePreviewWindow(tk.Toplevel):
                     for s in range(existing, existing + strings_taken):
                         assigned_strings[tidx].add(s)
             
-            label = f"{self.device_label}-{inv_idx + 1:02d}"
+            dev_idx = len(self.device_positions)
+            label = self.device_names.get(dev_idx, f"{self.device_label}-{inv_idx + 1:02d}")
             
             self.device_positions.append({
                 'x': device_x,
@@ -5243,7 +5258,7 @@ class SitePreviewWindow(tk.Toplevel):
                     'y': device_y,
                     'width_ft': device_width_ft,
                     'height_ft': device_height_ft,
-                    'label': f"CB-{global_device_idx + 1:02d}",
+                    'label': self.device_names.get(global_device_idx, f"CB-{global_device_idx + 1:02d}"),
                     'group_idx': grp_idx,
                     'device_position': device_position,
                     'assigned_strings': assigned_strings,
@@ -5255,7 +5270,7 @@ class SitePreviewWindow(tk.Toplevel):
         # Fill any remaining devices
         while global_device_idx < self.num_devices and self.device_positions:
             last = self.device_positions[-1].copy()
-            last['label'] = f"CB-{global_device_idx + 1:02d}"
+            last['label'] = self.device_names.get(global_device_idx, f"CB-{global_device_idx + 1:02d}")
             last['x'] += device_width_ft + 2
             last['assigned_strings'] = {}
             self.device_positions.append(last)
@@ -5460,6 +5475,29 @@ class SitePreviewWindow(tk.Toplevel):
         else:
             self.selected_group_idx = None
             self.dragging_group = False
+            self.draw()
+
+    def _on_device_double_click(self, event):
+        """Handle double-click on canvas — rename device if clicked on one."""
+        dev_idx = self.hit_test_device(event.x, event.y)
+        if dev_idx is None:
+            return
+        
+        dev = self.device_positions[dev_idx]
+        current_name = dev.get('label', f"{self.device_label}-{dev_idx + 1:02d}")
+        
+        from tkinter import simpledialog
+        new_name = simpledialog.askstring(
+            "Rename Device",
+            f"Enter new name for {current_name}:",
+            initialvalue=current_name,
+            parent=self
+        )
+        
+        if new_name and new_name.strip():
+            new_name = new_name.strip()
+            self.device_names[dev_idx] = new_name
+            dev['label'] = new_name
             self.draw()
     
     def on_motion(self, event):
@@ -6199,6 +6237,17 @@ class SitePreviewWindow(tk.Toplevel):
             ph = pad.get('height_ft', 8.0)
             if (pad['x'] <= wx <= pad['x'] + pw and
                 pad['y'] <= wy <= pad['y'] + ph):
+                return i
+        return None
+
+    def hit_test_device(self, cx, cy):
+        """Return the index of the device under canvas coords, or None."""
+        if not hasattr(self, 'device_positions') or not self.device_positions:
+            return None
+        wx, wy = self.canvas_to_world(cx, cy)
+        for i, dev in enumerate(self.device_positions):
+            if (dev['x'] <= wx <= dev['x'] + dev['width_ft'] and
+                dev['y'] <= wy <= dev['y'] + dev['height_ft']):
                 return i
         return None
     
