@@ -5,7 +5,9 @@ This module provides functions to calculate recommended cable sizes
 for all four cable types in a harness assembly based on electrical load.
 """
 
-from typing import Dict, Optional
+from typing import Dict, Optional, List
+import json
+import os
 
 # NEC Table 310.15(B)(16) - Ampacity for 90°C rated cables (THWN-2, XHHW-2)
 # Standard sizes used in solar installations
@@ -25,6 +27,152 @@ CABLE_SIZE_ORDER = [
     "10 AWG", "8 AWG", "6 AWG", 
     "4 AWG", "2 AWG", "1/0 AWG", "2/0 AWG", "4/0 AWG"
 ]
+
+# Extended order including kcmil sizes (for feeders/homeruns)
+CABLE_SIZE_ORDER_EXTENDED = [
+    "10 AWG", "8 AWG", "6 AWG", "4 AWG", "3 AWG", "2 AWG", "1 AWG",
+    "1/0 AWG", "2/0 AWG", "3/0 AWG", "4/0 AWG",
+    "250 kcmil", "300 kcmil", "350 kcmil", "400 kcmil", "500 kcmil",
+    "600 kcmil", "700 kcmil", "750 kcmil", "800 kcmil", "900 kcmil", "1000 kcmil"
+]
+
+# Cached NEC table data
+_nec_table_cache = None
+
+def _load_nec_table() -> dict:
+    """Load NEC Table 310.16 data from JSON file, with caching."""
+    global _nec_table_cache
+    if _nec_table_cache is not None:
+        return _nec_table_cache
+    
+    data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'data')
+    table_path = os.path.join(data_dir, 'nec_table_310_16.json')
+    
+    try:
+        with open(table_path, 'r') as f:
+            _nec_table_cache = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        print(f"Warning: Could not load NEC Table 310.16: {e}")
+        _nec_table_cache = {"copper": {}, "aluminum": {}}
+    
+    return _nec_table_cache
+
+
+def get_nec_ampacity(cable_size: str, material: str = "copper", temp_rating: str = "75C") -> float:
+    """
+    Look up ampacity from NEC Table 310.16.
+    
+    Args:
+        cable_size: Cable size string (e.g., "10 AWG", "500 kcmil")
+        material: "copper" or "aluminum"
+        temp_rating: "60C", "75C", or "90C"
+        
+    Returns:
+        float: Ampacity in amperes, or 0 if not found
+    """
+    table = _load_nec_table()
+    material_data = table.get(material, {})
+    size_data = material_data.get(cable_size, {})
+    return size_data.get(temp_rating, 0)
+
+
+def get_available_sizes(material: str = "copper") -> List[str]:
+    """
+    Get the ordered list of available cable sizes for a given material.
+    
+    Args:
+        material: "copper" or "aluminum"
+        
+    Returns:
+        List of cable size strings in order from smallest to largest
+    """
+    table = _load_nec_table()
+    material_data = table.get(material, {})
+    # Return sizes in the extended order, filtered to only those in the table
+    return [s for s in CABLE_SIZE_ORDER_EXTENDED if s in material_data]
+
+
+def recommend_cable_size(current: float, material: str = "copper", temp_rating: str = "75C") -> str:
+    """
+    Recommend the smallest cable size adequate for the given current.
+    
+    Args:
+        current: Required ampacity (already includes any NEC factors)
+        material: "copper" or "aluminum"
+        temp_rating: "60C", "75C", or "90C"
+        
+    Returns:
+        str: Recommended cable size, or largest available if none adequate
+    """
+    available = get_available_sizes(material)
+    for size in available:
+        ampacity = get_nec_ampacity(size, material, temp_rating)
+        if ampacity >= current:
+            return size
+    
+    # Return largest available
+    return available[-1] if available else "1000 kcmil"
+
+
+def recommend_lv_cable_sizes(num_strings: int, module_isc: float, 
+                              nec_factor: float = 1.56, temp_rating: str = "75C") -> Dict[str, str]:
+    """
+    Recommend cable sizes for LV collection (harness, extender, whip).
+    Always uses copper. Extender and whip are floored at the harness size.
+    
+    Args:
+        num_strings: Number of strings in the harness
+        module_isc: Module short circuit current in amperes
+        nec_factor: NEC safety factor (default 1.56)
+        temp_rating: Temperature rating column to use
+        
+    Returns:
+        Dict with 'harness', 'extender', 'whip' cable sizes
+    """
+    required_current = num_strings * module_isc * nec_factor
+    harness_size = recommend_cable_size(required_current, "copper", temp_rating)
+    
+    # Extender and whip are at least as large as harness
+    return {
+        'harness': harness_size,
+        'extender': harness_size,
+        'whip': harness_size
+    }
+
+
+def recommend_dc_feeder_size(breaker_rating: float, material: str = "aluminum", 
+                              temp_rating: str = "75C") -> str:
+    """
+    Recommend DC feeder cable size based on combiner breaker rating.
+    Cable ampacity must be >= breaker rating per NEC 240.4.
+    
+    Args:
+        breaker_rating: Combiner output breaker rating in amps
+        material: "copper" or "aluminum"
+        temp_rating: Temperature rating column to use
+        
+    Returns:
+        str: Recommended cable size
+    """
+    return recommend_cable_size(breaker_rating, material, temp_rating)
+
+
+def recommend_ac_homerun_size(max_ac_current: float, material: str = "aluminum",
+                               temp_rating: str = "75C") -> str:
+    """
+    Recommend AC homerun cable size based on inverter max output current.
+    Uses 1.25 NEC continuous load factor on the AC side.
+    
+    Args:
+        max_ac_current: Inverter maximum AC output current in amps
+        material: "copper" or "aluminum"
+        temp_rating: Temperature rating column to use
+        
+    Returns:
+        str: Recommended cable size
+    """
+    required_current = max_ac_current * 1.25
+    return recommend_cable_size(required_current, material, temp_rating)
 
 def calculate_string_cable_size(module_isc: float, nec_factor: float = 1.56) -> str:
     """

@@ -36,7 +36,6 @@ class QuickEstimate(ttk.Frame):
         self.module_width_default = 1134
         self.modules_per_string_default = 28
         self.row_spacing_default = 20.0
-        self.wire_gauge_default = '10 AWG'
         
         # Track currently selected item
         self.checked_items = set()  # Items checked for export
@@ -932,6 +931,474 @@ class QuickEstimate(ttk.Frame):
             result['feeder_count'] += 1
         
         return result
+    
+    def _build_wire_sizing_frame(self, parent):
+        """Build the Wire Sizing widget to the right of Global Settings."""
+        from src.utils.cable_sizing import (
+            CABLE_SIZE_ORDER, CABLE_SIZE_ORDER_EXTENDED, 
+            get_available_sizes
+        )
+        
+        ws_frame = ttk.LabelFrame(parent, text="Wire Sizing", padding="5")
+        ws_frame.pack(side='left', fill='y', padx=(10, 0))
+        self._ws_frame = ws_frame
+        
+        # Row 0: Temp rating, Material toggle, Reset button
+        controls_row = ttk.Frame(ws_frame)
+        controls_row.pack(fill='x', pady=(0, 5))
+        
+        ttk.Label(controls_row, text="Temp:").pack(side='left', padx=(0, 2))
+        self._ws_temp_var = tk.StringVar(value=self.wire_sizing.get('temp_rating', '90C'))
+        temp_combo = ttk.Combobox(
+            controls_row, textvariable=self._ws_temp_var,
+            values=['60C', '75C', '90C'], state='readonly', width=4
+        )
+        temp_combo.pack(side='left', padx=(0, 8))
+        self.disable_combobox_scroll(temp_combo)
+        
+        ttk.Label(controls_row, text="Feeder:").pack(side='left', padx=(0, 2))
+        self._ws_material_var = tk.StringVar(value=self.wire_sizing.get('feeder_material', 'aluminum'))
+        material_combo = ttk.Combobox(
+            controls_row, textvariable=self._ws_material_var,
+            values=['aluminum', 'copper'], state='readonly', width=9
+        )
+        material_combo.pack(side='left', padx=(0, 8))
+        self.disable_combobox_scroll(material_combo)
+        
+        ttk.Button(controls_row, text="Reset", width=5,
+                    command=self._reset_wire_sizing_to_recommended).pack(side='left')
+        
+        # Column headers
+        header_row = ttk.Frame(ws_frame)
+        header_row.pack(fill='x', pady=(0, 2))
+        
+        header_font = ('TkDefaultFont', 8, 'bold')
+        ttk.Label(header_row, text="Strings", font=header_font, width=7).pack(side='left')
+        ttk.Label(header_row, text="Harness", font=header_font, width=10).pack(side='left', padx=2)
+        ttk.Label(header_row, text="Extender", font=header_font, width=10).pack(side='left', padx=2)
+        ttk.Label(header_row, text="Whip", font=header_font, width=10).pack(side='left', padx=2)
+        
+        # Dynamic rows container — cleared and rebuilt by refresh_wire_sizing_table
+        self._ws_rows_frame = ttk.Frame(ws_frame)
+        self._ws_rows_frame.pack(fill='x')
+        
+        # Storage for combo vars and override tracking
+        self._ws_lv_combos = {}    # {(string_count, cable_type): tk.StringVar}
+        self._ws_feeder_var = tk.StringVar(value=self.wire_sizing.get('dc_feeder', ''))
+        self._ws_homerun_var = tk.StringVar(value=self.wire_sizing.get('ac_homerun', ''))
+        
+        # Available LV cable sizes (copper AWG only — pre-made assemblies)
+        self._ws_lv_sizes = CABLE_SIZE_ORDER  # ['10 AWG' through '4/0 AWG']
+        
+        # Traces for temp and material changes
+        self._ws_temp_var.trace_add('write', lambda *a: self._on_wire_sizing_setting_changed())
+        self._ws_material_var.trace_add('write', lambda *a: self._on_wire_sizing_setting_changed())
+        
+    def _on_wire_sizing_setting_changed(self):
+        """Handle change to temp rating or feeder material — recalc recommendations."""
+        self.wire_sizing['temp_rating'] = self._ws_temp_var.get()
+        self.wire_sizing['feeder_material'] = self._ws_material_var.get()
+        self._reset_wire_sizing_to_recommended()
+        self._mark_stale()
+        self._schedule_autosave()
+
+    def refresh_wire_sizing_table(self):
+        """Refresh the wire sizing table rows based on current harness configs."""
+        if not hasattr(self, '_ws_rows_frame'):
+            return
+        
+        from src.utils.cable_sizing import CABLE_SIZE_ORDER, get_available_sizes
+        
+        # Clear existing rows
+        for widget in self._ws_rows_frame.winfo_children():
+            widget.destroy()
+        self._ws_lv_combos.clear()
+        
+        active_counts = self._collect_active_string_counts()
+        topology = self.topology_var.get() if hasattr(self, 'topology_var') else 'Distributed String'
+        by_sc = self.wire_sizing.get('by_string_count', {})
+        
+        # Build LV rows (harness/extender/whip per string count)
+        for sc in active_counts:
+            row_frame = ttk.Frame(self._ws_rows_frame)
+            row_frame.pack(fill='x', pady=1)
+            
+            ttk.Label(row_frame, text=f"{sc}-str", width=7).pack(side='left')
+            
+            # Get current sizes from wire_sizing dict (int or str key)
+            entry = by_sc.get(sc) or by_sc.get(str(sc)) or {}
+            
+            for cable_type in ('harness', 'extender', 'whip'):
+                current_val = entry.get(cable_type, '10 AWG')
+                var = tk.StringVar(value=current_val)
+                combo = ttk.Combobox(
+                    row_frame, textvariable=var,
+                    values=CABLE_SIZE_ORDER, state='readonly', width=8
+                )
+                combo.pack(side='left', padx=2)
+                self.disable_combobox_scroll(combo)
+                
+                # Store reference
+                self._ws_lv_combos[(sc, cable_type)] = var
+                
+                # Bind change handler with closure
+                var.trace_add('write', lambda *a, s=sc, ct=cable_type: self._on_lv_size_changed(s, ct))
+        
+        # Separator before feeder rows
+        if active_counts and (topology != 'Distributed String' or True):
+            sep = ttk.Separator(self._ws_rows_frame, orient='horizontal')
+            sep.pack(fill='x', pady=3)
+        
+        # DC Feeder row (only for Centralized String / Central Inverter)
+        if topology in ('Centralized String', 'Central Inverter'):
+            feeder_row = ttk.Frame(self._ws_rows_frame)
+            feeder_row.pack(fill='x', pady=1)
+            
+            ttk.Label(feeder_row, text="DC Fdr", width=7).pack(side='left')
+            material = self.wire_sizing.get('feeder_material', 'aluminum')
+            feeder_sizes = get_available_sizes(material)
+            current_feeder = self.wire_sizing.get('dc_feeder', '')
+            self._ws_feeder_var.set(current_feeder)
+            feeder_combo = ttk.Combobox(
+                feeder_row, textvariable=self._ws_feeder_var,
+                values=feeder_sizes, state='readonly', width=10
+            )
+            feeder_combo.pack(side='left', padx=2)
+            self.disable_combobox_scroll(feeder_combo)
+            self._ws_feeder_var.trace_add('write', lambda *a: self._on_feeder_size_changed('dc_feeder'))
+        
+        # AC Homerun row (all topologies)
+        homerun_row = ttk.Frame(self._ws_rows_frame)
+        homerun_row.pack(fill='x', pady=1)
+        
+        ttk.Label(homerun_row, text="AC HR", width=7).pack(side='left')
+        material = self.wire_sizing.get('feeder_material', 'aluminum')
+        homerun_sizes = get_available_sizes(material)
+        current_homerun = self.wire_sizing.get('ac_homerun', '')
+        self._ws_homerun_var.set(current_homerun)
+        homerun_combo = ttk.Combobox(
+            homerun_row, textvariable=self._ws_homerun_var,
+            values=homerun_sizes, state='readonly', width=10
+        )
+        homerun_combo.pack(side='left', padx=2)
+        self.disable_combobox_scroll(homerun_combo)
+        self._ws_homerun_var.trace_add('write', lambda *a: self._on_feeder_size_changed('ac_homerun'))
+    
+    def _reset_wire_sizing_to_recommended(self):
+        """Reset all wire sizes to calculated recommendations."""
+        from src.utils.cable_sizing import (
+            recommend_lv_cable_sizes, recommend_dc_feeder_size, 
+            recommend_ac_homerun_size
+        )
+        
+        temp = self._ws_temp_var.get() if hasattr(self, '_ws_temp_var') else '90C'
+        material = self._ws_material_var.get() if hasattr(self, '_ws_material_var') else 'aluminum'
+        
+        self.wire_sizing['temp_rating'] = temp
+        self.wire_sizing['feeder_material'] = material
+        self.wire_sizing['user_overrides'] = {}  # Clear all overrides
+        
+        # Get module Isc
+        module_isc = self.selected_module.isc if self.selected_module else 13.0
+        
+        # Recommend LV sizes for each active string count
+        active_counts = self._collect_active_string_counts()
+        by_sc = {}
+        for sc in active_counts:
+            sizes = recommend_lv_cable_sizes(sc, module_isc, nec_factor=1.56, temp_rating=temp)
+            by_sc[sc] = sizes
+        self.wire_sizing['by_string_count'] = by_sc
+        
+        # Recommend DC feeder
+        topology = self.topology_var.get() if hasattr(self, 'topology_var') else 'Distributed String'
+        if topology in ('Centralized String', 'Central Inverter'):
+            try:
+                breaker = float(self.breaker_size_var.get())
+            except (ValueError, AttributeError):
+                breaker = 400.0
+            self.wire_sizing['dc_feeder'] = recommend_dc_feeder_size(breaker, material, temp)
+        else:
+            self.wire_sizing['dc_feeder'] = ''
+        
+        # Recommend AC homerun
+        if self.selected_inverter and hasattr(self.selected_inverter, 'max_ac_current'):
+            max_ac = self.selected_inverter.max_ac_current
+            self.wire_sizing['ac_homerun'] = recommend_ac_homerun_size(max_ac, material, temp)
+        else:
+            self.wire_sizing['ac_homerun'] = ''
+        
+        # Rebuild the table UI with new values
+        self.refresh_wire_sizing_table()
+        self._mark_stale()
+        self._schedule_autosave()
+
+    def _on_lv_size_changed(self, string_count, cable_type):
+        """Handle user changing a harness/extender/whip size in the wire sizing table."""
+        from src.utils.cable_sizing import get_cable_size_index
+        
+        key = (string_count, cable_type)
+        if key not in self._ws_lv_combos:
+            return
+        
+        new_size = self._ws_lv_combos[key].get()
+        
+        # Ensure by_string_count dict has this entry
+        by_sc = self.wire_sizing.setdefault('by_string_count', {})
+        entry = by_sc.get(string_count) or by_sc.get(str(string_count))
+        if entry is None:
+            entry = {'harness': '10 AWG', 'extender': '10 AWG', 'whip': '10 AWG'}
+            by_sc[string_count] = entry
+        
+        entry[cable_type] = new_size
+        
+        # Enforce floor constraint: extender and whip >= harness
+        harness_idx = get_cable_size_index(entry['harness'])
+        
+        if cable_type == 'harness':
+            # If harness got bigger, bump extender and whip up if they're smaller
+            for dep_type in ('extender', 'whip'):
+                dep_idx = get_cable_size_index(entry[dep_type])
+                if dep_idx < harness_idx:
+                    entry[dep_type] = entry['harness']
+                    dep_key = (string_count, dep_type)
+                    if dep_key in self._ws_lv_combos:
+                        self._ws_lv_combos[dep_key].set(entry['harness'])
+        else:
+            # If extender or whip was set smaller than harness, snap it back
+            my_idx = get_cable_size_index(new_size)
+            if my_idx < harness_idx:
+                entry[cable_type] = entry['harness']
+                self._ws_lv_combos[key].set(entry['harness'])
+        
+        # Track as user override
+        overrides = self.wire_sizing.setdefault('user_overrides', {})
+        overrides[f"{string_count}_{cable_type}"] = True
+        
+        self._mark_stale()
+        self._schedule_autosave()
+    
+    def _on_feeder_size_changed(self, feeder_type):
+        """Handle user changing DC feeder or AC homerun size."""
+        if feeder_type == 'dc_feeder':
+            self.wire_sizing['dc_feeder'] = self._ws_feeder_var.get()
+        elif feeder_type == 'ac_homerun':
+            self.wire_sizing['ac_homerun'] = self._ws_homerun_var.get()
+        
+        overrides = self.wire_sizing.setdefault('user_overrides', {})
+        overrides[feeder_type] = True
+        
+        self._mark_stale()
+        self._schedule_autosave()
+
+    def _refresh_wire_sizing_for_segments(self):
+        """Refresh wire sizing when segments/harness configs change.
+        Preserves user overrides, adds new string counts with recommendations,
+        removes string counts no longer in use."""
+        from src.utils.cable_sizing import recommend_lv_cable_sizes
+        
+        if not hasattr(self, '_ws_rows_frame'):
+            return
+        
+        temp = self.wire_sizing.get('temp_rating', '90C')
+        module_isc = self.selected_module.isc if self.selected_module else 13.0
+        overrides = self.wire_sizing.get('user_overrides', {})
+        
+        active_counts = self._collect_active_string_counts()
+        by_sc = self.wire_sizing.get('by_string_count', {})
+        
+        # Add recommendations for any new string counts
+        for sc in active_counts:
+            if sc not in by_sc and str(sc) not in by_sc:
+                sizes = recommend_lv_cable_sizes(sc, module_isc, nec_factor=1.56, temp_rating=temp)
+                by_sc[sc] = sizes
+        
+        # Remove string counts no longer in use (but only if not user-overridden)
+        keys_to_remove = []
+        for sc_key in list(by_sc.keys()):
+            sc_int = int(sc_key) if isinstance(sc_key, str) else sc_key
+            if sc_int not in active_counts:
+                # Check if any overrides exist for this string count
+                has_override = any(
+                    overrides.get(f"{sc_int}_{ct}") 
+                    for ct in ('harness', 'extender', 'whip')
+                )
+                if not has_override:
+                    keys_to_remove.append(sc_key)
+        
+        for key in keys_to_remove:
+            del by_sc[key]
+        
+        self.wire_sizing['by_string_count'] = by_sc
+        self.refresh_wire_sizing_table()
+    
+    def _on_topology_changed_wire_sizing(self):
+        """Handle topology change — show/hide DC feeder row, recalc if needed."""
+        from src.utils.cable_sizing import recommend_dc_feeder_size
+        
+        topology = self.topology_var.get()
+        material = self.wire_sizing.get('feeder_material', 'aluminum')
+        temp = self.wire_sizing.get('temp_rating', '90C')
+        overrides = self.wire_sizing.get('user_overrides', {})
+        
+        if topology in ('Centralized String', 'Central Inverter'):
+            # Generate DC feeder recommendation if not already overridden
+            if not overrides.get('dc_feeder') and not self.wire_sizing.get('dc_feeder'):
+                try:
+                    breaker = float(self.breaker_size_var.get())
+                except (ValueError, AttributeError):
+                    breaker = 400.0
+                self.wire_sizing['dc_feeder'] = recommend_dc_feeder_size(breaker, material, temp)
+        else:
+            self.wire_sizing['dc_feeder'] = ''
+        
+        self.refresh_wire_sizing_table()
+    
+    def _on_breaker_changed_wire_sizing(self):
+        """Handle breaker size change — update DC feeder recommendation."""
+        from src.utils.cable_sizing import recommend_dc_feeder_size
+        
+        overrides = self.wire_sizing.get('user_overrides', {})
+        if overrides.get('dc_feeder'):
+            return  # User has overridden, don't auto-update
+        
+        topology = self.topology_var.get()
+        if topology not in ('Centralized String', 'Central Inverter'):
+            return
+        
+        material = self.wire_sizing.get('feeder_material', 'aluminum')
+        temp = self.wire_sizing.get('temp_rating', '90C')
+        
+        try:
+            breaker = float(self.breaker_size_var.get())
+        except (ValueError, AttributeError):
+            breaker = 400.0
+        
+        self.wire_sizing['dc_feeder'] = recommend_dc_feeder_size(breaker, material, temp)
+        self.refresh_wire_sizing_table()
+    
+    def _on_inverter_changed_wire_sizing(self):
+        """Handle inverter change — update AC homerun recommendation."""
+        from src.utils.cable_sizing import recommend_ac_homerun_size
+        
+        overrides = self.wire_sizing.get('user_overrides', {})
+        if overrides.get('ac_homerun'):
+            return  # User has overridden, don't auto-update
+        
+        material = self.wire_sizing.get('feeder_material', 'aluminum')
+        temp = self.wire_sizing.get('temp_rating', '90C')
+        
+        if self.selected_inverter and hasattr(self.selected_inverter, 'max_ac_current'):
+            max_ac = self.selected_inverter.max_ac_current
+            self.wire_sizing['ac_homerun'] = recommend_ac_homerun_size(max_ac, material, temp)
+        else:
+            self.wire_sizing['ac_homerun'] = ''
+        
+        self.refresh_wire_sizing_table()
+    
+    def _collect_active_string_counts(self):
+        """Scan segments and return sorted list of harness string counts in use."""
+        string_counts = set()
+        lv_method = self.lv_collection_var.get() if hasattr(self, 'lv_collection_var') else 'Wire Harness'
+        
+        for group in self.groups:
+            for segment in group.get('segments', []):
+                if lv_method == 'String HR':
+                    string_counts.add(1)
+                else:
+                    harness_config = segment.get('harness_config', '')
+                    if harness_config:
+                        for part in harness_config.split('+'):
+                            try:
+                                sc = int(part.strip())
+                                if sc > 0:
+                                    string_counts.add(sc)
+                            except ValueError:
+                                pass
+                    else:
+                        spt = segment.get('strings_per_tracker', 1)
+                        if spt > 0:
+                            string_counts.add(spt)
+        
+        result = sorted(string_counts)
+        print(f"[Wire Sizing Debug] _collect_active_string_counts: groups={len(self.groups)}, lv_method={lv_method}, string_counts={result}")
+        for group in self.groups:
+            for seg in group.get('segments', []):
+                print(f"  seg: harness_config='{seg.get('harness_config', '')}', spt={seg.get('strings_per_tracker', '?')}")
+        return result
+
+    def get_wire_size_for(self, cable_type, num_strings=None):
+        """
+        Look up wire size from the wire_sizing dict.
+        
+        Args:
+            cable_type: 'harness', 'extender', 'whip', 'dc_feeder', 'ac_homerun'
+            num_strings: Required for harness/extender/whip — the harness string count
+            
+        Returns:
+            str: Cable size string (e.g., '10 AWG', '500 kcmil')
+        """
+        if cable_type in ('dc_feeder', 'ac_homerun'):
+            size = self.wire_sizing.get(cable_type, '')
+            return size if size else '4/0 AWG'
+        
+        if num_strings is None:
+            return '10 AWG'
+        
+        by_sc = self.wire_sizing.get('by_string_count', {})
+        # Try int key first, then string key (JSON round-trip converts int keys to strings)
+        entry = by_sc.get(num_strings) or by_sc.get(str(num_strings))
+        if entry:
+            return entry.get(cable_type, '10 AWG')
+        
+        return '10 AWG'
+    
+    def _gauge_to_string_count(self, cable_type, gauge):
+        """Reverse-lookup: find a string count that maps to this gauge for a given cable type.
+        Used to pass num_strings to lookup_part_and_price for correct part matching."""
+        by_sc = self.wire_sizing.get('by_string_count', {})
+        for sc_key, entry in by_sc.items():
+            if entry.get(cable_type) == gauge:
+                return int(sc_key) if isinstance(sc_key, str) else sc_key
+        return None
+
+    
+    def _get_effective_wire_size(self, cable_type):
+        """
+        Get the effective wire size for a cable type across all active string counts.
+        If all string counts agree, returns that size. Otherwise returns the largest.
+        Used for whips/extenders which are bucketed by length without string count context.
+        
+        Args:
+            cable_type: 'harness', 'extender', or 'whip'
+        Returns:
+            str: Cable size string
+        """
+        from src.utils.cable_sizing import get_cable_size_index
+        
+        by_sc = self.wire_sizing.get('by_string_count', {})
+        if not by_sc:
+            return '10 AWG'
+        
+        sizes = set()
+        for sc_key, entry in by_sc.items():
+            size = entry.get(cable_type, '10 AWG')
+            sizes.add(size)
+        
+        if len(sizes) == 1:
+            return sizes.pop()
+        
+        # Multiple sizes — return the largest
+        best = None
+        best_idx = -1
+        for s in sizes:
+            idx = get_cable_size_index(s)
+            if idx > best_idx:
+                best_idx = idx
+                best = s
+        
+        result = best or '10 AWG'
+        print(f"  [_get_effective_wire_size] {cable_type}: sizes_found={sizes}, returning={result}")
+        return result
 
     def lookup_part_and_price(self, item_type, **kwargs):
         """Look up part number and unit price for a BOM item.
@@ -943,8 +1410,8 @@ class QuickEstimate(ttk.Frame):
             import json
             from src.utils.pricing_lookup import PricingLookup
 
-            wire_gauge = getattr(self, 'wire_gauge_var', None)
-            wire_gauge = wire_gauge.get() if wire_gauge else '10 AWG'
+            # Wire gauge is now looked up per cable type from wire_sizing dict
+            wire_gauge = None  # Will be set per item_type below
 
             pricing = PricingLookup()
             part_number = 'N/A'
@@ -985,7 +1452,8 @@ class QuickEstimate(ttk.Frame):
                             spec.get('polarity') == polarity and
                             abs(spec.get('string_spacing_ft', 0) - target_spacing) < 0.1):
                         spec_trunk = spec.get('trunk_cable_size', spec.get('trunk_wire_gauge', ''))
-                        if spec_trunk == wire_gauge:
+                        harness_gauge = self.get_wire_size_for('harness', num_strings)
+                        if spec_trunk == harness_gauge:
                             matches.append(pn)
                 part_number = matches[0] if len(matches) == 1 else ('N/A' if not matches else ' or '.join(sorted(matches)))
 
@@ -1004,10 +1472,19 @@ class QuickEstimate(ttk.Frame):
                 with open(lib_path, 'r') as f:
                     library = json.load(f)
 
+                # Look up wire gauge for this cable type
+                # If num_strings is provided, use per-string-count size; otherwise use effective size
+                item_num_strings = kwargs.get('num_strings', None)
+                if item_num_strings is not None:
+                    item_wire_gauge = self.get_wire_size_for(item_type, item_num_strings)
+                else:
+                    item_wire_gauge = self._get_effective_wire_size(item_type)
+                print(f"  [lookup] {item_type} num_strings={item_num_strings} → wire_gauge={item_wire_gauge}, length={kwargs.get('length_ft')}, polarity={polarity}")
+
                 for pn, spec in library.items():
                     if pn.startswith('_comment_'):
                         continue
-                    if (spec.get('wire_gauge') == wire_gauge and
+                    if (spec.get('wire_gauge') == item_wire_gauge and
                             spec.get('polarity') == polarity and
                             spec.get('length_ft') == target_length):
                         part_number = pn
@@ -1359,8 +1836,20 @@ class QuickEstimate(ttk.Frame):
             self.modules_per_string_var.set(str(self._saved_modules_per_string))
         if hasattr(self, 'row_spacing_var'):
             self.row_spacing_var.set(str(estimate_data.get('row_spacing_ft', 20.0)))
-        if hasattr(self, 'wire_gauge_var'):
-            self.wire_gauge_var.set(estimate_data.get('wire_gauge', '10 AWG'))
+        # Load wire sizing (new format) or migrate from old wire_gauge
+        saved_wire_sizing = estimate_data.get('wire_sizing')
+        if saved_wire_sizing:
+            self.wire_sizing = copy.deepcopy(saved_wire_sizing)
+        else:
+            # Backward compat: old estimates had a single wire_gauge field
+            self.wire_sizing = {
+                'temp_rating': '90C',
+                'feeder_material': 'aluminum',
+                'by_string_count': {},
+                'dc_feeder': '',
+                'ac_homerun': '',
+                'user_overrides': {}
+            }
         
         # Restore inverter selection
         saved_inverter_name = estimate_data.get('inverter_name', '')
@@ -1439,6 +1928,10 @@ class QuickEstimate(ttk.Frame):
         # Derive module from templates
         self._derive_module_from_templates()
 
+        # Refresh wire sizing table — always reconcile saved data with current segments
+        # This adds missing string counts and removes stale ones
+        self._refresh_wire_sizing_for_segments()
+
         # Re-enable autosave now that loading is complete
         self._loading = False
 
@@ -1475,7 +1968,7 @@ class QuickEstimate(ttk.Frame):
         except ValueError:
             estimate_data['row_spacing_ft'] = 20.0
 
-        estimate_data['wire_gauge'] = self.wire_gauge_var.get()
+        estimate_data['wire_sizing'] = copy.deepcopy(self.wire_sizing)
         
         # Save inverter selection
         if self.selected_inverter:
@@ -1759,6 +2252,9 @@ class QuickEstimate(ttk.Frame):
                 except tk.TclError:
                     pass  # Widget may have been destroyed
 
+        # Refresh wire sizing table since string counts may have changed
+        self._refresh_wire_sizing_for_segments()
+
     def _on_module_selected(self, event=None):
         """Legacy — module is now derived from templates. Kept for backward compat."""
         pass
@@ -1775,6 +2271,7 @@ class QuickEstimate(ttk.Frame):
                 foreground='black'
             )
             self._update_strings_per_inverter()
+            self._on_inverter_changed_wire_sizing()
             # Auto-save when inverter changes (but not during load)
             if not getattr(self, '_loading', False):
                 self._mark_stale()
@@ -2214,9 +2711,12 @@ class QuickEstimate(ttk.Frame):
         bottom_frame = ttk.Frame(main_container)
         bottom_frame.pack(fill='both', expand=True)
         
-        # Global settings frame (applies to all calculations)
-        settings_frame = ttk.LabelFrame(bottom_frame, text="Global Settings", padding="5")
-        settings_frame.pack(fill='x', pady=(0, 10))
+        # Global settings + Wire sizing side-by-side container
+        settings_container = ttk.Frame(bottom_frame)
+        settings_container.pack(fill='x', pady=(0, 10))
+        
+        settings_frame = ttk.LabelFrame(settings_container, text="Global Settings", padding="5")
+        settings_frame.pack(side='left', fill='y')
         
         # Row 1: Module display (derived from templates)
         module_row = ttk.Frame(settings_frame)
@@ -2262,7 +2762,7 @@ class QuickEstimate(ttk.Frame):
         )
         topology_combo.pack(side='left', padx=(0, 15))
         self.disable_combobox_scroll(topology_combo)
-        self.topology_var.trace_add('write', lambda *args: (self._update_distance_hints(), self._mark_stale(), self._schedule_autosave()))
+        self.topology_var.trace_add('write', lambda *args: (self._update_distance_hints(), self._on_topology_changed_wire_sizing(), self._mark_stale(), self._schedule_autosave()))
         
         ttk.Label(topology_row, text="DC:AC Ratio:").pack(side='left', padx=(0, 5))
         self.dc_ac_ratio_var = tk.StringVar(value='1.25')
@@ -2296,7 +2796,7 @@ class QuickEstimate(ttk.Frame):
         )
         breaker_combo.pack(side='left', padx=(0, 15))
         self.disable_combobox_scroll(breaker_combo)
-        self.breaker_size_var.trace_add('write', lambda *args: (self._mark_stale(), self._schedule_autosave()))
+        self.breaker_size_var.trace_add('write', lambda *args: (self._on_breaker_changed_wire_sizing(), self._mark_stale(), self._schedule_autosave()))
 
         ttk.Label(topology_row, text="Strings/Inverter:").pack(side='left', padx=(0, 5))
         self.strings_per_inverter_var = tk.StringVar(value='--')
@@ -2326,18 +2826,16 @@ class QuickEstimate(ttk.Frame):
         ttk.Spinbox(settings_inner, from_=1, to=100, textvariable=self.row_spacing_var, width=6).pack(side='left', padx=(0, 15))
         self.row_spacing_var.trace_add('write', lambda *args: (self._mark_stale(), self._schedule_autosave()))
 
-        ttk.Label(settings_inner, text="Wire Gauge:").pack(side='left', padx=(0, 5))
-        self.wire_gauge_var = tk.StringVar(value=getattr(self, 'wire_gauge_default', '8 AWG'))
-        wire_gauge_combo = ttk.Combobox(
-            settings_inner,
-            textvariable=self.wire_gauge_var,
-            values=['8 AWG', '10 AWG'],
-            state='readonly',
-            width=8
-        )
-        wire_gauge_combo.pack(side='left')
-        self.disable_combobox_scroll(wire_gauge_combo)
-        self.wire_gauge_var.trace_add('write', lambda *args: (self._mark_stale(), self._schedule_autosave()))
+        # Wire sizing dict — populated dynamically based on harness configs
+        # Keys: 'temp_rating', 'feeder_material', 'by_string_count', 'dc_feeder', 'ac_homerun', 'user_overrides'
+        self.wire_sizing = {
+            'temp_rating': '90C',
+            'feeder_material': 'aluminum',
+            'by_string_count': {},
+            'dc_feeder': '',
+            'ac_homerun': '',
+            'user_overrides': {}
+        }
         
         ttk.Label(settings_inner, text="Polarity:").pack(side='left', padx=(10, 5))
         self.polarity_convention_var = tk.StringVar(value='Negative Always South')
@@ -2385,6 +2883,9 @@ class QuickEstimate(ttk.Frame):
         self.distance_hint_label = ttk.Label(distance_row, text="", foreground='gray')
         self.distance_hint_label.pack(side='left', padx=(5, 0))
         self._update_distance_hints()
+        
+        # Wire Sizing frame (right side of Global Settings)
+        self._build_wire_sizing_frame(settings_container)
         
         # Button row
         button_row = ttk.Frame(bottom_frame)
@@ -2752,6 +3253,9 @@ class QuickEstimate(ttk.Frame):
             # Update derived module from templates
             self._derive_module_from_templates()
             
+            # Refresh wire sizing for new template/harness configs
+            self._refresh_wire_sizing_for_segments()
+            
             # Rebuild details panel to refresh summary card
             for widget in self.details_container.winfo_children():
                 widget.destroy()
@@ -2770,6 +3274,7 @@ class QuickEstimate(ttk.Frame):
         
         def on_harness_change(*args):
             segment['harness_config'] = harness_var.get()
+            self._refresh_wire_sizing_for_segments()
             self._mark_stale()
             self._schedule_autosave()
         harness_var.trace_add('write', on_harness_change)
@@ -2795,6 +3300,7 @@ class QuickEstimate(ttk.Frame):
         for widget in self.details_container.winfo_children():
             widget.destroy()
         self.show_group_details(group_idx)
+        self._refresh_wire_sizing_for_segments()
         self._mark_stale()
         self._schedule_autosave()
     
@@ -2809,6 +3315,7 @@ class QuickEstimate(ttk.Frame):
         for widget in self.details_container.winfo_children():
             widget.destroy()
         self.show_group_details(group_idx)
+        self._refresh_wire_sizing_for_segments()
         self._mark_stale()
         self._schedule_autosave()
 
@@ -2965,12 +3472,14 @@ class QuickEstimate(ttk.Frame):
         
         # Build harness-count-per-spt lookup for whip calculation
         harness_count_by_spt = {}
+        harness_sizes_by_spt = {}
         for group in self.groups:
             for seg in group['segments']:
                 spt = seg['strings_per_tracker']
                 if spt not in harness_count_by_spt:
                     harness_sizes = self.parse_harness_config(self._get_effective_harness_config(seg))
                     harness_count_by_spt[spt] = len(harness_sizes)
+                    harness_sizes_by_spt[spt] = harness_sizes
 
         # Store unique modules for Excel export
         totals['segment_module_data'] = segment_module_data
@@ -3227,11 +3736,23 @@ class QuickEstimate(ttk.Frame):
                     seen_whip_trackers.add(tidx)
                     num_harnesses = harness_count_by_spt.get(spt, 1)
                 
-                whips_at_length = 2 * num_harnesses  # pos + neg per harness
-                if whip_length not in totals['whips_by_length']:
-                    totals['whips_by_length'][whip_length] = 0
-                totals['whips_by_length'][whip_length] += whips_at_length
-                totals['total_whip_length'] += whip_length * whips_at_length
+                # Determine individual harness sizes for wire gauge lookup
+                if tidx in split_details:
+                    ind_harness_sizes = split_details[tidx]['portions'][0]['harnesses']
+                    for portion in split_details[tidx]['portions']:
+                        if portion['inv_idx'] == inv_idx:
+                            ind_harness_sizes = portion['harnesses']
+                            break
+                else:
+                    ind_harness_sizes = harness_sizes_by_spt.get(spt, [spt])
+                
+                for h_str_count in ind_harness_sizes:
+                    gauge = self.get_wire_size_for('whip', h_str_count)
+                    key = (whip_length, gauge)
+                    if key not in totals['whips_by_length']:
+                        totals['whips_by_length'][key] = 0
+                    totals['whips_by_length'][key] += 2  # pos + neg
+                    totals['total_whip_length'] += whip_length * 2
 
         # ==================== Extenders ====================
         split_details = getattr(self, '_split_tracker_details', {})
@@ -3258,15 +3779,20 @@ class QuickEstimate(ttk.Frame):
                 
                 if non_split_qty > 0:
                     extender_pairs = self.calculate_extender_lengths_per_segment(seg, device_position)
-                    for pos_len, neg_len in extender_pairs:
+                    harness_sizes = self.parse_harness_config(self._get_effective_harness_config(seg))
+                    for pair_idx, (pos_len, neg_len) in enumerate(extender_pairs):
+                        h_str_count = harness_sizes[pair_idx] if pair_idx < len(harness_sizes) else 1
+                        gauge = self.get_wire_size_for('extender', h_str_count)
                         pos_rounded = self.round_whip_length(pos_len)
                         neg_rounded = self.round_whip_length(neg_len)
-                        if pos_rounded not in totals['extenders_pos_by_length']:
-                            totals['extenders_pos_by_length'][pos_rounded] = 0
-                        totals['extenders_pos_by_length'][pos_rounded] += non_split_qty
-                        if neg_rounded not in totals['extenders_neg_by_length']:
-                            totals['extenders_neg_by_length'][neg_rounded] = 0
-                        totals['extenders_neg_by_length'][neg_rounded] += non_split_qty
+                        pos_key = (pos_rounded, gauge)
+                        neg_key = (neg_rounded, gauge)
+                        if pos_key not in totals['extenders_pos_by_length']:
+                            totals['extenders_pos_by_length'][pos_key] = 0
+                        totals['extenders_pos_by_length'][pos_key] += non_split_qty
+                        if neg_key not in totals['extenders_neg_by_length']:
+                            totals['extenders_neg_by_length'][neg_key] = 0
+                        totals['extenders_neg_by_length'][neg_key] += non_split_qty
                         
         # Process split trackers individually — each portion gets its own extenders
         for tidx, details in split_details.items():
@@ -3285,16 +3811,21 @@ class QuickEstimate(ttk.Frame):
                 temp_seg['quantity'] = 1
                 
                 extender_pairs = self.calculate_extender_lengths_per_segment(temp_seg, device_position)
+                portion_harness_sizes = portion['harnesses']
                 
-                for pos_len, neg_len in extender_pairs:
+                for pair_idx, (pos_len, neg_len) in enumerate(extender_pairs):
+                    h_str_count = portion_harness_sizes[pair_idx] if pair_idx < len(portion_harness_sizes) else 1
+                    gauge = self.get_wire_size_for('extender', h_str_count)
                     pos_rounded = self.round_whip_length(pos_len)
                     neg_rounded = self.round_whip_length(neg_len)
-                    if pos_rounded not in totals['extenders_pos_by_length']:
-                        totals['extenders_pos_by_length'][pos_rounded] = 0
-                    totals['extenders_pos_by_length'][pos_rounded] += 1
-                    if neg_rounded not in totals['extenders_neg_by_length']:
-                        totals['extenders_neg_by_length'][neg_rounded] = 0
-                    totals['extenders_neg_by_length'][neg_rounded] += 1
+                    pos_key = (pos_rounded, gauge)
+                    neg_key = (neg_rounded, gauge)
+                    if pos_key not in totals['extenders_pos_by_length']:
+                        totals['extenders_pos_by_length'][pos_key] = 0
+                    totals['extenders_pos_by_length'][pos_key] += 1
+                    if neg_key not in totals['extenders_neg_by_length']:
+                        totals['extenders_neg_by_length'][neg_key] = 0
+                    totals['extenders_neg_by_length'][neg_key] += 1
 
         # ==================== DC Feeder and AC Homerun ====================
         try:
@@ -3440,38 +3971,51 @@ class QuickEstimate(ttk.Frame):
                     insert_row(f"{size}-String Harness (Pos)", pos_pn, qty, 'ea', pos_unit, pos_ext)
                     insert_row(f"{size}-String Harness (Neg)", neg_pn, qty, 'ea', neg_unit, neg_ext)
 
-        # Extenders — split into positive and negative sections
-        if totals['extenders_pos_by_length']:
-            insert_section('EXTENDERS — POSITIVE')
-            for length in sorted(totals['extenders_pos_by_length'].keys()):
-                qty = totals['extenders_pos_by_length'][length]
-                e_pn, e_unit, e_ext = self.lookup_part_and_price('extender', polarity='positive', length_ft=length, qty=qty)
-                insert_row(f"Extender {length}ft (Pos)", e_pn, qty, 'ea', e_unit, e_ext)
-        
-        if totals['extenders_neg_by_length']:
-            insert_section('EXTENDERS — NEGATIVE')
-            for length in sorted(totals['extenders_neg_by_length'].keys()):
-                qty = totals['extenders_neg_by_length'][length]
-                e_pn, e_unit, e_ext = self.lookup_part_and_price('extender', polarity='negative', length_ft=length, qty=qty)
-                insert_row(f"Extender {length}ft (Neg)", e_pn, qty, 'ea', e_unit, e_ext)
+        # Extenders — split by wire gauge, then by polarity
+        ext_gauges = sorted(set(g for (_, g) in totals['extenders_pos_by_length'].keys()) | 
+                           set(g for (_, g) in totals['extenders_neg_by_length'].keys()))
+        for gauge in ext_gauges:
+            # Positive
+            pos_items = {length: qty for (length, g), qty in totals['extenders_pos_by_length'].items() if g == gauge}
+            if pos_items:
+                insert_section(f'EXTENDERS — POSITIVE ({gauge})')
+                for length in sorted(pos_items.keys()):
+                    qty = pos_items[length]
+                    e_pn, e_unit, e_ext = self.lookup_part_and_price('extender', polarity='positive', length_ft=length, qty=qty, num_strings=self._gauge_to_string_count('extender', gauge))
+                    insert_row(f"Extender {length}ft (Pos)", e_pn, qty, 'ea', e_unit, e_ext)
+            
+            # Negative
+            neg_items = {length: qty for (length, g), qty in totals['extenders_neg_by_length'].items() if g == gauge}
+            if neg_items:
+                insert_section(f'EXTENDERS — NEGATIVE ({gauge})')
+                for length in sorted(neg_items.keys()):
+                    qty = neg_items[length]
+                    e_pn, e_unit, e_ext = self.lookup_part_and_price('extender', polarity='negative', length_ft=length, qty=qty, num_strings=self._gauge_to_string_count('extender', gauge))
+                    insert_row(f"Extender {length}ft (Neg)", e_pn, qty, 'ea', e_unit, e_ext)
 
-        # Whips — split into positive and negative sections
-        if totals['whips_by_length']:
+        # Whips — split by wire gauge, then by polarity
+        whip_gauges = sorted(set(g for (_, g) in totals['whips_by_length'].keys()))
+        if whip_gauges:
             device_label = 'to inverter' if topology == 'Distributed String' else 'to combiner'
             
-            # Positive whips (half of each length bucket)
-            insert_section(f'WHIPS — POSITIVE ({device_label})')
-            for length in sorted(totals['whips_by_length'].keys()):
-                qty = totals['whips_by_length'][length] // 2
-                w_pn, w_unit, w_ext = self.lookup_part_and_price('whip', polarity='positive', length_ft=length, qty=qty)
-                insert_row(f"Whip {length}ft (Pos)", w_pn, qty, 'ea', w_unit, w_ext)
-            
-            # Negative whips (half of each length bucket)
-            insert_section(f'WHIPS — NEGATIVE ({device_label})')
-            for length in sorted(totals['whips_by_length'].keys()):
-                qty = totals['whips_by_length'][length] // 2
-                w_pn, w_unit, w_ext = self.lookup_part_and_price('whip', polarity='negative', length_ft=length, qty=qty)
-                insert_row(f"Whip {length}ft (Neg)", w_pn, qty, 'ea', w_unit, w_ext)
+            for gauge in whip_gauges:
+                gauge_items = {length: qty for (length, g), qty in totals['whips_by_length'].items() if g == gauge}
+                if not gauge_items:
+                    continue
+                
+                # Positive whips (half of each length bucket)
+                insert_section(f'WHIPS — POSITIVE ({device_label}) ({gauge})')
+                for length in sorted(gauge_items.keys()):
+                    qty = gauge_items[length] // 2
+                    w_pn, w_unit, w_ext = self.lookup_part_and_price('whip', polarity='positive', length_ft=length, qty=qty, num_strings=self._gauge_to_string_count('whip', gauge))
+                    insert_row(f"Whip {length}ft (Pos)", w_pn, qty, 'ea', w_unit, w_ext)
+                
+                # Negative whips
+                insert_section(f'WHIPS — NEGATIVE ({device_label}) ({gauge})')
+                for length in sorted(gauge_items.keys()):
+                    qty = gauge_items[length] // 2
+                    w_pn, w_unit, w_ext = self.lookup_part_and_price('whip', polarity='negative', length_ft=length, qty=qty, num_strings=self._gauge_to_string_count('whip', gauge))
+                    insert_row(f"Whip {length}ft (Neg)", w_pn, qty, 'ea', w_unit, w_ext)
         
         # DC Feeders (Centralized String and Central Inverter only)
         if totals['dc_feeder_count'] > 0:
@@ -3481,9 +4025,10 @@ class QuickEstimate(ttk.Frame):
                 routed_dc_avg = dc_feeder_avg_ft
             dc_avg_display = routed_dc_avg if use_routed else dc_feeder_avg_ft
             dc_label_suffix = " (routed)" if use_routed else ""
-            insert_section('DC FEEDERS')
-            insert_row(f"DC Feeder — avg {dc_avg_display:.0f}ft{dc_label_suffix} × {totals['dc_feeder_count']} runs (pos)", '', f"{totals['dc_feeder_total_ft']:.0f}", 'ft')
-            insert_row(f"DC Feeder — avg {dc_avg_display:.0f}ft{dc_label_suffix} × {totals['dc_feeder_count']} runs (neg)", '', f"{totals['dc_feeder_total_ft']:.0f}", 'ft')
+            dc_wire_size = self.get_wire_size_for('dc_feeder')
+            insert_section(f'DC FEEDERS ({dc_wire_size})')
+            insert_row(f"DC Feeder {dc_wire_size} — avg {dc_avg_display:.0f}ft{dc_label_suffix} × {totals['dc_feeder_count']} runs (pos)", '', f"{totals['dc_feeder_total_ft']:.0f}", 'ft')
+            insert_row(f"DC Feeder {dc_wire_size} — avg {dc_avg_display:.0f}ft{dc_label_suffix} × {totals['dc_feeder_count']} runs (neg)", '', f"{totals['dc_feeder_total_ft']:.0f}", 'ft')
         
         # AC Homeruns
         if totals['ac_homerun_count'] > 0:
@@ -3493,8 +4038,9 @@ class QuickEstimate(ttk.Frame):
                 routed_ac_avg = ac_homerun_avg_ft
             ac_avg_display = routed_ac_avg if use_routed else ac_homerun_avg_ft
             ac_label_suffix = " (routed)" if use_routed else ""
-            insert_section('AC HOMERUNS')
-            insert_row(f"AC Homerun — avg {ac_avg_display:.0f}ft{ac_label_suffix} × {totals['ac_homerun_count']} runs", '', f"{totals['ac_homerun_total_ft']:.0f}", 'ft')
+            ac_wire_size = self.get_wire_size_for('ac_homerun')
+            insert_section(f'AC HOMERUNS ({ac_wire_size})')
+            insert_row(f"AC Homerun {ac_wire_size} — avg {ac_avg_display:.0f}ft{ac_label_suffix} × {totals['ac_homerun_count']} runs", '', f"{totals['ac_homerun_total_ft']:.0f}", 'ft')
 
     def export_to_excel(self):
         """Export the quick estimate BOM to Excel"""

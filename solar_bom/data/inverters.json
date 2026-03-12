@@ -4,14 +4,14 @@
     "model": "Highpower PEAK3 150kW",
     "inverter_type": "String",
     "rated_power_kw": 150.0,
-    "max_dc_power_kw": 225.0,
+    "max_dc_power_kw": 300.0,
     "max_efficiency": 98.0,
     "mppt_channels": [
       {
         "max_input_current": 180.0,
         "min_voltage": 855.0,
-        "max_voltage": 1425.0,
-        "max_power": 225000.0,
+        "max_voltage": 1500.0,
+        "max_power": 300000.0,
         "num_string_inputs": 1
       }
     ],
@@ -19,7 +19,7 @@
     "max_dc_voltage": 1500.0,
     "startup_voltage": 855.0,
     "nominal_ac_voltage": 600.0,
-    "max_ac_current": 40.0,
+    "max_ac_current": 151.0,
     "power_factor": 0.99,
     "dimensions_mm": [
       1000,
@@ -127,7 +127,7 @@
     "max_dc_voltage": 1500.0,
     "startup_voltage": 900.0,
     "nominal_ac_voltage": 800.0,
-    "max_ac_current": 40.0,
+    "max_ac_current": 198.5,
     "power_factor": 0.99,
     "dimensions_mm": [
       1000,
@@ -158,7 +158,7 @@
     "max_dc_voltage": 1500.0,
     "startup_voltage": 860.0,
     "nominal_ac_voltage": 600.0,
-    "max_ac_current": 40.0,
+    "max_ac_current": 120.0,
     "power_factor": 0.99,
     "dimensions_mm": [
       1000,

@@ -110,6 +110,10 @@ class InverterManager(ttk.Frame):
         self.nominal_ac_voltage_var = tk.StringVar(value="480")
         ttk.Entry(voltage_frame, textvariable=self.nominal_ac_voltage_var).grid(row=4, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         
+        ttk.Label(voltage_frame, text="Max AC Output Current (A):").grid(row=5, column=0, padx=5, pady=2, sticky=tk.W)
+        self.max_ac_current_var = tk.StringVar(value="")
+        ttk.Entry(voltage_frame, textvariable=self.max_ac_current_var).grid(row=5, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        
         # Buttons
         btn_frame = ttk.Frame(editor_frame)
         btn_frame.grid(row=7, column=0, columnspan=2, pady=10)
@@ -126,6 +130,14 @@ class InverterManager(ttk.Frame):
             self.total_inputs_label.config(text=f"Total String Inputs: {total}")
         except (ValueError, TypeError):
             self.total_inputs_label.config(text="Total String Inputs: --")
+
+    def _calculate_default_ac_current(self, rated_power_kw, nominal_ac_voltage):
+        """Calculate default max AC output current from rated power and voltage.
+        Assumes 3-phase: I = P / (V × √3)"""
+        import math
+        if nominal_ac_voltage <= 0:
+            return 40.0
+        return round(rated_power_kw * 1000 / (nominal_ac_voltage * math.sqrt(3)), 1)
             
     def create_inverter_spec(self) -> Optional[InverterSpec]:
         """Create InverterSpec from current UI values"""
@@ -175,7 +187,7 @@ class InverterManager(ttk.Frame):
                 max_dc_voltage=float(self.max_dc_voltage_var.get()),
                 startup_voltage=mppt_v_min,
                 nominal_ac_voltage=float(self.nominal_ac_voltage_var.get()),
-                max_ac_current=40.0,
+                max_ac_current=float(self.max_ac_current_var.get()) if self.max_ac_current_var.get().strip() else self._calculate_default_ac_current(rated_power_kw, float(self.nominal_ac_voltage_var.get())),
                 power_factor=0.99,
                 dimensions_mm=(1000, 600, 300),
                 weight_kg=75.0,
@@ -328,6 +340,7 @@ class InverterManager(ttk.Frame):
         self.mppt_voltage_max_var.set('1425')
         self.max_isc_var.set('')
         self.nominal_ac_voltage_var.set('480')
+        self.max_ac_current_var.set('')
         self._update_total_inputs()
         
         # Deselect from listbox
@@ -352,6 +365,7 @@ class InverterManager(ttk.Frame):
         max_isc = getattr(inverter, 'max_short_circuit_current', None)
         self.max_isc_var.set(str(max_isc) if max_isc else "")
         self.nominal_ac_voltage_var.set(str(getattr(inverter, 'nominal_ac_voltage', 480.0)))
+        self.max_ac_current_var.set(str(getattr(inverter, 'max_ac_current', '')))
         
         # Derive simplified MPPT fields from channel list
         channels = inverter.mppt_channels
