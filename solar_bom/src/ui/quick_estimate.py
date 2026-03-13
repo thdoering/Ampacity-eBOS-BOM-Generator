@@ -2721,21 +2721,119 @@ class QuickEstimate(ttk.Frame):
                 
                 tracker_cursor += count
 
-    def _refresh_combiner_results_from_assignments(self):
-        """Rebuild combiner BOM totals and results display from last_combiner_assignments.
+    def _read_combiner_bom_from_device_config(self):
+        """Read combiner BOM data from Device Configurator (single source of truth).
         
-        Called after manual CB edits in the site preview to keep the estimate
-        results in sync without re-running the full calculation.
+        Populates self.last_totals['combiners_by_breaker'] and ['combiner_details']
+        from the Device Configurator's combiner_configs, which reflect the user's
+        NEC multiplier, breaker overrides, and fuse sizes.
+        
+        Also syncs breaker sizes back into self.last_combiner_assignments.
+        
+        Returns True if Device Configurator had data, False if fallback is needed.
+        """
+        if not hasattr(self, 'last_totals') or not self.last_totals:
+            return False
+        
+        # Get Device Configurator
+        main_app = getattr(self, 'main_app', None)
+        if not main_app or not hasattr(main_app, 'device_configurator'):
+            return False
+        
+        dc = main_app.device_configurator
+        if not hasattr(dc, 'combiner_configs') or not dc.combiner_configs:
+            return False
+        
+        # Only use DC data if it's in QE mode
+        if getattr(dc, 'data_source', 'blocks') != 'quick_estimate':
+            return False
+        
+        totals = self.last_totals
+        totals['combiners_by_breaker'] = {}
+        totals['combiner_details'] = []
+        
+        # Sync breaker sizes back to last_combiner_assignments
+        dc_breakers = {}
+        for combiner_id, config in dc.combiner_configs.items():
+            dc_breakers[combiner_id] = config.get_display_breaker_size()
+        
+        for cb in self.last_combiner_assignments:
+            cb_name = cb.get('combiner_name', '')
+            if cb_name in dc_breakers:
+                cb['breaker_size'] = dc_breakers[cb_name]
+        
+        # Build totals from Device Configurator configs
+        # Group by (breaker_size, fuse_holder_rating, max_inputs) for CB matching
+        cb_groups = {}  # (breaker_size, fuse_holder_rating) -> {max_inputs, count}
+        
+        for combiner_id, config in dc.combiner_configs.items():
+            if not config.connections:
+                continue
+            
+            breaker_size = config.get_display_breaker_size()
+            num_inputs = len(config.connections)
+            
+            # Get fuse holder rating from the DC's actual fuse sizes
+            max_fuse = max(conn.get_display_fuse_size() for conn in config.connections)
+            fuse_holder_rating = self.get_fuse_holder_category(max_fuse)
+            
+            # Count by breaker size
+            if breaker_size not in totals['combiners_by_breaker']:
+                totals['combiners_by_breaker'][breaker_size] = 0
+            totals['combiners_by_breaker'][breaker_size] += 1
+            
+            # Group for CB part matching
+            key = (breaker_size, fuse_holder_rating)
+            if key not in cb_groups:
+                cb_groups[key] = {'max_inputs': 0, 'count': 0}
+            cb_groups[key]['max_inputs'] = max(cb_groups[key]['max_inputs'], num_inputs)
+            cb_groups[key]['count'] += 1
+        
+        # Match CB parts for each group
+        for (breaker_size, fuse_holder_rating), group_info in cb_groups.items():
+            matched_cb = self.find_combiner_box(group_info['max_inputs'], breaker_size, fuse_holder_rating)
+            if matched_cb:
+                totals['combiner_details'].append({
+                    'part_number': matched_cb.get('part_number', ''),
+                    'description': matched_cb.get('description', ''),
+                    'max_inputs': matched_cb.get('max_inputs', 0),
+                    'breaker_size': breaker_size,
+                    'fuse_holder_rating': fuse_holder_rating,
+                    'strings_per_cb': group_info['max_inputs'],
+                    'quantity': group_info['count'],
+                    'block_name': 'Site Total'
+                })
+            else:
+                totals['combiner_details'].append({
+                    'part_number': 'NO MATCH',
+                    'description': f'No CB found: {group_info["max_inputs"]} inputs, {breaker_size}A, {fuse_holder_rating}',
+                    'max_inputs': group_info['max_inputs'],
+                    'breaker_size': breaker_size,
+                    'fuse_holder_rating': fuse_holder_rating,
+                    'strings_per_cb': group_info['max_inputs'],
+                    'quantity': group_info['count'],
+                    'block_name': 'Site Total'
+                })
+        
+        self.last_totals = totals
+        return True
+
+    def _rebuild_combiner_totals_from_assignments(self):
+        """Fallback: rebuild combiner BOM totals from last_combiner_assignments.
+        
+        Used when the Device Configurator isn't available or isn't in QE mode.
         """
         if not self.last_combiner_assignments or not hasattr(self, 'last_totals') or not self.last_totals:
             return
         
         totals = self.last_totals
-        module_isc = self.selected_module.isc if self.selected_module else 0
-        
-        # Rebuild combiners_by_breaker and combiner_details
         totals['combiners_by_breaker'] = {}
         totals['combiner_details'] = []
+        
+        module_isc = self.selected_module.isc if self.selected_module else 0
+        nec_factor = 1.56
+        if self.current_project:
+            nec_factor = getattr(self.current_project, 'nec_safety_factor', 1.56)
         
         for cb in self.last_combiner_assignments:
             bs = cb['breaker_size']
@@ -2743,7 +2841,6 @@ class QuickEstimate(ttk.Frame):
                 totals['combiners_by_breaker'][bs] = 0
             totals['combiners_by_breaker'][bs] += 1
         
-        # Rebuild combiner details with per-breaker matching
         for bs, qty in totals['combiners_by_breaker'].items():
             max_h_strings = 1
             max_inputs = 0
@@ -2754,14 +2851,10 @@ class QuickEstimate(ttk.Frame):
                     for conn in cb['connections']:
                         max_h_strings = max(max_h_strings, conn['num_strings'])
             
-            nec_factor = 1.56
-            if self.current_project:
-                nec_factor = getattr(self.current_project, 'nec_safety_factor', 1.56)
             fuse_current = module_isc * nec_factor * max_h_strings
             fuse_holder_rating = self.get_fuse_holder_category(fuse_current)
-            strings_per_cb = max_inputs
             
-            matched_cb = self.find_combiner_box(strings_per_cb, bs, fuse_holder_rating)
+            matched_cb = self.find_combiner_box(max_inputs, bs, fuse_holder_rating)
             if matched_cb:
                 totals['combiner_details'].append({
                     'part_number': matched_cb.get('part_number', ''),
@@ -2769,24 +2862,37 @@ class QuickEstimate(ttk.Frame):
                     'max_inputs': matched_cb.get('max_inputs', 0),
                     'breaker_size': bs,
                     'fuse_holder_rating': fuse_holder_rating,
-                    'strings_per_cb': strings_per_cb,
+                    'strings_per_cb': max_inputs,
                     'quantity': qty,
                     'block_name': 'Site Total'
                 })
             else:
                 totals['combiner_details'].append({
                     'part_number': 'NO MATCH',
-                    'description': f'No CB found: {strings_per_cb} inputs, {bs}A, {fuse_holder_rating}',
-                    'max_inputs': strings_per_cb,
+                    'description': f'No CB found: {max_inputs} inputs, {bs}A, {fuse_holder_rating}',
+                    'max_inputs': max_inputs,
                     'breaker_size': bs,
                     'fuse_holder_rating': fuse_holder_rating,
-                    'strings_per_cb': strings_per_cb,
+                    'strings_per_cb': max_inputs,
                     'quantity': qty,
                     'block_name': 'Site Total'
                 })
         
-        # Update stored totals and refresh display
         self.last_totals = totals
+
+    def _refresh_combiner_results_from_assignments(self):
+        """Rebuild combiner BOM totals and refresh display.
+        
+        Called after manual CB edits in the site preview to keep the estimate
+        results in sync without re-running the full calculation.
+        """
+        if not self.last_combiner_assignments or not hasattr(self, 'last_totals') or not self.last_totals:
+            return
+        
+        # Read from Device Configurator if available, else fallback
+        if not self._read_combiner_bom_from_device_config():
+            self._rebuild_combiner_totals_from_assignments()
+        
         self._redraw_results_tree()
 
     def _redraw_results_tree(self):
@@ -2858,43 +2964,86 @@ class QuickEstimate(ttk.Frame):
                     insert_row(f"{size}-String Harness (Pos)", pos_pn, qty, 'ea', pos_unit, pos_ext)
                     insert_row(f"{size}-String Harness (Neg)", neg_pn, qty, 'ea', neg_unit, neg_ext)
         
-        # Whips
-        if totals.get('whips_by_length'):
-            insert_section('WHIP CABLES')
-            for length_key in sorted(totals['whips_by_length'].keys()):
-                qty = totals['whips_by_length'][length_key]
-                if isinstance(length_key, tuple):
-                    length, gauge = length_key
-                    insert_row(f"Whip Cable {length}ft ({gauge})", '', qty, 'ea')
-                else:
-                    insert_row(f"Whip Cable {length_key}ft", '', qty, 'ea')
-        
-        # Extenders
-        ext_pos = totals.get('extenders_pos_by_length', {})
-        ext_neg = totals.get('extenders_neg_by_length', {})
-        if ext_pos or ext_neg:
-            insert_section('EXTENDER CABLES')
-            for length_key in sorted(set(list(ext_pos.keys()) + list(ext_neg.keys()))):
-                if isinstance(length_key, tuple):
-                    length, gauge = length_key
-                    label = f"{length}ft ({gauge})"
-                else:
-                    length = length_key
-                    label = f"{length}ft"
-                if length_key in ext_pos:
-                    insert_row(f"Extender (Pos) {label}", '', ext_pos[length_key], 'ea')
-                if length_key in ext_neg:
-                    insert_row(f"Extender (Neg) {label}", '', ext_neg[length_key], 'ea')
+        # Extenders — split by wire gauge, then by polarity
+        ext_gauges = sorted(set(g for (_, g) in totals['extenders_pos_by_length'].keys()) |
+                           set(g for (_, g) in totals['extenders_neg_by_length'].keys()))
+        for gauge in ext_gauges:
+            # Positive
+            pos_items = {length: qty for (length, g), qty in totals['extenders_pos_by_length'].items() if g == gauge}
+            if pos_items:
+                insert_section(f'EXTENDERS — POSITIVE ({gauge})')
+                for length in sorted(pos_items.keys()):
+                    qty = pos_items[length]
+                    e_pn, e_unit, e_ext = self.lookup_part_and_price('extender', polarity='positive', length_ft=length, qty=qty, num_strings=self._gauge_to_string_count('extender', gauge))
+                    insert_row(f"Extender {length}ft (Pos)", e_pn, qty, 'ea', e_unit, e_ext)
+
+            # Negative
+            neg_items = {length: qty for (length, g), qty in totals['extenders_neg_by_length'].items() if g == gauge}
+            if neg_items:
+                insert_section(f'EXTENDERS — NEGATIVE ({gauge})')
+                for length in sorted(neg_items.keys()):
+                    qty = neg_items[length]
+                    e_pn, e_unit, e_ext = self.lookup_part_and_price('extender', polarity='negative', length_ft=length, qty=qty, num_strings=self._gauge_to_string_count('extender', gauge))
+                    insert_row(f"Extender {length}ft (Neg)", e_pn, qty, 'ea', e_unit, e_ext)
+
+        # Whips — split by wire gauge, then by polarity
+        whip_gauges = sorted(set(g for (_, g) in totals.get('whips_by_length', {}).keys()))
+        if whip_gauges:
+            display = totals.get('_display', {})
+            topology = display.get('topology', self.topology_var.get() if hasattr(self, 'topology_var') else '')
+            device_label = 'to inverter' if topology == 'Distributed String' else 'to combiner'
+
+            for gauge in whip_gauges:
+                gauge_items = {length: qty for (length, g), qty in totals['whips_by_length'].items() if g == gauge}
+                if not gauge_items:
+                    continue
+
+                # Positive whips (half of each length bucket)
+                insert_section(f'WHIPS — POSITIVE ({device_label}) ({gauge})')
+                for length in sorted(gauge_items.keys()):
+                    qty = gauge_items[length] // 2
+                    w_pn, w_unit, w_ext = self.lookup_part_and_price('whip', polarity='positive', length_ft=length, qty=qty, num_strings=self._gauge_to_string_count('whip', gauge))
+                    insert_row(f"Whip {length}ft (Pos)", w_pn, qty, 'ea', w_unit, w_ext)
+
+                # Negative whips
+                insert_section(f'WHIPS — NEGATIVE ({device_label}) ({gauge})')
+                for length in sorted(gauge_items.keys()):
+                    qty = gauge_items[length] // 2
+                    w_pn, w_unit, w_ext = self.lookup_part_and_price('whip', polarity='negative', length_ft=length, qty=qty, num_strings=self._gauge_to_string_count('whip', gauge))
+                    insert_row(f"Whip {length}ft (Neg)", w_pn, qty, 'ea', w_unit, w_ext)
         
         # DC Feeders
-        if totals.get('dc_feeder_total_ft', 0) > 0:
-            insert_section('DC FEEDER CABLES')
-            insert_row(f"DC Feeder Cable", '', f"{totals['dc_feeder_total_ft']:.0f}", 'ft')
-        
+        if totals.get('dc_feeder_count', 0) > 0:
+            display = totals.get('_display', {})
+            use_routed = display.get('use_routed', False)
+            dc_feeder_avg_ft = display.get('dc_feeder_avg_ft', 0)
+
+            if totals['dc_feeder_count'] > 0:
+                routed_dc_avg = totals['dc_feeder_total_ft'] / totals['dc_feeder_count']
+            else:
+                routed_dc_avg = dc_feeder_avg_ft
+            dc_avg_display = routed_dc_avg if use_routed else dc_feeder_avg_ft
+            dc_label_suffix = " (routed)" if use_routed else ""
+            dc_wire_size = self.get_wire_size_for('dc_feeder')
+            insert_section(f'DC FEEDERS ({dc_wire_size})')
+            insert_row(f"DC Feeder {dc_wire_size} — avg {dc_avg_display:.0f}ft{dc_label_suffix} × {totals['dc_feeder_count']} runs (pos)", '', f"{totals['dc_feeder_total_ft']:.0f}", 'ft')
+            insert_row(f"DC Feeder {dc_wire_size} — avg {dc_avg_display:.0f}ft{dc_label_suffix} × {totals['dc_feeder_count']} runs (neg)", '', f"{totals['dc_feeder_total_ft']:.0f}", 'ft')
+
         # AC Homeruns
-        if totals.get('ac_homerun_total_ft', 0) > 0:
-            insert_section('AC HOMERUN CABLES')
-            insert_row(f"AC Homerun Cable", '', f"{totals['ac_homerun_total_ft']:.0f}", 'ft')
+        if totals.get('ac_homerun_count', 0) > 0:
+            display = totals.get('_display', {})
+            use_routed = display.get('use_routed', False)
+            ac_homerun_avg_ft = display.get('ac_homerun_avg_ft', 0)
+
+            if totals['ac_homerun_count'] > 0:
+                routed_ac_avg = totals['ac_homerun_total_ft'] / totals['ac_homerun_count']
+            else:
+                routed_ac_avg = ac_homerun_avg_ft
+            ac_avg_display = routed_ac_avg if use_routed else ac_homerun_avg_ft
+            ac_label_suffix = " (routed)" if use_routed else ""
+            ac_wire_size = self.get_wire_size_for('ac_homerun')
+            insert_section(f'AC HOMERUNS ({ac_wire_size})')
+            insert_row(f"AC Homerun {ac_wire_size} — avg {ac_avg_display:.0f}ft{ac_label_suffix} × {totals['ac_homerun_count']} runs", '', f"{totals['ac_homerun_total_ft']:.0f}", 'ft')
     
     def _build_connections_from_harness_map(self, harness_map, tracker_segment_map, module_isc, nec_factor):
         """Convert an allocation harness_map into Device Configurator connection dicts."""
@@ -4250,38 +4399,12 @@ class QuickEstimate(ttk.Frame):
                 strings_per_cb = math.ceil(total_all_strings / num_combiners)
             num_devices = num_combiners
 
-        # Combiner box matching
+        # Preliminary combiner count (used for DC feeder/AC homerun distance calc)
+        # Actual CB part matching is done later via Device Configurator or fallback
         if num_combiners > 0:
             if breaker_size not in totals['combiners_by_breaker']:
                 totals['combiners_by_breaker'][breaker_size] = 0
             totals['combiners_by_breaker'][breaker_size] += num_combiners
-
-            fuse_current = module_isc * 1.56 * max(max_harness_strings, 1)
-            fuse_holder_rating = self.get_fuse_holder_category(fuse_current)
-
-            matched_cb = self.find_combiner_box(strings_per_cb, breaker_size, fuse_holder_rating)
-            if matched_cb:
-                totals['combiner_details'].append({
-                    'part_number': matched_cb.get('part_number', ''),
-                    'description': matched_cb.get('description', ''),
-                    'max_inputs': matched_cb.get('max_inputs', 0),
-                    'breaker_size': breaker_size,
-                    'fuse_holder_rating': fuse_holder_rating,
-                    'strings_per_cb': strings_per_cb,
-                    'quantity': num_combiners,
-                    'block_name': 'Site Total'
-                })
-            else:
-                totals['combiner_details'].append({
-                    'part_number': 'NO MATCH',
-                    'description': f'No CB found: {strings_per_cb} inputs, {breaker_size}A, {fuse_holder_rating}',
-                    'max_inputs': strings_per_cb,
-                    'breaker_size': breaker_size,
-                    'fuse_holder_rating': fuse_holder_rating,
-                    'strings_per_cb': strings_per_cb,
-                    'quantity': num_combiners,
-                    'block_name': 'Site Total'
-                })
 
         # ==================== Harness split adjustment ====================
         # NOTE: _adjust_harnesses_for_splits will be updated to use harness_map
@@ -4491,74 +4614,26 @@ class QuickEstimate(ttk.Frame):
         total_inverters = totals.get('inverter_summary', {}).get('total_inverters', 0)
         total_combiners = sum(totals['combiners_by_breaker'].values())
 
+        # Stash display context into totals so _redraw_results_tree has everything
+        totals['_display'] = {
+            'topology': topology,
+            'use_routed': use_routed if 'use_routed' in dir() else False,
+            'dc_feeder_avg_ft': dc_feeder_avg_ft if 'dc_feeder_avg_ft' in dir() else 0,
+            'ac_homerun_avg_ft': ac_homerun_avg_ft if 'ac_homerun_avg_ft' in dir() else 0,
+        }
+
         # Store totals for Excel export
         self.last_totals = totals
         self._results_stale = False
         
-        # Build structured combiner assignments for Device Configurator
-        # If manual CB assignments exist, preserve them instead of rebuilding
-        if self.last_combiner_assignments and any(cb.get('connections') for cb in self.last_combiner_assignments):
-            # Sync breaker overrides from Device Configurator if available
-            self._sync_breakers_from_device_config()
-            # Preserve manual assignments — just rebuild totals from them
-            self._refresh_combiner_results_from_assignments()
-        else:
+        # Build structured combiner assignments if they don't exist yet
+        if not (self.last_combiner_assignments and any(cb.get('connections') for cb in self.last_combiner_assignments)):
             self._build_combiner_assignments(totals, topology)
         
-        # Rebuild combiner-by-breaker totals from per-CB assignments
-        # (already handled above — either by _refresh or _build)
-        if self.last_combiner_assignments:
-            totals['combiners_by_breaker'] = {}
-            totals['combiner_details'] = []
-            
-            module_isc_val = self.selected_module.isc if self.selected_module else 0
-            nec_factor_val = 1.56
-            if self.current_project:
-                nec_factor_val = getattr(self.current_project, 'nec_safety_factor', 1.56)
-            
-            for cb in self.last_combiner_assignments:
-                bs = cb['breaker_size']
-                if bs not in totals['combiners_by_breaker']:
-                    totals['combiners_by_breaker'][bs] = 0
-                totals['combiners_by_breaker'][bs] += 1
-            
-            for bs, qty in totals['combiners_by_breaker'].items():
-                max_h_strings = 1
-                max_inputs = 0
-                for cb in self.last_combiner_assignments:
-                    if cb['breaker_size'] == bs:
-                        num_inputs = len(cb['connections'])
-                        max_inputs = max(max_inputs, num_inputs)
-                        for conn in cb['connections']:
-                            max_h_strings = max(max_h_strings, conn['num_strings'])
-                
-                fuse_current = module_isc_val * nec_factor_val * max_h_strings
-                fuse_holder_rating = self.get_fuse_holder_category(fuse_current)
-                strings_per_cb = max_inputs
-                
-                matched_cb = self.find_combiner_box(strings_per_cb, bs, fuse_holder_rating)
-                if matched_cb:
-                    totals['combiner_details'].append({
-                        'part_number': matched_cb.get('part_number', ''),
-                        'description': matched_cb.get('description', ''),
-                        'max_inputs': matched_cb.get('max_inputs', 0),
-                        'breaker_size': bs,
-                        'fuse_holder_rating': fuse_holder_rating,
-                        'strings_per_cb': strings_per_cb,
-                        'quantity': qty,
-                        'block_name': 'Site Total'
-                    })
-                else:
-                    totals['combiner_details'].append({
-                        'part_number': 'NO MATCH',
-                        'description': f'No CB found: {strings_per_cb} inputs, {bs}A, {fuse_holder_rating}',
-                        'max_inputs': strings_per_cb,
-                        'breaker_size': bs,
-                        'fuse_holder_rating': fuse_holder_rating,
-                        'strings_per_cb': strings_per_cb,
-                        'quantity': qty,
-                        'block_name': 'Site Total'
-                    })
+        # Read combiner BOM from Device Configurator (single source of truth)
+        # Falls back to simple assignment-based totals if DC isn't available
+        if not self._read_combiner_bom_from_device_config():
+            self._rebuild_combiner_totals_from_assignments()
             
             self.last_totals = totals
             totals['combiners_by_breaker'] = {}
@@ -4614,170 +4689,113 @@ class QuickEstimate(ttk.Frame):
             
             # Update last_totals since we modified totals
             self.last_totals = totals
+
+        self._redraw_results_tree()
+
+    def _write_combiner_sheet(self, wb):
+        """Write a Combiner Boxes sheet to the workbook from Device Configurator data."""
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
         
-        def insert_section(label):
-            self.results_tree.insert('', 'end', values=('', f'--- {label} ---', '', '', '', '', ''), tags=('section',))
-
-        def insert_row(item, part_number, qty, unit, unit_cost='', ext_cost=''):
-            iid = self.results_tree.insert('', 'end', values=('☑', item, part_number, qty, unit, unit_cost, ext_cost), tags=('checked',))
-            self.checked_items.add(iid)
-
-        # Combiner Boxes by breaker size
-        if totals['combiners_by_breaker']:
-            insert_section('COMBINER BOXES')
-            total_cbs = 0
-            for breaker_size in sorted(totals['combiners_by_breaker'].keys()):
-                qty = totals['combiners_by_breaker'][breaker_size]
-                total_cbs += qty
-                insert_row(f"Combiner Box ({breaker_size}A breaker)", '', qty, 'ea')
-            if len(totals['combiners_by_breaker']) > 1:
-                insert_row('Total Combiner Boxes', '', total_cbs, 'ea')
-
-            for detail in totals['combiner_details']:
-                if detail['part_number'] != 'NO MATCH':
-                    insert_row(
-                        f"  └ {detail['block_name']}: ({detail['max_inputs']}-input, {detail['fuse_holder_rating']})",
-                        detail['part_number'], detail['quantity'], 'ea'
-                    )
-                else:
-                    insert_row(
-                        f"  └ {detail['block_name']}: ⚠ {detail['description']}",
-                        '', detail['quantity'], 'ea'
-                    )
-
-        if totals['string_inverters'] > 0:
-            insert_section('INVERTERS')
-            inv_name = f"{self.selected_inverter.manufacturer} {self.selected_inverter.model}" if self.selected_inverter else "Inverter"
-            inv_summary = totals.get('inverter_summary', {})
-            actual_ratio = inv_summary.get('actual_dc_ac', 0)
-            insert_row(f"{inv_name} (DC:AC {actual_ratio:.2f})", '', totals['string_inverters'], 'ea')
-            # Show allocation summary
-            if allocation_result:
-                summary = allocation_result['summary']
-                split_count = summary.get('total_split_trackers', 0)
-                max_spi = summary.get('max_strings_per_inverter', 0)
-                min_spi = summary.get('min_strings_per_inverter', 0)
-                n_larger = summary.get('num_larger_inverters', 0)
-                n_smaller = summary.get('num_smaller_inverters', 0)
-                if max_spi == min_spi:
-                    size_str = f"all {max_spi} strings"
-                else:
-                    size_str = f"{n_larger}x{max_spi}str + {n_smaller}x{min_spi}str"
-                insert_row(
-                    f"  Allocation: {size_str}, {split_count} split tracker(s)",
-                    '', '', ''
-                )
-
-        # Harnesses
-        if totals['harnesses_by_size']:
-            insert_section('HARNESSES')
-            for size in sorted(totals['harnesses_by_size'].keys(), reverse=True):
-                qty = totals['harnesses_by_size'][size]
-                pos_pn, pos_unit, pos_ext = self.lookup_part_and_price('harness', num_strings=size, polarity='positive', qty=qty)
-                neg_pn, neg_unit, neg_ext = self.lookup_part_and_price('harness', num_strings=size, polarity='negative', qty=qty)
-                if size == 1:
-                    iid = self.results_tree.insert('', 'end', values=('☐', f"{size}-String Harness (Pos)", pos_pn, qty, 'ea', pos_unit, pos_ext), tags=('unchecked',))
-                    iid2 = self.results_tree.insert('', 'end', values=('☐', f"{size}-String Harness (Neg)", neg_pn, qty, 'ea', neg_unit, neg_ext), tags=('unchecked',))
-                else:
-                    insert_row(f"{size}-String Harness (Pos)", pos_pn, qty, 'ea', pos_unit, pos_ext)
-                    insert_row(f"{size}-String Harness (Neg)", neg_pn, qty, 'ea', neg_unit, neg_ext)
-
-        # Extenders — split by wire gauge, then by polarity
-        ext_gauges = sorted(set(g for (_, g) in totals['extenders_pos_by_length'].keys()) | 
-                           set(g for (_, g) in totals['extenders_neg_by_length'].keys()))
-        for gauge in ext_gauges:
-            # Positive
-            pos_items = {length: qty for (length, g), qty in totals['extenders_pos_by_length'].items() if g == gauge}
-            if pos_items:
-                insert_section(f'EXTENDERS — POSITIVE ({gauge})')
-                for length in sorted(pos_items.keys()):
-                    qty = pos_items[length]
-                    e_pn, e_unit, e_ext = self.lookup_part_and_price('extender', polarity='positive', length_ft=length, qty=qty, num_strings=self._gauge_to_string_count('extender', gauge))
-                    insert_row(f"Extender {length}ft (Pos)", e_pn, qty, 'ea', e_unit, e_ext)
-            
-            # Negative
-            neg_items = {length: qty for (length, g), qty in totals['extenders_neg_by_length'].items() if g == gauge}
-            if neg_items:
-                insert_section(f'EXTENDERS — NEGATIVE ({gauge})')
-                for length in sorted(neg_items.keys()):
-                    qty = neg_items[length]
-                    e_pn, e_unit, e_ext = self.lookup_part_and_price('extender', polarity='negative', length_ft=length, qty=qty, num_strings=self._gauge_to_string_count('extender', gauge))
-                    insert_row(f"Extender {length}ft (Neg)", e_pn, qty, 'ea', e_unit, e_ext)
-
-        # Whips — split by wire gauge, then by polarity
-        whip_gauges = sorted(set(g for (_, g) in totals['whips_by_length'].keys()))
-        if whip_gauges:
-            device_label = 'to inverter' if topology == 'Distributed String' else 'to combiner'
-            
-            for gauge in whip_gauges:
-                gauge_items = {length: qty for (length, g), qty in totals['whips_by_length'].items() if g == gauge}
-                if not gauge_items:
-                    continue
-                
-                # Positive whips (half of each length bucket)
-                insert_section(f'WHIPS — POSITIVE ({device_label}) ({gauge})')
-                for length in sorted(gauge_items.keys()):
-                    qty = gauge_items[length] // 2
-                    w_pn, w_unit, w_ext = self.lookup_part_and_price('whip', polarity='positive', length_ft=length, qty=qty, num_strings=self._gauge_to_string_count('whip', gauge))
-                    insert_row(f"Whip {length}ft (Pos)", w_pn, qty, 'ea', w_unit, w_ext)
-                
-                # Negative whips
-                insert_section(f'WHIPS — NEGATIVE ({device_label}) ({gauge})')
-                for length in sorted(gauge_items.keys()):
-                    qty = gauge_items[length] // 2
-                    w_pn, w_unit, w_ext = self.lookup_part_and_price('whip', polarity='negative', length_ft=length, qty=qty, num_strings=self._gauge_to_string_count('whip', gauge))
-                    insert_row(f"Whip {length}ft (Neg)", w_pn, qty, 'ea', w_unit, w_ext)
-        
-        # DC Feeders (Centralized String and Central Inverter only)
-        if totals['dc_feeder_count'] > 0:
-            if totals['dc_feeder_count'] > 0:
-                routed_dc_avg = totals['dc_feeder_total_ft'] / totals['dc_feeder_count']
-            else:
-                routed_dc_avg = dc_feeder_avg_ft
-            dc_avg_display = routed_dc_avg if use_routed else dc_feeder_avg_ft
-            dc_label_suffix = " (routed)" if use_routed else ""
-            dc_wire_size = self.get_wire_size_for('dc_feeder')
-            insert_section(f'DC FEEDERS ({dc_wire_size})')
-            insert_row(f"DC Feeder {dc_wire_size} — avg {dc_avg_display:.0f}ft{dc_label_suffix} × {totals['dc_feeder_count']} runs (pos)", '', f"{totals['dc_feeder_total_ft']:.0f}", 'ft')
-            insert_row(f"DC Feeder {dc_wire_size} — avg {dc_avg_display:.0f}ft{dc_label_suffix} × {totals['dc_feeder_count']} runs (neg)", '', f"{totals['dc_feeder_total_ft']:.0f}", 'ft')
-        
-        # AC Homeruns
-        if totals['ac_homerun_count'] > 0:
-            if totals['ac_homerun_count'] > 0:
-                routed_ac_avg = totals['ac_homerun_total_ft'] / totals['ac_homerun_count']
-            else:
-                routed_ac_avg = ac_homerun_avg_ft
-            ac_avg_display = routed_ac_avg if use_routed else ac_homerun_avg_ft
-            ac_label_suffix = " (routed)" if use_routed else ""
-            ac_wire_size = self.get_wire_size_for('ac_homerun')
-            insert_section(f'AC HOMERUNS ({ac_wire_size})')
-            insert_row(f"AC Homerun {ac_wire_size} — avg {ac_avg_display:.0f}ft{ac_label_suffix} × {totals['ac_homerun_count']} runs", '', f"{totals['ac_homerun_total_ft']:.0f}", 'ft')
-
-    def _sync_breakers_from_device_config(self):
-        """Pull manual breaker overrides from Device Configurator back into last_combiner_assignments."""
-        if not self.last_combiner_assignments:
-            return
-        
-        # Get Device Configurator via stored main_app reference
+        # Get Device Configurator
         main_app = getattr(self, 'main_app', None)
-        
         if not main_app or not hasattr(main_app, 'device_configurator'):
             return
-        
         dc = main_app.device_configurator
-        
         if not hasattr(dc, 'combiner_configs') or not dc.combiner_configs:
             return
         
-        # Match by combiner name
-        dc_breakers = {}
-        for combiner_id, config in dc.combiner_configs.items():
-            dc_breakers[combiner_id] = config.get_display_breaker_size()
+        ws = wb.create_sheet("Combiner Boxes")
         
-        for cb in self.last_combiner_assignments:
-            cb_name = cb.get('combiner_name', '')
-            if cb_name in dc_breakers:
-                cb['breaker_size'] = dc_breakers[cb_name]
+        # Styles
+        title_font = Font(bold=True, size=14)
+        header_font = Font(bold=True, size=11, color="FFFFFF")
+        header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+        cb_header_font = Font(bold=True, size=11)
+        cb_header_fill = PatternFill(start_color="D9E2F3", end_color="D9E2F3", fill_type="solid")
+        thin_border = Border(
+            left=Side(style='thin'), right=Side(style='thin'),
+            top=Side(style='thin'), bottom=Side(style='thin')
+        )
+        center_align = Alignment(horizontal='center', vertical='center')
+        mismatch_fill = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type="solid")
+        
+        row = 1
+        ws.merge_cells(f'A{row}:H{row}')
+        ws.cell(row=row, column=1, value="Combiner Box Configuration Details").font = title_font
+        row += 2
+        
+        # NEC factor info
+        nec_factor = float(dc.nec_factor_var.get()) if hasattr(dc, 'nec_factor_var') else 1.56
+        ws.cell(row=row, column=1, value="NEC Safety Factor:").font = Font(bold=True)
+        ws.cell(row=row, column=2, value=nec_factor)
+        row += 2
+        
+        # Column headers
+        headers = ['Combiner Box', 'Tracker', 'Harness', 'Strings', 'Isc (A)',
+                    'Harness Current (A)', 'Fuse Size (A)', 'Cable Size',
+                    'Total Current (A)', 'Breaker Size (A)']
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=row, column=col, value=header)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = center_align
+            cell.border = thin_border
+        header_row = row
+        row += 1
+        
+        # Data rows — one section per combiner box
+        for combiner_id in sorted(dc.combiner_configs.keys()):
+            config = dc.combiner_configs[combiner_id]
+            
+            for i, conn in enumerate(config.connections):
+                cb_cell = ws.cell(row=row, column=1, value=combiner_id)
+                cb_cell.border = thin_border
+                cb_cell.alignment = center_align
+                ws.cell(row=row, column=2, value=conn.tracker_id).border = thin_border
+                ws.cell(row=row, column=2).alignment = center_align
+                ws.cell(row=row, column=3, value=conn.harness_id).border = thin_border
+                ws.cell(row=row, column=3).alignment = center_align
+                ws.cell(row=row, column=4, value=conn.num_strings).border = thin_border
+                ws.cell(row=row, column=4).alignment = center_align
+                ws.cell(row=row, column=5, value=round(conn.module_isc, 2)).border = thin_border
+                ws.cell(row=row, column=5).alignment = center_align
+                ws.cell(row=row, column=6, value=round(conn.harness_current, 2)).border = thin_border
+                ws.cell(row=row, column=6).alignment = center_align
+                
+                fuse_cell = ws.cell(row=row, column=7, value=conn.get_display_fuse_size())
+                fuse_cell.border = thin_border
+                fuse_cell.alignment = center_align
+                
+                cable_cell = ws.cell(row=row, column=8, value=conn.get_display_cable_size())
+                cable_cell.border = thin_border
+                cable_cell.alignment = center_align
+                if conn.is_cable_size_mismatch():
+                    cable_cell.fill = mismatch_fill
+                
+                # Total current and breaker on first connection row only
+                if i == 0:
+                    ws.cell(row=row, column=9, value=round(config.total_input_current, 2)).border = thin_border
+                    ws.cell(row=row, column=9).alignment = center_align
+                    ws.cell(row=row, column=10, value=config.get_display_breaker_size()).border = thin_border
+                    ws.cell(row=row, column=10).alignment = center_align
+                else:
+                    ws.cell(row=row, column=9, value='').border = thin_border
+                    ws.cell(row=row, column=10, value='').border = thin_border
+                
+                row += 1
+            
+            # Blank row between combiner boxes
+            row += 1
+        
+        # Auto-fit columns
+        for col_idx in range(1, len(headers) + 1):
+            max_length = len(headers[col_idx - 1])  # Start with header width
+            col_letter = get_column_letter(col_idx)
+            for cell in ws[col_letter]:
+                if cell.value:
+                    max_length = max(max_length, len(str(cell.value)))
+            ws.column_dimensions[col_letter].width = min(max_length + 3, 30)
 
     def export_to_excel(self):
         """Export the quick estimate BOM to Excel"""
@@ -5208,6 +5226,9 @@ class QuickEstimate(ttk.Frame):
                 total_cell.border = thin_border
                 total_cell.alignment = center_align
                 row += 1
+
+            # ========== COMBINER BOXES SHEET ==========
+            self._write_combiner_sheet(wb)
             
             # ========== AUTO-FIT COLUMNS (BOM sheet) ==========
             for col_idx in range(1, 9):
