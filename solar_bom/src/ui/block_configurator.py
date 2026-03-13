@@ -1474,7 +1474,22 @@ class BlockConfigurator(ttk.Frame):
                 # Motor is in the middle of a specific string
                 current_y = y
                 
-                for string_idx in range(template.strings_per_tracker):
+                # Partial string info
+                partial_mods = template.partial_module_count
+                partial_side = getattr(template, 'partial_string_side', 'north')
+                partial_color = '#FFD700'  # Gold
+                
+                # Draw partial string on north (if applicable)
+                if partial_mods > 0 and partial_side == 'north':
+                    for i in range(partial_mods):
+                        self.canvas.create_rectangle(
+                            x_col, current_y,
+                            x_col + module_width * scale, current_y + module_height * scale,
+                            fill=partial_color, outline='orange', tags=group_tag
+                        )
+                        current_y += (module_height + template.module_spacing_m) * scale
+                
+                for string_idx in range(template.full_string_count):
                     if string_idx + 1 == template.motor_string_index and getattr(template, 'has_motor', True):
                         # This string has the motor (1-based index)
                         # Draw north modules
@@ -1519,17 +1534,43 @@ class BlockConfigurator(ttk.Frame):
                                 fill='lightblue', outline='blue', tags=group_tag
                             )
                             current_y += (module_height + template.module_spacing_m) * scale
+                        
+                # Draw partial string on south (if applicable)
+                if partial_mods > 0 and partial_side == 'south':
+                    for i in range(partial_mods):
+                        self.canvas.create_rectangle(
+                            x_col, current_y,
+                            x_col + module_width * scale, current_y + module_height * scale,
+                            fill=partial_color, outline='orange', tags=group_tag
+                        )
+                        current_y += (module_height + template.module_spacing_m) * scale
             else:
                 # Original between_strings logic
                 modules_per_string = template.modules_per_string
                 motor_position = template.get_motor_position()
                 strings_above_motor = motor_position
-                strings_below_motor = template.strings_per_tracker - motor_position
+                strings_below_motor = template.full_string_count - motor_position
                 modules_above_motor = modules_per_string * strings_above_motor
                 modules_below_motor = modules_per_string * strings_below_motor
+                
+                # Partial string info
+                partial_mods = template.partial_module_count
+                partial_side = getattr(template, 'partial_string_side', 'north')
+                partial_north = partial_mods if partial_side == 'north' else 0
+                partial_south = partial_mods if partial_side == 'south' else 0
+                partial_color = '#FFD700'  # Gold
 
                 # Draw all modules
                 y_pos = y
+                
+                # Draw partial string on north (if applicable)
+                for i in range(partial_north):
+                    self.canvas.create_rectangle(
+                        x_col, y_pos,
+                        x_col + module_width * scale, y_pos + module_height * scale,
+                        fill=partial_color, outline='orange', tags=group_tag
+                    )
+                    y_pos += (module_height + template.module_spacing_m) * scale
                 
                 # Draw modules above motor
                 for i in range(modules_above_motor):
@@ -1564,6 +1605,15 @@ class BlockConfigurator(ttk.Frame):
                         x_col, y_pos,
                         x_col + module_width * scale, y_pos + module_height * scale,
                         fill='lightblue', outline='blue', tags=group_tag
+                    )
+                    y_pos += (module_height + template.module_spacing_m) * scale
+                
+                # Draw partial string on south (if applicable)
+                for i in range(partial_south):
+                    self.canvas.create_rectangle(
+                        x_col, y_pos,
+                        x_col + module_width * scale, y_pos + module_height * scale,
+                        fill=partial_color, outline='orange', tags=group_tag
                     )
                     y_pos += (module_height + template.module_spacing_m) * scale
 

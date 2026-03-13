@@ -555,7 +555,7 @@ class QuickEstimate(ttk.Frame):
         self.group_listbox.delete(0, tk.END)
         for group in self.groups:
             total_trackers = sum(seg['quantity'] for seg in group['segments'])
-            total_strings = sum(seg['quantity'] * seg['strings_per_tracker'] for seg in group['segments'])
+            total_strings = sum(int(seg['quantity'] * seg['strings_per_tracker']) for seg in group['segments'])
             display = f"{group['name']}  ({total_trackers}T / {total_strings}S)"
             self.group_listbox.insert(tk.END, display)
         
@@ -909,7 +909,7 @@ class QuickEstimate(ttk.Frame):
             
             tracker_length_ft = 180.0  # fallback
             if first_ref:
-                dims = self._get_tracker_dims_ft(first_ref)
+                dims = self._get_estimate_tracker_dims_ft(first_ref)
                 if dims:
                     tracker_length_ft = dims[1]
             
@@ -2462,7 +2462,7 @@ class QuickEstimate(ttk.Frame):
         else:
             self.distance_hint_label.config(text="", foreground='gray')
 
-    def _get_tracker_dims_ft(self, template_ref):
+    def _get_estimate_tracker_dims_ft(self, template_ref):
         """Get (width_ft, length_ft) for a tracker from its template reference.
         
         Width = E-W dimension (across tracker row).
@@ -2479,7 +2479,6 @@ class QuickEstimate(ttk.Frame):
         strings_per_tracker = tdata.get('strings_per_tracker', 1)
         orientation = tdata.get('module_orientation', 'Portrait')
         module_spacing_m = tdata.get('module_spacing_m', 0.02)
-        string_spacing_m = tdata.get('string_spacing_m', 0.15)
         
         mod_w_m = ms.get('width_mm', 1134) / 1000.0
         mod_l_m = ms.get('length_mm', 2278) / 1000.0
@@ -2491,17 +2490,22 @@ class QuickEstimate(ttk.Frame):
             mod_across = mod_w_m
             mod_along = mod_l_m
         
-        # Width (E-W): one module across × string count + string gaps
-        width_m = mod_across * strings_per_tracker + string_spacing_m * max(strings_per_tracker - 1, 0)
+        # Width (E-W): module across dimension × modules_high (stacked columns)
+        modules_high = tdata.get('modules_high', 1)
+        width_m = mod_across * modules_high
         
-        # Length (N-S): modules_per_string along + module gaps
-        length_m = mod_along * mps + module_spacing_m * max(mps - 1, 0)
+        # Length (N-S): all modules laid end-to-end (full strings + partial) plus gaps and motor
+        full_spt = int(strings_per_tracker)
+        partial_mods = round((strings_per_tracker - full_spt) * mps) if strings_per_tracker != full_spt else 0
+        modules_in_row = full_spt * mps + partial_mods
         
-        # Check for motor gap
         motor_gap_m = tdata.get('motor_gap_m', 0)
-        if motor_gap_m > 0:
-            length_m += motor_gap_m
+        has_motor = tdata.get('has_motor', True)
+        if not has_motor:
+            motor_gap_m = 0
         
+        length_m = modules_in_row * mod_along + max(modules_in_row - 1, 0) * module_spacing_m + motor_gap_m
+
         width_ft = width_m * 3.28084
         length_ft = length_m * 3.28084
         
@@ -2513,6 +2517,7 @@ class QuickEstimate(ttk.Frame):
             for seg in group['segments']:
                 if seg['strings_per_tracker'] == strings_per_tracker and seg['quantity'] > 0:
                     return self.parse_harness_config(self._get_effective_harness_config(seg))
+                
         # Fallback: single harness equal to full string count
         return [int(strings_per_tracker)]
 
@@ -3680,7 +3685,7 @@ class QuickEstimate(ttk.Frame):
                     continue
 
                 ref = seg.get('template_ref')
-                dims = self._get_tracker_dims_ft(ref)
+                dims = self._get_estimate_tracker_dims_ft(ref)
                 t_length = dims[1] if dims else fallback_length_ft
                 
                 # Partial string pairing (same logic as tracker_sequence)
@@ -4342,7 +4347,7 @@ class QuickEstimate(ttk.Frame):
             info_row += 1
             
             for r in self.groups:
-                group_strings = sum(s['quantity'] * s['strings_per_tracker'] for s in r['segments'])
+                group_strings = sum(int(s['quantity'] * s['strings_per_tracker']) for s in r['segments'])
                 group_trackers = sum(s['quantity'] for s in r['segments'])
                 seg_summary = ", ".join(
                     f"{s['quantity']}x{s['strings_per_tracker']}S({s['harness_config']})"
@@ -4769,7 +4774,7 @@ class SitePreviewWindow(tk.Toplevel):
         self.build_layout_data()
         self.after(50, self.fit_and_redraw)
     
-    def get_tracker_dimensions_ft(self, template_ref):
+    def _get_preview_tracker_dims_ft(self, template_ref):
         """Compute physical (width_ft, length_ft) for a tracker from its template.
         
         Width = E-W dimension (across tracker, short side)
@@ -5070,7 +5075,7 @@ class SitePreviewWindow(tk.Toplevel):
             
             for seg in group_data['segments']:
                 ref = seg.get('template_ref')
-                dims = self.get_tracker_dimensions_ft(ref)
+                dims = self._get_preview_tracker_dims_ft(ref)
                 
                 for _ in range(seg['quantity']):
                     if global_idx in tracker_map:

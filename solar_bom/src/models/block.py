@@ -105,7 +105,7 @@ class BlockConfig:
             raise ValueError("Ground Coverage Ratio must be between 0 and 1")
             
         # Calculate total number of strings in block
-        total_strings = len(self.tracker_positions) * self.tracker_template.strings_per_tracker
+        total_strings = len(self.tracker_positions) * self.tracker_template.full_string_count
         
         # Validate against inverter capacity
         if total_strings > self.inverter.get_total_string_capacity():
