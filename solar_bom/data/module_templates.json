@@ -691,6 +691,28 @@
       "bifaciality_factor": null,
       "default_orientation": "Portrait",
       "cells_per_module": 72
+    },
+    "FS-6465A-B-P": {
+      "manufacturer": "First Solar",
+      "model": "FS-6465A-B-P",
+      "type": "Mono PERC",
+      "length_mm": 2024.0,
+      "width_mm": 1245.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 465.0,
+      "vmp": 189.8,
+      "imp": 2.45,
+      "voc": 223.8,
+      "isc": 2.6,
+      "max_system_voltage": 1500,
+      "efficiency": null,
+      "temperature_coefficient_pmax": -0.32,
+      "temperature_coefficient_voc": -0.28,
+      "temperature_coefficient_isc": 0.04,
+      "bifaciality_factor": null,
+      "default_orientation": "Portrait",
+      "cells_per_module": 72
     }
   },
   "NE Solar": {

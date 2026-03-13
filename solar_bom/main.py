@@ -260,6 +260,7 @@ class SolarBOMApplication:
             current_project=self.current_project,
             on_save=self.autosave_project
         )
+        self.quick_estimate_widget.main_app = self
         self.quick_estimate_widget.pack(fill='both', expand=True, padx=5, pady=5)
 
         # Add tabs to notebook

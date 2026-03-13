@@ -15,6 +15,7 @@ class DeviceConfigurator(ttk.Frame):
         self.current_project = None
         self.combiner_configs: Dict[str, CombinerBoxConfig] = {}
         self.edited_cells: Set[str] = set()  # Track manually edited cells
+        self.data_source = 'blocks'  # 'blocks' or 'quick_estimate'
         
         self.setup_ui()
         
@@ -153,12 +154,25 @@ class DeviceConfigurator(ttk.Frame):
         ttk.Button(button_frame, text="Export Configuration", 
                   command=self.export_configuration).pack(side=tk.LEFT, padx=5)
         
+        # Data source toggle
+        ttk.Separator(button_frame, orient='vertical').pack(side=tk.LEFT, padx=10, fill=tk.Y)
+        ttk.Label(button_frame, text="Data Source:").pack(side=tk.LEFT, padx=(5, 2))
+        
+        self.data_source_var = tk.StringVar(value='blocks')
+        ttk.Radiobutton(
+            button_frame, text="Block/Wiring Config",
+            variable=self.data_source_var, value='blocks',
+            command=self._on_data_source_changed
+        ).pack(side=tk.LEFT, padx=2)
+        ttk.Radiobutton(
+            button_frame, text="Quick Estimate",
+            variable=self.data_source_var, value='quick_estimate',
+            command=self._on_data_source_changed
+        ).pack(side=tk.LEFT, padx=2)
+        
         # Expand/Collapse All buttons
         ttk.Button(button_frame, text="Collapse All", 
                 command=self.collapse_all).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Expand All", 
-                command=self.expand_all).pack(side=tk.LEFT, padx=5)
-        
         ttk.Button(button_frame, text="Expand All", 
                 command=self.expand_all).pack(side=tk.LEFT, padx=5)
         
@@ -276,19 +290,88 @@ class DeviceConfigurator(ttk.Frame):
         nec_factor = getattr(project, 'nec_safety_factor', 1.56)
         self.nec_factor_var.set(f"{nec_factor:.2f}")
         
-        # Generate configurations for all combiner boxes
-        self.generate_combiner_configs()
+        # Restore data source setting
+        saved_source = getattr(project, 'device_config_source', 'blocks')
+        self.data_source = saved_source
+        if hasattr(self, 'data_source_var'):
+            self.data_source_var.set(saved_source)
+        
+        if saved_source == 'quick_estimate' and hasattr(project, 'device_configs') and project.device_configs:
+            # Load saved QE-sourced configs directly (QE hasn't calculated yet at load time)
+            self._load_qe_configs_from_saved(project.device_configs)
+        else:
+            # Generate configurations from blocks
+            self.generate_combiner_configs()
 
-        # Load saved device configurations if they exist
-        if hasattr(project, 'device_configs') and project.device_configs:
-            self.load_saved_configurations(project.device_configs)
+            # Load saved device configurations if they exist
+            if hasattr(project, 'device_configs') and project.device_configs:
+                self.load_saved_configurations(project.device_configs)
 
         # Update display
         self.refresh_display()
         
         # Update status
+        source_label = "Quick Estimate" if saved_source == 'quick_estimate' else "Block/Wiring Config"
         combiner_count = len(self.combiner_configs)
-        self.status_var.set(f"Loaded {combiner_count} combiner box(es)")
+        self.status_var.set(f"Loaded {combiner_count} combiner box(es) from {source_label}")
+
+    def _load_qe_configs_from_saved(self, saved_configs):
+        """Rebuild CombinerBoxConfig objects from saved QE-sourced device configs."""
+        self.combiner_configs.clear()
+        self.edited_cells.clear()
+        
+        for combiner_id, saved_config in saved_configs.items():
+            connections = []
+            for saved_conn in saved_config.get('connections', []):
+                connection = HarnessConnection(
+                    block_id=saved_conn.get('block_id', 'QE'),
+                    tracker_id=saved_conn['tracker_id'],
+                    harness_id=saved_conn['harness_id'],
+                    num_strings=saved_conn['num_strings'],
+                    module_isc=saved_conn['module_isc'],
+                    nec_factor=saved_conn['nec_factor'],
+                    actual_cable_size=saved_conn.get('actual_cable_size', '10 AWG'),
+                )
+                
+                # Restore user overrides
+                if saved_conn.get('user_fuse_size'):
+                    connection.user_fuse_size = saved_conn['user_fuse_size']
+                    connection.fuse_manually_set = saved_conn.get('fuse_manually_set', True)
+                    if connection.fuse_manually_set:
+                        cell_id = f"{combiner_id}_{connection.tracker_id}_{connection.harness_id}_fuse"
+                        self.edited_cells.add(cell_id)
+                
+                if saved_conn.get('user_cable_size'):
+                    connection.user_cable_size = saved_conn['user_cable_size']
+                    connection.cable_manually_set = saved_conn.get('cable_manually_set', True)
+                    if connection.cable_manually_set:
+                        cell_id = f"{combiner_id}_{connection.tracker_id}_{connection.harness_id}_cable"
+                        self.edited_cells.add(cell_id)
+                
+                connections.append(connection)
+            
+            config = CombinerBoxConfig(
+                combiner_id=combiner_id,
+                block_id=saved_config.get('block_id', 'QE'),
+                connections=connections,
+                use_whips=saved_config.get('use_whips', True),
+                whip_length_ft=saved_config.get('whip_length_ft', 3),
+            )
+            
+            # Restore breaker overrides
+            if saved_config.get('user_breaker_size'):
+                config.user_breaker_size = saved_config['user_breaker_size']
+                config.breaker_manually_set = saved_config.get('breaker_manually_set', False)
+                if config.breaker_manually_set:
+                    self.edited_cells.add(f"{combiner_id}_breaker")
+            
+            # Apply fuse uniformity rule
+            if config.connections:
+                max_fuse = max(conn.calculated_fuse_size for conn in config.connections)
+                for conn in config.connections:
+                    conn.calculated_fuse_size = max_fuse
+            
+            self.combiner_configs[combiner_id] = config
 
     def load_saved_configurations(self, saved_configs: Dict[str, dict]):
         """Load saved device configurations"""
@@ -336,7 +419,140 @@ class DeviceConfigurator(ttk.Frame):
                     if conn.cable_manually_set:
                         cell_id = f"{combiner_id}_{conn.tracker_id}_{conn.harness_id}_cable"
                         self.edited_cells.add(cell_id)
+
+    def _on_data_source_changed(self):
+        """Handle data source toggle between Block/Wiring Config and Quick Estimate."""
+        new_source = self.data_source_var.get()
+        
+        if new_source == self.data_source:
+            return  # No change
+        
+        # Warn if there are manual edits
+        if self.edited_cells:
+            if not messagebox.askyesno(
+                "Switch Data Source?",
+                "Switching data sources will discard your manual edits.\n\nContinue?"
+            ):
+                # Revert the radio button
+                self.data_source_var.set(self.data_source)
+                return
+        
+        self.data_source = new_source
+        
+        if new_source == 'quick_estimate':
+            self.load_from_quick_estimate()
+        else:
+            # Reload from Block/Wiring Configurator
+            self.combiner_configs.clear()
+            self.edited_cells.clear()
+            if self.current_project:
+                try:
+                    self.generate_combiner_configs()
+                except (AttributeError, TypeError):
+                    # Blocks may be serialized dicts, not live BlockConfig objects
+                    pass
+                if hasattr(self.current_project, 'device_configs') and self.current_project.device_configs:
+                    # If we have saved configs and generate failed, load from saved
+                    if not self.combiner_configs:
+                        self._load_qe_configs_from_saved(self.current_project.device_configs)
+                    else:
+                        self.load_saved_configurations(self.current_project.device_configs)
+                self.refresh_display()
+                combiner_count = len(self.combiner_configs)
+                self.status_var.set(f"Loaded {combiner_count} combiner box(es) from Block/Wiring Config")
     
+    def load_from_quick_estimate(self):
+        """Load combiner box configurations from Quick Estimate data."""
+        # Get the QE widget via main_app
+        qe_widget = None
+        if hasattr(self, 'main_app') and hasattr(self.main_app, 'quick_estimate_widget'):
+            qe_widget = self.main_app.quick_estimate_widget
+        
+        if not qe_widget:
+            messagebox.showwarning(
+                "Not Available",
+                "Quick Estimate is not available. Please run a Quick Estimate first."
+            )
+            return
+        
+        assignments = getattr(qe_widget, 'last_combiner_assignments', [])
+        if not assignments:
+            messagebox.showinfo(
+                "No Data",
+                "No combiner assignments found.\n\n"
+                "Please run Calculate Estimate in the Quick Estimate tab first\n"
+                "(using Centralized String or Central Inverter topology)."
+            )
+            return
+        
+        # Clear existing
+        self.combiner_configs.clear()
+        self.edited_cells.clear()
+        
+        # NEC factor — use project setting if available
+        nec_factor = 1.56
+        if self.current_project:
+            nec_factor = getattr(self.current_project, 'nec_safety_factor', 1.56)
+            self.nec_factor_var.set(f"{nec_factor:.2f}")
+        
+        # Convert each assignment into a CombinerBoxConfig
+        for cb_data in assignments:
+            cb_name = cb_data['combiner_name']
+            combiner_id = cb_name  # Use the display name as the ID
+            
+            connections = []
+            for conn_data in cb_data['connections']:
+                connection = HarnessConnection(
+                    block_id='QE',  # Mark as Quick Estimate sourced
+                    tracker_id=conn_data['tracker_label'],
+                    harness_id=conn_data['harness_label'],
+                    num_strings=conn_data['num_strings'],
+                    module_isc=conn_data['module_isc'],
+                    nec_factor=conn_data['nec_factor'],
+                    actual_cable_size=conn_data.get('wire_gauge', '10 AWG'),
+                )
+                connections.append(connection)
+            
+            combiner_config = CombinerBoxConfig(
+                combiner_id=combiner_id,
+                block_id='QE',
+                connections=connections,
+                use_whips=self.use_whips_var.get(),
+                whip_length_ft=3 if self.use_whips_var.get() else 0,
+            )
+            
+            # Let the calculated breaker size stand — user can override manually
+            # (QE breaker dropdown is a global default, not per-CB)
+            
+            # Apply fuse uniformity rule
+            if combiner_config.connections:
+                max_fuse = max(conn.calculated_fuse_size for conn in combiner_config.connections)
+                for conn in combiner_config.connections:
+                    conn.calculated_fuse_size = max_fuse
+                    if conn.user_fuse_size and conn.user_fuse_size < max_fuse:
+                        conn.user_fuse_size = None
+                        conn.fuse_manually_set = False
+            
+            self.combiner_configs[combiner_id] = combiner_config
+        
+        # Refresh display
+        self.refresh_display()
+        self.update_warnings()
+        
+        # Save to project
+        self.save_configuration_to_project()
+        
+        # Update status and ensure toggle reflects source
+        self.data_source = 'quick_estimate'
+        if hasattr(self, 'data_source_var'):
+            self.data_source_var.set('quick_estimate')
+        
+        total_connections = sum(len(c.connections) for c in self.combiner_configs.values())
+        self.status_var.set(
+            f"Loaded {len(self.combiner_configs)} combiner box(es) "
+            f"with {total_connections} connections from Quick Estimate"
+        )
+
     def generate_combiner_configs(self):
         """Generate combiner box configurations from project blocks"""
         if not self.current_project:
@@ -816,8 +1032,9 @@ class DeviceConfigurator(ttk.Frame):
                 'whip_length_ft': getattr(config, 'whip_length_ft', 3)
             }
         
-        # Save to project
+        # Save to project (include data source setting)
         self.current_project.device_configs = device_configs
+        self.current_project.device_config_source = self.data_source
         
         # Trigger autosave if available
         if hasattr(self, 'main_app') and hasattr(self.main_app, 'autosave_project'):

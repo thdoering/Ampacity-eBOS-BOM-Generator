@@ -34,6 +34,8 @@ class Project:
     wiring_mode: str = "daisy_chain"  # Default to daisy chain
     # Device configurations (combiner boxes, etc.)
     device_configs: Dict[str, dict] = field(default_factory=dict)
+    # Data source for device configs: 'blocks' or 'quick_estimate'
+    device_config_source: str = "blocks"
     # Single Line Diagram configuration
     sld_diagram: Optional[dict] = None  # Stores SLDDiagram as dict
     # NEC safety factor for electrical calculations (default 1.56 = 125% × 125%)
@@ -70,6 +72,7 @@ class Project:
             'enabled_templates': self.enabled_templates,
             'wiring_mode': self.wiring_mode,
             'device_configs': self.device_configs,
+            'device_config_source': self.device_config_source,
             'sld_diagram': self.sld_diagram,
             'nec_safety_factor': self.nec_safety_factor,
             'quick_estimates': self.quick_estimates,
@@ -98,6 +101,7 @@ class Project:
             enabled_templates=data.get('enabled_templates', []),
             wiring_mode=data.get('wiring_mode', 'daisy_chain'),
             device_configs=data.get('device_configs', {}),
+            device_config_source=data.get('device_config_source', 'blocks'),
             sld_diagram=data.get('sld_diagram', None),
             nec_safety_factor=data.get('nec_safety_factor', 1.56),
             quick_estimates=data.get('quick_estimates', {}),

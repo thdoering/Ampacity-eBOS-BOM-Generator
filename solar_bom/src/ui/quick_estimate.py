@@ -28,6 +28,7 @@ class QuickEstimate(ttk.Frame):
         self.groups = []
         self.pads = []  # Collection points (inverter pads)
         self.device_names = {}  # {device_idx: "custom_name"} for CB/SI renaming
+        self.last_combiner_assignments = []  # Structured CB data for Device Configurator
         self._harness_combos = []  # Track harness combo widgets for LV collection disabling
         self.selected_group_idx = None
         self._updating_listbox = False
@@ -2254,6 +2255,7 @@ class QuickEstimate(ttk.Frame):
         self.groups.clear()
         self.pads.clear()
         self.device_names.clear()
+        self.last_combiner_assignments = []
         self.allocation_locked = False
         self.locked_allocation_result = None
         if hasattr(self, 'group_listbox'):
@@ -2421,6 +2423,11 @@ class QuickEstimate(ttk.Frame):
             self._last_inspect_mode = preview.inspect_mode
             self.pads = preview.pads  # Save pad positions back
             self.device_names = dict(preview.device_names)  # Save renamed devices back
+            
+            # If CB assignments were edited, refresh the estimate results
+            if hasattr(self, 'last_combiner_assignments') and self.last_combiner_assignments:
+                self._refresh_combiner_results_from_assignments()
+            
             self._schedule_autosave()
             preview.destroy()
         preview.protocol("WM_DELETE_WINDOW", _on_preview_close)
@@ -2560,6 +2567,404 @@ class QuickEstimate(ttk.Frame):
                 
         # Fallback: single harness equal to full string count
         return [int(strings_per_tracker)]
+
+    def _build_combiner_assignments(self, totals, topology):
+        """Build structured combiner box assignments for Device Configurator.
+        
+        Produces self.last_combiner_assignments — a list of dicts, one per CB,
+        each containing the tracker/harness connections that feed it.
+        
+        For Centralized String: 1 CB per inverter, connections from allocation harness_map.
+        For Central Inverter: distribute trackers proportionally across N combiners.
+        For Distributed String: no CBs — returns empty list.
+        """
+        self.last_combiner_assignments = []
+        
+        if topology == 'Distributed String':
+            return
+        
+        inv_summary = totals.get('inverter_summary', {})
+        allocation_result = inv_summary.get('allocation_result')
+        module_isc = self.selected_module.isc if self.selected_module else 0
+        
+        try:
+            breaker_size = int(self.breaker_size_var.get())
+        except (ValueError, AttributeError):
+            breaker_size = 400
+        
+        # NEC factor — use project setting if available
+        nec_factor = 1.56
+        if self.current_project:
+            nec_factor = getattr(self.current_project, 'nec_safety_factor', 1.56)
+        
+        # Standard breaker sizes for per-CB calculation
+        BREAKER_SIZES = [100, 125, 150, 175, 200, 225, 250, 300, 350, 400, 450, 500, 600, 700, 800]
+        
+        # Build flat tracker list with segment metadata for harness config lookup
+        tracker_segment_map = []  # flat list: one entry per tracker with its segment ref
+        for group in self.groups:
+            for seg in group['segments']:
+                harness_config_str = self._get_effective_harness_config(seg)
+                harness_sizes = self.parse_harness_config(harness_config_str)
+                for _ in range(seg['quantity']):
+                    tracker_segment_map.append({
+                        'spt': seg['strings_per_tracker'],
+                        'harness_sizes': list(harness_sizes),
+                        'wire_gauge': self._get_wire_gauge_for_segment(seg, 'whip'),
+                    })
+        
+        if topology == 'Centralized String' and allocation_result:
+            # 1 CB per inverter — connections directly from allocation harness_map
+            for inv_idx, inv in enumerate(allocation_result['inverters']):
+                cb_name = self.device_names.get(inv_idx, f"CB-{inv_idx + 1:02d}")
+                connections = self._build_connections_from_harness_map(
+                    inv['harness_map'], tracker_segment_map, module_isc, nec_factor
+                )
+                # Calculate per-CB breaker from actual total current
+                total_current = sum(
+                    c['num_strings'] * c['module_isc'] * c['nec_factor']
+                    for c in connections
+                )
+                calc_breaker = breaker_size  # fallback to global
+                for bs in BREAKER_SIZES:
+                    if bs >= total_current:
+                        calc_breaker = bs
+                        break
+                
+                self.last_combiner_assignments.append({
+                    'combiner_name': cb_name,
+                    'device_idx': inv_idx,
+                    'breaker_size': calc_breaker,
+                    'module_isc': module_isc,
+                    'nec_factor': nec_factor,
+                    'connections': connections,
+                })
+        
+        elif topology == 'Central Inverter':
+            total_combiners = sum(totals.get('combiners_by_breaker', {}).values())
+            if total_combiners <= 0 or not tracker_segment_map:
+                return
+            
+            # Distribute trackers across combiners proportionally
+            # (same logic as _compute_devices_proportional but at the QE level)
+            num_trackers = len(tracker_segment_map)
+            
+            # Find max inputs for the matched CB
+            fuse_current = module_isc * nec_factor * max(
+                (max(t['harness_sizes']) if t['harness_sizes'] else 1)
+                for t in tracker_segment_map
+            )
+            fuse_holder_rating = self.get_fuse_holder_category(fuse_current)
+            combiner_library = self.load_combiner_library()
+            
+            matching_cbs = [
+                cb_data for cb_data in combiner_library.values()
+                if (cb_data.get('breaker_size', 0) == breaker_size and
+                    cb_data.get('fuse_holder_rating', '') == fuse_holder_rating)
+            ]
+            if matching_cbs:
+                matching_cbs.sort(key=lambda c: c.get('max_inputs', 0), reverse=True)
+                max_inputs = matching_cbs[0].get('max_inputs', 24)
+            else:
+                max_inputs = 24
+            
+            # Simple even distribution of trackers across CBs
+            base_per_cb = num_trackers // total_combiners
+            extra = num_trackers % total_combiners
+            
+            tracker_cursor = 0
+            for cb_idx in range(total_combiners):
+                count = base_per_cb + (1 if cb_idx < extra else 0)
+                if count <= 0:
+                    continue
+                
+                cb_name = self.device_names.get(cb_idx, f"CB-{cb_idx + 1:02d}")
+                connections = []
+                
+                for local_i in range(count):
+                    tidx = tracker_cursor + local_i
+                    if tidx >= num_trackers:
+                        break
+                    t_info = tracker_segment_map[tidx]
+                    
+                    # Build one connection per harness in this tracker
+                    for h_idx, h_size in enumerate(t_info['harness_sizes']):
+                        connections.append({
+                            'tracker_idx': tidx,
+                            'tracker_label': f"T{tidx + 1:02d}",
+                            'harness_label': f"H{h_idx + 1:02d}",
+                            'num_strings': h_size,
+                            'module_isc': module_isc,
+                            'nec_factor': nec_factor,
+                            'wire_gauge': t_info['wire_gauge'],
+                        })
+                
+                # Calculate per-CB breaker from actual total current
+                total_current = sum(
+                    c['num_strings'] * c['module_isc'] * c['nec_factor']
+                    for c in connections
+                )
+                calc_breaker = breaker_size  # fallback to global
+                for bs in BREAKER_SIZES:
+                    if bs >= total_current:
+                        calc_breaker = bs
+                        break
+                
+                self.last_combiner_assignments.append({
+                    'combiner_name': cb_name,
+                    'device_idx': cb_idx,
+                    'breaker_size': calc_breaker,
+                    'module_isc': module_isc,
+                    'nec_factor': nec_factor,
+                    'connections': connections,
+                })
+                
+                tracker_cursor += count
+
+    def _refresh_combiner_results_from_assignments(self):
+        """Rebuild combiner BOM totals and results display from last_combiner_assignments.
+        
+        Called after manual CB edits in the site preview to keep the estimate
+        results in sync without re-running the full calculation.
+        """
+        if not self.last_combiner_assignments or not hasattr(self, 'last_totals') or not self.last_totals:
+            return
+        
+        totals = self.last_totals
+        module_isc = self.selected_module.isc if self.selected_module else 0
+        
+        # Rebuild combiners_by_breaker and combiner_details
+        totals['combiners_by_breaker'] = {}
+        totals['combiner_details'] = []
+        
+        for cb in self.last_combiner_assignments:
+            bs = cb['breaker_size']
+            if bs not in totals['combiners_by_breaker']:
+                totals['combiners_by_breaker'][bs] = 0
+            totals['combiners_by_breaker'][bs] += 1
+        
+        # Rebuild combiner details with per-breaker matching
+        for bs, qty in totals['combiners_by_breaker'].items():
+            max_h_strings = 1
+            max_inputs = 0
+            for cb in self.last_combiner_assignments:
+                if cb['breaker_size'] == bs:
+                    num_inputs = len(cb['connections'])
+                    max_inputs = max(max_inputs, num_inputs)
+                    for conn in cb['connections']:
+                        max_h_strings = max(max_h_strings, conn['num_strings'])
+            
+            nec_factor = 1.56
+            if self.current_project:
+                nec_factor = getattr(self.current_project, 'nec_safety_factor', 1.56)
+            fuse_current = module_isc * nec_factor * max_h_strings
+            fuse_holder_rating = self.get_fuse_holder_category(fuse_current)
+            strings_per_cb = max_inputs
+            
+            matched_cb = self.find_combiner_box(strings_per_cb, bs, fuse_holder_rating)
+            if matched_cb:
+                totals['combiner_details'].append({
+                    'part_number': matched_cb.get('part_number', ''),
+                    'description': matched_cb.get('description', ''),
+                    'max_inputs': matched_cb.get('max_inputs', 0),
+                    'breaker_size': bs,
+                    'fuse_holder_rating': fuse_holder_rating,
+                    'strings_per_cb': strings_per_cb,
+                    'quantity': qty,
+                    'block_name': 'Site Total'
+                })
+            else:
+                totals['combiner_details'].append({
+                    'part_number': 'NO MATCH',
+                    'description': f'No CB found: {strings_per_cb} inputs, {bs}A, {fuse_holder_rating}',
+                    'max_inputs': strings_per_cb,
+                    'breaker_size': bs,
+                    'fuse_holder_rating': fuse_holder_rating,
+                    'strings_per_cb': strings_per_cb,
+                    'quantity': qty,
+                    'block_name': 'Site Total'
+                })
+        
+        # Update stored totals and refresh display
+        self.last_totals = totals
+        self._redraw_results_tree()
+
+    def _redraw_results_tree(self):
+        """Redraw the results treeview from self.last_totals without recalculating.
+        
+        This is a display-only refresh — it does NOT re-run calculate_estimate().
+        """
+        if not hasattr(self, 'last_totals') or not self.last_totals:
+            return
+        
+        totals = self.last_totals
+        
+        # Clear existing results
+        for item in self.results_tree.get_children():
+            self.results_tree.delete(item)
+        self.checked_items.clear()
+        
+        def insert_section(label):
+            self.results_tree.insert('', 'end', values=('', f'--- {label} ---', '', '', '', '', ''), tags=('section',))
+
+        def insert_row(item, part_number, qty, unit, unit_cost='', ext_cost=''):
+            iid = self.results_tree.insert('', 'end', values=('☑', item, part_number, qty, unit, unit_cost, ext_cost), tags=('checked',))
+            self.checked_items.add(iid)
+        
+        # Combiner Boxes
+        if totals.get('combiners_by_breaker'):
+            insert_section('COMBINER BOXES')
+            total_cbs = 0
+            for breaker_size in sorted(totals['combiners_by_breaker'].keys()):
+                qty = totals['combiners_by_breaker'][breaker_size]
+                total_cbs += qty
+                insert_row(f"Combiner Box ({breaker_size}A breaker)", '', qty, 'ea')
+            if len(totals['combiners_by_breaker']) > 1:
+                insert_row('Total Combiner Boxes', '', total_cbs, 'ea')
+            
+            for detail in totals.get('combiner_details', []):
+                if detail['part_number'] != 'NO MATCH':
+                    insert_row(
+                        f"  └ Site Total: ({detail['max_inputs']}-input, {detail['fuse_holder_rating']})",
+                        detail['part_number'], detail['quantity'], 'ea'
+                    )
+                else:
+                    insert_row(
+                        f"  └ Site Total: ⚠ {detail['description']}",
+                        '', detail['quantity'], 'ea'
+                    )
+        
+        # Inverters
+        if totals.get('string_inverters', 0) > 0:
+            insert_section('INVERTERS')
+            inv_summary = totals.get('inverter_summary', {})
+            actual_ratio = inv_summary.get('actual_dc_ac', 0)
+            inv_name = "Inverter"
+            if self.selected_inverter:
+                inv_name = f"{self.selected_inverter.manufacturer} {self.selected_inverter.model}"
+            insert_row(f"{inv_name} (DC:AC {actual_ratio:.2f})", '', totals['string_inverters'], 'ea')
+        
+        # Harnesses
+        if totals.get('harnesses_by_size'):
+            insert_section('HARNESSES')
+            for size in sorted(totals['harnesses_by_size'].keys(), reverse=True):
+                qty = totals['harnesses_by_size'][size]
+                pos_pn, pos_unit, pos_ext = self.lookup_part_and_price('harness', num_strings=size, polarity='positive', qty=qty)
+                neg_pn, neg_unit, neg_ext = self.lookup_part_and_price('harness', num_strings=size, polarity='negative', qty=qty)
+                if size == 1:
+                    iid = self.results_tree.insert('', 'end', values=('☐', f"{size}-String Harness (Pos)", pos_pn, qty, 'ea', pos_unit, pos_ext), tags=('unchecked',))
+                    iid2 = self.results_tree.insert('', 'end', values=('☐', f"{size}-String Harness (Neg)", neg_pn, qty, 'ea', neg_unit, neg_ext), tags=('unchecked',))
+                else:
+                    insert_row(f"{size}-String Harness (Pos)", pos_pn, qty, 'ea', pos_unit, pos_ext)
+                    insert_row(f"{size}-String Harness (Neg)", neg_pn, qty, 'ea', neg_unit, neg_ext)
+        
+        # Whips
+        if totals.get('whips_by_length'):
+            insert_section('WHIP CABLES')
+            for length_key in sorted(totals['whips_by_length'].keys()):
+                qty = totals['whips_by_length'][length_key]
+                if isinstance(length_key, tuple):
+                    length, gauge = length_key
+                    insert_row(f"Whip Cable {length}ft ({gauge})", '', qty, 'ea')
+                else:
+                    insert_row(f"Whip Cable {length_key}ft", '', qty, 'ea')
+        
+        # Extenders
+        ext_pos = totals.get('extenders_pos_by_length', {})
+        ext_neg = totals.get('extenders_neg_by_length', {})
+        if ext_pos or ext_neg:
+            insert_section('EXTENDER CABLES')
+            for length_key in sorted(set(list(ext_pos.keys()) + list(ext_neg.keys()))):
+                if isinstance(length_key, tuple):
+                    length, gauge = length_key
+                    label = f"{length}ft ({gauge})"
+                else:
+                    length = length_key
+                    label = f"{length}ft"
+                if length_key in ext_pos:
+                    insert_row(f"Extender (Pos) {label}", '', ext_pos[length_key], 'ea')
+                if length_key in ext_neg:
+                    insert_row(f"Extender (Neg) {label}", '', ext_neg[length_key], 'ea')
+        
+        # DC Feeders
+        if totals.get('dc_feeder_total_ft', 0) > 0:
+            insert_section('DC FEEDER CABLES')
+            insert_row(f"DC Feeder Cable", '', f"{totals['dc_feeder_total_ft']:.0f}", 'ft')
+        
+        # AC Homeruns
+        if totals.get('ac_homerun_total_ft', 0) > 0:
+            insert_section('AC HOMERUN CABLES')
+            insert_row(f"AC Homerun Cable", '', f"{totals['ac_homerun_total_ft']:.0f}", 'ft')
+    
+    def _build_connections_from_harness_map(self, harness_map, tracker_segment_map, module_isc, nec_factor):
+        """Convert an allocation harness_map into Device Configurator connection dicts."""
+        connections = []
+        
+        # Group harness_map entries by tracker to assign harness labels
+        tracker_harness_counter = {}  # tracker_idx -> next harness number
+        
+        for entry in harness_map:
+            tidx = entry['tracker_idx']
+            strings_taken = entry['strings_taken']
+            spt = entry['strings_per_tracker']
+            is_split = entry.get('is_split', False)
+            
+            # Get segment info for this tracker
+            t_info = tracker_segment_map[tidx] if tidx < len(tracker_segment_map) else None
+            wire_gauge = t_info['wire_gauge'] if t_info else '10 AWG'
+            original_harnesses = t_info['harness_sizes'] if t_info else [spt]
+            
+            if not is_split:
+                # Full tracker — one connection per harness in the config
+                for h_idx, h_size in enumerate(original_harnesses):
+                    connections.append({
+                        'tracker_idx': tidx,
+                        'tracker_label': f"T{tidx + 1:02d}",
+                        'harness_label': f"H{h_idx + 1:02d}",
+                        'num_strings': h_size,
+                        'module_isc': module_isc,
+                        'nec_factor': nec_factor,
+                        'wire_gauge': wire_gauge,
+                    })
+            else:
+                # Split tracker — distribute strings_taken across harnesses
+                remaining = strings_taken
+                harness_cursor = tracker_harness_counter.get(tidx, 0)
+                
+                while remaining > 0 and harness_cursor < len(original_harnesses):
+                    h_size = original_harnesses[harness_cursor]
+                    take = min(remaining, h_size)
+                    connections.append({
+                        'tracker_idx': tidx,
+                        'tracker_label': f"T{tidx + 1:02d}",
+                        'harness_label': f"H{harness_cursor + 1:02d}",
+                        'num_strings': take,
+                        'module_isc': module_isc,
+                        'nec_factor': nec_factor,
+                        'wire_gauge': wire_gauge,
+                    })
+                    remaining -= take
+                    if take >= h_size:
+                        harness_cursor += 1
+                
+                tracker_harness_counter[tidx] = harness_cursor
+        
+        return connections
+    
+    def _get_wire_gauge_for_segment(self, seg, cable_type):
+        """Get the wire gauge for a segment from the wire sizing table."""
+        spt = seg.get('strings_per_tracker', 1)
+        harness_sizes = self.parse_harness_config(self._get_effective_harness_config(seg))
+        max_harness = max(harness_sizes) if harness_sizes else spt
+        
+        # Look up from self.wire_sizing
+        if hasattr(self, 'wire_sizing') and self.wire_sizing:
+            # Wire sizing is keyed by string count
+            sizing = self.wire_sizing.get(str(max_harness)) or self.wire_sizing.get(str(spt))
+            if sizing and cable_type in sizing:
+                return sizing[cable_type]
+        
+        return '10 AWG'
 
     def _adjust_harnesses_for_splits(self, totals):
         """Adjust harness counts based on inverter allocation split trackers.
@@ -3824,7 +4229,7 @@ class QuickEstimate(ttk.Frame):
 
         elif topology == 'Central Inverter':
             # Find largest matching CB to minimize combiner count
-            fuse_current = module_isc * 1.56 * max(max_harness_strings, 1)
+            fuse_current = module_isc * nec_factor * max(max_harness_strings, 1)
             fuse_holder_rating = self.get_fuse_holder_category(fuse_current)
             combiner_library = self.load_combiner_library()
 
@@ -4089,8 +4494,126 @@ class QuickEstimate(ttk.Frame):
         # Store totals for Excel export
         self.last_totals = totals
         self._results_stale = False
-        if self._calc_btn:
-            self._calc_btn.config(state='disabled')
+        
+        # Build structured combiner assignments for Device Configurator
+        # If manual CB assignments exist, preserve them instead of rebuilding
+        if self.last_combiner_assignments and any(cb.get('connections') for cb in self.last_combiner_assignments):
+            # Sync breaker overrides from Device Configurator if available
+            self._sync_breakers_from_device_config()
+            # Preserve manual assignments — just rebuild totals from them
+            self._refresh_combiner_results_from_assignments()
+        else:
+            self._build_combiner_assignments(totals, topology)
+        
+        # Rebuild combiner-by-breaker totals from per-CB assignments
+        # (already handled above — either by _refresh or _build)
+        if self.last_combiner_assignments:
+            totals['combiners_by_breaker'] = {}
+            totals['combiner_details'] = []
+            
+            module_isc_val = self.selected_module.isc if self.selected_module else 0
+            nec_factor_val = 1.56
+            if self.current_project:
+                nec_factor_val = getattr(self.current_project, 'nec_safety_factor', 1.56)
+            
+            for cb in self.last_combiner_assignments:
+                bs = cb['breaker_size']
+                if bs not in totals['combiners_by_breaker']:
+                    totals['combiners_by_breaker'][bs] = 0
+                totals['combiners_by_breaker'][bs] += 1
+            
+            for bs, qty in totals['combiners_by_breaker'].items():
+                max_h_strings = 1
+                max_inputs = 0
+                for cb in self.last_combiner_assignments:
+                    if cb['breaker_size'] == bs:
+                        num_inputs = len(cb['connections'])
+                        max_inputs = max(max_inputs, num_inputs)
+                        for conn in cb['connections']:
+                            max_h_strings = max(max_h_strings, conn['num_strings'])
+                
+                fuse_current = module_isc_val * nec_factor_val * max_h_strings
+                fuse_holder_rating = self.get_fuse_holder_category(fuse_current)
+                strings_per_cb = max_inputs
+                
+                matched_cb = self.find_combiner_box(strings_per_cb, bs, fuse_holder_rating)
+                if matched_cb:
+                    totals['combiner_details'].append({
+                        'part_number': matched_cb.get('part_number', ''),
+                        'description': matched_cb.get('description', ''),
+                        'max_inputs': matched_cb.get('max_inputs', 0),
+                        'breaker_size': bs,
+                        'fuse_holder_rating': fuse_holder_rating,
+                        'strings_per_cb': strings_per_cb,
+                        'quantity': qty,
+                        'block_name': 'Site Total'
+                    })
+                else:
+                    totals['combiner_details'].append({
+                        'part_number': 'NO MATCH',
+                        'description': f'No CB found: {strings_per_cb} inputs, {bs}A, {fuse_holder_rating}',
+                        'max_inputs': strings_per_cb,
+                        'breaker_size': bs,
+                        'fuse_holder_rating': fuse_holder_rating,
+                        'strings_per_cb': strings_per_cb,
+                        'quantity': qty,
+                        'block_name': 'Site Total'
+                    })
+            
+            self.last_totals = totals
+            totals['combiners_by_breaker'] = {}
+            totals['combiner_details'] = []
+            
+            # Group by breaker size
+            for cb in self.last_combiner_assignments:
+                bs = cb['breaker_size']
+                if bs not in totals['combiners_by_breaker']:
+                    totals['combiners_by_breaker'][bs] = 0
+                totals['combiners_by_breaker'][bs] += 1
+            
+            # Rebuild combiner details with per-breaker matching
+            module_isc = self.selected_module.isc if self.selected_module else 0
+            for bs, qty in totals['combiners_by_breaker'].items():
+                # Find max harness strings for fuse holder rating
+                max_h_strings = 1
+                max_inputs = 0
+                for cb in self.last_combiner_assignments:
+                    if cb['breaker_size'] == bs:
+                        num_inputs = len(cb['connections'])
+                        max_inputs = max(max_inputs, num_inputs)
+                        for conn in cb['connections']:
+                            max_h_strings = max(max_h_strings, conn['num_strings'])
+                
+                fuse_current = module_isc * 1.56 * max_h_strings
+                fuse_holder_rating = self.get_fuse_holder_category(fuse_current)
+                strings_per_cb = max_inputs
+                
+                matched_cb = self.find_combiner_box(strings_per_cb, bs, fuse_holder_rating)
+                if matched_cb:
+                    totals['combiner_details'].append({
+                        'part_number': matched_cb.get('part_number', ''),
+                        'description': matched_cb.get('description', ''),
+                        'max_inputs': matched_cb.get('max_inputs', 0),
+                        'breaker_size': bs,
+                        'fuse_holder_rating': fuse_holder_rating,
+                        'strings_per_cb': strings_per_cb,
+                        'quantity': qty,
+                        'block_name': 'Site Total'
+                    })
+                else:
+                    totals['combiner_details'].append({
+                        'part_number': 'NO MATCH',
+                        'description': f'No CB found: {strings_per_cb} inputs, {bs}A, {fuse_holder_rating}',
+                        'max_inputs': strings_per_cb,
+                        'breaker_size': bs,
+                        'fuse_holder_rating': fuse_holder_rating,
+                        'strings_per_cb': strings_per_cb,
+                        'quantity': qty,
+                        'block_name': 'Site Total'
+                    })
+            
+            # Update last_totals since we modified totals
+            self.last_totals = totals
         
         def insert_section(label):
             self.results_tree.insert('', 'end', values=('', f'--- {label} ---', '', '', '', '', ''), tags=('section',))
@@ -4229,6 +4752,32 @@ class QuickEstimate(ttk.Frame):
             ac_wire_size = self.get_wire_size_for('ac_homerun')
             insert_section(f'AC HOMERUNS ({ac_wire_size})')
             insert_row(f"AC Homerun {ac_wire_size} — avg {ac_avg_display:.0f}ft{ac_label_suffix} × {totals['ac_homerun_count']} runs", '', f"{totals['ac_homerun_total_ft']:.0f}", 'ft')
+
+    def _sync_breakers_from_device_config(self):
+        """Pull manual breaker overrides from Device Configurator back into last_combiner_assignments."""
+        if not self.last_combiner_assignments:
+            return
+        
+        # Get Device Configurator via stored main_app reference
+        main_app = getattr(self, 'main_app', None)
+        
+        if not main_app or not hasattr(main_app, 'device_configurator'):
+            return
+        
+        dc = main_app.device_configurator
+        
+        if not hasattr(dc, 'combiner_configs') or not dc.combiner_configs:
+            return
+        
+        # Match by combiner name
+        dc_breakers = {}
+        for combiner_id, config in dc.combiner_configs.items():
+            dc_breakers[combiner_id] = config.get_display_breaker_size()
+        
+        for cb in self.last_combiner_assignments:
+            cb_name = cb.get('combiner_name', '')
+            if cb_name in dc_breakers:
+                cb['breaker_size'] = dc_breakers[cb_name]
 
     def export_to_excel(self):
         """Export the quick estimate BOM to Excel"""
@@ -4824,6 +5373,7 @@ class SitePreviewWindow(tk.Toplevel):
         
         self.setup_ui()
         self.build_layout_data()
+        self._recolor_from_cb_assignments()
         self.after(50, self.fit_and_redraw)
     
     def _get_preview_tracker_dims_ft(self, template_ref):
@@ -4995,6 +5545,10 @@ class SitePreviewWindow(tk.Toplevel):
         
         self.assign_btn = ttk.Button(top_bar, text="Assign Devices", command=self._show_assignment_dialog)
         self.assign_btn.pack(side='left', padx=4)
+        
+        if self.device_label == 'CB':
+            self.edit_cbs_btn = ttk.Button(top_bar, text="Edit CBs", command=self._show_cb_assignment_dialog)
+            self.edit_cbs_btn.pack(side='left', padx=4)
 
         self.show_routes_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
@@ -6807,6 +7361,362 @@ class SitePreviewWindow(tk.Toplevel):
         dh = dialog.winfo_height()
         dialog.geometry(f"+{px + (pw - dw) // 2}+{py + (ph - dh) // 2}")
 
+    def _show_cb_assignment_dialog(self):
+        """Show dialog to reassign harness connections between combiner boxes."""
+        if not hasattr(self, 'device_positions') or not self.device_positions:
+            from tkinter import messagebox
+            messagebox.showinfo("No Devices", "No combiner boxes to edit.", parent=self)
+            return
+        
+        # Build working data from last_combiner_assignments (accurate per-harness)
+        parent_qe = self.master
+        assignments = getattr(parent_qe, 'last_combiner_assignments', [])
+        
+        if not assignments:
+            from tkinter import messagebox
+            messagebox.showinfo("No Data", "No combiner assignments found. Run Calculate Estimate first.", parent=self)
+            return
+        
+        dialog = tk.Toplevel(self)
+        dialog.title("Edit Combiner Box Assignments")
+        dialog.geometry("750x500")
+        dialog.transient(self)
+        dialog.grab_set()
+        
+        # Deep copy so we can cancel without side effects
+        cb_data = []
+        for cb in assignments:
+            cb_data.append({
+                'name': cb['combiner_name'],
+                'dev_idx': cb.get('device_idx'),
+                'module_isc': cb.get('module_isc', 0),
+                'nec_factor': cb.get('nec_factor', 1.56),
+                'connections': [dict(c) for c in cb['connections']],
+            })
+        
+        # Save original state for cancel revert
+        import copy
+        original_cb_data = copy.deepcopy(cb_data)
+        
+        # --- Layout ---
+        main_frame = ttk.Frame(dialog, padding="10")
+        main_frame.pack(fill='both', expand=True)
+        main_frame.columnconfigure(0, weight=1)
+        main_frame.columnconfigure(1, weight=0)
+        main_frame.columnconfigure(2, weight=2)
+        main_frame.rowconfigure(0, weight=1)
+        
+        # --- Left panel: CB list ---
+        left_frame = ttk.LabelFrame(main_frame, text="Combiner Boxes", padding="5")
+        left_frame.grid(row=0, column=0, sticky='nsew', padx=(0, 5))
+        left_frame.rowconfigure(0, weight=1)
+        left_frame.columnconfigure(0, weight=1)
+        
+        cb_listbox = tk.Listbox(left_frame, exportselection=False)
+        cb_listbox.grid(row=0, column=0, sticky='nsew')
+        
+        cb_scroll = ttk.Scrollbar(left_frame, orient='vertical', command=cb_listbox.yview)
+        cb_scroll.grid(row=0, column=1, sticky='ns')
+        cb_listbox.config(yscrollcommand=cb_scroll.set)
+        
+        def refresh_cb_list(select_idx=None):
+            cb_listbox.delete(0, tk.END)
+            for i, cb in enumerate(cb_data):
+                n_conn = len(cb['connections'])
+                total_str = sum(c['num_strings'] for c in cb['connections'])
+                cb_listbox.insert(tk.END, f"{cb['name']}  ({n_conn} inputs, {total_str} strings)")
+            if select_idx is not None and select_idx < len(cb_data):
+                cb_listbox.selection_set(select_idx)
+                cb_listbox.see(select_idx)
+                on_cb_select(None)
+        
+        def _update_live_preview():
+            """Push current cb_data to device_positions and tracker colors, then redraw."""
+            # Rebuild device_names and assigned_strings on device_positions
+            for dev in self.device_positions:
+                dev['assigned_strings'] = {}
+            
+            for cb_idx, cb in enumerate(cb_data):
+                if cb_idx < len(self.device_positions):
+                    self.device_positions[cb_idx]['label'] = cb['name']
+                    self.device_names[cb_idx] = cb['name']
+                    
+                    assigned = {}
+                    for conn in cb['connections']:
+                        tidx = conn['tracker_idx']
+                        n_str = conn['num_strings']
+                        if tidx not in assigned:
+                            assigned[tidx] = set()
+                        existing = len(assigned[tidx])
+                        for s in range(existing, existing + n_str):
+                            assigned[tidx].add(s)
+                    self.device_positions[cb_idx]['assigned_strings'] = assigned
+            
+            # Rebuild tracker color assignments from cb_data
+            # Build tracker_idx -> list of (cb_idx, strings_taken)
+            tracker_cb_map = {}  # tidx -> [(cb_idx, strings_taken), ...]
+            for cb_idx, cb in enumerate(cb_data):
+                for conn in cb['connections']:
+                    tidx = conn['tracker_idx']
+                    if tidx not in tracker_cb_map:
+                        tracker_cb_map[tidx] = []
+                    tracker_cb_map[tidx].append((cb_idx, conn['num_strings']))
+            
+            # Walk through group_layout trackers and update their assignments
+            global_idx = 0
+            for group_data in self.group_layout:
+                for tracker in group_data['trackers']:
+                    if global_idx in tracker_cb_map:
+                        new_assignments = []
+                        for cb_idx, strings_taken in tracker_cb_map[global_idx]:
+                            color = self.colors[cb_idx % len(self.colors)]
+                            new_assignments.append({
+                                'color': color,
+                                'strings': strings_taken,
+                                'inv_idx': cb_idx,
+                            })
+                        tracker['assignments'] = new_assignments
+                    else:
+                        # Unassigned tracker — grey
+                        tracker['assignments'] = [{
+                            'color': '#CCCCCC',
+                            'strings': tracker['strings_per_tracker'],
+                            'inv_idx': -1,
+                        }]
+                    global_idx += 1
+            
+            self.draw()
+        
+        # CB buttons
+        cb_btn_frame = ttk.Frame(left_frame)
+        cb_btn_frame.grid(row=1, column=0, columnspan=2, pady=(5, 0), sticky='ew')
+        
+        def add_cb():
+            next_num = len(cb_data) + 1
+            module_isc = cb_data[0]['module_isc'] if cb_data else 0
+            nec_factor = cb_data[0]['nec_factor'] if cb_data else 1.56
+            cb_data.append({
+                'name': f"CB-{next_num:02d}",
+                'dev_idx': None,
+                'module_isc': module_isc,
+                'nec_factor': nec_factor,
+                'connections': [],
+            })
+            refresh_cb_list(select_idx=len(cb_data) - 1)
+            _update_live_preview()
+        
+        def remove_cb():
+            sel = cb_listbox.curselection()
+            if not sel:
+                return
+            idx = sel[0]
+            cb = cb_data[idx]
+            if cb['connections']:
+                from tkinter import messagebox
+                if not messagebox.askyesno(
+                    "Remove CB",
+                    f"'{cb['name']}' has {len(cb['connections'])} connections.\n"
+                    "They will become unassigned. Continue?",
+                    parent=dialog
+                ):
+                    return
+            cb_data.pop(idx)
+            new_sel = min(idx, len(cb_data) - 1) if cb_data else None
+            refresh_cb_list(select_idx=new_sel)
+            _update_live_preview()
+        
+        def rename_cb():
+            sel = cb_listbox.curselection()
+            if not sel:
+                return
+            idx = sel[0]
+            from tkinter import simpledialog
+            new_name = simpledialog.askstring(
+                "Rename CB", f"New name for {cb_data[idx]['name']}:",
+                initialvalue=cb_data[idx]['name'], parent=dialog
+            )
+            if new_name and new_name.strip():
+                cb_data[idx]['name'] = new_name.strip()
+                refresh_cb_list(select_idx=idx)
+                _update_live_preview()
+        
+        ttk.Button(cb_btn_frame, text="Add CB", command=add_cb).pack(side='left', padx=2)
+        ttk.Button(cb_btn_frame, text="Remove", command=remove_cb).pack(side='left', padx=2)
+        ttk.Button(cb_btn_frame, text="Rename", command=rename_cb).pack(side='left', padx=2)
+        
+        # --- Middle: Move button ---
+        mid_frame = ttk.Frame(main_frame)
+        mid_frame.grid(row=0, column=1, padx=5, sticky='ns')
+        mid_frame.rowconfigure(0, weight=1)
+        mid_frame.rowconfigure(2, weight=1)
+        
+        def move_selected():
+            cb_sel = cb_listbox.curselection()
+            if not cb_sel:
+                from tkinter import messagebox
+                messagebox.showinfo("Select CB", "Select a source CB on the left first.", parent=dialog)
+                return
+            src_idx = cb_sel[0]
+            
+            conn_sel = conn_tree.selection()
+            if not conn_sel:
+                from tkinter import messagebox
+                messagebox.showinfo("Select Connections", "Select connections to move on the right.", parent=dialog)
+                return
+            
+            target_names = [(i, cb['name']) for i, cb in enumerate(cb_data) if i != src_idx]
+            if not target_names:
+                return
+            
+            pick = tk.Toplevel(dialog)
+            pick.title("Move to...")
+            pick.transient(dialog)
+            pick.grab_set()
+            pick.geometry("250x300")
+            
+            ttk.Label(pick, text="Select target CB:").pack(padx=10, pady=(10, 5))
+            target_lb = tk.Listbox(pick, exportselection=False)
+            target_lb.pack(fill='both', expand=True, padx=10)
+            for i, name in target_names:
+                target_lb.insert(tk.END, name)
+            if target_names:
+                target_lb.selection_set(0)
+            
+            def do_move():
+                t_sel = target_lb.curselection()
+                if not t_sel:
+                    pick.destroy()
+                    return
+                target_idx = target_names[t_sel[0]][0]
+                
+                selected_iids = conn_tree.selection()
+                all_iids = list(conn_tree.get_children())
+                indices_to_move = [all_iids.index(iid) for iid in selected_iids if iid in all_iids]
+                
+                moved = []
+                for ci in sorted(indices_to_move, reverse=True):
+                    if ci < len(cb_data[src_idx]['connections']):
+                        moved.append(cb_data[src_idx]['connections'].pop(ci))
+                
+                cb_data[target_idx]['connections'].extend(reversed(moved))
+                
+                pick.destroy()
+                refresh_cb_list(select_idx=src_idx)
+                _update_live_preview()
+            
+            ttk.Button(pick, text="Move", command=do_move).pack(pady=10)
+        
+        ttk.Button(mid_frame, text="Move →", command=move_selected).grid(row=1, column=0)
+        
+        # --- Right panel: Connections for selected CB ---
+        right_frame = ttk.LabelFrame(main_frame, text="Connections", padding="5")
+        right_frame.grid(row=0, column=2, sticky='nsew', padx=(5, 0))
+        right_frame.rowconfigure(0, weight=1)
+        right_frame.columnconfigure(0, weight=1)
+        
+        conn_columns = ('tracker', 'harness', 'strings')
+        conn_tree = ttk.Treeview(right_frame, columns=conn_columns, show='headings', selectmode='extended')
+        conn_tree.heading('tracker', text='Tracker')
+        conn_tree.heading('harness', text='Harness')
+        conn_tree.heading('strings', text='# Strings')
+        conn_tree.column('tracker', width=80, anchor='center')
+        conn_tree.column('harness', width=80, anchor='center')
+        conn_tree.column('strings', width=80, anchor='center')
+        conn_tree.grid(row=0, column=0, sticky='nsew')
+        
+        conn_scroll = ttk.Scrollbar(right_frame, orient='vertical', command=conn_tree.yview)
+        conn_scroll.grid(row=0, column=1, sticky='ns')
+        conn_tree.config(yscrollcommand=conn_scroll.set)
+        
+        def on_cb_select(event):
+            sel = cb_listbox.curselection()
+            if not sel:
+                conn_tree.delete(*conn_tree.get_children())
+                return
+            idx = sel[0]
+            conn_tree.delete(*conn_tree.get_children())
+            for conn in cb_data[idx]['connections']:
+                conn_tree.insert('', 'end', values=(
+                    conn['tracker_label'],
+                    conn['harness_label'],
+                    conn['num_strings']
+                ))
+        
+        cb_listbox.bind('<<ListboxSelect>>', on_cb_select)
+        
+        # --- Warning label ---
+        warning_var = tk.StringVar(value="")
+        warning_label = ttk.Label(dialog, textvariable=warning_var, foreground='orange')
+        warning_label.pack(fill='x', padx=10)
+        
+        # --- Bottom buttons ---
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(fill='x', padx=10, pady=10)
+        
+        def apply_changes():
+            # Write back to parent's last_combiner_assignments
+            BREAKER_SIZES = [100, 125, 150, 175, 200, 225, 250, 300, 350, 400, 450, 500, 600, 700, 800]
+            
+            new_assignments = []
+            for cb_idx, cb in enumerate(cb_data):
+                connections = cb['connections']
+                total_current = sum(
+                    c['num_strings'] * cb['module_isc'] * cb['nec_factor']
+                    for c in connections
+                )
+                calc_breaker = 400
+                for bs in BREAKER_SIZES:
+                    if bs >= total_current:
+                        calc_breaker = bs
+                        break
+                
+                new_assignments.append({
+                    'combiner_name': cb['name'],
+                    'device_idx': cb_idx,
+                    'breaker_size': calc_breaker,
+                    'module_isc': cb['module_isc'],
+                    'nec_factor': cb['nec_factor'],
+                    'connections': connections,
+                })
+            
+            parent_qe.last_combiner_assignments = new_assignments
+            
+            # Final preview update
+            _update_live_preview()
+            
+            dialog.destroy()
+        
+        def cancel():
+            # Restore from saved snapshot
+            for cb_idx, snap in enumerate(original_cb_data):
+                if cb_idx < len(cb_data):
+                    cb_data[cb_idx] = snap
+                else:
+                    cb_data.append(snap)
+            # Trim if we added extra CBs
+            while len(cb_data) > len(original_cb_data):
+                cb_data.pop()
+            _update_live_preview()
+            dialog.destroy()
+        
+        dialog.protocol("WM_DELETE_WINDOW", cancel)
+        
+        ttk.Button(btn_frame, text="Apply", command=apply_changes).pack(side='right', padx=(5, 0))
+        ttk.Button(btn_frame, text="Cancel", command=cancel).pack(side='right')
+        
+        # Initial population
+        refresh_cb_list(select_idx=0)
+        
+        # Center on parent
+        dialog.update_idletasks()
+        px = self.winfo_rootx()
+        py = self.winfo_rooty()
+        pw = self.winfo_width()
+        ph = self.winfo_height()
+        dw = dialog.winfo_width()
+        dh = dialog.winfo_height()
+        dialog.geometry(f"+{px + (pw - dw) // 2}+{py + (ph - dh) // 2}")
+
     def _on_pad_right_click(self, event):
         """Show context menu for pads."""
         hit = self.hit_test_pad(event.x, event.y)
@@ -6928,3 +7838,42 @@ class SitePreviewWindow(tk.Toplevel):
                     font=('Helvetica', font_size, 'bold'),
                     fill=color
                 )
+
+    def _recolor_from_cb_assignments(self):
+        """Recolor tracker assignments from parent's last_combiner_assignments.
+        
+        Called after build_layout_data() to override the default inverter-based
+        coloring with CB-based coloring when manual CB edits exist.
+        """
+        parent_qe = self.master
+        assignments = getattr(parent_qe, 'last_combiner_assignments', [])
+        if not assignments:
+            return
+        
+        # Build tracker_idx -> [(cb_idx, strings_taken), ...]
+        tracker_cb_map = {}
+        for cb_idx, cb in enumerate(assignments):
+            for conn in cb.get('connections', []):
+                tidx = conn['tracker_idx']
+                if tidx not in tracker_cb_map:
+                    tracker_cb_map[tidx] = []
+                tracker_cb_map[tidx].append((cb_idx, conn['num_strings']))
+        
+        if not tracker_cb_map:
+            return
+        
+        # Walk through group_layout and update tracker assignments
+        global_idx = 0
+        for group_data in self.group_layout:
+            for tracker in group_data['trackers']:
+                if global_idx in tracker_cb_map:
+                    new_assignments = []
+                    for cb_idx, strings_taken in tracker_cb_map[global_idx]:
+                        color = self.colors[cb_idx % len(self.colors)]
+                        new_assignments.append({
+                            'color': color,
+                            'strings': strings_taken,
+                            'inv_idx': cb_idx,
+                        })
+                    tracker['assignments'] = new_assignments
+                global_idx += 1
