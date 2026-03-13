@@ -393,10 +393,18 @@ class QuickEstimate(ttk.Frame):
             else:
                 module_dim_along_tracker = width_mm / 1000
             
-            total_modules = int(spt) * int(mps) if isinstance(spt, int) and isinstance(mps, int) else '?'
-            tracker_length_m = (int(mps) * int(spt) * module_dim_along_tracker + 
-                               (int(mps) * int(spt) - 1) * spacing_m +
-                               (motor_gap_m if has_motor else 0)) if isinstance(spt, int) and isinstance(mps, int) else None
+            try:
+                full_spt_info = int(float(spt))
+                mps_info = int(mps)
+                partial_info = round((float(spt) - full_spt_info) * mps_info) if float(spt) != full_spt_info else 0
+                total_modules = full_spt_info * mps_info + partial_info
+                modules_in_row = total_modules
+                tracker_length_m = (modules_in_row * module_dim_along_tracker + 
+                                   (modules_in_row - 1) * spacing_m +
+                                   (motor_gap_m if has_motor else 0))
+            except (ValueError, TypeError):
+                total_modules = '?'
+                tracker_length_m = None
             tracker_length_ft = f"{tracker_length_m * 3.28084:.1f} ft" if tracker_length_m else '?'
             
             short_name = ref.split(' - ', 1)[1] if ' - ' in ref else ref
@@ -444,6 +452,7 @@ class QuickEstimate(ttk.Frame):
         group = {
             'name': f"Group {group_num}",
             'device_position': 'middle',
+            'driveline_angle': 0.0,
             'segments': [
                 {'quantity': 1, 'strings_per_tracker': default_spt, 'harness_config': str(default_spt), 'template_ref': default_ref}
             ]
@@ -679,20 +688,28 @@ class QuickEstimate(ttk.Frame):
         # Build world X for every global tracker index
         # Uses saved group positions or auto-layout, same as site preview
         tracker_world_x = []
+        tracker_world_y = []
         tracker_group = []
         auto_x_cursor = 0.0
         
         for grp_idx, group in enumerate(self.groups):
             saved_x = group.get('position_x')
+            saved_y = group.get('position_y')
             if saved_x is not None:
                 group_x = saved_x
             else:
                 group_x = auto_x_cursor
+            group_y = saved_y if saved_y is not None else 0.0
+            
+            driveline_angle_deg = group.get('driveline_angle', 0.0)
+            driveline_tan = math.tan(math.radians(driveline_angle_deg)) if driveline_angle_deg > 0 else 0.0
             
             local_idx = 0
             for seg in group['segments']:
                 for _ in range(seg['quantity']):
-                    tracker_world_x.append(group_x + local_idx * row_spacing_ft)
+                    local_x_offset = local_idx * row_spacing_ft
+                    tracker_world_x.append(group_x + local_x_offset)
+                    tracker_world_y.append(group_y + local_x_offset * driveline_tan)
                     tracker_group.append(grp_idx)
                     local_idx += 1
             
@@ -738,9 +755,18 @@ class QuickEstimate(ttk.Frame):
             else:
                 device_x = 0
             
-            device_info.append((device_x, device_position))
+            # Compute device Y from average of its trackers' Y positions + device_position offset
+            inv_tracker_ys = []
+            for entry in harness_map:
+                tidx = entry['tracker_idx']
+                if tidx < len(tracker_world_y) and tracker_group[tidx] == primary_grp:
+                    inv_tracker_ys.append(tracker_world_y[tidx])
+            device_y = (min(inv_tracker_ys) + max(inv_tracker_ys)) / 2.0 if inv_tracker_ys else 0.0
+            
+            device_info.append((device_x, device_y, device_position))
         
-        def get_ns_offset(device_position):
+        def get_ns_base_offset(device_position):
+            """Fixed N-S offset from device_position setting (north/south/middle)."""
             if device_position == 'middle':
                 return 0.0
             return 6.5  # 5ft offset + half device height
@@ -754,8 +780,8 @@ class QuickEstimate(ttk.Frame):
             if inv_idx >= len(device_info) or device_info[inv_idx] is None:
                 continue
             
-            dev_x, dev_position = device_info[inv_idx]
-            ns_offset = get_ns_offset(dev_position)
+            dev_x, dev_y, dev_position = device_info[inv_idx]
+            ns_base = get_ns_base_offset(dev_position)
             
             for entry in inv['harness_map']:
                 tidx = entry['tracker_idx']
@@ -770,18 +796,14 @@ class QuickEstimate(ttk.Frame):
                     continue
                 
                 ew_distance = abs(tracker_world_x[tidx] - dev_x)
-                total_distance = (ew_distance**2 + ns_offset**2) ** 0.5
+                # N-S distance = angle-based Y difference + fixed device_position offset
+                ns_from_angle = abs(tracker_world_y[tidx] - dev_y)
+                ns_total = ns_from_angle + ns_base
+                total_distance = (ew_distance**2 + ns_total**2) ** 0.5
                 
                 spt = entry.get('strings_per_tracker', 0)
+                
                 whip_distances.append((total_distance, spt, tidx, inv_idx))
-                if tidx >= len(tracker_world_x):
-                    continue
-                
-                ew_distance = abs(tracker_world_x[tidx] - dev_x)
-                total_distance = (ew_distance**2 + ns_offset**2) ** 0.5
-                
-                spt = entry.get('strings_per_tracker', 0)
-                whip_distances.append((total_distance, spt))
         
         return whip_distances
     
@@ -1316,10 +1338,7 @@ class QuickEstimate(ttk.Frame):
                             string_counts.add(spt)
         
         result = sorted(string_counts)
-        print(f"[Wire Sizing Debug] _collect_active_string_counts: groups={len(self.groups)}, lv_method={lv_method}, string_counts={result}")
-        for group in self.groups:
-            for seg in group.get('segments', []):
-                print(f"  seg: harness_config='{seg.get('harness_config', '')}', spt={seg.get('strings_per_tracker', '?')}")
+
         return result
 
     def get_wire_size_for(self, cable_type, num_strings=None):
@@ -1393,7 +1412,6 @@ class QuickEstimate(ttk.Frame):
                 best = s
         
         result = best or '10 AWG'
-        print(f"  [_get_effective_wire_size] {cable_type}: sizes_found={sizes}, returning={result}")
         return result
 
     def lookup_part_and_price(self, item_type, **kwargs):
@@ -1475,7 +1493,6 @@ class QuickEstimate(ttk.Frame):
                     item_wire_gauge = self.get_wire_size_for(item_type, item_num_strings)
                 else:
                     item_wire_gauge = self._get_effective_wire_size(item_type)
-                print(f"  [lookup] {item_type} num_strings={item_num_strings} → wire_gauge={item_wire_gauge}, length={kwargs.get('length_ft')}, polarity={polarity}")
 
                 for pn, spec in library.items():
                     if pn.startswith('_comment_'):
@@ -1607,7 +1624,7 @@ class QuickEstimate(ttk.Frame):
         lv_method = self.lv_collection_var.get() if hasattr(self, 'lv_collection_var') else 'Wire Harness'
         if lv_method == 'String HR':
             spt = seg.get('strings_per_tracker', 1)
-            return '+'.join(['1'] * spt)
+            return '+'.join(['1'] * int(spt))
         return seg.get('harness_config', str(seg.get('strings_per_tracker', 1)))
         
     def calculate_extender_lengths_per_segment(self, seg, device_position):
@@ -1650,8 +1667,10 @@ class QuickEstimate(ttk.Frame):
             string_length_ft = (mps * mod_along_m + (mps - 1) * spacing_m) * m_to_ft
             motor_gap_ft = motor_gap_m * m_to_ft
             
-            # Total tracker length
-            total_modules = mps * spt
+            # Total tracker length — use full strings + partial modules
+            full_spt = int(spt)
+            partial_mods = round((spt - full_spt) * mps) if spt != full_spt else 0
+            total_modules = full_spt * mps + partial_mods
             tracker_length_m = (total_modules * mod_along_m + 
                                (total_modules - 1) * spacing_m + 
                                (motor_gap_m if has_motor else 0))
@@ -1664,13 +1683,28 @@ class QuickEstimate(ttk.Frame):
                 motor_string_idx = tdata.get('motor_string_index', None)
                 motor_split_north = tdata.get('motor_split_north', mps // 2)
                 
+                # Partial string on north adds height before everything
+                partial_north_mods = 0
+                spt_val = tdata.get('strings_per_tracker', 1)
+                if spt_val != int(spt_val) and tdata.get('partial_string_side', 'north') == 'north':
+                    partial_north_mods = round((spt_val - int(spt_val)) * mps)
+                partial_north_m = partial_north_mods * (mod_along_m + spacing_m) if partial_north_mods > 0 else 0
+                
+                # Partial string on north shifts motor further south
+                partial_north_mods_ext = 0
+                if spt != int(spt):
+                    tdata_ext = self.enabled_templates.get(template_ref, {})
+                    if tdata_ext.get('partial_string_side', 'north') == 'north':
+                        partial_north_mods_ext = round((spt - int(spt)) * mps)
+                partial_north_m_ext = partial_north_mods_ext * (mod_along_m + spacing_m)
+                
                 if motor_placement == 'between_strings':
                     if motor_pos_after is not None:
                         strings_before = motor_pos_after
                     else:
                         strings_before = 1  # default: after first string
                     modules_before = strings_before * mps
-                    motor_y_m = (modules_before * mod_along_m + 
+                    motor_y_m = partial_north_m + (modules_before * mod_along_m + 
                                 (modules_before - 1) * spacing_m + spacing_m)
                     motor_y_ft = motor_y_m * m_to_ft
                 elif motor_placement == 'middle_of_string':
@@ -1679,7 +1713,7 @@ class QuickEstimate(ttk.Frame):
                     else:
                         strings_before = 0
                     modules_before = strings_before * mps + motor_split_north
-                    motor_y_m = (modules_before * mod_along_m + 
+                    motor_y_m = partial_north_m + (modules_before * mod_along_m + 
                                 max(modules_before - 1, 0) * spacing_m + spacing_m)
                     motor_y_ft = motor_y_m * m_to_ft
                 else:
@@ -2242,7 +2276,7 @@ class QuickEstimate(ttk.Frame):
                 try:
                     if lv_method == 'String HR':
                         spt = segment.get('strings_per_tracker', 1)
-                        override_display = '+'.join(['1'] * spt)
+                        override_display = '+'.join(['1'] * int(spt))
                         original_config = segment['harness_config']
                         harness_var.set(override_display)
                         segment['harness_config'] = original_config  # restore saved config
@@ -2479,8 +2513,8 @@ class QuickEstimate(ttk.Frame):
             for seg in group['segments']:
                 if seg['strings_per_tracker'] == strings_per_tracker and seg['quantity'] > 0:
                     return self.parse_harness_config(self._get_effective_harness_config(seg))
-        # Fallback: single harness equal to string count
-        return [strings_per_tracker]
+        # Fallback: single harness equal to full string count
+        return [int(strings_per_tracker)]
 
     def _adjust_harnesses_for_splits(self, totals):
         """Adjust harness counts based on inverter allocation split trackers.
@@ -3105,6 +3139,24 @@ class QuickEstimate(ttk.Frame):
             self._schedule_autosave()
         device_pos_combo.bind('<<ComboboxSelected>>', on_device_position_change)
         
+        # Driveline Angle
+        ttk.Label(form_frame, text="Driveline Angle (°):").grid(row=2, column=0, sticky='w', pady=5)
+        angle_var = tk.StringVar(value=str(group.get('driveline_angle', 0.0)))
+        angle_spinbox = ttk.Spinbox(form_frame, from_=0, to=45, increment=0.5,
+                                     textvariable=angle_var, width=8)
+        angle_spinbox.grid(row=2, column=1, sticky='w', pady=5, padx=(10, 0))
+        
+        def on_angle_change(*args):
+            try:
+                val = float(angle_var.get())
+                val = max(0.0, min(45.0, val))
+                group['driveline_angle'] = val
+            except ValueError:
+                pass
+            self._mark_stale()
+            self._schedule_autosave()
+        angle_var.trace_add('write', on_angle_change)
+        
         # Horizontal container for segments (left) and template info (right)
         content_row = ttk.Frame(scrollable_frame)
         content_row.pack(fill='both', expand=True, pady=(10, 0), padx=10)
@@ -3206,7 +3258,7 @@ class QuickEstimate(ttk.Frame):
         self._harness_combos.append((harness_combo, harness_var, segment))
         if self.lv_collection_var.get() == 'String HR':
             spt = segment.get('strings_per_tracker', 1)
-            override_display = '+'.join(['1'] * spt)
+            override_display = '+'.join(['1'] * int(spt))
             original_config = segment['harness_config']
             harness_var.set(override_display)
             segment['harness_config'] = original_config  # restore — don't overwrite saved config
@@ -3448,10 +3500,30 @@ class QuickEstimate(ttk.Frame):
                     'spt': spt
                 })
 
+                # Determine if this segment has partial strings
+                full_spt = int(spt)
+                has_partial = (spt != full_spt)
+                
                 # Add to flat tracker sequence (one entry per physical tracker)
-                for _ in range(qty):
-                    tracker_sequence.append(spt)
-                    # Track which group/segment each global tracker belongs to
+                # For partial-string trackers, pair adjacent trackers:
+                #   Left of pair: full_spt + 1 (owns the shared string)
+                #   Right of pair: full_spt
+                #   Unpaired odd tracker: full_spt (half-string not counted)
+                num_pairs = qty // 2 if has_partial else 0
+                unpaired = qty % 2 if has_partial else 0
+                
+                for i in range(qty):
+                    if has_partial:
+                        if i % 2 == 0 and i + 1 < qty:
+                            effective_spt = full_spt + 1  # Left of pair — owns shared string
+                        elif i % 2 == 1:
+                            effective_spt = full_spt  # Right of pair
+                        else:
+                            effective_spt = full_spt  # Unpaired odd tracker
+                    else:
+                        effective_spt = spt
+                    
+                    tracker_sequence.append(effective_spt)
                     self._tracker_to_segment.append({
                         'group_idx': self.groups.index(group),
                         'seg': seg,
@@ -3459,12 +3531,28 @@ class QuickEstimate(ttk.Frame):
                     })
 
                 total_all_trackers += qty
-                total_all_strings += qty * spt
+                if has_partial:
+                    total_all_strings += full_spt * qty + num_pairs  # Only paired halves count
+                else:
+                    total_all_strings += qty * spt
 
-                # Count trackers by string count
-                if spt not in totals['trackers_by_string']:
-                    totals['trackers_by_string'][spt] = 0
-                totals['trackers_by_string'][spt] += qty
+                # Count trackers by effective string count
+                if has_partial:
+                    num_pairs_count = qty // 2
+                    # Left of pair
+                    left_spt = full_spt + 1
+                    if left_spt not in totals['trackers_by_string']:
+                        totals['trackers_by_string'][left_spt] = 0
+                    totals['trackers_by_string'][left_spt] += num_pairs_count
+                    # Right of pair + any unpaired
+                    right_count = num_pairs_count + (qty % 2)
+                    if full_spt not in totals['trackers_by_string']:
+                        totals['trackers_by_string'][full_spt] = 0
+                    totals['trackers_by_string'][full_spt] += right_count
+                else:
+                    if spt not in totals['trackers_by_string']:
+                        totals['trackers_by_string'][spt] = 0
+                    totals['trackers_by_string'][spt] += qty
 
                 # Count harnesses by size
                 harness_sizes = self.parse_harness_config(harness_config)
@@ -3487,8 +3575,22 @@ class QuickEstimate(ttk.Frame):
                     harness_count_by_spt[spt] = len(harness_sizes)
                     harness_sizes_by_spt[spt] = harness_sizes
 
-        # Store unique modules for Excel export
-        totals['segment_module_data'] = segment_module_data
+        # Warn about unpaired partial strings
+        unpaired_warnings = []
+        for group in self.groups:
+            for seg in group['segments']:
+                seg_spt = seg['strings_per_tracker']
+                if seg_spt != int(seg_spt) and seg['quantity'] % 2 != 0:
+                    ref = seg.get('template_ref', 'Unlinked')
+                    unpaired_warnings.append(f"{group['name']}: {seg['quantity']}x {seg_spt}S has 1 unpaired half-string")
+        
+        if unpaired_warnings:
+            from tkinter import messagebox
+            messagebox.showwarning(
+                "Unpaired Partial Strings",
+                "The following segments have an odd number of partial-string trackers, "
+                "leaving half-strings unpaired:\n\n" + "\n".join(unpaired_warnings)
+            )
 
         # ==================== Module geometry (primary module for global calcs) ====================
         module_isc = self.selected_module.isc
@@ -3547,15 +3649,28 @@ class QuickEstimate(ttk.Frame):
                         split_n_c = tdata_check.get('motor_split_north', mps_c // 2)
                         mod_along_c = (ms_c.get('width_mm', 1000) if orient_c == 'Portrait' else ms_c.get('length_mm', 2000)) / 1000
                         
+                        # Partial string on north adds offset
+                        spt_c = tdata_check.get('strings_per_tracker', 1)
+                        partial_north_m_c = 0
+                        if spt_c != int(spt_c) and tdata_check.get('partial_string_side', 'north') == 'north':
+                            partial_north_mods_c = round((spt_c - int(spt_c)) * mps_c)
+                            partial_north_m_c = partial_north_mods_c * (mod_along_c + spacing_c)
+                        
                         if placement_c == 'between_strings':
                             p = pos_after_c if pos_after_c is not None else (str_idx_c if str_idx_c is not None else 1)
                             mn = p * mps_c
-                            group_ref_motor_y_ft = (mn * mod_along_c + (mn - 1) * spacing_c + spacing_c) * 3.28084 if mn > 0 else 0.0
+                            motor_y_m = partial_north_m_c + (mn * mod_along_c + (mn - 1) * spacing_c + spacing_c) if mn > 0 else 0.0
+                            group_ref_motor_y_ft = motor_y_m * 3.28084
                         elif placement_c == 'middle_of_string':
                             s = str_idx_c if str_idx_c is not None else 1
                             mb = (s - 1) * mps_c + split_n_c
-                            group_ref_motor_y_ft = (mb * mod_along_c + (mb - 1) * spacing_c + spacing_c) * 3.28084
+                            motor_y_m = partial_north_m_c + (mb * mod_along_c + (mb - 1) * spacing_c + spacing_c)
+                            group_ref_motor_y_ft = motor_y_m * 3.28084
                         break  # Use first template's motor as reference
+
+            # Driveline angle for this group
+            driveline_angle_deg = group.get('driveline_angle', 0.0)
+            driveline_tan = math.tan(math.radians(driveline_angle_deg)) if driveline_angle_deg > 0 else 0.0
 
             tracker_within_group = 0
             for seg in group['segments']:
@@ -3567,13 +3682,26 @@ class QuickEstimate(ttk.Frame):
                 ref = seg.get('template_ref')
                 dims = self._get_tracker_dims_ft(ref)
                 t_length = dims[1] if dims else fallback_length_ft
+                
+                # Partial string pairing (same logic as tracker_sequence)
+                full_spt = int(spt)
+                has_partial = (spt != full_spt)
 
-                for _ in range(qty):
+                for i in range(qty):
+                    if has_partial:
+                        if i % 2 == 0 and i + 1 < qty:
+                            effective_spt = full_spt + 1
+                        else:
+                            effective_spt = full_spt
+                    else:
+                        effective_spt = int(spt)
+                    
+                    local_x_offset = tracker_within_group * row_spacing_ft
                     tracker_entries.append({
                         'original_idx': flat_idx,
-                        'spt': spt,
-                        'x': group_x + tracker_within_group * row_spacing_ft,
-                        'y': group_y,
+                        'spt': effective_spt,
+                        'x': group_x + local_x_offset,
+                        'y': group_y + local_x_offset * driveline_tan,
                         'length_ft': t_length,
                         'motor_y_ft': group_ref_motor_y_ft,
                     })
@@ -4676,7 +4804,9 @@ class SitePreviewWindow(tk.Toplevel):
             mod_across_m = module_width_mm / 1000
         
         # N-S length: all modules in one string laid end-to-end, times strings, plus gaps and motor
-        modules_in_row = modules_per_string * strings_per_tracker
+        full_spt = int(strings_per_tracker)
+        partial_mods = round((strings_per_tracker - full_spt) * modules_per_string) if strings_per_tracker != full_spt else 0
+        modules_in_row = full_spt * modules_per_string + partial_mods
         tracker_length_m = (modules_in_row * mod_along_m + 
                            (modules_in_row - 1) * module_spacing_m +
                            motor_gap_m)
@@ -4686,6 +4816,7 @@ class SitePreviewWindow(tk.Toplevel):
         
         # Convert to feet
         m_to_ft = 3.28084
+
         return (tracker_width_m * m_to_ft, tracker_length_m * m_to_ft)
 
     def get_motor_position_in_tracker(self, template_ref):
@@ -4721,21 +4852,26 @@ class SitePreviewWindow(tk.Toplevel):
         
         m_to_ft = 3.28084
         
+        # Partial string on north pushes motor further south
+        partial_north_m = 0
+        spt_val = tdata.get('strings_per_tracker', 1)
+        if spt_val != int(spt_val) and tdata.get('partial_string_side', 'north') == 'north':
+            partial_north_mods = round((spt_val - int(spt_val)) * modules_per_string)
+            partial_north_m = partial_north_mods * (mod_along_m + module_spacing_m)
+        
         if motor_placement == 'between_strings':
-            # motor_position_after_string: 0 = motor at north end, 1 = after 1st string, etc.
             pos_after = motor_position_after_string if motor_position_after_string is not None else (motor_string_index_raw if motor_string_index_raw is not None else 1)
             modules_north = pos_after * modules_per_string
             if modules_north > 0:
-                motor_y_m = (modules_north * mod_along_m + 
+                motor_y_m = partial_north_m + (modules_north * mod_along_m + 
                             (modules_north - 1) * module_spacing_m +
                             module_spacing_m)
             else:
-                motor_y_m = 0
+                motor_y_m = partial_north_m
         elif motor_placement == 'middle_of_string':
-            # motor_string_index: which string the motor splits (1-based)
             string_idx = motor_string_index_raw if motor_string_index_raw is not None else 1
             modules_before_split = (string_idx - 1) * modules_per_string + motor_split_north
-            motor_y_m = (modules_before_split * mod_along_m + 
+            motor_y_m = partial_north_m + (modules_before_split * mod_along_m + 
                         (modules_before_split - 1) * module_spacing_m +
                         module_spacing_m)
         else:
@@ -4952,10 +5088,23 @@ class SitePreviewWindow(tk.Toplevel):
                         tracker['motor_y_ft'] = motor_y
                         tracker['motor_gap_ft'] = motor_gap
                         tracker['has_motor'] = has_motor
+                        # Partial string info from template
+                        if ref and ref in self.enabled_templates:
+                            tdata_ps = self.enabled_templates[ref]
+                            raw_spt = tdata_ps.get('strings_per_tracker', 1)
+                            if raw_spt != int(raw_spt):
+                                mps_ps = tdata_ps.get('modules_per_string', 28)
+                                tracker['partial_module_count'] = round((raw_spt - int(raw_spt)) * mps_ps)
+                                tracker['partial_string_side'] = tdata_ps.get('partial_string_side', 'north')
+                                tracker['full_string_count'] = int(raw_spt)
+                            else:
+                                tracker['partial_module_count'] = 0
+                                tracker['partial_string_side'] = 'north'
+                                tracker['full_string_count'] = int(raw_spt)
                         
                         if group_motor_y is None and has_motor:
                             group_motor_y = motor_y
-                        
+
                         group_trackers.append(tracker)
                         
                         max_tracker_width_ft = max(max_tracker_width_ft, tracker['width_ft'])
@@ -4997,13 +5146,26 @@ class SitePreviewWindow(tk.Toplevel):
             visual_min_y_offset = 0.0
             visual_max_y_offset = 0.0
             
+            # Driveline angle: each tracker offset in Y by t_idx * pitch * tan(angle)
+            driveline_angle_deg = group_data.get('driveline_angle', 0.0)
+            driveline_angle_rad = math.radians(driveline_angle_deg)
+            driveline_tan = math.tan(driveline_angle_rad) if driveline_angle_deg > 0 else 0.0
+            
+            visual_min_y_base = 0.0
+            visual_max_y_base = 0.0
+            
             if group_trackers and ref_motor is not None:
-                for t in group_trackers:
+                for t_i, t in enumerate(group_trackers):
                     t_motor = t.get('motor_y_ft', 0)
                     t_length_val = t.get('length_ft', group_length)
-                    y_offset = ref_motor - t_motor  # How far this tracker shifts from gy
-                    visual_min_y_offset = min(visual_min_y_offset, y_offset)
-                    visual_max_y_offset = max(visual_max_y_offset, y_offset + t_length_val)
+                    y_offset = ref_motor - t_motor  # Motor alignment shift (no angle)
+                    angle_y = t_i * self.row_spacing_ft * driveline_tan
+                    # Base bounds (no angle) — for parallelogram overlap checking
+                    visual_min_y_base = min(visual_min_y_base, y_offset)
+                    visual_max_y_base = max(visual_max_y_base, y_offset + t_length_val)
+                    # Full bounds (with angle) — for bounding box and selection highlight
+                    visual_min_y_offset = min(visual_min_y_offset, y_offset + angle_y)
+                    visual_max_y_offset = max(visual_max_y_offset, y_offset + angle_y + t_length_val)
             
             self.group_layout.append({
                 'name': group_data['name'],
@@ -5015,6 +5177,10 @@ class SitePreviewWindow(tk.Toplevel):
                 'group_idx': grp_idx,
                 'visual_min_y': visual_min_y_offset,
                 'visual_max_y': visual_max_y_offset,
+                'visual_min_y_base': visual_min_y_base,
+                'visual_max_y_base': visual_max_y_base,
+                'driveline_angle': driveline_angle_deg,
+                'driveline_tan': driveline_tan,
             })
 
         # Flat list for backward compat
@@ -5139,18 +5305,22 @@ class SitePreviewWindow(tk.Toplevel):
                 center_local = (min(local_indices) + max(local_indices)) / 2.0
                 device_x = gx + center_local * pitch + (max_width - device_width_ft) / 2
             else:
+                center_local = 0
                 device_x = gx
+            
+            # Driveline angle Y offset based on device's X position in group
+            angle_y_offset = center_local * pitch * group_data.get('driveline_tan', 0.0)
             
             # Compute Y based on position setting
             if device_position == 'north':
                 vis_min = group_data.get('visual_min_y', 0)
-                device_y = gy + vis_min - offset_ft - device_height_ft
+                device_y = gy + vis_min - offset_ft - device_height_ft + angle_y_offset
             elif device_position == 'south':
                 vis_max = group_data.get('visual_max_y', group_data['length_ft'])
-                device_y = gy + vis_max + offset_ft
+                device_y = gy + vis_max + offset_ft + angle_y_offset
             else:  # 'middle'
                 motor_y = group_data.get('motor_y_ft', group_data['length_ft'] / 2)
-                device_y = gy + motor_y - device_height_ft / 2
+                device_y = gy + motor_y - device_height_ft / 2 + angle_y_offset
             
             # Build assigned_strings from this inverter's harness_map
             assigned_strings = {}
@@ -5220,16 +5390,18 @@ class SitePreviewWindow(tk.Toplevel):
             gx = group_data['x']
             gy = group_data['y']
             
-            # Compute Y
+            # Base Y (before driveline angle offset)
             if device_position == 'north':
                 vis_min = group_data.get('visual_min_y', 0)
-                device_y = gy + vis_min - offset_ft - device_height_ft
+                base_device_y = gy + vis_min - offset_ft - device_height_ft
             elif device_position == 'south':
                 vis_max = group_data.get('visual_max_y', group_data['length_ft'])
-                device_y = gy + vis_max + offset_ft
+                base_device_y = gy + vis_max + offset_ft
             else:
                 motor_y = group_data.get('motor_y_ft', group_data['length_ft'] / 2)
-                device_y = gy + motor_y - device_height_ft / 2
+                base_device_y = gy + motor_y - device_height_ft / 2
+            
+            driveline_tan = group_data.get('driveline_tan', 0.0)
             
             # Even spacing within group
             group_global_start = sum(len(self.group_layout[g]['trackers']) for g in range(grp_idx))
@@ -5244,6 +5416,7 @@ class SitePreviewWindow(tk.Toplevel):
                 
                 center_tracker = tracker_start + sub_size / 2.0 - 0.5
                 device_x = gx + center_tracker * pitch + (max_width - device_width_ft) / 2
+                device_y = base_device_y + center_tracker * pitch * driveline_tan
                 
                 # All strings in tracker range belong to this CB
                 assigned_strings = {}
@@ -5251,7 +5424,7 @@ class SitePreviewWindow(tk.Toplevel):
                     global_idx = group_global_start + local_idx
                     if local_idx < len(group_trackers):
                         spt = group_trackers[local_idx].get('strings_per_tracker', 0)
-                        assigned_strings[global_idx] = set(range(spt))
+                        assigned_strings[global_idx] = set(range(int(spt)))
                 
                 self.device_positions.append({
                     'x': device_x,
@@ -5686,18 +5859,52 @@ class SitePreviewWindow(tk.Toplevel):
                 # Center tracker within pitch slot
                 tx_offset = (max_width - t_width) / 2 if max_width > t_width else 0
                 
+                # Driveline angle: offset each tracker in Y
+                angle_y_offset = t_idx * pitch * group_data.get('driveline_tan', 0.0)
+                
                 # Align tracker vertically within group
                 if getattr(self, 'align_on_motor', False) and tracker.get('has_motor', False) and group_data.get('motor_y_ft', None) is not None:
                     # Motor alignment: offset so this tracker's motor Y matches group's reference motor Y
                     reference_motor_y = group_data['motor_y_ft']
-                    ty = gy + (reference_motor_y - tracker['motor_y_ft'])
+                    ty = gy + (reference_motor_y - tracker['motor_y_ft']) + angle_y_offset
                 else:
                     # Center alignment fallback
                     max_group_length = group_data['length_ft']
                     ty_offset = (max_group_length - t_length) / 2
-                    ty = gy + ty_offset                
-                # Per-string height
-                string_height = t_length / spt if spt > 0 else t_length
+                    ty = gy + ty_offset + angle_y_offset              
+                # Per-string height — adjust for partial strings
+                partial_mods = tracker.get('partial_module_count', 0)
+                partial_side = tracker.get('partial_string_side', 'north')
+                full_str_count = tracker.get('full_string_count', spt)
+                mps_for_height = 26  # fallback
+                
+                ref = tracker.get('template_ref')
+                if partial_mods > 0 and ref and ref in self.enabled_templates:
+                    mps_for_height = self.enabled_templates[ref].get('modules_per_string', 26)
+                
+                if partial_mods > 0 and full_str_count > 0:
+                    total_mods = full_str_count * mps_for_height + partial_mods
+                    module_extent = t_length
+                    full_height = (module_extent * mps_for_height / total_mods) if total_mods > 0 else module_extent
+                    partial_height = (module_extent * partial_mods / total_mods) if total_mods > 0 else 0
+                    
+                    # Build height list per effective string slot
+                    # Always include the partial band (even for right-of-pair trackers)
+                    string_heights = []
+                    has_owned_partial = (spt > full_str_count)
+                    draw_spt = spt + (1 if not has_owned_partial else 0)  # Add unowned partial band
+                    
+                    if partial_side == 'north':
+                        string_heights.append(partial_height)  # Always draw partial band
+                        for _ in range(full_str_count):
+                            string_heights.append(full_height)
+                    else:  # south
+                        for _ in range(full_str_count):
+                            string_heights.append(full_height)
+                        string_heights.append(partial_height)  # Always draw partial band
+                else:
+                    string_height = t_length / spt if spt > 0 else t_length
+                    string_heights = [string_height] * int(spt)
                 
                 # Build string colors
                 string_colors = []
@@ -5731,9 +5938,31 @@ class SitePreviewWindow(tk.Toplevel):
                                     assigned = dev.get('assigned_strings', {})
                                     selected_strings.update(assigned.get(global_tracker_idx, set()))
                 
-                # Draw each string
-                for s_idx in range(spt):
-                    color = string_colors[s_idx] if s_idx < len(string_colors) else '#D0D0D0'
+                # Draw each string (including unowned partial bands)
+                draw_count = len(string_heights)
+                for s_idx in range(draw_count):
+                    # Determine if this is an unowned partial band
+                    is_unowned_partial = (partial_mods > 0 and spt <= full_str_count and
+                                         ((partial_side == 'north' and s_idx == 0) or
+                                          (partial_side == 'south' and s_idx == draw_count - 1)))
+                    
+                    if is_unowned_partial:
+                        color = '#D4C878'  # Muted gold for unowned partial
+                    else:
+                        # Map drawing index back to allocation string index
+                        # Skip the partial band position to get the right color
+                        if partial_mods > 0 and partial_side == 'north':
+                            color_idx = s_idx - 1  # Partial is at 0, so shift down
+                            if spt > full_str_count and s_idx == 0:
+                                color_idx = 0  # Owned partial gets first color
+                        elif partial_mods > 0 and partial_side == 'south':
+                            if spt > full_str_count and s_idx == draw_count - 1:
+                                color_idx = spt - 1  # Owned partial gets last color
+                            else:
+                                color_idx = s_idx
+                        else:
+                            color_idx = s_idx
+                        color = string_colors[color_idx] if 0 <= color_idx < len(string_colors) else '#D0D0D0'
                     
                     if highlighting:
                         if s_idx in selected_strings:
@@ -5753,10 +5982,11 @@ class SitePreviewWindow(tk.Toplevel):
                         outline_color = '#555555'
                         outline_width = 1
                     
-                    sy = ty + s_idx * string_height
+                    sy = ty + sum(string_heights[:s_idx])
+                    sh = string_heights[s_idx] if s_idx < len(string_heights) else string_heights[-1]
                     
                     sx1, sy1 = self.world_to_canvas(tx + tx_offset, sy)
-                    sx2, sy2 = self.world_to_canvas(tx + tx_offset + t_width, sy + string_height)
+                    sx2, sy2 = self.world_to_canvas(tx + tx_offset + t_width, sy + sh)
                     
                     self.canvas.create_rectangle(
                         sx1, sy1, sx2, sy2,
@@ -5848,19 +6078,26 @@ class SitePreviewWindow(tk.Toplevel):
         )
     
     def _draw_motor_alignment_lines(self):
-        """Draw a driveline across each group at its motor Y position."""
+        """Draw a driveline across each group at its motor Y position,
+        following the driveline angle if set."""
         for group_data in self.group_layout:
             motor_y = group_data.get('motor_y_ft', 0)
             if motor_y <= 0:
                 continue
             
-            world_y = group_data['y'] + motor_y
             overhang = self.max_tracker_width_ft * 0.5
+            driveline_tan = group_data.get('driveline_tan', 0.0)
             
-            x1, y1 = self.world_to_canvas(group_data['x'] - overhang, world_y)
-            x2, y2 = self.world_to_canvas(
-                group_data['x'] + group_data['width_ft'] + overhang, world_y
-            )
+            left_x = group_data['x'] - overhang
+            right_x = group_data['x'] + group_data['width_ft'] + overhang
+            
+            left_y = group_data['y'] + motor_y
+            # Angle offset based on horizontal span from group origin
+            right_y = left_y + (right_x - group_data['x']) * driveline_tan
+            left_y = left_y + (-overhang) * driveline_tan
+            
+            x1, y1 = self.world_to_canvas(left_x, left_y)
+            x2, y2 = self.world_to_canvas(right_x, right_y)
             
             self.canvas.create_line(
                 x1, y1, x2, y2,
@@ -5989,19 +6226,39 @@ class SitePreviewWindow(tk.Toplevel):
                 gi = self.group_layout[i]
                 gj = self.group_layout[j]
                 
-                # Use visual bounds for accurate overlap detection
                 i_x1 = gi['x']
                 i_x2 = gi['x'] + gi['width_ft']
-                i_y1 = gi['y'] + gi.get('visual_min_y', 0)
-                i_y2 = gi['y'] + gi.get('visual_max_y', gi['length_ft'])
-                
                 j_x1 = gj['x']
                 j_x2 = gj['x'] + gj['width_ft']
-                j_y1 = gj['y'] + gj.get('visual_min_y', 0)
-                j_y2 = gj['y'] + gj.get('visual_max_y', gj['length_ft'])
                 
-                # Check for rectangle overlap
-                if i_x1 < j_x2 and i_x2 > j_x1 and i_y1 < j_y2 and i_y2 > j_y1:
+                # Check X overlap first
+                if i_x1 >= j_x2 or i_x2 <= j_x1:
+                    continue
+                
+                # Driveline angle: Y bounds shift linearly with X
+                i_tan = gi.get('driveline_tan', 0.0)
+                j_tan = gj.get('driveline_tan', 0.0)
+                i_vis_min = gi.get('visual_min_y_base', gi.get('visual_min_y', 0))
+                i_vis_max = gi.get('visual_max_y_base', gi.get('visual_max_y', gi['length_ft']))
+                j_vis_min = gj.get('visual_min_y_base', gj.get('visual_min_y', 0))
+                j_vis_max = gj.get('visual_max_y_base', gj.get('visual_max_y', gj['length_ft']))
+                
+                # Check Y overlap at both ends of the X overlap region
+                x_overlap_left = max(i_x1, j_x1)
+                x_overlap_right = min(i_x2, j_x2)
+                
+                has_overlap = False
+                for x_check in [x_overlap_left, x_overlap_right]:
+                    i_y1 = gi['y'] + i_vis_min + (x_check - i_x1) * i_tan
+                    i_y2 = gi['y'] + i_vis_max + (x_check - i_x1) * i_tan
+                    j_y1 = gj['y'] + j_vis_min + (x_check - j_x1) * j_tan
+                    j_y2 = gj['y'] + j_vis_max + (x_check - j_x1) * j_tan
+                    
+                    if i_y1 < j_y2 and i_y2 > j_y1:
+                        has_overlap = True
+                        break
+                
+                if has_overlap:
                     overlaps.append((i, j))
         
         return overlaps

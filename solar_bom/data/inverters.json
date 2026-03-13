@@ -168,5 +168,67 @@
     "weight_kg": 75.0,
     "ip_rating": "IP65",
     "max_short_circuit_current": 500.0
+  },
+  "Solectria XGI 1500-150/166": {
+    "manufacturer": "Solectria",
+    "model": "XGI 1500-150/166",
+    "inverter_type": "String",
+    "rated_power_kw": 150.0,
+    "max_dc_power_kw": 332.0,
+    "max_efficiency": 98.0,
+    "mppt_channels": [
+      {
+        "max_input_current": 178.0,
+        "min_voltage": 860.0,
+        "max_voltage": 1450.0,
+        "max_power": 332000.0,
+        "num_string_inputs": 1
+      }
+    ],
+    "mppt_configuration": "Independent",
+    "max_dc_voltage": 1500.0,
+    "startup_voltage": 860.0,
+    "nominal_ac_voltage": 600.0,
+    "max_ac_current": 160.0,
+    "power_factor": 0.99,
+    "dimensions_mm": [
+      1000,
+      600,
+      300
+    ],
+    "weight_kg": 75.0,
+    "ip_rating": "IP65",
+    "max_short_circuit_current": 500.0
+  },
+  "Solectria XGI 1500-125/150": {
+    "manufacturer": "Solectria",
+    "model": "XGI 1500-125/150",
+    "inverter_type": "String",
+    "rated_power_kw": 125.0,
+    "max_dc_power_kw": 332.0,
+    "max_efficiency": 98.0,
+    "mppt_channels": [
+      {
+        "max_input_current": 148.3,
+        "min_voltage": 860.0,
+        "max_voltage": 1450.0,
+        "max_power": 332000.0,
+        "num_string_inputs": 1
+      }
+    ],
+    "mppt_configuration": "Independent",
+    "max_dc_voltage": 1500.0,
+    "startup_voltage": 860.0,
+    "nominal_ac_voltage": 600.0,
+    "max_ac_current": 144.0,
+    "power_factor": 0.99,
+    "dimensions_mm": [
+      1000,
+      600,
+      300
+    ],
+    "weight_kg": 75.0,
+    "ip_rating": "IP65",
+    "max_short_circuit_current": 500.0
   }
 }

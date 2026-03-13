@@ -128,7 +128,7 @@ class TrackerPosition:
             # Motor is in the middle of a specific string
             current_y = 0
             
-            for i in range(self.template.strings_per_tracker):
+            for i in range(self.template.full_string_count):
                 if i + 1 == self.template.motor_string_index and getattr(self.template, 'has_motor', True):
                     # This string has the motor (1-based index)
                     # Calculate split string dimensions
@@ -183,7 +183,7 @@ class TrackerPosition:
             motor_position = self.template.get_motor_position()
             has_motor = getattr(self.template, 'has_motor', True)
             
-            for i in range(self.template.strings_per_tracker):
+            for i in range(self.template.full_string_count):
                 # Add motor gap offset for strings after the motor position
                 if has_motor and i >= motor_position:
                     y_start = (i * single_string_height) + self.template.motor_gap_m
@@ -232,7 +232,7 @@ class TrackerTemplate:
     module_spec: ModuleSpec
     module_orientation: ModuleOrientation
     modules_per_string: int
-    strings_per_tracker: int
+    strings_per_tracker: float  # Supports 0.5 increments for partial strings (e.g., 2.5)
     
     # Optional parameters with defaults
     description: Optional[str] = None
@@ -247,10 +247,31 @@ class TrackerTemplate:
     motor_split_north: int = 0  # Modules north of motor when middle_of_string  
     motor_split_south: int = 0  # Modules south of motor when middle_of_string
     
+    ## Partial string configuration
+    partial_string_side: str = 'north'  # 'north' or 'south' — which end gets the partial
+    
     # Multi-module-high configuration (1p, 2p, 4p, 1l, 2l, 4l)
     # Each column of stacked modules is a separate string
     modules_high: int = 1  # Number of modules stacked E/W (1, 2, or 4)
     
+    @property
+    def full_string_count(self) -> int:
+        """Number of complete strings (integer part of strings_per_tracker)."""
+        return int(self.strings_per_tracker)
+    
+    @property
+    def has_partial_string(self) -> bool:
+        """Whether this tracker has a partial string."""
+        return self.strings_per_tracker != int(self.strings_per_tracker)
+    
+    @property
+    def partial_module_count(self) -> int:
+        """Number of modules in the partial string (0 if no partial)."""
+        if not self.has_partial_string:
+            return 0
+        frac = self.strings_per_tracker - int(self.strings_per_tracker)
+        return round(frac * self.modules_per_string)
+
     def validate(self) -> bool:
         """
         Validate tracker template configuration
@@ -261,6 +282,14 @@ class TrackerTemplate:
             
         if self.strings_per_tracker <= 0:
             raise ValueError("Strings per tracker must be positive")
+        
+        # Validate partial string configuration
+        if self.has_partial_string:
+            frac = self.strings_per_tracker - int(self.strings_per_tracker)
+            if abs(frac - 0.5) > 0.01:
+                raise ValueError("Partial strings must be in 0.5 increments")
+            if self.partial_string_side not in ('north', 'south'):
+                raise ValueError("Partial string side must be 'north' or 'south'")
             
         if self.module_spacing_m < 0:
             raise ValueError("Module spacing cannot be negative")
@@ -268,16 +297,19 @@ class TrackerTemplate:
         if self.motor_gap_m < 0:
             raise ValueError("Motor gap cannot be negative")
         
-        if self.motor_position_after_string < 0 or self.motor_position_after_string > self.strings_per_tracker:
-            raise ValueError("Motor position must be between 0 and strings_per_tracker")
+        if self.motor_position_after_string < 0:
+            raise ValueError("Motor position cannot be negative")
+        if self.motor_position_after_string > self.full_string_count:
+            # Auto-clamp for backward compat (e.g., 1-string templates with default motor_pos=2)
+            self.motor_position_after_string = min(self.motor_position_after_string, self.full_string_count)
             
         # Validate new motor placement fields
         if self.motor_placement_type not in ["between_strings", "middle_of_string"]:
             raise ValueError("Motor placement type must be 'between_strings' or 'middle_of_string'")
             
         if self.motor_placement_type == "middle_of_string":
-            if self.motor_string_index < 1 or self.motor_string_index > self.strings_per_tracker:
-                raise ValueError("Motor string index must be between 1 and strings_per_tracker")
+            if self.motor_string_index < 1 or self.motor_string_index > self.full_string_count:
+                raise ValueError("Motor string index must be between 1 and full string count")
             if self.motor_split_north < 0 or self.motor_split_south < 0:
                 raise ValueError("Motor split values cannot be negative")
             if self.motor_split_north + self.motor_split_south != self.modules_per_string:
@@ -306,6 +338,11 @@ class TrackerTemplate:
         else:
             module_height = self.module_spec.length_mm / 1000
         
+        # Partial string on north adds height before everything else
+        partial_north_height = 0
+        if self.has_partial_string and self.partial_string_side == 'north':
+            partial_north_height = self.partial_module_count * (module_height + self.module_spacing_m)
+        
         if self.motor_placement_type == "middle_of_string":
             # Complete strings above the motor string
             complete_strings_above = self.motor_string_index - 1  # 1-based index
@@ -316,23 +353,26 @@ class TrackerTemplate:
             # North modules of the motor string
             north_modules_height = self.motor_split_north * (module_height + self.module_spacing_m)
             
-            # Motor center is at top + complete strings + north modules + half the gap
-            return complete_strings_height + north_modules_height + (self.motor_gap_m / 2)
+            # Motor center is at top + partial + complete strings + north modules + half the gap
+            return partial_north_height + complete_strings_height + north_modules_height + (self.motor_gap_m / 2)
         else:
             # between_strings: motor is after motor_position_after_string strings
             motor_pos = self.get_motor_position()
             modules_above = motor_pos * self.modules_per_string
             modules_above_height = modules_above * (module_height + self.module_spacing_m)
             
-            return modules_above_height + (self.motor_gap_m / 2)
+            return partial_north_height + modules_above_height + (self.motor_gap_m / 2)
     
     def get_total_modules(self) -> int:
         """Calculate total number of modules on the tracker"""
-        return self.modules_per_string * self.strings_per_tracker * self.modules_high
+        full = self.modules_per_string * self.full_string_count
+        partial = self.partial_module_count
+        return (full + partial) * self.modules_high
     
     def get_total_strings(self) -> int:
-        """Calculate total number of strings on the tracker (each E/W column is a separate string)"""
-        return self.strings_per_tracker * self.modules_high
+        """Calculate total number of complete strings (each E/W column is a separate string).
+        Partial strings are NOT counted here — they pair with adjacent trackers."""
+        return self.full_string_count * self.modules_high
     
     def get_physical_dimensions(self) -> Tuple[float, float]:
         """
@@ -370,21 +410,27 @@ class TrackerTemplate:
             # Tracker width is module width × modules_high (stacked E/W)
             total_width = module_width * self.modules_high
         
+        # Partial string length (extra modules at one end)
+        if self.has_partial_string:
+            partial_count = self.partial_module_count
+            if self.module_orientation == ModuleOrientation.PORTRAIT:
+                partial_length = (module_width * partial_count) + (self.module_spacing_m * partial_count)
+            else:
+                partial_length = (module_length * partial_count) + (self.module_spacing_m * partial_count)
+        else:
+            partial_length = 0
+        
         # Calculate total length based on motor placement type
         if self.motor_placement_type == "middle_of_string":
-            # Motor is in the middle of a specific string
             if not self.has_motor:
-                total_length = single_string_length * self.strings_per_tracker
+                total_length = single_string_length * self.full_string_count + partial_length
             else:
-                total_length = single_string_length * self.strings_per_tracker + self.motor_gap_m
+                total_length = single_string_length * self.full_string_count + self.motor_gap_m + partial_length
         else:
-            # Original between_strings logic
             if not self.has_motor:
-                # No motor - just strings
-                total_length = single_string_length * self.strings_per_tracker
+                total_length = single_string_length * self.full_string_count + partial_length
             else:
-                # Motor exists - always include gap regardless of position
-                total_length = (single_string_length * self.strings_per_tracker) + self.motor_gap_m
+                total_length = (single_string_length * self.full_string_count) + self.motor_gap_m + partial_length
                         
         return (total_length, total_width)
     
@@ -401,7 +447,7 @@ class TrackerTemplate:
             
         string_positions = []
         
-        for string_idx in range(self.strings_per_tracker):
+        for string_idx in range(self.full_string_count):
             string = []
             y_pos = string_idx * (module_width + self.module_spacing_m)
             
