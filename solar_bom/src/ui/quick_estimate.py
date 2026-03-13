@@ -44,6 +44,10 @@ class QuickEstimate(ttk.Frame):
         self._calc_btn = None  # Reference to calculate button
         self._autosave_after_id = None
         
+        # Allocation lock state
+        self.allocation_locked = False
+        self.locked_allocation_result = None
+        
         self.setup_ui()
         
         # Load most recent estimate or show empty state
@@ -467,6 +471,7 @@ class QuickEstimate(ttk.Frame):
         self.group_listbox.see(idx)
         self.on_group_select(None)
         
+        self._auto_unlock_allocation()
         self._mark_stale()
         self._schedule_autosave()
         return idx
@@ -491,6 +496,7 @@ class QuickEstimate(ttk.Frame):
         self.group_listbox.see(insert_idx)
         self.on_group_select(None)
         
+        self._auto_unlock_allocation()
         self._mark_stale()
         self._schedule_autosave()
     
@@ -1958,6 +1964,10 @@ class QuickEstimate(ttk.Frame):
         # Load device names (convert str keys back to int)
         saved_names = estimate_data.get('device_names', {})
         self.device_names = {int(k): v for k, v in saved_names.items()}
+        
+        # Load allocation lock state
+        self.allocation_locked = estimate_data.get('allocation_locked', False)
+        self.locked_allocation_result = estimate_data.get('locked_allocation_result', None)
 
         # Derive module from templates
         self._derive_module_from_templates()
@@ -2040,6 +2050,13 @@ class QuickEstimate(ttk.Frame):
         
         # Save device names (convert int keys to str for JSON)
         estimate_data['device_names'] = {str(k): v for k, v in self.device_names.items()}
+        
+        # Save allocation lock state
+        estimate_data['allocation_locked'] = self.allocation_locked
+        if self.allocation_locked and self.locked_allocation_result is not None:
+            estimate_data['locked_allocation_result'] = copy.deepcopy(self.locked_allocation_result)
+        else:
+            estimate_data['locked_allocation_result'] = None
         
         # Notify callback
         if self.on_save:
@@ -2211,12 +2228,34 @@ class QuickEstimate(ttk.Frame):
             if self.on_save:
                 self.on_save()
 
+    def _auto_unlock_allocation(self):
+        """Unlock allocation if locked, with a user notification.
+        
+        Called when structural changes (inverter, topology, segments, groups)
+        invalidate a locked allocation.
+        """
+        if not self.allocation_locked:
+            return
+        
+        self.allocation_locked = False
+        self.locked_allocation_result = None
+        
+        from tkinter import messagebox
+        messagebox.showinfo(
+            "Allocation Unlocked",
+            "The allocation lock has been released because the estimate structure changed.\n\n"
+            "Re-run Calculate Estimate and lock again from the Site Preview if needed.",
+            parent=self
+        )
+
     def _clear_estimate_ui(self):
         """Clear the groups and details when switching/deleting estimates"""
         # Clear groups and pads
         self.groups.clear()
         self.pads.clear()
         self.device_names.clear()
+        self.allocation_locked = False
+        self.locked_allocation_result = None
         if hasattr(self, 'group_listbox'):
             self._refresh_group_listbox()
         
@@ -2312,6 +2351,7 @@ class QuickEstimate(ttk.Frame):
             self._on_inverter_changed_wire_sizing()
             # Auto-save when inverter changes (but not during load)
             if not getattr(self, '_loading', False):
+                self._auto_unlock_allocation()
                 self._mark_stale()
                 self.save_estimate()
         else:
@@ -2807,7 +2847,7 @@ class QuickEstimate(ttk.Frame):
         )
         topology_combo.pack(side='left', padx=(0, 15))
         self.disable_combobox_scroll(topology_combo)
-        self.topology_var.trace_add('write', lambda *args: (self._update_distance_hints(), self._on_topology_changed_wire_sizing(), self._mark_stale(), self._schedule_autosave()))
+        self.topology_var.trace_add('write', lambda *args: (self._auto_unlock_allocation(), self._update_distance_hints(), self._on_topology_changed_wire_sizing(), self._mark_stale(), self._schedule_autosave()))
         
         ttk.Label(topology_row, text="DC:AC Ratio:").pack(side='left', padx=(0, 5))
         self.dc_ac_ratio_var = tk.StringVar(value='1.25')
@@ -2815,7 +2855,7 @@ class QuickEstimate(ttk.Frame):
             topology_row, from_=1.0, to=2.0, increment=0.05,
             textvariable=self.dc_ac_ratio_var, width=6, format='%.2f'
         ).pack(side='left', padx=(0, 15))
-        self.dc_ac_ratio_var.trace_add('write', lambda *args: (self._update_strings_per_inverter(), self._mark_stale(), self._schedule_autosave()))
+        self.dc_ac_ratio_var.trace_add('write', lambda *args: (self._auto_unlock_allocation(), self._update_strings_per_inverter(), self._mark_stale(), self._schedule_autosave()))
         
         ttk.Label(topology_row, text="LV Collection:").pack(side='left', padx=(0, 5))
         self.lv_collection_var = tk.StringVar(value='Wire Harness')
@@ -3310,6 +3350,7 @@ class QuickEstimate(ttk.Frame):
                     segment['harness_config'] = new_options[0]
             
             self._update_group_string_count(group)
+            self._auto_unlock_allocation()
             self._mark_stale()
             self._schedule_autosave()
             
@@ -3331,6 +3372,7 @@ class QuickEstimate(ttk.Frame):
             except ValueError:
                 pass
             self._update_group_string_count(group)
+            self._auto_unlock_allocation()
             self._mark_stale()
             self._schedule_autosave()
         qty_var.trace_add('write', on_qty_change)
@@ -3364,6 +3406,7 @@ class QuickEstimate(ttk.Frame):
             widget.destroy()
         self.show_group_details(group_idx)
         self._refresh_wire_sizing_for_segments()
+        self._auto_unlock_allocation()
         self._mark_stale()
         self._schedule_autosave()
     
@@ -3379,6 +3422,7 @@ class QuickEstimate(ttk.Frame):
             widget.destroy()
         self.show_group_details(group_idx)
         self._refresh_wire_sizing_for_segments()
+        self._auto_unlock_allocation()
         self._mark_stale()
         self._schedule_autosave()
 
@@ -3391,6 +3435,7 @@ class QuickEstimate(ttk.Frame):
         for widget in self.details_container.winfo_children():
             widget.destroy()
         self.show_group_details(group_idx)
+        self._auto_unlock_allocation()
         self._mark_stale()
         self._schedule_autosave()
     
@@ -3721,7 +3766,11 @@ class QuickEstimate(ttk.Frame):
         allocation_result = None
 
         if self.selected_inverter and strings_per_inv > 0 and total_all_strings > 0:
-            if tracker_entries:
+            if self.allocation_locked and self.locked_allocation_result is not None:
+                # Use the locked (frozen) allocation — skip spatial recalculation
+                allocation_result = self.locked_allocation_result
+                spatial_runs = allocation_result.get('spatial_runs', 1)
+            elif tracker_entries:
                 allocation_result = allocate_strings_spatial(
                     tracker_entries, strings_per_inv, row_spacing_ft
                 )
@@ -4770,6 +4819,9 @@ class SitePreviewWindow(tk.Toplevel):
         self.selected_group_idx = None
         self.align_on_motor = True
         
+        # Read lock state from parent (QuickEstimate)
+        self.allocation_locked = getattr(self.master, 'allocation_locked', False)
+        
         self.setup_ui()
         self.build_layout_data()
         self.after(50, self.fit_and_redraw)
@@ -4899,6 +4951,10 @@ class SitePreviewWindow(tk.Toplevel):
         ttk.Button(top_bar, text="Zoom Out", command=lambda: self.zoom(0.7)).pack(side='left', padx=2)
         ttk.Button(top_bar, text="Reset Positions", command=self._reset_positions).pack(side='left', padx=2)
         ttk.Button(top_bar, text="Refresh Allocation", command=self._refresh_allocation).pack(side='left', padx=2)
+        
+        self.lock_btn = ttk.Button(top_bar, text="Lock Allocation", command=self._toggle_allocation_lock)
+        self.lock_btn.pack(side='left', padx=2)
+        self._update_lock_button()
         
         ttk.Separator(top_bar, orient='vertical').pack(side='left', fill='y', padx=8, pady=2)
         
@@ -6215,12 +6271,49 @@ class SitePreviewWindow(tk.Toplevel):
                 actual_ratio = inv_summary.get('actual_dc_ac', 0)
                 split = inv_summary.get('total_split_trackers', 0)
                 spatial_runs = inv_summary.get('allocation_result', {}).get('spatial_runs', 1)
+                lock_str = "  |  🔒 LOCKED" if self.allocation_locked else ""
                 self.summary_label.config(
                     text=f"{num_inv} Inverters  |  {total_str} Strings  |  DC:AC: {actual_ratio:.2f}  |  "
-                         f"{split} Split Trackers  |  {spatial_runs} Run(s)  |  {self.topology}"
+                         f"{split} Split Trackers  |  {spatial_runs} Run(s)  |  {self.topology}{lock_str}"
                 )
                 
                 self.draw()
+
+    def _toggle_allocation_lock(self):
+        """Toggle the allocation lock on/off."""
+        parent = self.master
+        
+        if self.allocation_locked:
+            # Unlock
+            self.allocation_locked = False
+            parent.allocation_locked = False
+            parent.locked_allocation_result = None
+            self._update_lock_button()
+        else:
+            # Lock — snapshot the current allocation
+            inv_summary = getattr(parent, 'last_totals', {}).get('inverter_summary', {})
+            alloc = inv_summary.get('allocation_result')
+            if not alloc:
+                from tkinter import messagebox
+                messagebox.showwarning(
+                    "No Allocation",
+                    "Run Refresh Allocation first to generate an allocation to lock.",
+                    parent=self
+                )
+                return
+            
+            import copy
+            self.allocation_locked = True
+            parent.allocation_locked = True
+            parent.locked_allocation_result = copy.deepcopy(alloc)
+            self._update_lock_button()
+
+    def _update_lock_button(self):
+        """Update the lock button text and style to reflect current state."""
+        if self.allocation_locked:
+            self.lock_btn.config(text="🔒 Unlock Allocation")
+        else:
+            self.lock_btn.config(text="🔓 Lock Allocation")
 
     def _check_overlaps(self):
         """Check for overlapping groups and return list of overlapping pair indices."""
