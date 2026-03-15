@@ -223,9 +223,8 @@ class SitePreviewWindow(tk.Toplevel):
         self.assign_btn = ttk.Button(top_bar, text="Assign Devices", command=self._show_assignment_dialog)
         self.assign_btn.pack(side='left', padx=4)
         
-        if self.device_label == 'CB':
-            self.edit_cbs_btn = ttk.Button(top_bar, text="Edit CBs", command=self._show_cb_assignment_dialog)
-            self.edit_cbs_btn.pack(side='left', padx=4)
+        self.edit_devices_btn = ttk.Button(top_bar, text="Edit Devices", command=self._show_edit_devices_dialog)
+        self.edit_devices_btn.pack(side='left', padx=4)
 
         self.show_routes_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
@@ -1274,6 +1273,14 @@ class SitePreviewWindow(tk.Toplevel):
                         outline_color = '#555555'
                         outline_width = 1
                     
+                    # Yellow highlight from Edit Devices dialog
+                    _hl = getattr(self, '_highlighted_strings', set())
+                    if (not is_unowned_partial and _hl and
+                            (global_tracker_idx, s_idx) in _hl):
+                        color = '#FFFF00'
+                        outline_color = '#DAA520'
+                        outline_width = 2
+                    
                     sy = ty + sum(string_heights[:s_idx])
                     sh = string_heights[s_idx] if s_idx < len(string_heights) else string_heights[-1]
                     
@@ -1486,6 +1493,12 @@ class SitePreviewWindow(tk.Toplevel):
         
         parent = self.master
         if hasattr(parent, 'calculate_estimate'):
+            # Clear stale combiner assignments so calculate_estimate rebuilds them fresh
+            parent.last_combiner_assignments = []
+            parent.allocation_locked = False
+            parent.locked_allocation_result = None
+            self.allocation_locked = False
+            self._tracker_physical_order = None
             parent.calculate_estimate()
             
             inv_summary = getattr(parent, 'last_totals', {}).get('inverter_summary', {})
@@ -2032,347 +2045,785 @@ class SitePreviewWindow(tk.Toplevel):
         dh = dialog.winfo_height()
         dialog.geometry(f"+{px + (pw - dw) // 2}+{py + (ph - dh) // 2}")
 
-    def _show_cb_assignment_dialog(self):
-        """Show dialog to reassign harness connections between combiner boxes."""
-        if not hasattr(self, 'device_positions') or not self.device_positions:
-            messagebox.showinfo("No Devices", "No combiner boxes to edit.", parent=self)
-            return
+    def _normalize_to_device_strings(self):
+        """Convert allocation/combiner data into per-string device format with physical positions.
         
-        # Build working data from last_combiner_assignments (accurate per-harness)
+        Returns:
+            (device_data, metadata) or (None, None) if no data.
+            
+            device_data: list of dicts:
+                {'name': str, 'strings': [(tracker_idx, physical_pos), ...]}
+                where physical_pos is 0-based north-to-south position on the tracker.
+            metadata: dict with 'module_isc', 'nec_factor', 'tracker_spt', 'source'
+        """
         parent_qe = self.master
+        
+        module_isc = 0.0
+        nec_factor = 1.56
+        if hasattr(parent_qe, 'selected_module') and parent_qe.selected_module:
+            module_isc = parent_qe.selected_module.isc
+        
+        tracker_spt = {}  # tracker_idx -> total strings on that tracker
+        
+        # We need to assign physical positions to strings.
+        # Convention: within each tracker, devices are assigned north-to-south
+        # in the order they appear in the allocation.
+        # tracker_cursor tracks the next unassigned physical position per tracker.
+        tracker_cursor = {}  # tracker_idx -> next physical position to assign
+        
+        # For CB topologies, prefer last_combiner_assignments
         assignments = getattr(parent_qe, 'last_combiner_assignments', [])
         
-        if not assignments:
-            messagebox.showinfo("No Data", "No combiner assignments found. Run Calculate Estimate first.", parent=self)
-            return
-        
-        dialog = tk.Toplevel(self)
-        dialog.title("Edit Combiner Box Assignments")
-        dialog.geometry("750x500")
-        dialog.transient(self)
-        dialog.grab_set()
-        
-        # Deep copy so we can cancel without side effects
-        cb_data = []
-        for cb in assignments:
-            cb_data.append({
-                'name': cb['combiner_name'],
-                'dev_idx': cb.get('device_idx'),
-                'module_isc': cb.get('module_isc', 0),
-                'nec_factor': cb.get('nec_factor', 1.56),
-                'connections': [dict(c) for c in cb['connections']],
-            })
-        
-        # Save original state for cancel revert
-        import copy
-        original_cb_data = copy.deepcopy(cb_data)
-        
-        # --- Layout ---
-        main_frame = ttk.Frame(dialog, padding="10")
-        main_frame.pack(fill='both', expand=True)
-        main_frame.columnconfigure(0, weight=1)
-        main_frame.columnconfigure(1, weight=0)
-        main_frame.columnconfigure(2, weight=2)
-        main_frame.rowconfigure(0, weight=1)
-        
-        # --- Left panel: CB list ---
-        left_frame = ttk.LabelFrame(main_frame, text="Combiner Boxes", padding="5")
-        left_frame.grid(row=0, column=0, sticky='nsew', padx=(0, 5))
-        left_frame.rowconfigure(0, weight=1)
-        left_frame.columnconfigure(0, weight=1)
-        
-        cb_listbox = tk.Listbox(left_frame, exportselection=False)
-        cb_listbox.grid(row=0, column=0, sticky='nsew')
-        
-        cb_scroll = ttk.Scrollbar(left_frame, orient='vertical', command=cb_listbox.yview)
-        cb_scroll.grid(row=0, column=1, sticky='ns')
-        cb_listbox.config(yscrollcommand=cb_scroll.set)
-        
-        def refresh_cb_list(select_idx=None):
-            cb_listbox.delete(0, tk.END)
-            for i, cb in enumerate(cb_data):
-                n_conn = len(cb['connections'])
-                total_str = sum(c['num_strings'] for c in cb['connections'])
-                cb_listbox.insert(tk.END, f"{cb['name']}  ({n_conn} inputs, {total_str} strings)")
-            if select_idx is not None and select_idx < len(cb_data):
-                cb_listbox.selection_set(select_idx)
-                cb_listbox.see(select_idx)
-                on_cb_select(None)
-        
-        def _update_live_preview():
-            """Push current cb_data to device_positions and tracker colors, then redraw."""
-            # Rebuild device_names and assigned_strings on device_positions
-            for dev in self.device_positions:
-                dev['assigned_strings'] = {}
+        if self.topology in ('Centralized String', 'Central Inverter') and assignments:
+            # First pass: determine SPT for each tracker
+            inv_summary = getattr(parent_qe, 'last_totals', {}).get('inverter_summary', {})
+            alloc = inv_summary.get('allocation_result', {})
+            for inv in alloc.get('inverters', []):
+                for entry in inv.get('harness_map', []):
+                    tracker_spt.setdefault(entry['tracker_idx'], entry['strings_per_tracker'])
             
-            for cb_idx, cb in enumerate(cb_data):
-                if cb_idx < len(self.device_positions):
-                    self.device_positions[cb_idx]['label'] = cb['name']
-                    self.device_names[cb_idx] = cb['name']
-                    
-                    assigned = {}
-                    for conn in cb['connections']:
+            # Fallback: count from assignments
+            if not tracker_spt:
+                all_counts = {}
+                for cb in assignments:
+                    for conn in cb.get('connections', []):
                         tidx = conn['tracker_idx']
-                        n_str = conn['num_strings']
-                        if tidx not in assigned:
-                            assigned[tidx] = set()
-                        existing = len(assigned[tidx])
-                        for s in range(existing, existing + n_str):
-                            assigned[tidx].add(s)
-                    self.device_positions[cb_idx]['assigned_strings'] = assigned
+                        all_counts[tidx] = all_counts.get(tidx, 0) + conn['num_strings']
+                tracker_spt = dict(all_counts)
             
-            # Rebuild tracker color assignments from cb_data
-            # Build tracker_idx -> list of (cb_idx, strings_taken)
-            tracker_cb_map = {}  # tidx -> [(cb_idx, strings_taken), ...]
-            for cb_idx, cb in enumerate(cb_data):
-                for conn in cb['connections']:
+            device_data = []
+            tracker_cursor = {}
+            for cb_idx, cb in enumerate(assignments):
+                strings = []
+                for conn in cb.get('connections', []):
                     tidx = conn['tracker_idx']
-                    if tidx not in tracker_cb_map:
-                        tracker_cb_map[tidx] = []
-                    tracker_cb_map[tidx].append((cb_idx, conn['num_strings']))
-            
-            # Walk through group_layout trackers and update their assignments
-            global_idx = 0
-            for group_data in self.group_layout:
-                for tracker in group_data['trackers']:
-                    if global_idx in tracker_cb_map:
-                        new_assignments = []
-                        for cb_idx, strings_taken in tracker_cb_map[global_idx]:
-                            color = self.colors[cb_idx % len(self.colors)]
-                            new_assignments.append({
-                                'color': color,
-                                'strings': strings_taken,
-                                'inv_idx': cb_idx,
-                            })
-                        tracker['assignments'] = new_assignments
+                    n = conn['num_strings']
+                    # Use stored position if available
+                    stored_start = conn.get('start_string_pos', None)
+                    if stored_start is not None:
+                        start = stored_start
                     else:
-                        # Unassigned tracker — grey
-                        tracker['assignments'] = [{
-                            'color': '#CCCCCC',
-                            'strings': tracker['strings_per_tracker'],
-                            'inv_idx': -1,
-                        }]
-                    global_idx += 1
+                        start = tracker_cursor.get(tidx, 0)
+                    for p in range(start, start + n):
+                        strings.append((tidx, p))
+                    tracker_cursor[tidx] = max(tracker_cursor.get(tidx, 0), start + n)
+                
+                device_data.append({
+                    'name': cb.get('combiner_name', f'CB-{cb_idx+1:02d}'),
+                    'strings': strings,
+                })
+                if cb.get('module_isc'):
+                    module_isc = cb['module_isc']
+                if cb.get('nec_factor'):
+                    nec_factor = cb['nec_factor']
             
-            self.draw()
-        
-        # CB buttons
-        cb_btn_frame = ttk.Frame(left_frame)
-        cb_btn_frame.grid(row=1, column=0, columnspan=2, pady=(5, 0), sticky='ew')
-        
-        def add_cb():
-            next_num = len(cb_data) + 1
-            module_isc = cb_data[0]['module_isc'] if cb_data else 0
-            nec_factor = cb_data[0]['nec_factor'] if cb_data else 1.56
-            cb_data.append({
-                'name': f"CB-{next_num:02d}",
-                'dev_idx': None,
+            return device_data, {
                 'module_isc': module_isc,
                 'nec_factor': nec_factor,
-                'connections': [],
+                'tracker_spt': tracker_spt,
+                'source': 'combiner',
+            }
+        
+        # For Distributed String (or fallback): use allocation_result
+        inv_summary = getattr(parent_qe, 'last_totals', {}).get('inverter_summary', {})
+        alloc = inv_summary.get('allocation_result')
+        
+        if alloc and alloc.get('inverters'):
+            device_data = []
+            device_prefix = 'INV' if self.topology == 'Distributed String' else 'CB'
+            tracker_cursor = {}
+            
+            for inv_idx, inv in enumerate(alloc['inverters']):
+                strings = []
+                for entry in inv.get('harness_map', []):
+                    tidx = entry['tracker_idx']
+                    tracker_spt.setdefault(tidx, entry['strings_per_tracker'])
+                    start = tracker_cursor.get(tidx, 0)
+                    for p in range(start, start + entry['strings_taken']):
+                        strings.append((tidx, p))
+                    tracker_cursor[tidx] = start + entry['strings_taken']
+                
+                device_data.append({
+                    'name': f'{device_prefix}-{inv_idx+1:02d}',
+                    'strings': strings,
+                })
+            
+            return device_data, {
+                'module_isc': module_isc,
+                'nec_factor': nec_factor,
+                'tracker_spt': tracker_spt,
+                'source': 'allocation',
+            }
+        
+        return None, None
+
+    def _rebuild_from_device_strings(self, device_data, metadata):
+        """Rebuild allocation_result (and combiner assignments for CB topologies)
+        from per-string device data with physical positions. Also locks the allocation.
+        """
+        parent_qe = self.master
+        tracker_spt = metadata['tracker_spt']
+        module_isc = metadata['module_isc']
+        nec_factor = metadata['nec_factor']
+        
+        # --- Build allocation_result ---
+        # Sort each device's strings by (tracker_idx, physical_pos)
+        for dev in device_data:
+            dev['strings'].sort(key=lambda s: (s[0], s[1]))
+        
+        inverters = []
+        for dev_idx, dev in enumerate(device_data):
+            harness_map = []
+            tracker_indices = []
+            pattern = []
+            
+            if not dev['strings']:
+                inverters.append({
+                    'pattern': [], 'tracker_indices': [], 'total_strings': 0,
+                    'target_strings': 0, 'full_trackers': 0, 'split_trackers': 0,
+                    'harness_map': [],
+                })
+                continue
+            
+            # Group consecutive same-tracker strings
+            current_tidx = dev['strings'][0][0]
+            current_count = 0
+            
+            for tidx, _pos in dev['strings']:
+                if tidx == current_tidx:
+                    current_count += 1
+                else:
+                    spt = tracker_spt.get(current_tidx, current_count)
+                    harness_map.append({
+                        'tracker_idx': current_tidx,
+                        'strings_per_tracker': spt,
+                        'strings_taken': current_count,
+                        'is_split': current_count < spt,
+                        'split_position': 'full',
+                    })
+                    tracker_indices.append((current_tidx, current_count))
+                    pattern.append(current_count)
+                    current_tidx = tidx
+                    current_count = 1
+            
+            # Flush last group
+            spt = tracker_spt.get(current_tidx, current_count)
+            harness_map.append({
+                'tracker_idx': current_tidx,
+                'strings_per_tracker': spt,
+                'strings_taken': current_count,
+                'is_split': current_count < spt,
+                'split_position': 'full',
             })
-            refresh_cb_list(select_idx=len(cb_data) - 1)
-            _update_live_preview()
-        
-        def remove_cb():
-            sel = cb_listbox.curselection()
-            if not sel:
-                return
-            idx = sel[0]
-            cb = cb_data[idx]
-            if cb['connections']:
-                if not messagebox.askyesno(
-                    "Remove CB",
-                    f"'{cb['name']}' has {len(cb['connections'])} connections.\n"
-                    "They will become unassigned. Continue?",
-                    parent=dialog
-                ):
-                    return
-            cb_data.pop(idx)
-            new_sel = min(idx, len(cb_data) - 1) if cb_data else None
-            refresh_cb_list(select_idx=new_sel)
-            _update_live_preview()
-        
-        def rename_cb():
-            sel = cb_listbox.curselection()
-            if not sel:
-                return
-            idx = sel[0]
-            from tkinter import simpledialog
-            new_name = simpledialog.askstring(
-                "Rename CB", f"New name for {cb_data[idx]['name']}:",
-                initialvalue=cb_data[idx]['name'], parent=dialog
-            )
-            if new_name and new_name.strip():
-                cb_data[idx]['name'] = new_name.strip()
-                refresh_cb_list(select_idx=idx)
-                _update_live_preview()
-        
-        ttk.Button(cb_btn_frame, text="Add CB", command=add_cb).pack(side='left', padx=2)
-        ttk.Button(cb_btn_frame, text="Remove", command=remove_cb).pack(side='left', padx=2)
-        ttk.Button(cb_btn_frame, text="Rename", command=rename_cb).pack(side='left', padx=2)
-        
-        # --- Middle: Move button ---
-        mid_frame = ttk.Frame(main_frame)
-        mid_frame.grid(row=0, column=1, padx=5, sticky='ns')
-        mid_frame.rowconfigure(0, weight=1)
-        mid_frame.rowconfigure(2, weight=1)
-        
-        def move_selected():
-            cb_sel = cb_listbox.curselection()
-            if not cb_sel:
-                messagebox.showinfo("Select CB", "Select a source CB on the left first.", parent=dialog)
-                return
-            src_idx = cb_sel[0]
+            tracker_indices.append((current_tidx, current_count))
+            pattern.append(current_count)
             
-            conn_sel = conn_tree.selection()
-            if not conn_sel:
-                messagebox.showinfo("Select Connections", "Select connections to move on the right.", parent=dialog)
-                return
-            
-            target_names = [(i, cb['name']) for i, cb in enumerate(cb_data) if i != src_idx]
-            if not target_names:
-                return
-            
-            pick = tk.Toplevel(dialog)
-            pick.title("Move to...")
-            pick.transient(dialog)
-            pick.grab_set()
-            pick.geometry("250x300")
-            
-            ttk.Label(pick, text="Select target CB:").pack(padx=10, pady=(10, 5))
-            target_lb = tk.Listbox(pick, exportselection=False)
-            target_lb.pack(fill='both', expand=True, padx=10)
-            for i, name in target_names:
-                target_lb.insert(tk.END, name)
-            if target_names:
-                target_lb.selection_set(0)
-            
-            def do_move():
-                t_sel = target_lb.curselection()
-                if not t_sel:
-                    pick.destroy()
-                    return
-                target_idx = target_names[t_sel[0]][0]
-                
-                selected_iids = conn_tree.selection()
-                all_iids = list(conn_tree.get_children())
-                indices_to_move = [all_iids.index(iid) for iid in selected_iids if iid in all_iids]
-                
-                moved = []
-                for ci in sorted(indices_to_move, reverse=True):
-                    if ci < len(cb_data[src_idx]['connections']):
-                        moved.append(cb_data[src_idx]['connections'].pop(ci))
-                
-                cb_data[target_idx]['connections'].extend(reversed(moved))
-                
-                pick.destroy()
-                refresh_cb_list(select_idx=src_idx)
-                _update_live_preview()
-            
-            ttk.Button(pick, text="Move", command=do_move).pack(pady=10)
+            total = sum(pattern)
+            inverters.append({
+                'pattern': pattern,
+                'tracker_indices': tracker_indices,
+                'total_strings': total,
+                'target_strings': total,
+                'full_trackers': sum(1 for e in harness_map if not e['is_split']),
+                'split_trackers': sum(1 for e in harness_map if e['is_split']),
+                'harness_map': harness_map,
+            })
         
-        ttk.Button(mid_frame, text="Move →", command=move_selected).grid(row=1, column=0)
+        # Fix split_position across all inverters
+        tracker_appearances = {}
+        for inv_idx, inv in enumerate(inverters):
+            for e_idx, entry in enumerate(inv['harness_map']):
+                tidx = entry['tracker_idx']
+                if tidx not in tracker_appearances:
+                    tracker_appearances[tidx] = []
+                tracker_appearances[tidx].append((inv_idx, e_idx))
         
-        # --- Right panel: Connections for selected CB ---
-        right_frame = ttk.LabelFrame(main_frame, text="Connections", padding="5")
-        right_frame.grid(row=0, column=2, sticky='nsew', padx=(5, 0))
-        right_frame.rowconfigure(0, weight=1)
-        right_frame.columnconfigure(0, weight=1)
+        for tidx, appearances in tracker_appearances.items():
+            if len(appearances) <= 1:
+                continue
+            for pos, (inv_idx, e_idx) in enumerate(appearances):
+                entry = inverters[inv_idx]['harness_map'][e_idx]
+                entry['is_split'] = True
+                if pos == 0:
+                    entry['split_position'] = 'head'
+                elif pos == len(appearances) - 1:
+                    entry['split_position'] = 'tail'
+                else:
+                    entry['split_position'] = 'middle'
         
-        conn_columns = ('tracker', 'harness', 'strings')
-        conn_tree = ttk.Treeview(right_frame, columns=conn_columns, show='headings', selectmode='extended')
-        conn_tree.heading('tracker', text='Tracker')
-        conn_tree.heading('harness', text='Harness')
-        conn_tree.heading('strings', text='# Strings')
-        conn_tree.column('tracker', width=80, anchor='center')
-        conn_tree.column('harness', width=80, anchor='center')
-        conn_tree.column('strings', width=80, anchor='center')
-        conn_tree.grid(row=0, column=0, sticky='nsew')
+        # Build summary
+        total_strings = sum(inv['total_strings'] for inv in inverters)
+        total_split = sum(1 for apps in tracker_appearances.values() if len(apps) > 1)
+        inv_sizes = [inv['total_strings'] for inv in inverters if inv['total_strings'] > 0]
+        max_spi = max(inv_sizes) if inv_sizes else 0
+        min_spi = min(inv_sizes) if inv_sizes else 0
         
-        conn_scroll = ttk.Scrollbar(right_frame, orient='vertical', command=conn_tree.yview)
-        conn_scroll.grid(row=0, column=1, sticky='ns')
-        conn_tree.config(yscrollcommand=conn_scroll.set)
+        tracker_type_counts = {}
+        for spt in tracker_spt.values():
+            tracker_type_counts[spt] = tracker_type_counts.get(spt, 0) + 1
         
-        def on_cb_select(event):
-            sel = cb_listbox.curselection()
-            if not sel:
-                conn_tree.delete(*conn_tree.get_children())
-                return
-            idx = sel[0]
-            conn_tree.delete(*conn_tree.get_children())
-            for conn in cb_data[idx]['connections']:
-                conn_tree.insert('', 'end', values=(
-                    conn['tracker_label'],
-                    conn['harness_label'],
-                    conn['num_strings']
-                ))
+        allocation_result = {
+            'inverters': inverters,
+            'summary': {
+                'total_inverters': len(inv_sizes),
+                'total_strings': total_strings,
+                'total_trackers': len(tracker_spt),
+                'total_split_trackers': total_split,
+                'max_strings_per_inverter': max_spi,
+                'min_strings_per_inverter': min_spi,
+                'num_larger_inverters': sum(1 for s in inv_sizes if s == max_spi) if max_spi != min_spi else 0,
+                'num_smaller_inverters': sum(1 for s in inv_sizes if s == min_spi) if max_spi != min_spi else 0,
+                'tracker_type_counts': tracker_type_counts,
+            },
+        }
         
-        cb_listbox.bind('<<ListboxSelect>>', on_cb_select)
+        # Write allocation to parent's last_totals
+        if hasattr(parent_qe, 'last_totals') and parent_qe.last_totals:
+            inv_summary = parent_qe.last_totals.get('inverter_summary', {})
+            inv_summary['allocation_result'] = allocation_result
+            inv_summary['total_inverters'] = allocation_result['summary']['total_inverters']
+            inv_summary['total_strings'] = total_strings
+            inv_summary['total_split_trackers'] = total_split
         
-        # --- Warning label ---
-        warning_var = tk.StringVar(value="")
-        warning_label = ttk.Label(dialog, textvariable=warning_var, foreground='orange')
-        warning_label.pack(fill='x', padx=10)
+        # Lock the allocation
+        parent_qe.allocation_locked = True
+        parent_qe.locked_allocation_result = copy.deepcopy(allocation_result)
+        self.allocation_locked = True
         
-        # --- Bottom buttons ---
-        btn_frame = ttk.Frame(dialog)
-        btn_frame.pack(fill='x', padx=10, pady=10)
+        # Store physical position ordering for draw code.
+        # For each tracker, list device contributions sorted north-to-south
+        # by minimum physical position that device owns.
+        tracker_physical_order = {}
+        for tidx in tracker_spt:
+            dev_entries = []
+            for dev_idx, dev in enumerate(device_data):
+                positions = [p for t, p in dev['strings'] if t == tidx]
+                if positions:
+                    dev_entries.append((min(positions), dev_idx, len(positions)))
+            dev_entries.sort()  # Sort by min physical position (northernmost first)
+            tracker_physical_order[tidx] = [(dev_idx, count) for _, dev_idx, count in dev_entries]
+        self._tracker_physical_order = tracker_physical_order
         
-        def apply_changes():
-            # Write back to parent's last_combiner_assignments
+        # For CB topologies, also rebuild last_combiner_assignments
+        if self.topology in ('Centralized String', 'Central Inverter'):
             BREAKER_SIZES = [100, 125, 150, 175, 200, 225, 250, 300, 350, 400, 450, 500, 600, 700, 800]
-            
             new_assignments = []
-            for cb_idx, cb in enumerate(cb_data):
-                connections = cb['connections']
-                total_current = sum(
-                    c['num_strings'] * cb['module_isc'] * cb['nec_factor']
-                    for c in connections
-                )
-                calc_breaker = 400
+            
+            # Get harness config lookup from parent
+            parent_qe = self.master
+            
+            for dev_idx, dev in enumerate(device_data):
+                connections = []
+                if dev['strings']:
+                    # Group strings by tracker, preserving order
+                    tracker_groups = []
+                    current_tidx = dev['strings'][0][0]
+                    current_positions = []
+                    
+                    for tidx, phys_pos in dev['strings']:
+                        if tidx == current_tidx:
+                            current_positions.append(phys_pos)
+                        else:
+                            tracker_groups.append((current_tidx, current_positions))
+                            current_tidx = tidx
+                            current_positions = [phys_pos]
+                    tracker_groups.append((current_tidx, current_positions))
+                    
+                    # Build connections per harness (not per tracker)
+                    for tidx, positions in tracker_groups:
+                        spt = tracker_spt.get(tidx, len(positions))
+                        start_pos = min(positions)
+                        num_strings_here = len(positions)
+                        
+                        # Get the harness config for this tracker type
+                        if hasattr(parent_qe, '_get_harness_config_for_tracker_type'):
+                            full_harness_config = parent_qe._get_harness_config_for_tracker_type(spt)
+                        else:
+                            full_harness_config = [spt]
+                        
+                        # If this device owns ALL strings, use harness config directly
+                        if num_strings_here == spt:
+                            h_num = 1
+                            pos_cursor = 0
+                            for h_size in full_harness_config:
+                                connections.append({
+                                    'tracker_idx': tidx,
+                                    'tracker_label': f'T{tidx+1:02d}',
+                                    'harness_label': f'H{h_num:02d}',
+                                    'num_strings': h_size,
+                                    'module_isc': module_isc,
+                                    'nec_factor': nec_factor,
+                                    'wire_gauge': '10 AWG',
+                                    'start_string_pos': pos_cursor,
+                                })
+                                pos_cursor += h_size
+                                h_num += 1
+                        else:
+                            # Partial tracker — derive harnesses by walking config
+                            # and finding overlap with our positions
+                            harness_ranges = []
+                            pos_cursor = 0
+                            for h_size in full_harness_config:
+                                harness_ranges.append((pos_cursor, pos_cursor + h_size - 1))
+                                pos_cursor += h_size
+                            
+                            position_set = set(positions)
+                            h_num = 1
+                            for h_start, h_end in harness_ranges:
+                                overlap = [p for p in range(h_start, h_end + 1) if p in position_set]
+                                if overlap:
+                                    connections.append({
+                                        'tracker_idx': tidx,
+                                        'tracker_label': f'T{tidx+1:02d}',
+                                        'harness_label': f'H{h_num:02d}',
+                                        'num_strings': len(overlap),
+                                        'module_isc': module_isc,
+                                        'nec_factor': nec_factor,
+                                        'wire_gauge': '10 AWG',
+                                        'start_string_pos': min(overlap),
+                                    })
+                                    h_num += 1
+                
+                total_current = sum(c['num_strings'] * module_isc * nec_factor for c in connections)
+                calc_breaker = BREAKER_SIZES[-1]
                 for bs in BREAKER_SIZES:
                     if bs >= total_current:
                         calc_breaker = bs
                         break
                 
                 new_assignments.append({
-                    'combiner_name': cb['name'],
-                    'device_idx': cb_idx,
+                    'combiner_name': dev['name'],
+                    'device_idx': dev_idx,
                     'breaker_size': calc_breaker,
-                    'module_isc': cb['module_isc'],
-                    'nec_factor': cb['nec_factor'],
+                    'module_isc': module_isc,
+                    'nec_factor': nec_factor,
                     'connections': connections,
                 })
             
             parent_qe.last_combiner_assignments = new_assignments
+
+    def _show_edit_devices_dialog(self):
+        """Show dialog to reassign string-level connections between devices."""
+        device_data, metadata = self._normalize_to_device_strings()
+        if not device_data:
+            messagebox.showinfo("No Data", "Run Calculate Estimate first.", parent=self)
+            return
+
+        original = copy.deepcopy(device_data)
+        original_locked = self.allocation_locked
+        original_parent_locked = getattr(self.master, 'allocation_locked', False)
+        original_locked_result = copy.deepcopy(getattr(self.master, 'locked_allocation_result', None))
+        # Snapshot full parent state for cancel restoration
+        original_last_totals = copy.deepcopy(getattr(self.master, 'last_totals', None))
+        original_combiner_assignments = copy.deepcopy(getattr(self.master, 'last_combiner_assignments', []))
+        original_inv_summary = copy.deepcopy(self.inv_summary) if hasattr(self, 'inv_summary') else None
+        original_physical_order = copy.deepcopy(getattr(self, '_tracker_physical_order', None))
+
+        dialog = tk.Toplevel(self)
+        dialog.title("Edit Device Assignments")
+        dialog.geometry("400x650")
+        dialog.transient(self)
+        # No grab_set — allow pan/zoom on canvas behind dialog
+
+        self._highlighted_strings = set()
+
+        # Lookup: tree item iid -> tracker_idx
+        string_tracker = {}
+
+        def _regroup(dev):
+            """Sort strings by (tracker_idx, physical_pos) to keep contiguous."""
+            dev['strings'].sort(key=lambda s: (s[0], s[1]))
+
+        def _validate_move(source_dev_idx, positions_to_move, target_dev_idx):
+            """Check that moving strings preserves contiguity on both sides.
             
-            # Final preview update
-            _update_live_preview()
+            Returns (ok, error_message).
+            """
+            # Group positions being moved by tracker
+            moving_by_tracker = {}
+            for pos_idx in positions_to_move:
+                if pos_idx < len(device_data[source_dev_idx]['strings']):
+                    tidx, phys = device_data[source_dev_idx]['strings'][pos_idx]
+                    moving_by_tracker.setdefault(tidx, set()).add(phys)
             
-            dialog.destroy()
-        
-        def cancel():
-            # Restore from saved snapshot
-            for cb_idx, snap in enumerate(original_cb_data):
-                if cb_idx < len(cb_data):
-                    cb_data[cb_idx] = snap
+            for tidx, moving_positions in moving_by_tracker.items():
+                # Current positions this tracker has on source device
+                source_positions = {p for t, p in device_data[source_dev_idx]['strings'] if t == tidx}
+                remaining = source_positions - moving_positions
+                
+                # Check source contiguity after removal
+                if len(remaining) > 1:
+                    if max(remaining) - min(remaining) + 1 != len(remaining):
+                        return False, (f"Cannot move: would leave a gap in T{tidx+1:02d} "
+                                       f"on {device_data[source_dev_idx]['name']}")
+                
+                # Current positions this tracker has on target device
+                target_positions = {p for t, p in device_data[target_dev_idx]['strings'] if t == tidx}
+                combined = target_positions | moving_positions
+                
+                # Check target contiguity after addition
+                if len(combined) > 1:
+                    if max(combined) - min(combined) + 1 != len(combined):
+                        return False, (f"Cannot move: would create a gap in T{tidx+1:02d} "
+                                       f"on {device_data[target_dev_idx]['name']}")
+            
+            return True, ""
+
+        # --- Tree ---
+        tree_frame = ttk.Frame(dialog, padding="10")
+        tree_frame.pack(fill='both', expand=True)
+
+        tree = ttk.Treeview(tree_frame, selectmode='extended', show='tree')
+        tree_scroll = ttk.Scrollbar(tree_frame, orient='vertical', command=tree.yview)
+        tree.config(yscrollcommand=tree_scroll.set)
+        tree.pack(side='left', fill='both', expand=True)
+        tree_scroll.pack(side='right', fill='y')
+
+        # Drop target feedback
+        drop_label_var = tk.StringVar(value="")
+        drop_label = ttk.Label(dialog, textvariable=drop_label_var,
+                               font=('Helvetica', 10, 'bold'), foreground='#1565C0')
+        drop_label.pack(fill='x', padx=10)
+
+        # Summary label
+        summary_var = tk.StringVar()
+        ttk.Label(dialog, textvariable=summary_var, foreground='gray',
+                  font=('Helvetica', 9)).pack(fill='x', padx=10)
+
+        def _update_summary():
+            total_devs = len(device_data)
+            total_strings = sum(len(d['strings']) for d in device_data)
+            tracker_dev_map = {}
+            for dev_idx, dev in enumerate(device_data):
+                for tidx, _pos in dev['strings']:
+                    tracker_dev_map.setdefault(tidx, set()).add(dev_idx)
+            splits = sum(1 for devs in tracker_dev_map.values() if len(devs) > 1)
+            summary_var.set(f"{total_devs} devices  |  {total_strings} strings  |  {splits} split trackers")
+
+        def refresh_tree(select_device=None):
+            tree.delete(*tree.get_children())
+            string_tracker.clear()
+            for dev_idx, dev in enumerate(device_data):
+                total = len(dev['strings'])
+                dev_iid = f'dev_{dev_idx}'
+                tree.insert('', 'end', iid=dev_iid,
+                            text=f"{dev['name']}  ({total} strings)",
+                            open=(total <= 40))
+
+                for s_pos, (tidx, phys_pos) in enumerate(dev['strings']):
+                    str_iid = f'dev_{dev_idx}_s_{s_pos}'
+                    tree.insert(dev_iid, 'end', iid=str_iid,
+                                text=f"  T{tidx+1:02d} - S{phys_pos+1:02d}")
+                    string_tracker[str_iid] = (tidx, phys_pos)
+
+            if select_device is not None:
+                dev_iid = f'dev_{select_device}'
+                if dev_iid in tree.get_children():
+                    tree.see(dev_iid)
+
+            _update_summary()
+
+        # --- Selection → highlight on canvas ---
+        def on_tree_select(event=None):
+            if drag_state.get('suppressing'):
+                return
+            selected = [iid for iid in tree.selection() if iid in string_tracker]
+            self._highlighted_strings = set()
+
+            for str_iid in selected:
+                tidx, phys_pos = string_tracker[str_iid]
+                self._highlighted_strings.add((tidx, phys_pos))
+
+            self.draw()
+
+        tree.bind('<<TreeviewSelect>>', on_tree_select)
+
+        # --- Drag-and-drop state ---
+        drag_state = {
+            'active': False,
+            'start_x': 0,
+            'start_y': 0,
+            'threshold': 5,
+            'items': [],
+            'suppressing': False,
+            'last_target_dev': None,
+        }
+
+        # Tag for highlighting the drop target device row
+        tree.tag_configure('drop_target', background='#BBDEFB')
+
+        def _resolve_device_iid(y):
+            """Given a y coordinate, resolve to the device iid the user is hovering over."""
+            iid = tree.identify_row(y)
+            if not iid:
+                return None
+            # If it's a string child, go to parent device
+            if iid in string_tracker:
+                iid = tree.parent(iid)
+            if iid and iid.startswith('dev_'):
+                return iid
+            return None
+
+        def _on_press(event):
+            drag_state['active'] = False
+            drag_state['suppressing'] = False
+            drag_state['last_target_dev'] = None
+            drag_state['start_x'] = event.x
+            drag_state['start_y'] = event.y
+            def _capture():
+                drag_state['items'] = [iid for iid in tree.selection() if iid in string_tracker]
+            tree.after_idle(_capture)
+
+        def _on_motion(event):
+            if not drag_state['active']:
+                dx = abs(event.x - drag_state['start_x'])
+                dy = abs(event.y - drag_state['start_y'])
+                if dx > drag_state['threshold'] or dy > drag_state['threshold']:
+                    if drag_state['items']:
+                        drag_state['active'] = True
+                        drag_state['suppressing'] = True
+                        tree.config(cursor='hand2')
+                        n = len(drag_state['items'])
+                        drop_label_var.set(f"Dragging {n} string{'s' if n != 1 else ''}...")
+
+            if drag_state['active']:
+                dev_iid = _resolve_device_iid(event.y)
+
+                # Clear previous highlight
+                if drag_state['last_target_dev'] and drag_state['last_target_dev'] != dev_iid:
+                    try:
+                        old_tags = list(tree.item(drag_state['last_target_dev'], 'tags'))
+                        if 'drop_target' in old_tags:
+                            old_tags.remove('drop_target')
+                        tree.item(drag_state['last_target_dev'], tags=old_tags)
+                    except Exception:
+                        pass
+
+                if dev_iid:
+                    dev_idx = int(dev_iid.split('_')[1])
+                    dev_name = device_data[dev_idx]['name']
+
+                    # Check if any source is different from target
+                    source_devs = set()
+                    for s_iid in drag_state['items']:
+                        source_devs.add(tree.parent(s_iid))
+
+                    if dev_iid in source_devs and len(source_devs) == 1:
+                        drop_label_var.set(f"⚠ Cannot drop on source device ({dev_name})")
+                    else:
+                        drop_label_var.set(f"▶ Drop onto: {dev_name}")
+                        try:
+                            cur_tags = list(tree.item(dev_iid, 'tags'))
+                            if 'drop_target' not in cur_tags:
+                                cur_tags.append('drop_target')
+                            tree.item(dev_iid, tags=cur_tags)
+                        except Exception:
+                            pass
+
+                    drag_state['last_target_dev'] = dev_iid
                 else:
-                    cb_data.append(snap)
-            # Trim if we added extra CBs
-            while len(cb_data) > len(original_cb_data):
-                cb_data.pop()
+                    drop_label_var.set("Dragging... (hover over a device to drop)")
+                    drag_state['last_target_dev'] = None
+
+        def _on_release(event):
+            was_active = drag_state['active']
+            drag_state['active'] = False
+            drag_state['suppressing'] = False
+            tree.config(cursor='')
+            drop_label_var.set("")
+
+            # Clear drop target highlight
+            if drag_state['last_target_dev']:
+                try:
+                    old_tags = list(tree.item(drag_state['last_target_dev'], 'tags'))
+                    if 'drop_target' in old_tags:
+                        old_tags.remove('drop_target')
+                    tree.item(drag_state['last_target_dev'], tags=old_tags)
+                except Exception:
+                    pass
+            drag_state['last_target_dev'] = None
+
+            if not was_active:
+                return
+
+            dev_iid = _resolve_device_iid(event.y)
+            if not dev_iid:
+                return
+
+            target_dev = int(dev_iid.split('_')[1])
+
+            selected = drag_state['items']
+            if not selected:
+                return
+
+            # Group by source device
+            by_source = {}
+            for s_iid in selected:
+                parent_iid = tree.parent(s_iid)
+                if not parent_iid:
+                    continue
+                dev_idx = int(parent_iid.split('_')[1])
+                s_pos = int(s_iid.rsplit('_', 1)[1])
+                by_source.setdefault(dev_idx, []).append(s_pos)
+
+            # Validate contiguity for each source
+            for src_dev, positions in by_source.items():
+                if src_dev == target_dev:
+                    continue
+                ok, err = _validate_move(src_dev, positions, target_dev)
+                if not ok:
+                    messagebox.showwarning("Invalid Move", err, parent=dialog)
+                    drag_state['items'] = []
+                    return
+
+            moved = []
+            for src_dev, positions in by_source.items():
+                if src_dev == target_dev:
+                    continue
+                for pos in sorted(positions, reverse=True):
+                    if pos < len(device_data[src_dev]['strings']):
+                        entry = device_data[src_dev]['strings'].pop(pos)
+                        moved.append(entry)
+
+            if not moved:
+                return
+
+            device_data[target_dev]['strings'].extend(reversed(moved))
+            _regroup(device_data[target_dev])
+
+            refresh_tree(select_device=target_dev)
             _update_live_preview()
+            drag_state['items'] = []
+
+        tree.bind('<ButtonPress-1>', _on_press, add='+')
+        tree.bind('<B1-Motion>', _on_motion)
+        tree.bind('<ButtonRelease-1>', _on_release, add='+')
+
+        # --- Action buttons ---
+        action_frame = ttk.Frame(dialog, padding="5 0")
+        action_frame.pack(fill='x', padx=10)
+
+        def add_device():
+            prefix = 'INV' if self.topology == 'Distributed String' else 'CB'
+            next_num = len(device_data) + 1
+            device_data.append({'name': f'{prefix}-{next_num:02d}', 'strings': []})
+            refresh_tree(select_device=len(device_data) - 1)
+            _update_live_preview()
+
+        def remove_device():
+            sel = tree.selection()
+            dev_indices = set()
+            for iid in sel:
+                if iid.startswith('dev_') and iid not in string_tracker:
+                    dev_indices.add(int(iid.split('_')[1]))
+            if not dev_indices:
+                messagebox.showinfo("Select Device",
+                                    "Select a device node to remove.", parent=dialog)
+                return
+            for idx in sorted(dev_indices, reverse=True):
+                if device_data[idx]['strings']:
+                    if not messagebox.askyesno(
+                        "Remove Device",
+                        f"'{device_data[idx]['name']}' has "
+                        f"{len(device_data[idx]['strings'])} strings.\n"
+                        "They will be lost. Continue?", parent=dialog):
+                        continue
+                device_data.pop(idx)
+            refresh_tree()
+            _update_live_preview()
+
+        def rename_device():
+            sel = tree.selection()
+            for iid in sel:
+                if iid.startswith('dev_') and iid not in string_tracker:
+                    dev_idx = int(iid.split('_')[1])
+                    new_name = simpledialog.askstring(
+                        "Rename", f"New name for {device_data[dev_idx]['name']}:",
+                        initialvalue=device_data[dev_idx]['name'], parent=dialog)
+                    if new_name and new_name.strip():
+                        device_data[dev_idx]['name'] = new_name.strip()
+                        refresh_tree(select_device=dev_idx)
+                        _update_live_preview()
+                    break
+
+        ttk.Label(action_frame, text="Drag strings to move  |",
+                  foreground='gray', font=('Helvetica', 9)).pack(side='left', padx=(0, 8))
+        ttk.Button(action_frame, text="Add Device", command=add_device).pack(side='left', padx=2)
+        ttk.Button(action_frame, text="Remove", command=remove_device).pack(side='left', padx=2)
+        ttk.Button(action_frame, text="Rename", command=rename_device).pack(side='left', padx=2)
+
+        # --- Live preview update ---
+        def _update_live_preview():
+            self._rebuild_from_device_strings(device_data, metadata)
+
+            inv_summary = getattr(self.master, 'last_totals', {}).get('inverter_summary', {})
+            if inv_summary and inv_summary.get('allocation_result'):
+                self.inv_summary = inv_summary
+                self.build_layout_data()
+                self._recolor_from_cb_assignments()
+            self._build_legend()
+            self.draw()
+
+        # --- Apply / Cancel ---
+        bottom_frame = ttk.Frame(dialog, padding="10")
+        bottom_frame.pack(fill='x')
+
+        def apply_changes():
+            self._rebuild_from_device_strings(device_data, metadata)
+            self._update_lock_button()
+            self._highlighted_strings = set()
+
+            inv_summary = getattr(self.master, 'last_totals', {}).get('inverter_summary', {})
+            if inv_summary and inv_summary.get('allocation_result'):
+                self.inv_summary = inv_summary
+
+            self.build_layout_data()
+            self._recolor_from_cb_assignments()
+            self._build_legend()
+
+            # Update top bar summary
+            alloc = inv_summary.get('allocation_result', {})
+            num_inv = alloc.get('summary', {}).get('total_inverters', 0)
+            total_str = alloc.get('summary', {}).get('total_strings', 0)
+            split = alloc.get('summary', {}).get('total_split_trackers', 0)
+            spatial_runs = alloc.get('spatial_runs', 1)
+            actual_ratio = inv_summary.get('actual_dc_ac', 0)
+            self.summary_label.config(
+                text=f"{num_inv} Devices  |  {total_str} Strings  |  DC:AC: {actual_ratio:.2f}  |  "
+                     f"{split} Split Trackers  |  {spatial_runs} Run(s)  |  {self.topology}  |  🔒 LOCKED"
+            )
+
+            self.draw()
             dialog.destroy()
-        
+
+        def cancel():
+            # Restore full parent state from snapshot — no rebuild needed
+            self.allocation_locked = original_locked
+            self.master.allocation_locked = original_parent_locked
+            self.master.locked_allocation_result = original_locked_result
+            self.master.last_totals = original_last_totals
+            self.master.last_combiner_assignments = original_combiner_assignments
+            self._tracker_physical_order = original_physical_order
+            self._update_lock_button()
+
+            self._highlighted_strings = set()
+
+            if original_inv_summary is not None:
+                self.inv_summary = original_inv_summary
+            self.build_layout_data()
+            self._recolor_from_cb_assignments()
+            self._build_legend()
+            self.draw()
+            dialog.destroy()
+
         dialog.protocol("WM_DELETE_WINDOW", cancel)
-        
-        ttk.Button(btn_frame, text="Apply", command=apply_changes).pack(side='right', padx=(5, 0))
-        ttk.Button(btn_frame, text="Cancel", command=cancel).pack(side='right')
-        
-        # Initial population
-        refresh_cb_list(select_idx=0)
-        
+
+        ttk.Button(bottom_frame, text="Apply", command=apply_changes).pack(side='right', padx=2)
+        ttk.Button(bottom_frame, text="Cancel", command=cancel).pack(side='right', padx=2)
+
+        # Initial tree
+        refresh_tree()
+
         # Center on parent
         dialog.update_idletasks()
         px = self.winfo_rootx()
@@ -2509,39 +2960,70 @@ class SitePreviewWindow(tk.Toplevel):
         
         Called after build_layout_data() to override the default inverter-based
         coloring with CB-based coloring when manual CB edits exist.
+        
+        If _tracker_physical_order is available (from Edit Devices), uses
+        physical position ordering so that the device owning the northernmost
+        strings on a tracker gets painted first.
         """
         parent_qe = self.master
         assignments = getattr(parent_qe, 'last_combiner_assignments', [])
         if not assignments:
             return
         
-        # Build tracker_idx -> [(cb_idx, strings_taken), ...]
-        tracker_cb_map = {}
-        for cb_idx, cb in enumerate(assignments):
-            for conn in cb.get('connections', []):
-                tidx = conn['tracker_idx']
-                if tidx not in tracker_cb_map:
-                    tracker_cb_map[tidx] = []
-                tracker_cb_map[tidx].append((cb_idx, conn['num_strings']))
+        physical_order = getattr(self, '_tracker_physical_order', None)
         
-        if not tracker_cb_map:
-            return
-        
-        # Walk through group_layout and update tracker assignments
-        global_idx = 0
-        for group_data in self.group_layout:
-            for tracker in group_data['trackers']:
-                if global_idx in tracker_cb_map:
-                    new_assignments = []
-                    for cb_idx, strings_taken in tracker_cb_map[global_idx]:
-                        color = self.colors[cb_idx % len(self.colors)]
-                        new_assignments.append({
-                            'color': color,
-                            'strings': strings_taken,
-                            'inv_idx': cb_idx,
-                        })
-                    tracker['assignments'] = new_assignments
-                global_idx += 1
+        if physical_order:
+            # Use physical ordering — most accurate after manual edits
+            global_idx = 0
+            for group_data in self.group_layout:
+                for tracker in group_data['trackers']:
+                    if global_idx in physical_order:
+                        new_assignments = []
+                        for dev_idx, count in physical_order[global_idx]:
+                            color = self.colors[dev_idx % len(self.colors)]
+                            new_assignments.append({
+                                'color': color,
+                                'strings': count,
+                                'inv_idx': dev_idx,
+                            })
+                        tracker['assignments'] = new_assignments
+                    global_idx += 1
+        else:
+            # Fallback: use start_string_pos if available, else device-index ordering
+            tracker_cb_map = {}
+            for cb_idx, cb in enumerate(assignments):
+                for conn in cb.get('connections', []):
+                    tidx = conn['tracker_idx']
+                    if tidx not in tracker_cb_map:
+                        tracker_cb_map[tidx] = []
+                    start_pos = conn.get('start_string_pos', None)
+                    tracker_cb_map[tidx].append((start_pos, cb_idx, conn['num_strings']))
+            
+            if not tracker_cb_map:
+                return
+            
+            # Sort each tracker's contributions by start_string_pos (north first)
+            for tidx in tracker_cb_map:
+                entries = tracker_cb_map[tidx]
+                if entries[0][0] is not None:
+                    # Have position data — sort by it
+                    entries.sort(key=lambda e: e[0])
+                # else: leave in original device order
+            
+            global_idx = 0
+            for group_data in self.group_layout:
+                for tracker in group_data['trackers']:
+                    if global_idx in tracker_cb_map:
+                        new_assignments = []
+                        for _start_pos, cb_idx, strings_taken in tracker_cb_map[global_idx]:
+                            color = self.colors[cb_idx % len(self.colors)]
+                            new_assignments.append({
+                                'color': color,
+                                'strings': strings_taken,
+                                'inv_idx': cb_idx,
+                            })
+                        tracker['assignments'] = new_assignments
+                    global_idx += 1
 
 class QuickEstimateDialog(tk.Toplevel):
     """Dialog wrapper for Quick Estimate tool"""

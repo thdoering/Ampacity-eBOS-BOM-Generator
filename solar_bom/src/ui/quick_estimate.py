@@ -1565,8 +1565,8 @@ class QuickEstimate(ttk.Frame):
     def get_harness_options(self, num_strings):
         """Generate harness configuration options for a given string count.
         
-        Returns 2-part splits (e.g. '3+1', '2+2') plus the full size.
-        For small counts (<=4), also includes deeper splits like '1+1+1'.
+        Returns the full-size option plus all 2-part splits (largest first).
+        Max 2 harnesses per tracker.
         """
         num_strings = int(num_strings)
         if num_strings < 1:
@@ -1577,14 +1577,6 @@ class QuickEstimate(ttk.Frame):
         # 2-part splits: largest first
         for i in range(1, num_strings // 2 + 1):
             options.append(f"{num_strings - i}+{i}")
-        
-        # For small counts, add useful deeper splits
-        if num_strings == 3:
-            options.append("1+1+1")
-        elif num_strings == 4:
-            if "2+1+1" not in options:
-                options.append("2+1+1")
-            options.append("1+1+1+1")
         
         return options
 
@@ -1942,6 +1934,11 @@ class QuickEstimate(ttk.Frame):
         # Load allocation lock state
         self.allocation_locked = estimate_data.get('allocation_locked', False)
         self.locked_allocation_result = estimate_data.get('locked_allocation_result', None)
+        
+        # Restore combiner assignments (includes start_string_pos for physical ordering)
+        saved_cb_assignments = estimate_data.get('combiner_assignments', None)
+        if saved_cb_assignments:
+            self.last_combiner_assignments = copy.deepcopy(saved_cb_assignments)
 
         # Derive module from templates
         self._derive_module_from_templates()
@@ -2016,6 +2013,12 @@ class QuickEstimate(ttk.Frame):
             estimate_data['locked_allocation_result'] = copy.deepcopy(self.locked_allocation_result)
         else:
             estimate_data['locked_allocation_result'] = None
+        
+        # Save combiner assignments (includes start_string_pos for physical ordering)
+        if self.last_combiner_assignments:
+            estimate_data['combiner_assignments'] = copy.deepcopy(self.last_combiner_assignments)
+        else:
+            estimate_data['combiner_assignments'] = None
         
         # Notify callback
         if self.on_save:
@@ -3088,14 +3091,70 @@ class QuickEstimate(ttk.Frame):
                 return sizing[cable_type]
         
         return '10 AWG'
+    
+    def _derive_harnesses_for_split(self, harness_config_sizes, spt, device_positions):
+        """Derive per-device harness configs from a segment's harness config and split boundaries.
+        
+        Walks the harness config north-to-south (physical position order) and
+        cuts any harness that straddles a device boundary.
+        
+        Args:
+            harness_config_sizes: list of ints, e.g. [6, 6] for "6+6"
+            spt: total strings per tracker
+            device_positions: list of dicts, each with:
+                - 'inv_idx': device index
+                - 'strings_taken': how many strings this device owns
+                - 'start_pos': first physical position owned (0-based, north)
+                
+        Returns:
+            list of dicts (same order as device_positions), each with:
+                - 'inv_idx': device index
+                - 'strings_taken': total strings
+                - 'harnesses': list of ints (harness sizes for this portion)
+        """
+        # Build the harness ranges: which physical positions each harness covers
+        harness_ranges = []
+        pos_cursor = 0
+        for h_size in harness_config_sizes:
+            harness_ranges.append((pos_cursor, pos_cursor + h_size - 1))  # inclusive
+            pos_cursor += h_size
+        
+        # Sort device portions by start_pos (north first)
+        sorted_portions = sorted(device_positions, key=lambda p: p['start_pos'])
+        
+        result = []
+        for portion in sorted_portions:
+            p_start = portion['start_pos']
+            p_end = p_start + portion['strings_taken'] - 1  # inclusive
+            
+            portion_harnesses = []
+            for h_start, h_end in harness_ranges:
+                # Find overlap between this harness range and this device's range
+                overlap_start = max(h_start, p_start)
+                overlap_end = min(h_end, p_end)
+                overlap = overlap_end - overlap_start + 1
+                
+                if overlap > 0:
+                    portion_harnesses.append(overlap)
+            
+            result.append({
+                'inv_idx': portion['inv_idx'],
+                'strings_taken': portion['strings_taken'],
+                'harnesses': portion_harnesses,
+            })
+        
+        return result
 
     def _adjust_harnesses_for_splits(self, totals):
-        """Adjust harness counts based on inverter allocation split trackers.
+        """Derive harness configs for split trackers based on allocation boundaries.
+        
+        Walks the segment's harness config north-to-south and cuts at the split
+        boundary. Harnesses cannot span device boundaries.
         
         Also builds self._split_tracker_details for use by whip and extender
         calculations — maps each split tracker to per-device harness assignments.
         """
-        self._split_tracker_details = {}  # tracker_idx -> split info
+        self._split_tracker_details = {}
         
         inv_summary = totals.get('inverter_summary', {})
         allocation_result = inv_summary.get('allocation_result')
@@ -3112,56 +3171,66 @@ class QuickEstimate(ttk.Frame):
                     tidx = entry['tracker_idx']
                     if tidx not in split_trackers:
                         split_trackers[tidx] = []
-                    # Tag with which inverter/device this portion belongs to
                     entry_with_inv = dict(entry)
                     entry_with_inv['inv_idx'] = inv_idx
                     split_trackers[tidx].append(entry_with_inv)
         
         if not split_trackers:
             return
-                
+        
+        # Build tracker_to_segment map for looking up harness configs
+        tracker_seg_map = getattr(self, '_tracker_to_segment', [])
+        
         for tidx, entries in split_trackers.items():
             spt = entries[0]['strings_per_tracker']
             original_harness_sizes = self._get_harness_config_for_tracker_type(spt)
             
-            # Sort portions largest-first for greedy harness distribution
-            portions = sorted(entries, key=lambda e: e['strings_taken'], reverse=True)
-            remaining_harnesses = sorted(original_harness_sizes, reverse=True)
-                        
-            # Build per-portion harness assignments
-            portion_details = []
-            for portion in portions:
-                amount = portion['strings_taken']
-                inv_idx = portion['inv_idx']
-                assigned_harnesses = []
-                assigned = 0
-                
-                while assigned < amount and remaining_harnesses:
-                    h = remaining_harnesses[0]
-                    if assigned + h <= amount:
-                        # Whole harness fits in this portion
-                        assigned_harnesses.append(h)
-                        remaining_harnesses.pop(0)
-                        assigned += h
-                    else:
-                        # Must split this harness at the boundary
-                        needed = amount - assigned
-                        assigned_harnesses.append(needed)
-                        leftover = h - needed
-                        remaining_harnesses.pop(0)
-                        if leftover > 0:
-                            remaining_harnesses.insert(0, leftover)
-                        assigned = amount
-                
-                portion_details.append({
-                    'inv_idx': inv_idx,
-                    'strings_taken': amount,
-                    'harnesses': assigned_harnesses,
-                })
+            # Build device_positions with physical start positions
+            # Entries come from harness_map which is ordered by allocation sequence.
+            # For head/tail splits: head starts at 0, tail starts after head.
+            device_positions = []
+            pos_cursor = 0
             
-            # Any remaining harnesses (shouldn't happen but be safe)
-            if remaining_harnesses:
-                portion_details[-1]['harnesses'].extend(remaining_harnesses)
+            # Sort by split_position: head first, then middle, then tail
+            position_order = {'head': 0, 'middle': 1, 'tail': 2, 'full': 0}
+            sorted_entries = sorted(entries, key=lambda e: position_order.get(e.get('split_position', 'full'), 0))
+            
+            # Check if we have start_string_pos from Edit Devices (most accurate)
+            # This comes through the combiner assignments path
+            has_physical_pos = False
+            if self.last_combiner_assignments:
+                for cb in self.last_combiner_assignments:
+                    for conn in cb.get('connections', []):
+                        if conn['tracker_idx'] == tidx and 'start_string_pos' in conn:
+                            has_physical_pos = True
+                            break
+                    if has_physical_pos:
+                        break
+            
+            if has_physical_pos:
+                # Build from combiner assignments with physical positions
+                for cb_idx, cb in enumerate(self.last_combiner_assignments):
+                    for conn in cb.get('connections', []):
+                        if conn['tracker_idx'] == tidx:
+                            device_positions.append({
+                                'inv_idx': cb_idx,
+                                'strings_taken': conn['num_strings'],
+                                'start_pos': conn.get('start_string_pos', 0),
+                            })
+            else:
+                # Fall back to allocation order (head=north, tail=south)
+                for entry in sorted_entries:
+                    device_positions.append({
+                        'inv_idx': entry['inv_idx'],
+                        'strings_taken': entry['strings_taken'],
+                        'start_pos': pos_cursor,
+                    })
+                    pos_cursor += entry['strings_taken']
+            
+            # Derive harnesses for each portion
+            portion_details = self._derive_harnesses_for_split(
+                original_harness_sizes, spt, device_positions
+            )
             
             # Store for whip and extender calculations
             self._split_tracker_details[tidx] = {
@@ -3170,7 +3239,7 @@ class QuickEstimate(ttk.Frame):
                 'portions': portion_details,
             }
             
-            # Adjust harness totals: remove originals, add new
+            # Adjust harness totals: remove originals, add derived
             for size in original_harness_sizes:
                 if size in totals['harnesses_by_size']:
                     totals['harnesses_by_size'][size] -= 1
@@ -4535,9 +4604,24 @@ class QuickEstimate(ttk.Frame):
         self.last_totals = totals
         self._results_stale = False
         
-        # Build structured combiner assignments if they don't exist yet
-        if not (self.last_combiner_assignments and any(cb.get('connections') for cb in self.last_combiner_assignments)):
-            self._build_combiner_assignments(totals, topology)
+        # Snapshot start_string_pos from existing assignments before rebuilding
+        _saved_positions = {}
+        for cb in self.last_combiner_assignments:
+            for conn in cb.get('connections', []):
+                if 'start_string_pos' in conn:
+                    key = (cb.get('combiner_name', ''), conn['tracker_idx'])
+                    _saved_positions[key] = conn['start_string_pos']
+        
+        # Always rebuild combiner assignments from current allocation + harness configs
+        self._build_combiner_assignments(totals, topology)
+        
+        # Carry forward start_string_pos into rebuilt assignments
+        if _saved_positions:
+            for cb in self.last_combiner_assignments:
+                for conn in cb.get('connections', []):
+                    key = (cb.get('combiner_name', ''), conn['tracker_idx'])
+                    if key in _saved_positions:
+                        conn['start_string_pos'] = _saved_positions[key]
         
         # Read combiner BOM from Device Configurator (single source of truth)
         # Falls back to simple assignment-based totals if DC isn't available

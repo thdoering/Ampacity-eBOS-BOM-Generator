@@ -439,6 +439,10 @@ class DeviceConfigurator(ttk.Frame):
         
         self.data_source = new_source
         
+        # Always persist the source preference
+        if self.current_project:
+            self.current_project.device_config_source = new_source
+        
         if new_source == 'quick_estimate':
             self.load_from_quick_estimate()
         else:
