@@ -3005,8 +3005,7 @@ class SitePreviewWindow(tk.Toplevel):
             # Sort each tracker's contributions by start_string_pos (north first)
             for tidx in tracker_cb_map:
                 entries = tracker_cb_map[tidx]
-                if entries[0][0] is not None:
-                    # Have position data — sort by it
+                if all(e[0] is not None for e in entries):
                     entries.sort(key=lambda e: e[0])
                 # else: leave in original device order
             

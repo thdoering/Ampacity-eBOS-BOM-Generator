@@ -1562,6 +1562,46 @@ class QuickEstimate(ttk.Frame):
         except:
             return 0.0
 
+    def _get_default_harness_config_from_template(self, template_ref):
+        """Derive the default harness config string from a tracker template's motor position.
+        
+        Convention: first number = north side of motor, second = south side.
+        If no motor, returns single harness (full SPT as a string).
+        
+        Returns a config string like "7+6" or "13".
+        """
+        if not template_ref or template_ref not in self.enabled_templates:
+            return None
+        
+        tdata = self.enabled_templates[template_ref]
+        spt = tdata.get('strings_per_tracker', 3)
+        has_motor = tdata.get('has_motor', True)
+        
+        if not has_motor:
+            return str(int(spt))
+        
+        motor_placement = tdata.get('motor_placement_type', 'between_strings')
+        
+        if motor_placement == 'between_strings':
+            motor_pos_after = tdata.get('motor_position_after_string', None)
+            if motor_pos_after is not None:
+                north = int(motor_pos_after)
+                south = int(spt) - north
+                if north > 0 and south > 0:
+                    return f"{north}+{south}"
+        elif motor_placement == 'middle_of_string':
+            motor_string_idx = tdata.get('motor_string_index', None)
+            if motor_string_idx is not None:
+                # Motor is in the middle of a string, so the split is at that string boundary
+                # motor_string_index is 0-based; strings 0..idx are north, idx+1..end are south
+                north = int(motor_string_idx) + 1
+                south = int(spt) - north
+                if north > 0 and south > 0:
+                    return f"{north}+{south}"
+        
+        # Fallback: single harness
+        return str(int(spt))
+
     def get_harness_options(self, num_strings):
         """Generate harness configuration options for a given string count.
         
@@ -1574,9 +1614,13 @@ class QuickEstimate(ttk.Frame):
         
         options = [str(num_strings)]
         
-        # 2-part splits: largest first
-        for i in range(1, num_strings // 2 + 1):
-            options.append(f"{num_strings - i}+{i}")
+        # 2-part splits: both orderings (north+south convention)
+        for i in range(1, num_strings):
+            if i == num_strings - i:
+                # Equal split — only one entry needed
+                options.append(f"{i}+{i}")
+            else:
+                options.append(f"{num_strings - i}+{i}")
         
         return options
 
@@ -3938,7 +3982,13 @@ class QuickEstimate(ttk.Frame):
                 # Update harness options for new string count
                 new_options = self.get_harness_options(new_spt)
                 harness_combo['values'] = new_options
-                if harness_var.get() not in new_options:
+                
+                # Auto-derive default from template motor position
+                derived = self._get_default_harness_config_from_template(selected_key)
+                if derived and derived in new_options:
+                    harness_var.set(derived)
+                    segment['harness_config'] = derived
+                elif harness_var.get() not in new_options:
                     harness_var.set(new_options[0])
                     segment['harness_config'] = new_options[0]
             
@@ -3988,10 +4038,15 @@ class QuickEstimate(ttk.Frame):
             default_ref = None
             default_spt = 3
         
+        # Auto-derive harness config from template motor position
+        default_harness = self._get_default_harness_config_from_template(default_ref)
+        if not default_harness:
+            default_harness = str(default_spt)
+        
         group['segments'].append({
             'quantity': 1,
             'strings_per_tracker': default_spt,
-            'harness_config': str(default_spt),
+            'harness_config': default_harness,
             'template_ref': default_ref
         })
         self._rebuild_group_details(group_idx)
