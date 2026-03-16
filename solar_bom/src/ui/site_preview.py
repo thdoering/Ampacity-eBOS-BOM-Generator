@@ -2506,14 +2506,24 @@ class SitePreviewWindow(tk.Toplevel):
             summary_var.set(f"{total_devs} devices  |  {total_strings} strings  |  {splits} split trackers")
 
         def refresh_tree(select_device=None):
+            # Capture current open/closed state before rebuilding
+            open_state = {}
+            for child in tree.get_children():
+                dev_idx_str = child.replace('dev_', '')
+                if dev_idx_str.isdigit():
+                    open_state[int(dev_idx_str)] = tree.item(child, 'open')
+
             tree.delete(*tree.get_children())
             string_tracker.clear()
             for dev_idx, dev in enumerate(device_data):
                 total = len(dev['strings'])
                 dev_iid = f'dev_{dev_idx}'
-                tree.insert('', 'end', iid=dev_iid,
+                # Preserve previous open state; default to open=(total <= 40) for new nodes
+                is_open = open_state.get(dev_idx, False)
+                tree.insert('', 'end', 
+                            iid=dev_iid,
                             text=f"{dev['name']}  ({total} strings)",
-                            open=(total <= 40))
+                            open=is_open)
 
                 for s_pos, (tidx, phys_pos) in enumerate(dev['strings']):
                     str_iid = f'dev_{dev_idx}_s_{s_pos}'
@@ -2575,9 +2585,17 @@ class SitePreviewWindow(tk.Toplevel):
             drag_state['last_target_dev'] = None
             drag_state['start_x'] = event.x
             drag_state['start_y'] = event.y
-            def _capture():
-                drag_state['items'] = [iid for iid in tree.selection() if iid in string_tracker]
-            tree.after_idle(_capture)
+            # Capture selection NOW, before Tkinter's default handler changes it
+            clicked_iid = tree.identify_row(event.y)
+            current_sel = [iid for iid in tree.selection() if iid in string_tracker]
+            if clicked_iid in current_sel:
+                # Clicked on an already-selected item — drag the whole selection
+                drag_state['items'] = current_sel
+            else:
+                # Clicked on a new item — let default handler update selection, then capture
+                def _capture():
+                    drag_state['items'] = [iid for iid in tree.selection() if iid in string_tracker]
+                tree.after_idle(_capture)
 
         def _on_motion(event):
             if not drag_state['active']:
@@ -2825,6 +2843,10 @@ class SitePreviewWindow(tk.Toplevel):
 
         ttk.Button(bottom_frame, text="Apply", command=apply_changes).pack(side='right', padx=2)
         ttk.Button(bottom_frame, text="Cancel", command=cancel).pack(side='right', padx=2)
+        ttk.Button(bottom_frame, text="Collapse All",
+                   command=lambda: [tree.item(c, open=False) for c in tree.get_children()]).pack(side='left', padx=2)
+        ttk.Button(bottom_frame, text="Expand All",
+                   command=lambda: [tree.item(c, open=True) for c in tree.get_children()]).pack(side='left', padx=2)
 
         # Initial tree
         refresh_tree()
