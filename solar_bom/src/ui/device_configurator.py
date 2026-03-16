@@ -301,11 +301,18 @@ class DeviceConfigurator(ttk.Frame):
             self._load_qe_configs_from_saved(project.device_configs)
         else:
             # Generate configurations from blocks
-            self.generate_combiner_configs()
+            try:
+                self.generate_combiner_configs()
+            except (AttributeError, TypeError):
+                # Blocks may be serialized dicts, not live BlockConfig objects
+                pass
 
             # Load saved device configurations if they exist
             if hasattr(project, 'device_configs') and project.device_configs:
-                self.load_saved_configurations(project.device_configs)
+                if not self.combiner_configs:
+                    self._load_qe_configs_from_saved(project.device_configs)
+                else:
+                    self.load_saved_configurations(project.device_configs)
 
         # Update display
         self.refresh_display()

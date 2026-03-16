@@ -1643,7 +1643,7 @@ class QuickEstimate(ttk.Frame):
             return '+'.join(['1'] * int(spt))
         return seg.get('harness_config', str(seg.get('strings_per_tracker', 1)))
         
-    def calculate_extender_lengths_per_segment(self, seg, device_position):
+    def calculate_extender_lengths_per_segment(self, seg, device_position, string_offset=0):
         """Calculate per-harness positive and negative extender lengths for a segment.
         
         Returns a list of (pos_length_ft, neg_length_ft) tuples, one per harness in the config.
@@ -1781,27 +1781,31 @@ class QuickEstimate(ttk.Frame):
         elif has_motor:
             motor_after_string = 0  # default fallback
         
-        # Build string boundary positions N→S
-        string_positions = []  # list of (north_edge, south_edge, harness_idx)
-        y_cursor = 0.0
-        abs_string_idx = 0
+        # Build ALL string boundary positions for the full tracker N→S
         inter_string_gap = (spacing_m if (template_ref and template_ref in self.enabled_templates) else 0.02) * m_to_ft
-        
+        full_string_count = int(spt)
+        all_string_positions = []  # (north_edge, south_edge) for every string on tracker
+        y_cursor = 0.0
+        for abs_idx in range(full_string_count):
+            north_edge = y_cursor
+            south_edge = y_cursor + string_length_ft
+            all_string_positions.append((north_edge, south_edge))
+            y_cursor = south_edge
+            if has_motor and motor_after_string is not None and abs_idx == motor_after_string:
+                y_cursor += motor_gap_ft
+            elif abs_idx < full_string_count - 1:
+                y_cursor += inter_string_gap
+
+        # Assign harness indices starting from string_offset
+        # (For non-split trackers offset=0; for split portions, offset = physical start position)
+        string_positions = []
+        str_pos = string_offset
         for h_idx, h_size in enumerate(harness_sizes):
             for s in range(h_size):
-                north_edge = y_cursor
-                south_edge = y_cursor + string_length_ft
-                string_positions.append((north_edge, south_edge, h_idx))
-                y_cursor = south_edge
-                
-                # Add motor gap after the correct absolute string
-                if has_motor and motor_after_string is not None and abs_string_idx == motor_after_string:
-                    y_cursor += motor_gap_ft
-                elif abs_string_idx < spt - 1:
-                    # Add inter-string spacing (not after last string)
-                    y_cursor += inter_string_gap
-                
-                abs_string_idx += 1
+                if str_pos < len(all_string_positions):
+                    n_edge, s_edge = all_string_positions[str_pos]
+                    string_positions.append((n_edge, s_edge, h_idx))
+                    str_pos += 1
         
         # Calculate per-harness extender lengths
         result = []
@@ -1812,47 +1816,61 @@ class QuickEstimate(ttk.Frame):
                 result.append((10.0, 10.0))
                 continue
             
-            harness_north = harness_strings[0][0]
-            harness_south = harness_strings[-1][1]
+            # Find the device-side string (closest to target_y)
+            # The extender only runs from the harness's device-side terminal
+            # to the whip point — the harness cable covers the internal span.
+            if device_position == 'north':
+                device_side = harness_strings[0]    # northernmost string
+            elif device_position == 'south':
+                device_side = harness_strings[-1]   # southernmost string
+            else:  # middle
+                harness_center = (harness_strings[0][0] + harness_strings[-1][1]) / 2
+                if harness_center <= target_y:
+                    device_side = harness_strings[-1]   # harness north of device
+                else:
+                    device_side = harness_strings[0]    # harness south of device
             
-            # Determine which end is positive and which is negative
+            ds_north = device_side[0]  # north edge of device-side string
+            ds_south = device_side[1]  # south edge of device-side string
+            
+            # Determine which edge is positive and which is negative
             if polarity == 'Negative Always South':
-                pos_y = harness_north
-                neg_y = harness_south
+                pos_y = ds_north
+                neg_y = ds_south
             elif polarity == 'Negative Always North':
-                pos_y = harness_south
-                neg_y = harness_north
+                pos_y = ds_south
+                neg_y = ds_north
             elif polarity == 'Negative Toward Device':
                 if device_position == 'north':
-                    neg_y = harness_north
-                    pos_y = harness_south
+                    neg_y = ds_north
+                    pos_y = ds_south
                 elif device_position == 'south':
-                    neg_y = harness_south
-                    pos_y = harness_north
+                    neg_y = ds_south
+                    pos_y = ds_north
                 else:
-                    if harness_north < motor_y_ft:
-                        neg_y = harness_south
-                        pos_y = harness_north
+                    if ds_north < motor_y_ft:
+                        neg_y = ds_south
+                        pos_y = ds_north
                     else:
-                        neg_y = harness_north
-                        pos_y = harness_south
+                        neg_y = ds_north
+                        pos_y = ds_south
             elif polarity == 'Positive Toward Device':
                 if device_position == 'north':
-                    pos_y = harness_north
-                    neg_y = harness_south
+                    pos_y = ds_north
+                    neg_y = ds_south
                 elif device_position == 'south':
-                    pos_y = harness_south
-                    neg_y = harness_north
+                    pos_y = ds_south
+                    neg_y = ds_north
                 else:
-                    if harness_north < motor_y_ft:
-                        pos_y = harness_south
-                        neg_y = harness_north
+                    if ds_north < motor_y_ft:
+                        pos_y = ds_south
+                        neg_y = ds_north
                     else:
-                        pos_y = harness_north
-                        neg_y = harness_south
+                        pos_y = ds_north
+                        neg_y = ds_south
             else:
-                pos_y = harness_north
-                neg_y = harness_south
+                pos_y = ds_north
+                neg_y = ds_south
             
             pos_extender = max(abs(pos_y - target_y), 5.0)
             neg_extender = max(abs(neg_y - target_y), 5.0)
@@ -3084,9 +3102,6 @@ class QuickEstimate(ttk.Frame):
             t_info = tracker_segment_map[tidx] if tidx < len(tracker_segment_map) else None
             wire_gauge = t_info['wire_gauge'] if t_info else '10 AWG'
             original_harnesses = t_info['harness_sizes'] if t_info else [spt]
-            
-            print(f"[DEBUG _build_conn] tidx={tidx} spt={spt} is_split={is_split} "
-                  f"strings_taken={strings_taken} original_harnesses={original_harnesses}")
 
             if not is_split:
                 # Full tracker — one connection per harness in the config
@@ -3201,6 +3216,7 @@ class QuickEstimate(ttk.Frame):
             result.append({
                 'inv_idx': portion['inv_idx'],
                 'strings_taken': portion['strings_taken'],
+                'start_pos': portion['start_pos'],
                 'harnesses': portion_harnesses,
             })
         
@@ -3638,6 +3654,9 @@ class QuickEstimate(ttk.Frame):
         
         preview_btn = ttk.Button(button_row, text="Site Preview", command=self.show_site_preview)
         preview_btn.pack(side='left', padx=(10, 0))
+
+        diag_btn = ttk.Button(button_row, text="Run Diagnostics", command=self._run_diagnostics)
+        diag_btn.pack(side='left', padx=(10, 0))
         
         # Results frame (full width)
         results_frame = ttk.LabelFrame(bottom_frame, text="Estimated BOM (Rolled-Up Totals)", padding="10")
@@ -4586,7 +4605,8 @@ class QuickEstimate(ttk.Frame):
                 temp_seg['harness_config'] = portion_config
                 temp_seg['quantity'] = 1
                 
-                extender_pairs = self.calculate_extender_lengths_per_segment(temp_seg, device_position)
+                string_offset = portion.get('start_pos', 0)
+                extender_pairs = self.calculate_extender_lengths_per_segment(temp_seg, device_position, string_offset)
                 portion_harness_sizes = portion['harnesses']
                 
                 for pair_idx, (pos_len, neg_len) in enumerate(extender_pairs):
@@ -4685,7 +4705,7 @@ class QuickEstimate(ttk.Frame):
             # Fresh or unlocked — rebuild from allocation + harness configs
             self._build_combiner_assignments(totals, topology)
 
-        from src.utils.validate_combiner_assignments import validate_assignments
+        from src.utils.diagnostics import validate_assignments
         validate_assignments(self.last_combiner_assignments, verbose=True)
 
         # Read combiner BOM from Device Configurator (single source of truth)
@@ -5310,3 +5330,57 @@ class QuickEstimate(ttk.Frame):
             )
         except Exception as e:
             messagebox.showerror("Export Error", f"Failed to export BOM:\n{str(e)}")
+
+    def _run_diagnostics(self):
+        """Run all diagnostic checks and display results in a dialog."""
+        from src.utils.diagnostics import (
+            run_all_diagnostics, format_diagnostic_report
+        )
+
+        result = run_all_diagnostics(self, verbose=True)
+        report = format_diagnostic_report(result)
+
+        # Show in a scrollable dialog
+        diag_win = tk.Toplevel(self)
+        diag_win.title("Quick Estimate Diagnostics")
+        diag_win.geometry("700x500")
+        diag_win.transient(self.winfo_toplevel())
+
+        text_frame = ttk.Frame(diag_win)
+        text_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        text_widget = tk.Text(text_frame, wrap=tk.WORD, font=('Consolas', 10))
+        scrollbar = ttk.Scrollbar(text_frame, orient=tk.VERTICAL,
+                                   command=text_widget.yview)
+        text_widget.configure(yscrollcommand=scrollbar.set)
+
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Color tags
+        text_widget.tag_configure('pass', foreground='green')
+        text_widget.tag_configure('fail', foreground='red')
+        text_widget.tag_configure('issue', foreground='#CC6600')
+        text_widget.tag_configure('header', font=('Consolas', 11, 'bold'))
+
+        for line in report.split('\n'):
+            if line.startswith('[PASS]'):
+                text_widget.insert(tk.END, line + '\n', 'pass')
+            elif line.startswith('[FAIL]'):
+                text_widget.insert(tk.END, line + '\n', 'fail')
+            elif line.strip().startswith('EXT_') or line.strip().startswith('SPLIT_') or \
+                 line.strip().startswith('WHIP_') or line.strip().startswith('HARNESS_') or \
+                 line.strip().startswith('DUPLICATE') or line.strip().startswith('MISSING') or \
+                 line.strip().startswith('ORDER') or line.strip().startswith('CONTIGUITY') or \
+                 line.strip().startswith('NO_DATA'):
+                text_widget.insert(tk.END, line + '\n', 'issue')
+            elif '===' in line or '---' in line:
+                text_widget.insert(tk.END, line + '\n', 'header')
+            else:
+                text_widget.insert(tk.END, line + '\n')
+
+        text_widget.configure(state=tk.DISABLED)
+
+        # Close button
+        ttk.Button(diag_win, text="Close",
+                   command=diag_win.destroy).pack(pady=(0, 10))
