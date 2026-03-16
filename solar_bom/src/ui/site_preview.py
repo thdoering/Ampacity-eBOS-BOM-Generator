@@ -2366,6 +2366,11 @@ class SitePreviewWindow(tk.Toplevel):
                             for h_size in full_harness_config:
                                 harness_ranges.append((pos_cursor, pos_cursor + h_size - 1))
                                 pos_cursor += h_size
+
+                            print(f"[DEBUG _rebuild PARTIAL] tidx={tidx} dev={dev['name']} "
+                                  f"spt={spt} full_harness_config={full_harness_config} "
+                                  f"positions={sorted(positions)} start_pos={start_pos} "
+                                  f"harness_ranges={harness_ranges}")
                             
                             position_set = set(positions)
                             h_num = 1

@@ -2259,6 +2259,7 @@ class QuickEstimate(ttk.Frame):
         self.last_combiner_assignments = []
         self.allocation_locked = False
         self.locked_allocation_result = None
+        self.last_combiner_assignments = []
         if hasattr(self, 'group_listbox'):
             self._refresh_group_listbox()
         
@@ -3084,22 +3085,36 @@ class QuickEstimate(ttk.Frame):
             wire_gauge = t_info['wire_gauge'] if t_info else '10 AWG'
             original_harnesses = t_info['harness_sizes'] if t_info else [spt]
             
+            print(f"[DEBUG _build_conn] tidx={tidx} spt={spt} is_split={is_split} "
+                  f"strings_taken={strings_taken} original_harnesses={original_harnesses}")
+
             if not is_split:
                 # Full tracker — one connection per harness in the config
+                pos_cursor = 0
                 for h_idx, h_size in enumerate(original_harnesses):
                     connections.append({
                         'tracker_idx': tidx,
                         'tracker_label': f"T{tidx + 1:02d}",
                         'harness_label': f"H{h_idx + 1:02d}",
                         'num_strings': h_size,
+                        'start_string_pos': pos_cursor,
                         'module_isc': module_isc,
                         'nec_factor': nec_factor,
                         'wire_gauge': wire_gauge,
                     })
+                    pos_cursor += h_size
             else:
                 # Split tracker — distribute strings_taken across harnesses
                 remaining = strings_taken
                 harness_cursor = tracker_harness_counter.get(tidx, 0)
+                # Compute physical start position from split_position.
+                # Head starts at 0, tail starts at (spt - strings_taken).
+                # This is correct for fresh allocations where splits are always head/tail.
+                split_pos = entry.get('split_position', 'head')
+                if split_pos == 'tail':
+                    pos_cursor = spt - strings_taken
+                else:
+                    pos_cursor = 0
                 
                 while remaining > 0 and harness_cursor < len(original_harnesses):
                     h_size = original_harnesses[harness_cursor]
@@ -3109,10 +3124,12 @@ class QuickEstimate(ttk.Frame):
                         'tracker_label': f"T{tidx + 1:02d}",
                         'harness_label': f"H{harness_cursor + 1:02d}",
                         'num_strings': take,
+                        'start_string_pos': pos_cursor,
                         'module_isc': module_isc,
                         'nec_factor': nec_factor,
                         'wire_gauge': wire_gauge,
                     })
+                    pos_cursor += take
                     remaining -= take
                     if take >= h_size:
                         harness_cursor += 1
@@ -4659,25 +4676,18 @@ class QuickEstimate(ttk.Frame):
         self.last_totals = totals
         self._results_stale = False
         
-        # Snapshot start_string_pos from existing assignments before rebuilding
-        _saved_positions = {}
-        for cb in self.last_combiner_assignments:
-            for conn in cb.get('connections', []):
-                if 'start_string_pos' in conn:
-                    key = (cb.get('combiner_name', ''), conn['tracker_idx'])
-                    _saved_positions[key] = conn['start_string_pos']
-        
-        # Always rebuild combiner assignments from current allocation + harness configs
-        self._build_combiner_assignments(totals, topology)
-        
-        # Carry forward start_string_pos into rebuilt assignments
-        if _saved_positions:
-            for cb in self.last_combiner_assignments:
-                for conn in cb.get('connections', []):
-                    key = (cb.get('combiner_name', ''), conn['tracker_idx'])
-                    if key in _saved_positions:
-                        conn['start_string_pos'] = _saved_positions[key]
-        
+        # Combiner assignments: preserve if allocation is locked (user edited devices),
+        # otherwise rebuild from scratch with correct positions.
+        if self.allocation_locked and self.last_combiner_assignments:
+            # Edit Devices locked the allocation — its assignments are the source of truth
+            pass
+        else:
+            # Fresh or unlocked — rebuild from allocation + harness configs
+            self._build_combiner_assignments(totals, topology)
+
+        from src.utils.validate_combiner_assignments import validate_assignments
+        validate_assignments(self.last_combiner_assignments, verbose=True)
+
         # Read combiner BOM from Device Configurator (single source of truth)
         # Falls back to simple assignment-based totals if DC isn't available
         if not self._read_combiner_bom_from_device_config():

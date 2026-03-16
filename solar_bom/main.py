@@ -131,6 +131,8 @@ class SolarBOMApplication:
         device_configurator.main_app = self
         # Store reference for other components to access
         self.device_configurator = device_configurator
+        # Load project data (restores data source preference, saved configs, etc.)
+        device_configurator.load_project(self.current_project)
         
         # Create Project Info tab
         from src.ui.project_info_tab import ProjectInfoTab
