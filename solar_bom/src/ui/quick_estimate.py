@@ -4603,6 +4603,7 @@ class QuickEstimate(ttk.Frame):
                 portion_config = '+'.join(str(h) for h in portion['harnesses'])
                 temp_seg = dict(seg)
                 temp_seg['harness_config'] = portion_config
+                temp_seg['strings_per_tracker'] = portion.get('strings_taken', sum(portion['harnesses']))
                 temp_seg['quantity'] = 1
                 
                 string_offset = portion.get('start_pos', 0)

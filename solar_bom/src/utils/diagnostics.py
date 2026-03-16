@@ -187,7 +187,7 @@ def print_inventory(combiner_assignments):
 # ═══════════════════════════════════════════════════════════════
 
 def validate_extenders(totals, groups, tracker_seg_map, split_tracker_details,
-                       enabled_templates=None, verbose=False):
+                       enabled_templates=None, lv_collection_method='Wire Harness', verbose=False):
     """Validate extender BOM data using physics-based invariants.
 
     These checks don't rely on hardcoded expected values — they verify
@@ -255,8 +255,12 @@ def validate_extenders(totals, groups, tracker_seg_map, split_tracker_details,
             non_split_qty = qty - num_splits
 
             # Parse harness config to count harnesses per tracker
+            # For String HR, every string is its own harness regardless of stored config
             harness_config = seg.get('harness_config', str(seg.get('strings_per_tracker', 1)))
-            num_harnesses = len(harness_config.split('+'))
+            if lv_collection_method == 'String HR':
+                num_harnesses = int(seg.get('strings_per_tracker', 1))
+            else:
+                num_harnesses = len(harness_config.split('+'))
             expected_harness_count += non_split_qty * num_harnesses
 
     # Count from split tracker portions
@@ -625,10 +629,14 @@ def run_all_diagnostics(qe_widget, verbose=True):
     groups = getattr(qe_widget, 'groups', [])
     enabled_templates = getattr(qe_widget, 'enabled_templates', None)
     ext_issues = []
+    lv_method = getattr(qe_widget, 'lv_collection_var', None)
+    lv_collection_method = lv_method.get() if lv_method else 'Wire Harness'
     if totals:
         ext_issues = validate_extenders(
             totals, groups, tracker_seg_map, split_details,
-            enabled_templates=enabled_templates, verbose=verbose,
+            enabled_templates=enabled_templates,
+            lv_collection_method=lv_collection_method,
+            verbose=verbose,
         )
     else:
         ext_issues = ['NO_DATA: No totals found. Run Calculate first.']
