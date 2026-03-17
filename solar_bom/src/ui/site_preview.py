@@ -615,26 +615,40 @@ class SitePreviewWindow(tk.Toplevel):
             
             # Build assigned_strings from this inverter's harness_map
             assigned_strings = {}
-            for entry in harness_map:
-                tidx = entry['tracker_idx']
-                strings_taken = entry['strings_taken']
-                spt = entry['strings_per_tracker']
-                is_split = entry.get('is_split', False)
-                split_pos = entry.get('split_position', 'full')
-                
-                if tidx not in assigned_strings:
-                    assigned_strings[tidx] = set()
-                
-                if is_split and split_pos == 'tail':
-                    # Tail of a split: strings are at the END of the tracker
-                    start_idx = spt - strings_taken
-                    for s in range(start_idx, spt):
+            
+            # Prefer combiner assignments (have exact start_string_pos from Edit Devices)
+            parent_qe = self.master
+            cb_assignments = getattr(parent_qe, 'last_combiner_assignments', [])
+            if cb_assignments and inv_idx < len(cb_assignments):
+                cb = cb_assignments[inv_idx]
+                for conn in cb.get('connections', []):
+                    tidx = conn['tracker_idx']
+                    start = conn.get('start_string_pos', 0)
+                    n = conn['num_strings']
+                    if tidx not in assigned_strings:
+                        assigned_strings[tidx] = set()
+                    for s in range(start, start + n):
                         assigned_strings[tidx].add(s)
-                else:
-                    # Head of split or full tracker: strings from the front
-                    existing = len(assigned_strings[tidx])
-                    for s in range(existing, existing + strings_taken):
-                        assigned_strings[tidx].add(s)
+            else:
+                # Fallback to harness_map heuristic
+                for entry in harness_map:
+                    tidx = entry['tracker_idx']
+                    strings_taken = entry['strings_taken']
+                    spt = entry['strings_per_tracker']
+                    is_split = entry.get('is_split', False)
+                    split_pos = entry.get('split_position', 'full')
+                    
+                    if tidx not in assigned_strings:
+                        assigned_strings[tidx] = set()
+                    
+                    if is_split and split_pos == 'tail':
+                        start_idx = spt - strings_taken
+                        for s in range(start_idx, spt):
+                            assigned_strings[tidx].add(s)
+                    else:
+                        existing = len(assigned_strings[tidx])
+                        for s in range(existing, existing + strings_taken):
+                            assigned_strings[tidx].add(s)
             
             dev_idx = len(self.device_positions)
             label = self.device_names.get(dev_idx, f"{self.device_label}-{inv_idx + 1:02d}")
@@ -881,6 +895,15 @@ class SitePreviewWindow(tk.Toplevel):
             return
         
         if self.inspect_mode:
+            # Check info panel first (topmost layer)
+            if hasattr(self, '_info_panel_bounds') and self._info_panel_bounds:
+                bx1, by1, bx2, by2 = self._info_panel_bounds
+                if bx1 <= event.x <= bx2 and by1 <= event.y <= by2:
+                    self._dragging_panel = True
+                    self._panel_drag_start = (event.x, event.y)
+                    self._panel_drag_dev = self.selected_device_idx
+                    return
+
             # Check pads first (drawn on top)
             hit_pad = self.hit_test_pad(event.x, event.y)
             if hit_pad is not None:
@@ -966,6 +989,18 @@ class SitePreviewWindow(tk.Toplevel):
     
     def on_motion(self, event):
         """Handle mouse drag — move group, move pad, or pan canvas."""
+        # Panel drag
+        if getattr(self, '_dragging_panel', False) and self._panel_drag_start:
+            dx = event.x - self._panel_drag_start[0]
+            dy = event.y - self._panel_drag_start[1]
+            dev_idx = self._panel_drag_dev
+            if not hasattr(self, '_info_panel_offset'):
+                self._info_panel_offset = {}
+            old = self._info_panel_offset.get(dev_idx, (0, -100))
+            self._info_panel_offset[dev_idx] = (old[0] + dx, old[1] + dy)
+            self._panel_drag_start = (event.x, event.y)
+            self.draw()
+            return
         dx_px = event.x - self.drag_start_x
         dy_px = event.y - self.drag_start_y
         
@@ -1002,6 +1037,11 @@ class SitePreviewWindow(tk.Toplevel):
     
     def on_release(self, event):
         """Handle mouse release — finalize group or pad position."""
+        if getattr(self, '_dragging_panel', False):
+            self._dragging_panel = False
+            self._panel_drag_start = None
+            return
+
         if getattr(self, '_dragging_pad', False) and self._drag_moved:
             self._update_world_bounds()
         
@@ -1327,7 +1367,7 @@ class SitePreviewWindow(tk.Toplevel):
                         fill='#FF8800', outline='#CC6600', width=1
                     )
                 
-                # Tracker label
+                # Tracker label — use global tracker index to match info panel / assignments
                 label_cx, label_cy = self.world_to_canvas(
                     tx + tx_offset + t_width / 2,
                     ty + t_length + 2
@@ -1337,11 +1377,12 @@ class SitePreviewWindow(tk.Toplevel):
                     lbl_size = max(6, min(9, int(8 * self.scale)))
                     self.canvas.create_text(
                         label_cx, label_cy,
-                        text=f"T{t_idx+1}", font=('Helvetica', lbl_size), fill='#555555'
+                        text=f"T{global_tracker_idx+1}", font=('Helvetica', lbl_size), fill='#555555'
                     )
         
         # Draw devices (CB/SI)
         self._draw_devices()
+        self._draw_device_info_panel()
 
         # Draw routes (behind pads)
         self._draw_routes()
@@ -1703,6 +1744,219 @@ class SitePreviewWindow(tk.Toplevel):
                 text=label, font=('Helvetica', font_size, 'bold'),
                 fill='#333333', anchor='s'
             )
+
+    def _draw_device_info_panel(self):
+        """Draw a draggable info panel near the selected device with a connector tail."""
+        if not self.inspect_mode or self.selected_device_idx is None:
+            return
+        if not hasattr(self, 'device_positions') or self.selected_device_idx >= len(self.device_positions):
+            return
+
+        parent_qe = self.master
+        dev = self.device_positions[self.selected_device_idx]
+        dev_label = dev.get('label', f'{self.device_label}-{self.selected_device_idx + 1}')
+
+        # Gather data from parent QE
+        ns_offsets = getattr(parent_qe, '_tracker_ns_to_device', {})
+        assignments = getattr(parent_qe, 'last_combiner_assignments', [])
+        split_details = getattr(parent_qe, '_split_tracker_details', {})
+        tracker_seg_map = getattr(parent_qe, '_tracker_to_segment', [])
+
+        # Find CB assignment for this device
+        cb_data = None
+        for cb in assignments:
+            if cb.get('device_idx') == self.selected_device_idx:
+                cb_data = cb
+                break
+        if cb_data is None and self.selected_device_idx < len(assignments):
+            cb_data = assignments[self.selected_device_idx]
+        if cb_data is None:
+            return
+
+        inv_idx = cb_data.get('device_idx', self.selected_device_idx)
+
+        # Build per-tracker detail
+        tracker_info = {}  # tidx -> {strings, harnesses, whip_ew, ns_offset, ext_pos, ext_neg}
+        for conn in cb_data.get('connections', []):
+            tidx = conn['tracker_idx']
+            if tidx not in tracker_info:
+                tracker_info[tidx] = {
+                    'strings': 0, 'harness_labels': [],
+                    'whip_ew': 0, 'ns_offset': 0,
+                    'ext_pos': [], 'ext_neg': [],
+                }
+            info = tracker_info[tidx]
+            info['strings'] += conn['num_strings']
+            info['harness_labels'].append(f"{conn.get('harness_label', '?')}({conn['num_strings']}S)")
+
+        # Compute whip E-W per tracker from device position data
+        dev_cx = dev['x'] + dev['width_ft'] / 2
+        for tidx in tracker_info:
+            # Find tracker world X
+            global_idx = 0
+            t_x = None
+            for grp in self.group_layout:
+                for t_i, t in enumerate(grp['trackers']):
+                    if global_idx == tidx:
+                        t_x = grp['x'] + t_i * self.tracker_pitch_ft
+                        break
+                    global_idx += 1
+                if t_x is not None:
+                    break
+            if t_x is not None:
+                tracker_info[tidx]['whip_ew'] = abs(t_x - dev_cx)
+
+            # N-S inter-row offset
+            tracker_info[tidx]['ns_offset'] = ns_offsets.get((tidx, inv_idx), 0)
+
+            # Extender lengths
+            if tidx < len(tracker_seg_map):
+                seg_info = tracker_seg_map[tidx]
+                seg = seg_info['seg']
+                device_position = seg_info['device_position']
+                ns_off = tracker_info[tidx]['ns_offset']
+
+                signed_ns = ns_offsets.get((tidx, inv_idx), 0)
+                if tidx in split_details:
+                    for portion in split_details[tidx]['portions']:
+                        if portion['inv_idx'] == inv_idx:
+                            pairs = parent_qe.calculate_extender_lengths_per_segment(
+                                seg, device_position, portion.get('start_pos', 0),
+                                target_y_offset=signed_ns,
+                                harness_sizes_override=portion['harnesses'])
+                            for p_len, n_len in pairs:
+                                tracker_info[tidx]['ext_pos'].append(
+                                    parent_qe.round_whip_length(p_len))
+                                tracker_info[tidx]['ext_neg'].append(
+                                    parent_qe.round_whip_length(n_len))
+                else:
+                    pairs = parent_qe.calculate_extender_lengths_per_segment(
+                        seg, device_position, target_y_offset=signed_ns)
+                    for p_len, n_len in pairs:
+                        tracker_info[tidx]['ext_pos'].append(
+                            parent_qe.round_whip_length(p_len))
+                        tracker_info[tidx]['ext_neg'].append(
+                            parent_qe.round_whip_length(n_len))
+
+        # Build row data for tabular layout
+        headers = ['Trkr', 'Str', 'Whip', 'Ext+', 'Ext-']
+        rows = []
+        for tidx in sorted(tracker_info.keys()):
+            info = tracker_info[tidx]
+            whip_r = str(parent_qe.round_whip_length(info['whip_ew']) if info['whip_ew'] > 0 else 10)
+            ext_p = '/'.join(str(v) for v in info['ext_pos']) if info['ext_pos'] else '--'
+            ext_n = '/'.join(str(v) for v in info['ext_neg']) if info['ext_neg'] else '--'
+            rows.append([f"T{tidx+1}", str(info['strings']), whip_r, ext_p, ext_n])
+
+        # Calculate column widths from headers + data
+        col_widths = [len(h) for h in headers]
+        for row in rows:
+            for i, val in enumerate(row):
+                col_widths[i] = max(col_widths[i], len(val))
+
+        # Build formatted lines
+        def fmt_row(vals, widths):
+            parts = []
+            for i, val in enumerate(vals):
+                if i == 0:
+                    parts.append(val.ljust(widths[i]))
+                else:
+                    parts.append(val.rjust(widths[i]))
+            return '  '.join(parts)
+
+        lines = []
+        lines.append(('header', f"{dev_label}  ({len(cb_data.get('connections', []))} inputs, {cb_data.get('breaker_size', '?')}A)"))
+        lines.append(('spacer', ''))
+        lines.append(('subheader', fmt_row(headers, col_widths)))
+
+        for row in rows:
+            lines.append(('row', fmt_row(row, col_widths)))
+
+        # Totals
+        total_whip = sum(parent_qe.round_whip_length(info['whip_ew'])
+                         for info in tracker_info.values() if info['whip_ew'] > 0)
+        lines.append(('spacer', ''))
+        lines.append(('summary', f"Whips total: {total_whip}ft"))
+
+        # Panel dimensions — width measured from actual font rendering
+        import tkinter.font as tkfont
+        font_size = 9
+        line_height = font_size + 5
+        pad = 10
+        measure_font = tkfont.Font(family='Consolas', size=font_size + 1)
+        max_text_px = max(measure_font.measure(text) for _, text in lines) if lines else 200
+        panel_width = max_text_px + pad * 3
+        panel_height = len(lines) * line_height + pad * 2
+
+        # Anchor point on device (center-top)
+        anchor_wx = dev['x'] + dev['width_ft'] / 2
+        anchor_wy = dev['y']
+        ax, ay = self.world_to_canvas(anchor_wx, anchor_wy)
+
+        # Panel position — use stored drag offset or default above device
+        if not hasattr(self, '_info_panel_offset'):
+            self._info_panel_offset = {}
+        off = self._info_panel_offset.get(self.selected_device_idx, (0, -panel_height - 30))
+        px = ax + off[0] - panel_width // 2
+        py = ay + off[1]
+
+        # Clamp to canvas
+        cw = self.canvas.winfo_width()
+        ch = self.canvas.winfo_height()
+        px = max(5, min(px, cw - panel_width - 5))
+        py = max(5, min(py, ch - panel_height - 5))
+
+        # Store panel bounds for hit testing
+        self._info_panel_bounds = (px, py, px + panel_width, py + panel_height)
+
+        # Draw tail connector line from anchor to panel bottom-center
+        panel_cx = px + panel_width // 2
+        panel_bottom = py + panel_height
+        self.canvas.create_line(
+            ax, ay, panel_cx, panel_bottom,
+            fill='#4444AA', width=2, dash=(4, 3)
+        )
+        # Small circle at anchor
+        r = 4
+        self.canvas.create_oval(ax - r, ay - r, ax + r, ay + r,
+                                fill='#4444AA', outline='#6666CC', width=1)
+
+        # Panel background with shadow
+        self.canvas.create_rectangle(
+            px + 3, py + 3, px + panel_width + 3, py + panel_height + 3,
+            fill='#111111', outline='', width=0
+        )
+        self.canvas.create_rectangle(
+            px, py, px + panel_width, py + panel_height,
+            fill='#1E1E2E', outline='#4444AA', width=2
+        )
+
+        # Draw text lines
+        for i, (style, text) in enumerate(lines):
+            y_pos = py + pad + i * line_height
+            if style == 'header':
+                self.canvas.create_text(px + pad, y_pos, text=text,
+                    font=('Consolas', font_size + 1, 'bold'), fill='#FFCC00', anchor='nw')
+            elif style == 'subheader':
+                self.canvas.create_text(px + pad, y_pos, text=text,
+                    font=('Consolas', font_size, 'bold'), fill='#8888BB', anchor='nw')
+            elif style == 'row':
+                color = '#FF9944' if '+' in text.split()[-1] and text.split()[-1] != '--' else '#DDDDDD'
+                self.canvas.create_text(px + pad, y_pos, text=text,
+                    font=('Consolas', font_size), fill=color, anchor='nw')
+            elif style == 'summary':
+                self.canvas.create_text(px + pad, y_pos, text=text,
+                    font=('Consolas', font_size, 'bold'), fill='#66BBFF', anchor='nw')
+
+        # Drag handle indicator (top-right corner)
+        hx = px + panel_width - 16
+        hy = py + 4
+        for row in range(3):
+            for col in range(2):
+                self.canvas.create_rectangle(
+                    hx + col * 5, hy + row * 4,
+                    hx + col * 5 + 3, hy + row * 4 + 2,
+                    fill='#666688', outline='')
 
     def _draw_scale_bar(self):
         """Draw a scale bar in the bottom-left corner showing real-world distance."""
@@ -2439,6 +2693,14 @@ class SitePreviewWindow(tk.Toplevel):
             """Sort strings by (tracker_idx, physical_pos) to keep contiguous."""
             dev['strings'].sort(key=lambda s: (s[0], s[1]))
 
+        def _sort_device_data():
+            """Sort device_data in-place by natural name order (e.g. CB-02 before CB-10)."""
+            import re
+            def _natural_key(dev):
+                return [int(c) if c.isdigit() else c.lower()
+                        for c in re.split(r'(\d+)', dev['name'])]
+            device_data.sort(key=_natural_key)
+
         def _validate_move(source_dev_idx, positions_to_move, target_dev_idx):
             """Check that moving strings preserves contiguity on both sides.
             
@@ -2505,7 +2767,32 @@ class SitePreviewWindow(tk.Toplevel):
             splits = sum(1 for devs in tracker_dev_map.values() if len(devs) > 1)
             summary_var.set(f"{total_devs} devices  |  {total_strings} strings  |  {splits} split trackers")
 
+        # Holds a reference to any open inline-rename Entry widget so refresh_tree can clean it up
+        inline_entry_ref = [None]
+
         def refresh_tree(select_device=None):
+            # Destroy any open inline-rename entry before rebuilding
+            if inline_entry_ref[0] is not None:
+                try:
+                    inline_entry_ref[0].destroy()
+                except Exception:
+                    pass
+                inline_entry_ref[0] = None
+
+            # Sort device_data in-place by natural name order before every rebuild
+            import re as _sort_re
+            # Resolve select_device to a name BEFORE sorting (indices shift after sort)
+            select_name = None
+            if select_device is not None and select_device < len(device_data):
+                select_name = device_data[select_device]['name']
+
+            device_data.sort(key=lambda d: [int(c) if c.isdigit() else c.lower()
+                                            for c in _sort_re.split(r'(\d+)', d['name'])])
+
+            # If we had a name to select, find its new index
+            if select_name is not None:
+                select_device = next((i for i, d in enumerate(device_data) if d['name'] == select_name), select_device)
+
             # Capture current open/closed state before rebuilding
             open_state = {}
             for child in tree.get_children():
@@ -2534,6 +2821,7 @@ class SitePreviewWindow(tk.Toplevel):
             if select_device is not None:
                 dev_iid = f'dev_{select_device}'
                 if dev_iid in tree.get_children():
+                    tree.selection_set(dev_iid)
                     tree.see(dev_iid)
 
             _update_summary()
@@ -2722,16 +3010,130 @@ class SitePreviewWindow(tk.Toplevel):
         tree.bind('<B1-Motion>', _on_motion)
         tree.bind('<ButtonRelease-1>', _on_release, add='+')
 
+        # --- Inline rename on double-click ---
+        def _begin_inline_rename(iid):
+            if inline_entry_ref[0] is not None:
+                try:
+                    inline_entry_ref[0].destroy()
+                except Exception:
+                    pass
+                inline_entry_ref[0] = None
+
+            dev_idx = int(iid.split('_')[1])
+            tree.see(iid)
+            tree.update_idletasks()
+            bbox = tree.bbox(iid, column='#0')
+            if not bbox:
+                return
+            x, y, w, h = bbox
+            entry_var = tk.StringVar(value=device_data[dev_idx]['name'])
+            entry = ttk.Entry(tree, textvariable=entry_var)
+            entry.place(x=x + 4, y=y, width=max(w - 8, 120), height=h)
+            entry.select_range(0, 'end')
+            entry.focus_set()
+            inline_entry_ref[0] = entry
+
+            def _commit(event=None):
+                name = entry_var.get().strip()
+                if name:
+                    device_data[dev_idx]['name'] = name
+                if inline_entry_ref[0] is entry:
+                    inline_entry_ref[0] = None
+                try:
+                    entry.destroy()
+                except Exception:
+                    pass
+                refresh_tree(select_device=dev_idx)
+                _update_live_preview()
+
+            def _cancel(event=None):
+                if inline_entry_ref[0] is entry:
+                    inline_entry_ref[0] = None
+                try:
+                    entry.destroy()
+                except Exception:
+                    pass
+
+            entry.bind('<Return>', _commit)
+            entry.bind('<FocusOut>', _commit)
+            entry.bind('<Escape>', _cancel)
+
+        def _on_double_click(event):
+            iid = tree.identify_row(event.y)
+            if iid and iid.startswith('dev_') and iid not in string_tracker:
+                _begin_inline_rename(iid)
+                return 'break'
+
+        tree.bind('<Double-Button-1>', _on_double_click)
+
         # --- Action buttons ---
         action_frame = ttk.Frame(dialog, padding="5 0")
         action_frame.pack(fill='x', padx=10)
 
         def add_device():
-            prefix = 'INV' if self.topology == 'Distributed String' else 'CB'
-            next_num = len(device_data) + 1
-            device_data.append({'name': f'{prefix}-{next_num:02d}', 'strings': []})
-            refresh_tree(select_device=len(device_data) - 1)
-            _update_live_preview()
+            import re as _re
+            default_prefix = 'INV-' if self.topology == 'Distributed String' else 'CB-'
+
+            # Find the next available sequential number for the default prefix
+            existing_nums = []
+            for d in device_data:
+                m = _re.match(rf'^{_re.escape(default_prefix)}(\d+)$', d['name'])
+                if m:
+                    existing_nums.append(int(m.group(1)))
+            next_num = (max(existing_nums) + 1) if existing_nums else (len(device_data) + 1)
+
+            add_dlg = tk.Toplevel(dialog)
+            add_dlg.title("Add Device(s)")
+            add_dlg.transient(dialog)
+            add_dlg.resizable(False, False)
+
+            frm = ttk.Frame(add_dlg, padding=12)
+            frm.pack(fill='both', expand=True)
+
+            ttk.Label(frm, text="Count:").grid(row=0, column=0, sticky='w', padx=(0, 8), pady=4)
+            count_var = tk.IntVar(value=1)
+            ttk.Spinbox(frm, from_=1, to=99, textvariable=count_var, width=6).grid(row=0, column=1, sticky='w')
+
+            ttk.Label(frm, text="Prefix:").grid(row=1, column=0, sticky='w', padx=(0, 8), pady=4)
+            prefix_var = tk.StringVar(value=default_prefix)
+            ttk.Entry(frm, textvariable=prefix_var, width=12).grid(row=1, column=1, sticky='w')
+
+            ttk.Label(frm, text="Start #:").grid(row=2, column=0, sticky='w', padx=(0, 8), pady=4)
+            start_var = tk.IntVar(value=next_num)
+            ttk.Spinbox(frm, from_=1, to=999, textvariable=start_var, width=6).grid(row=2, column=1, sticky='w')
+
+            btn_frame = ttk.Frame(frm)
+            btn_frame.grid(row=3, column=0, columnspan=2, pady=(10, 0))
+
+            def _do_add():
+                try:
+                    count = int(count_var.get())
+                    start = int(start_var.get())
+                except (ValueError, tk.TclError):
+                    return
+                prefix = prefix_var.get()
+                last_name = None
+                for n in range(start, start + count):
+                    last_name = f'{prefix}{n:02d}'
+                    device_data.append({'name': last_name, 'strings': []})
+                _sort_device_data()
+                add_dlg.destroy()
+                new_idx = next((i for i, d in enumerate(device_data) if d['name'] == last_name), len(device_data) - 1)
+                refresh_tree(select_device=new_idx)
+                _update_live_preview()
+
+            ttk.Button(btn_frame, text="Add", command=_do_add).pack(side='left', padx=4)
+            ttk.Button(btn_frame, text="Cancel", command=add_dlg.destroy).pack(side='left', padx=4)
+
+            add_dlg.bind('<Return>', lambda e: _do_add())
+            add_dlg.bind('<Escape>', lambda e: add_dlg.destroy())
+
+            add_dlg.update_idletasks()
+            x = dialog.winfo_rootx() + (dialog.winfo_width() - add_dlg.winfo_width()) // 2
+            y = dialog.winfo_rooty() + (dialog.winfo_height() - add_dlg.winfo_height()) // 2
+            add_dlg.geometry(f'+{x}+{y}')
+            add_dlg.grab_set()
+            add_dlg.focus_set()
 
         def remove_device():
             sel = tree.selection()
@@ -2756,27 +3158,101 @@ class SitePreviewWindow(tk.Toplevel):
             _update_live_preview()
 
         def rename_device():
-            sel = tree.selection()
-            for iid in sel:
-                if iid.startswith('dev_') and iid not in string_tracker:
-                    dev_idx = int(iid.split('_')[1])
-                    new_name = simpledialog.askstring(
-                        "Rename", f"New name for {device_data[dev_idx]['name']}:",
-                        initialvalue=device_data[dev_idx]['name'], parent=dialog)
-                    if new_name and new_name.strip():
-                        device_data[dev_idx]['name'] = new_name.strip()
-                        refresh_tree(select_device=dev_idx)
-                        _update_live_preview()
-                    break
+            import re as _re
+            sel = [iid for iid in tree.selection()
+                   if iid.startswith('dev_') and iid not in string_tracker]
+            if not sel:
+                messagebox.showinfo("Select Device",
+                                    "Select a device node to rename.", parent=dialog)
+                return
+
+            if len(sel) == 1:
+                dev_idx = int(sel[0].split('_')[1])
+                new_name = simpledialog.askstring(
+                    "Rename", f"New name for {device_data[dev_idx]['name']}:",
+                    initialvalue=device_data[dev_idx]['name'], parent=dialog)
+                if new_name and new_name.strip():
+                    import re as _re2
+                    clean_name = new_name.strip()
+                    device_data[dev_idx]['name'] = clean_name
+                    device_data.sort(key=lambda d: [int(c) if c.isdigit() else c.lower() for c in _re2.split(r'(\d+)', d['name'])])
+                    print("SORTED ORDER:", [d['name'] for d in device_data])
+                    sorted_idx = next(i for i, d in enumerate(device_data) if d['name'] == clean_name)
+                    print("SELECTED IDX:", sorted_idx)
+                    refresh_tree(select_device=sorted_idx)
+                    _update_live_preview()
+            else:
+                # Bulk rename — put devices in tree display order
+                tree_order = [iid for iid in tree.get_children() if iid in sel]
+                dev_indices = [int(iid.split('_')[1]) for iid in tree_order]
+
+                # Guess a common prefix by stripping trailing digits from shared prefix
+                names = [device_data[i]['name'] for i in dev_indices]
+                common = names[0]
+                for name in names[1:]:
+                    common = common[:sum(1 for a, b in zip(common, name) if a == b)]
+                common = _re.sub(r'\d+$', '', common)
+
+                ren_dlg = tk.Toplevel(dialog)
+                ren_dlg.title(f"Bulk Rename {len(sel)} Devices")
+                ren_dlg.transient(dialog)
+                ren_dlg.resizable(False, False)
+
+                frm = ttk.Frame(ren_dlg, padding=12)
+                frm.pack(fill='both', expand=True)
+
+                ttk.Label(frm, text=f"Rename {len(sel)} devices sequentially:").grid(
+                    row=0, column=0, columnspan=2, sticky='w', pady=(0, 8))
+
+                ttk.Label(frm, text="Prefix:").grid(row=1, column=0, sticky='w', padx=(0, 8), pady=4)
+                prefix_var = tk.StringVar(value=common or 'CB-')
+                ttk.Entry(frm, textvariable=prefix_var, width=14).grid(row=1, column=1, sticky='w')
+
+                ttk.Label(frm, text="Start #:").grid(row=2, column=0, sticky='w', padx=(0, 8), pady=4)
+                start_var = tk.IntVar(value=1)
+                ttk.Spinbox(frm, from_=1, to=999, textvariable=start_var, width=6).grid(row=2, column=1, sticky='w')
+
+                btn_frame = ttk.Frame(frm)
+                btn_frame.grid(row=3, column=0, columnspan=2, pady=(10, 0))
+
+                def _do_rename():
+                    try:
+                        start = int(start_var.get())
+                    except (ValueError, tk.TclError):
+                        return
+                    prefix = prefix_var.get()
+                    for n, dev_idx in enumerate(dev_indices):
+                        device_data[dev_idx]['name'] = f'{prefix}{start + n:02d}'
+                    _sort_device_data()
+                    ren_dlg.destroy()
+                    refresh_tree()
+                    _update_live_preview()
+
+                ttk.Button(btn_frame, text="Rename", command=_do_rename).pack(side='left', padx=4)
+                ttk.Button(btn_frame, text="Cancel", command=ren_dlg.destroy).pack(side='left', padx=4)
+
+                ren_dlg.bind('<Return>', lambda e: _do_rename())
+                ren_dlg.bind('<Escape>', lambda e: ren_dlg.destroy())
+
+                ren_dlg.update_idletasks()
+                x = dialog.winfo_rootx() + (dialog.winfo_width() - ren_dlg.winfo_width()) // 2
+                y = dialog.winfo_rooty() + (dialog.winfo_height() - ren_dlg.winfo_height()) // 2
+                ren_dlg.geometry(f'+{x}+{y}')
+                ren_dlg.grab_set()
+                ren_dlg.focus_set()
 
         ttk.Label(action_frame, text="Drag strings to move  |",
                   foreground='gray', font=('Helvetica', 9)).pack(side='left', padx=(0, 8))
-        ttk.Button(action_frame, text="Add Device", command=add_device).pack(side='left', padx=2)
+        ttk.Button(action_frame, text="Add Device(s)", command=add_device).pack(side='left', padx=2)
         ttk.Button(action_frame, text="Remove", command=remove_device).pack(side='left', padx=2)
         ttk.Button(action_frame, text="Rename", command=rename_device).pack(side='left', padx=2)
 
         # --- Live preview update ---
         def _update_live_preview():
+            # Sync device count, names, and rebuild
+            self.num_devices = len(device_data)
+            self.device_names = {i: dev['name'] for i, dev in enumerate(device_data)}
+
             self._rebuild_from_device_strings(device_data, metadata)
 
             inv_summary = getattr(self.master, 'last_totals', {}).get('inverter_summary', {})
@@ -2784,14 +3260,16 @@ class SitePreviewWindow(tk.Toplevel):
                 self.inv_summary = inv_summary
                 self.build_layout_data()
                 self._recolor_from_cb_assignments()
-            self._build_legend()
-            self.draw()
+                self._build_legend()
+                self.draw()
 
         # --- Apply / Cancel ---
         bottom_frame = ttk.Frame(dialog, padding="10")
         bottom_frame.pack(fill='x')
 
         def apply_changes():
+            self.num_devices = len(device_data)
+            self.device_names = {i: dev['name'] for i, dev in enumerate(device_data)}
             self._rebuild_from_device_strings(device_data, metadata)
             self._update_lock_button()
             self._highlighted_strings = set()

@@ -800,13 +800,20 @@ class QuickEstimate(ttk.Frame):
                     continue
                 
                 ew_distance = abs(tracker_world_x[tidx] - dev_x)
-                # N-S distance = angle-based Y difference + fixed device_position offset
-                ns_from_angle = abs(tracker_world_y[tidx] - dev_y)
-                ns_total = ns_from_angle + ns_base
-                total_distance = (ew_distance**2 + ns_total**2) ** 0.5
+                # N-S inter-row distance (tracker to device) — stored for extender adjustment
+                ns_inter_row = abs(tracker_world_y[tidx] - dev_y)
+                
+                # Whip = E-W only; N-S distance goes to extender
+                total_distance = ew_distance
+                
+                # Store SIGNED N-S offset: positive = CB is south of tracker
+                if not hasattr(self, '_tracker_ns_to_device'):
+                    self._tracker_ns_to_device = {}
+                signed_ns = dev_y - tracker_world_y[tidx]
+                self._tracker_ns_to_device[(tidx, inv_idx)] = signed_ns
                 
                 spt = entry.get('strings_per_tracker', 0)
-                
+
                 whip_distances.append((total_distance, spt, tidx, inv_idx))
         
         return whip_distances
@@ -1643,15 +1650,18 @@ class QuickEstimate(ttk.Frame):
             return '+'.join(['1'] * int(spt))
         return seg.get('harness_config', str(seg.get('strings_per_tracker', 1)))
         
-    def calculate_extender_lengths_per_segment(self, seg, device_position, string_offset=0):
+    def calculate_extender_lengths_per_segment(self, seg, device_position, string_offset=0, target_y_offset=0, harness_sizes_override=None):
         """Calculate per-harness positive and negative extender lengths for a segment.
         
         Returns a list of (pos_length_ft, neg_length_ft) tuples, one per harness in the config.
         Multiply each by seg['quantity'] for total counts.
         """
         template_ref = seg.get('template_ref')
-        harness_config = self._get_effective_harness_config(seg)
-        harness_sizes = self.parse_harness_config(harness_config)
+        if harness_sizes_override is not None:
+            harness_sizes = harness_sizes_override
+        else:
+            harness_config = self._get_effective_harness_config(seg)
+            harness_sizes = self.parse_harness_config(harness_config)
         spt = seg['strings_per_tracker']
         
         if not harness_sizes:
@@ -1758,6 +1768,9 @@ class QuickEstimate(ttk.Frame):
             target_y = tracker_length_ft + device_offset_ft
         else:  # middle
             target_y = motor_y_ft
+
+        # Shift target for far-away trackers (signed: positive = CB south)
+        target_y += target_y_offset
         
         # Resolve polarity convention
         polarity = self.polarity_convention_var.get()
@@ -4516,6 +4529,9 @@ class QuickEstimate(ttk.Frame):
                 else:
                     distance_ft, spt = entry[0], entry[1]
                     tidx, inv_idx = -1, -1
+                if distance_ft > 100:
+                    print(f"[WHIP DEBUG] Long whip: tidx={tidx} T{tidx+1:02d} -> inv_idx={inv_idx} "
+                          f"raw_distance={distance_ft:.1f}ft spt={spt}")
                 whip_length = self.round_whip_length(distance_ft)
                 
                 if tidx in split_details:
@@ -4599,15 +4615,10 @@ class QuickEstimate(ttk.Frame):
             device_position = seg_info['device_position']
             
             for portion in details['portions']:
-                # Build a temporary segment matching this portion's harness config
-                portion_config = '+'.join(str(h) for h in portion['harnesses'])
-                temp_seg = dict(seg)
-                temp_seg['harness_config'] = portion_config
-                temp_seg['strings_per_tracker'] = portion.get('strings_taken', sum(portion['harnesses']))
-                temp_seg['quantity'] = 1
-                
                 string_offset = portion.get('start_pos', 0)
-                extender_pairs = self.calculate_extender_lengths_per_segment(temp_seg, device_position, string_offset)
+                extender_pairs = self.calculate_extender_lengths_per_segment(
+                    seg, device_position, string_offset,
+                    harness_sizes_override=portion['harnesses'])
                 portion_harness_sizes = portion['harnesses']
                 
                 for pair_idx, (pos_len, neg_len) in enumerate(extender_pairs):
@@ -4619,6 +4630,85 @@ class QuickEstimate(ttk.Frame):
                     neg_key = (neg_rounded, gauge)
                     totals['extenders_pos_by_length'][pos_key] += 1
                     totals['extenders_neg_by_length'][neg_key] += 1
+
+        # Adjust extenders for trackers with inter-row N-S offset to their device.
+        # Instead of adding offset uniformly, recompute with shifted target_y so
+        # each extender naturally lengthens toward the CB direction.
+        ns_offsets = getattr(self, '_tracker_ns_to_device', {})
+        if ns_offsets:
+            for (tidx, inv_idx), signed_ns in ns_offsets.items():
+                if abs(signed_ns) < 1.0:
+                    continue  # Skip negligible offsets
+
+                if tidx >= len(tracker_seg_map):
+                    continue
+
+                seg_info = tracker_seg_map[tidx]
+                seg = seg_info['seg']
+                device_position = seg_info['device_position']
+
+                if tidx in split_details:
+                    for portion in split_details[tidx]['portions']:
+                        if portion['inv_idx'] != inv_idx:
+                            continue
+                        string_offset = portion.get('start_pos', 0)
+                        h_override = portion['harnesses']
+
+                        # Base extenders (no offset)
+                        base_pairs = self.calculate_extender_lengths_per_segment(
+                            seg, device_position, string_offset,
+                            harness_sizes_override=h_override)
+                        # Recomputed extenders with signed N-S shift
+                        adjusted_pairs = self.calculate_extender_lengths_per_segment(
+                            seg, device_position, string_offset,
+                            target_y_offset=signed_ns,
+                            harness_sizes_override=h_override)
+                        portion_harness_sizes = portion['harnesses']
+
+                        for pair_idx in range(len(base_pairs)):
+                            h_str_count = portion_harness_sizes[pair_idx] if pair_idx < len(portion_harness_sizes) else 1
+                            gauge = self.get_wire_size_for('extender', h_str_count)
+                            # Remove base
+                            base_pos, base_neg = base_pairs[pair_idx]
+                            old_pos_key = (self.round_whip_length(base_pos), gauge)
+                            old_neg_key = (self.round_whip_length(base_neg), gauge)
+                            totals['extenders_pos_by_length'][old_pos_key] -= 1
+                            totals['extenders_neg_by_length'][old_neg_key] -= 1
+                            # Add adjusted
+                            adj_pos, adj_neg = adjusted_pairs[pair_idx]
+                            new_pos_key = (self.round_whip_length(adj_pos), gauge)
+                            new_neg_key = (self.round_whip_length(adj_neg), gauge)
+                            totals['extenders_pos_by_length'][new_pos_key] += 1
+                            totals['extenders_neg_by_length'][new_neg_key] += 1
+                else:
+                    # Non-split tracker
+                    base_pairs = self.calculate_extender_lengths_per_segment(
+                        seg, device_position)
+                    adjusted_pairs = self.calculate_extender_lengths_per_segment(
+                        seg, device_position, target_y_offset=signed_ns)
+                    harness_sizes = self._get_harness_sizes(seg)
+
+                    for pair_idx in range(len(base_pairs)):
+                        h_str_count = harness_sizes[pair_idx] if pair_idx < len(harness_sizes) else 1
+                        gauge = self.get_wire_size_for('extender', h_str_count)
+                        # Remove base
+                        base_pos, base_neg = base_pairs[pair_idx]
+                        old_pos_key = (self.round_whip_length(base_pos), gauge)
+                        old_neg_key = (self.round_whip_length(base_neg), gauge)
+                        totals['extenders_pos_by_length'][old_pos_key] -= 1
+                        totals['extenders_neg_by_length'][old_neg_key] -= 1
+                        # Add adjusted
+                        adj_pos, adj_neg = adjusted_pairs[pair_idx]
+                        new_pos_key = (self.round_whip_length(adj_pos), gauge)
+                        new_neg_key = (self.round_whip_length(adj_neg), gauge)
+                        totals['extenders_pos_by_length'][new_pos_key] += 1
+                        totals['extenders_neg_by_length'][new_neg_key] += 1
+
+            # Clean up any zero-count entries
+            for key_dict in [totals['extenders_pos_by_length'], totals['extenders_neg_by_length']]:
+                zero_keys = [k for k, v in key_dict.items() if v <= 0]
+                for k in zero_keys:
+                    del key_dict[k]
 
         # ==================== DC Feeder and AC Homerun ====================
         dc_feeder_avg_ft = self._get_float_var(self.dc_feeder_distance_var, 500.0)
@@ -4705,9 +4795,6 @@ class QuickEstimate(ttk.Frame):
         else:
             # Fresh or unlocked — rebuild from allocation + harness configs
             self._build_combiner_assignments(totals, topology)
-
-        from src.utils.diagnostics import validate_assignments
-        validate_assignments(self.last_combiner_assignments, verbose=True)
 
         # Read combiner BOM from Device Configurator (single source of truth)
         # Falls back to simple assignment-based totals if DC isn't available

@@ -187,7 +187,8 @@ def print_inventory(combiner_assignments):
 # ═══════════════════════════════════════════════════════════════
 
 def validate_extenders(totals, groups, tracker_seg_map, split_tracker_details,
-                       enabled_templates=None, lv_collection_method='Wire Harness', verbose=False):
+                       enabled_templates=None, lv_collection_method='Wire Harness',
+                       max_ns_offset=0, verbose=False):
     """Validate extender BOM data using physics-based invariants.
 
     These checks don't rely on hardcoded expected values — they verify
@@ -288,7 +289,7 @@ def validate_extenders(totals, groups, tracker_seg_map, split_tracker_details,
             continue
         for seg in group.get('segments', []):
             harness_config = seg.get('harness_config', str(seg.get('strings_per_tracker', 1)))
-            harness_sizes = [int(x) for x in harness_config.split('+')]
+            harness_sizes = [int(float(x)) for x in harness_config.split('+')]
             if len(harness_sizes) < 2:
                 continue
             # For 2-harness configs with device=middle, H0 and H1 should have
@@ -321,20 +322,21 @@ def validate_extenders(totals, groups, tracker_seg_map, split_tracker_details,
             tracker_len_ft = tracker_len_m * m_to_ft
             max_tracker_length_ft = max(max_tracker_length_ft, tracker_len_ft)
 
-    if max_tracker_length_ft > 0:
+    max_allowed = (max_tracker_length_ft + max_ns_offset) * 1.1 if max_tracker_length_ft > 0 else 0
+    if max_allowed > 0:
         for (length, gauge), qty in pos_by_length.items():
-            if length > max_tracker_length_ft * 1.5:  # 50% tolerance for splits near ends
+            if length > max_allowed:
                 issues.append(
                     f"EXT_TOO_LONG: Positive extender {length}ft exceeds "
-                    f"1.5x max tracker length ({max_tracker_length_ft:.0f}ft), "
-                    f"gauge={gauge}, qty={qty}"
+                    f"max allowed ({max_allowed:.0f}ft = tracker {max_tracker_length_ft:.0f}ft + "
+                    f"inter-row {max_ns_offset:.0f}ft + 10%), gauge={gauge}, qty={qty}"
                 )
         for (length, gauge), qty in neg_by_length.items():
-            if length > max_tracker_length_ft * 1.5:
+            if length > max_allowed:
                 issues.append(
                     f"EXT_TOO_LONG: Negative extender {length}ft exceeds "
-                    f"1.5x max tracker length ({max_tracker_length_ft:.0f}ft), "
-                    f"gauge={gauge}, qty={qty}"
+                    f"max allowed ({max_allowed:.0f}ft = tracker {max_tracker_length_ft:.0f}ft + "
+                    f"inter-row {max_ns_offset:.0f}ft + 10%), gauge={gauge}, qty={qty}"
                 )
 
     # ── Verbose output ──
@@ -528,6 +530,136 @@ def validate_whips(totals, verbose=False):
 
     return issues
 
+def validate_whip_extender_relationship(totals, qe_widget, verbose=False):
+    """Validate that whips are E-W only and far-away tracker extenders are correct.
+
+    Invariants:
+      1. No whip should exceed the max E-W span of the project.
+      2. For trackers with significant inter-row N-S offset to their device,
+         the positive and negative extenders must be asymmetric (differ by ~ns_offset).
+      3. The longer extender must be >= abs(ns_offset).
+
+    Args:
+        totals: the totals dict from calculate_estimate.
+        qe_widget: the QuickEstimate widget instance.
+        verbose: if True, print details to console.
+
+    Returns:
+        list of issue strings. Empty list = all good.
+    """
+    issues = []
+    ns_offsets = getattr(qe_widget, '_tracker_ns_to_device', {})
+    whips_by_length = totals.get('whips_by_length', {})
+    groups = getattr(qe_widget, 'groups', [])
+    row_spacing = 20.0
+    try:
+        row_spacing = float(qe_widget.row_spacing_var.get())
+    except (ValueError, AttributeError):
+        pass
+
+    # ── 1. Max whip should not exceed max E-W span ──
+    # Max E-W span = largest group tracker count × row_spacing
+    max_ew_span = 0
+    for group in groups:
+        group_trackers = sum(seg.get('quantity', 0) for seg in group.get('segments', []))
+        max_ew_span = max(max_ew_span, group_trackers * row_spacing)
+
+    if max_ew_span > 0 and whips_by_length:
+        max_whip = max(length for (length, gauge) in whips_by_length.keys())
+        if max_whip > max_ew_span * 1.1:  # 10% tolerance for rounding
+            issues.append(
+                f"WHIP_TOO_LONG: Max whip {max_whip}ft exceeds max E-W span "
+                f"{max_ew_span:.0f}ft — whips should be E-W only"
+            )
+
+    # ── 2. Far-away tracker extender checks ──
+    split_details = getattr(qe_widget, '_split_tracker_details', {})
+    tracker_seg_map = getattr(qe_widget, '_tracker_to_segment', [])
+    assignments = getattr(qe_widget, 'last_combiner_assignments', [])
+
+    for (tidx, inv_idx), signed_ns in ns_offsets.items():
+        if abs(signed_ns) < 10:
+            continue  # Only check trackers with meaningful inter-row offset
+
+        if tidx >= len(tracker_seg_map):
+            continue
+
+        seg_info = tracker_seg_map[tidx]
+        seg = seg_info['seg']
+        device_position = seg_info['device_position']
+
+        # Get the extender pairs for this tracker with offset
+        if tidx in split_details:
+            for portion in split_details[tidx]['portions']:
+                if portion['inv_idx'] != inv_idx:
+                    continue
+                pairs = qe_widget.calculate_extender_lengths_per_segment(
+                    seg, device_position, portion.get('start_pos', 0),
+                    target_y_offset=signed_ns,
+                    harness_sizes_override=portion['harnesses'])
+
+                for pair_idx, (pos_len, neg_len) in enumerate(pairs):
+                    pos_r = qe_widget.round_whip_length(pos_len)
+                    neg_r = qe_widget.round_whip_length(neg_len)
+                    longer = max(pos_r, neg_r)
+                    ns_abs = abs(signed_ns)
+
+                    # Check 2a: asymmetry — pos and neg should differ
+                    if abs(pos_r - neg_r) < 10:
+                        issues.append(
+                            f"EXT_SYMMETRIC: T{tidx+1:02d} portion(inv={inv_idx}) H{pair_idx+1} "
+                            f"has pos={pos_r}ft neg={neg_r}ft but N-S offset={ns_abs:.0f}ft — "
+                            f"expected asymmetric extenders"
+                        )
+
+                    # Check 2b: longer extender must cover the inter-row gap
+                    if longer < ns_abs * 0.8:  # 20% tolerance
+                        issues.append(
+                            f"EXT_TOO_SHORT: T{tidx+1:02d} portion(inv={inv_idx}) H{pair_idx+1} "
+                            f"longer ext={longer}ft but N-S offset={ns_abs:.0f}ft — "
+                            f"extender should cover inter-row distance"
+                        )
+        else:
+            # Non-split tracker
+            pairs = qe_widget.calculate_extender_lengths_per_segment(
+                seg, device_position,
+                target_y_offset=signed_ns,
+                harness_sizes_override=None)
+
+            for pair_idx, (pos_len, neg_len) in enumerate(pairs):
+                pos_r = qe_widget.round_whip_length(pos_len)
+                neg_r = qe_widget.round_whip_length(neg_len)
+                longer = max(pos_r, neg_r)
+                ns_abs = abs(signed_ns)
+
+                if abs(pos_r - neg_r) < 10:
+                    issues.append(
+                        f"EXT_SYMMETRIC: T{tidx+1:02d} (inv={inv_idx}) H{pair_idx+1} "
+                        f"has pos={pos_r}ft neg={neg_r}ft but N-S offset={ns_abs:.0f}ft — "
+                        f"expected asymmetric extenders"
+                    )
+
+                if longer < ns_abs * 0.8:
+                    issues.append(
+                        f"EXT_TOO_SHORT: T{tidx+1:02d} (inv={inv_idx}) H{pair_idx+1} "
+                        f"longer ext={longer}ft but N-S offset={ns_abs:.0f}ft — "
+                        f"extender should cover inter-row distance"
+                    )
+
+    if verbose or issues:
+        print("\n[WHIP/EXT RELATIONSHIP] === Validation ===")
+        print(f"  Max E-W span: {max_ew_span:.0f}ft")
+        print(f"  Trackers with inter-row offset: {sum(1 for v in ns_offsets.values() if abs(v) >= 10)}")
+        if issues:
+            print(f"  [{len(issues)} ISSUES]:")
+            for issue in issues:
+                print(f"    {issue}")
+        else:
+            print("  [ALL CHECKS PASSED]")
+        print("[WHIP/EXT RELATIONSHIP] === End ===\n")
+
+    return issues
+
 
 # ═══════════════════════════════════════════════════════════════
 # Harness Diagnostics
@@ -632,10 +764,13 @@ def run_all_diagnostics(qe_widget, verbose=True):
     lv_method = getattr(qe_widget, 'lv_collection_var', None)
     lv_collection_method = lv_method.get() if lv_method else 'Wire Harness'
     if totals:
+        ns_offsets = getattr(qe_widget, '_tracker_ns_to_device', {})
+        max_ns_offset = max((abs(v) for v in ns_offsets.values()), default=0)
         ext_issues = validate_extenders(
             totals, groups, tracker_seg_map, split_details,
             enabled_templates=enabled_templates,
             lv_collection_method=lv_collection_method,
+            max_ns_offset=max_ns_offset,
             verbose=verbose,
         )
     else:
@@ -656,6 +791,18 @@ def run_all_diagnostics(qe_widget, verbose=True):
         'name': 'Whips',
         'passed': len(whip_issues) == 0,
         'issues': whip_issues,
+    })
+
+    # ── 4b. Whip/Extender Relationship ──
+    rel_issues = []
+    if totals:
+        rel_issues = validate_whip_extender_relationship(totals, qe_widget, verbose=verbose)
+    else:
+        rel_issues = ['NO_DATA: No totals found. Run Calculate first.']
+    sections.append({
+        'name': 'Whip/Extender Relationship',
+        'passed': len(rel_issues) == 0,
+        'issues': rel_issues,
     })
 
     # ── 5. Harnesses ──
