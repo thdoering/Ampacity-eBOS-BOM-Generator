@@ -343,9 +343,16 @@ class SitePreviewWindow(tk.Toplevel):
                 tracker_map[tidx]['assignments'].append({
                     'color': color,
                     'strings': entry['strings_taken'],
-                    'inv_idx': inv_idx
+                    'inv_idx': inv_idx,
+                    'start_physical_pos': entry.get('start_physical_pos', -1),
                 })
         
+        # Sort each tracker's assignments by physical position (north-to-south)
+        for tidx in tracker_map:
+            assignments = tracker_map[tidx]['assignments']
+            if any(a.get('start_physical_pos', -1) >= 0 for a in assignments):
+                assignments.sort(key=lambda a: a.get('start_physical_pos', 0))
+
         # Split tracker_map into groups with template dimensions
         global_idx = 0
         max_tracker_length_ft = 0
@@ -2392,10 +2399,13 @@ class SitePreviewWindow(tk.Toplevel):
                 for entry in inv.get('harness_map', []):
                     tidx = entry['tracker_idx']
                     tracker_spt.setdefault(tidx, entry['strings_per_tracker'])
-                    start = tracker_cursor.get(tidx, 0)
+                    if 'start_physical_pos' in entry:
+                        start = entry['start_physical_pos']
+                    else:
+                        start = tracker_cursor.get(tidx, 0)
                     for p in range(start, start + entry['strings_taken']):
                         strings.append((tidx, p))
-                    tracker_cursor[tidx] = start + entry['strings_taken']
+                    tracker_cursor[tidx] = max(tracker_cursor.get(tidx, 0), start + entry['strings_taken'])
                 
                 device_data.append({
                     'name': f'{device_prefix}-{inv_idx+1:02d}',
@@ -2441,9 +2451,10 @@ class SitePreviewWindow(tk.Toplevel):
             
             # Group consecutive same-tracker strings
             current_tidx = dev['strings'][0][0]
+            current_start_pos = dev['strings'][0][1]
             current_count = 0
             
-            for tidx, _pos in dev['strings']:
+            for tidx, phys_pos in dev['strings']:
                 if tidx == current_tidx:
                     current_count += 1
                 else:
@@ -2454,10 +2465,12 @@ class SitePreviewWindow(tk.Toplevel):
                         'strings_taken': current_count,
                         'is_split': current_count < spt,
                         'split_position': 'full',
+                        'start_physical_pos': current_start_pos,
                     })
                     tracker_indices.append((current_tidx, current_count))
                     pattern.append(current_count)
                     current_tidx = tidx
+                    current_start_pos = phys_pos
                     current_count = 1
             
             # Flush last group
@@ -2468,6 +2481,7 @@ class SitePreviewWindow(tk.Toplevel):
                 'strings_taken': current_count,
                 'is_split': current_count < spt,
                 'split_position': 'full',
+                'start_physical_pos': current_start_pos,
             })
             tracker_indices.append((current_tidx, current_count))
             pattern.append(current_count)
@@ -2620,11 +2634,6 @@ class SitePreviewWindow(tk.Toplevel):
                             for h_size in full_harness_config:
                                 harness_ranges.append((pos_cursor, pos_cursor + h_size - 1))
                                 pos_cursor += h_size
-
-                            print(f"[DEBUG _rebuild PARTIAL] tidx={tidx} dev={dev['name']} "
-                                  f"spt={spt} full_harness_config={full_harness_config} "
-                                  f"positions={sorted(positions)} start_pos={start_pos} "
-                                  f"harness_ranges={harness_ranges}")
                             
                             position_set = set(positions)
                             h_num = 1
@@ -2871,6 +2880,7 @@ class SitePreviewWindow(tk.Toplevel):
             drag_state['active'] = False
             drag_state['suppressing'] = False
             drag_state['last_target_dev'] = None
+            drag_state['items'] = []          # ← Clear stale items immediately
             drag_state['start_x'] = event.x
             drag_state['start_y'] = event.y
             # Capture selection NOW, before Tkinter's default handler changes it
@@ -2878,7 +2888,7 @@ class SitePreviewWindow(tk.Toplevel):
             current_sel = [iid for iid in tree.selection() if iid in string_tracker]
             if clicked_iid in current_sel:
                 # Clicked on an already-selected item — drag the whole selection
-                drag_state['items'] = current_sel
+                drag_state['items'] = list(current_sel)
             else:
                 # Clicked on a new item — let default handler update selection, then capture
                 def _capture():
@@ -2975,6 +2985,8 @@ class SitePreviewWindow(tk.Toplevel):
                     continue
                 dev_idx = int(parent_iid.split('_')[1])
                 s_pos = int(s_iid.rsplit('_', 1)[1])
+                if s_pos < len(device_data[dev_idx]['strings']):
+                    actual_string = device_data[dev_idx]['strings'][s_pos]
                 by_source.setdefault(dev_idx, []).append(s_pos)
 
             # Validate contiguity for each source
@@ -2995,7 +3007,6 @@ class SitePreviewWindow(tk.Toplevel):
                     if pos < len(device_data[src_dev]['strings']):
                         entry = device_data[src_dev]['strings'].pop(pos)
                         moved.append(entry)
-
             if not moved:
                 return
 
@@ -3005,7 +3016,6 @@ class SitePreviewWindow(tk.Toplevel):
             refresh_tree(select_device=target_dev)
             _update_live_preview()
             drag_state['items'] = []
-
         tree.bind('<ButtonPress-1>', _on_press, add='+')
         tree.bind('<B1-Motion>', _on_motion)
         tree.bind('<ButtonRelease-1>', _on_release, add='+')
@@ -3176,9 +3186,7 @@ class SitePreviewWindow(tk.Toplevel):
                     clean_name = new_name.strip()
                     device_data[dev_idx]['name'] = clean_name
                     device_data.sort(key=lambda d: [int(c) if c.isdigit() else c.lower() for c in _re2.split(r'(\d+)', d['name'])])
-                    print("SORTED ORDER:", [d['name'] for d in device_data])
                     sorted_idx = next(i for i, d in enumerate(device_data) if d['name'] == clean_name)
-                    print("SELECTED IDX:", sorted_idx)
                     refresh_tree(select_device=sorted_idx)
                     _update_live_preview()
             else:
@@ -3472,11 +3480,9 @@ class SitePreviewWindow(tk.Toplevel):
         """
         parent_qe = self.master
         assignments = getattr(parent_qe, 'last_combiner_assignments', [])
-        if not assignments:
-            return
-        
         physical_order = getattr(self, '_tracker_physical_order', None)
         
+        # Physical ordering takes priority — works for all topologies
         if physical_order:
             # Use physical ordering — most accurate after manual edits
             global_idx = 0
@@ -3494,6 +3500,8 @@ class SitePreviewWindow(tk.Toplevel):
                         tracker['assignments'] = new_assignments
                     global_idx += 1
         else:
+            if not assignments:
+                return
             # Fallback: use start_string_pos if available, else device-index ordering
             tracker_cb_map = {}
             for cb_idx, cb in enumerate(assignments):

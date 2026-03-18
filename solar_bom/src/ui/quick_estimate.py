@@ -4525,9 +4525,6 @@ class QuickEstimate(ttk.Frame):
                 else:
                     distance_ft, spt = entry[0], entry[1]
                     tidx, inv_idx = -1, -1
-                if distance_ft > 100:
-                    print(f"[WHIP DEBUG] Long whip: tidx={tidx} T{tidx+1:02d} -> inv_idx={inv_idx} "
-                          f"raw_distance={distance_ft:.1f}ft spt={spt}")
                 whip_length = self.round_whip_length(distance_ft)
                 
                 if tidx in split_details:
