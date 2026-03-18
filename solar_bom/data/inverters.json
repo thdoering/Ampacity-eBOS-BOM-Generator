@@ -261,5 +261,206 @@
     "weight_kg": 75.0,
     "ip_rating": "IP65",
     "max_short_circuit_current": 300.0
+  },
+  "CPS SCH275KTL-DO/US-800-24 V2": {
+    "manufacturer": "CPS",
+    "model": "SCH275KTL-DO/US-800-24 V2",
+    "inverter_type": "String",
+    "rated_power_kw": 275.0,
+    "max_dc_power_kw": 253.8,
+    "max_efficiency": 98.0,
+    "mppt_channels": [
+      {
+        "max_input_current": 30.0,
+        "min_voltage": 900.0,
+        "max_voltage": 1300.0,
+        "max_power": 21150.0,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 30.0,
+        "min_voltage": 900.0,
+        "max_voltage": 1300.0,
+        "max_power": 21150.0,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 30.0,
+        "min_voltage": 900.0,
+        "max_voltage": 1300.0,
+        "max_power": 21150.0,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 30.0,
+        "min_voltage": 900.0,
+        "max_voltage": 1300.0,
+        "max_power": 21150.0,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 30.0,
+        "min_voltage": 900.0,
+        "max_voltage": 1300.0,
+        "max_power": 21150.0,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 30.0,
+        "min_voltage": 900.0,
+        "max_voltage": 1300.0,
+        "max_power": 21150.0,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 30.0,
+        "min_voltage": 900.0,
+        "max_voltage": 1300.0,
+        "max_power": 21150.0,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 30.0,
+        "min_voltage": 900.0,
+        "max_voltage": 1300.0,
+        "max_power": 21150.0,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 30.0,
+        "min_voltage": 900.0,
+        "max_voltage": 1300.0,
+        "max_power": 21150.0,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 30.0,
+        "min_voltage": 900.0,
+        "max_voltage": 1300.0,
+        "max_power": 21150.0,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 30.0,
+        "min_voltage": 900.0,
+        "max_voltage": 1300.0,
+        "max_power": 21150.0,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 30.0,
+        "min_voltage": 900.0,
+        "max_voltage": 1300.0,
+        "max_power": 21150.0,
+        "num_string_inputs": 2
+      }
+    ],
+    "mppt_configuration": "Independent",
+    "max_dc_voltage": 1500.0,
+    "startup_voltage": 900.0,
+    "nominal_ac_voltage": 800.0,
+    "max_ac_current": 198.5,
+    "power_factor": 0.99,
+    "dimensions_mm": [
+      1000,
+      600,
+      300
+    ],
+    "weight_kg": 75.0,
+    "ip_rating": "IP65",
+    "max_short_circuit_current": 600.0
+  },
+  "Sungrow SG3150U": {
+    "manufacturer": "Sungrow",
+    "model": "SG3150U",
+    "inverter_type": "Central",
+    "rated_power_kw": 3150.0,
+    "max_dc_power_kw": 3150.0,
+    "max_efficiency": 98.0,
+    "mppt_channels": [
+      {
+        "max_input_current": 3510.0,
+        "min_voltage": 915.0,
+        "max_voltage": 1300.0,
+        "max_power": 3150000.0,
+        "num_string_inputs": 24
+      }
+    ],
+    "mppt_configuration": "Independent",
+    "max_dc_voltage": 1500.0,
+    "startup_voltage": 915.0,
+    "nominal_ac_voltage": 630.0,
+    "max_ac_current": 2886.0,
+    "power_factor": 0.99,
+    "dimensions_mm": [
+      1000,
+      600,
+      300
+    ],
+    "weight_kg": 75.0,
+    "ip_rating": "IP65",
+    "max_short_circuit_current": 4800.0
+  },
+  "SMA Highpower PEAK3 125kW": {
+    "manufacturer": "SMA",
+    "model": "Highpower PEAK3 125kW",
+    "inverter_type": "String",
+    "rated_power_kw": 125.0,
+    "max_dc_power_kw": 187.5,
+    "max_efficiency": 98.0,
+    "mppt_channels": [
+      {
+        "max_input_current": 180.0,
+        "min_voltage": 710.0,
+        "max_voltage": 1425.0,
+        "max_power": 187500.0,
+        "num_string_inputs": 1
+      }
+    ],
+    "mppt_configuration": "Independent",
+    "max_dc_voltage": 1500.0,
+    "startup_voltage": 710.0,
+    "nominal_ac_voltage": 480.0,
+    "max_ac_current": 151.0,
+    "power_factor": 0.99,
+    "dimensions_mm": [
+      1000,
+      600,
+      300
+    ],
+    "weight_kg": 75.0,
+    "ip_rating": "IP65",
+    "max_short_circuit_current": 325.0
+  },
+  "CPS SCH250K-T-US-600 Distributed": {
+    "manufacturer": "CPS",
+    "model": "SCH250K-T-US-600 Distributed",
+    "inverter_type": "String",
+    "rated_power_kw": 250.0,
+    "max_dc_power_kw": 425.0,
+    "max_efficiency": 98.0,
+    "mppt_channels": [
+      {
+        "max_input_current": 300.0,
+        "min_voltage": 860.0,
+        "max_voltage": 1450.0,
+        "max_power": 425000.0,
+        "num_string_inputs": 30
+      }
+    ],
+    "mppt_configuration": "Independent",
+    "max_dc_voltage": 1500.0,
+    "startup_voltage": 860.0,
+    "nominal_ac_voltage": 600.0,
+    "max_ac_current": 241.0,
+    "power_factor": 0.99,
+    "dimensions_mm": [
+      1000,
+      600,
+      300
+    ],
+    "weight_kg": 75.0,
+    "ip_rating": "IP65",
+    "max_short_circuit_current": 450.0
   }
 }

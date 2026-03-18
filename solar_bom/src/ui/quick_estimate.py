@@ -3373,14 +3373,10 @@ class QuickEstimate(ttk.Frame):
         target_dc_kw = target_ratio * self.selected_inverter.rated_power_kw
         power_based_strings = round(target_dc_kw / string_power_kw)
         
-        if topology == 'Distributed String':
-            # Physical input count matters — strings connect directly to inverter
-            input_limited = self.selected_inverter.get_total_string_capacity()
-            strings_per_inv = min(power_based_strings, input_limited)
-        else:
-            # Centralized String or Central Inverter — combiners aggregate strings
-            # Only power/ratio target applies, not physical input count
-            strings_per_inv = power_based_strings
+        # All topologies: strings/inverter driven by DC:AC ratio target only.
+        # Physical input limits don't cap string count because harnesses
+        # allow multiple strings per input (determined later per-segment).
+        strings_per_inv = power_based_strings
         
         strings_per_inv = max(strings_per_inv, 1)  # At least 1
         self._updating_spi = True
