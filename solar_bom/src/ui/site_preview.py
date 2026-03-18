@@ -244,7 +244,7 @@ class SitePreviewWindow(tk.Toplevel):
         actual_ratio = self.inv_summary.get('actual_dc_ac', 0)
         split = self.inv_summary.get('total_split_trackers', 0)
         
-        summary_text = f"{num_inv} Inverters  |  {total_str} Strings  |  DC:AC: {actual_ratio:.2f}  |  {split} Split Trackers  |  {self.topology}"
+        summary_text = self._format_summary(num_inv, total_str, actual_ratio, split)
         self.summary_label = ttk.Label(top_bar, text=summary_text, foreground='#333333')
         self.summary_label.pack(side='right', padx=10)
         
@@ -315,6 +315,23 @@ class SitePreviewWindow(tk.Toplevel):
             runs_str = f"  |  {spatial_runs} spatial run(s)" if spatial_runs > 1 else ""
             ttk.Label(self.legend_frame, text=f"{size_str}  |  {split_count} split tracker(s){runs_str}",
                      font=('Helvetica', 9), foreground='#555555').pack(anchor='w')
+            
+    def _format_summary(self, num_inv, total_str, actual_ratio, split,
+                        spatial_runs=1, locked=False):
+        """Format the top-bar summary string, topology-aware."""
+        lock_str = "  |  🔒 LOCKED" if locked else ""
+        runs_str = f"  |  {spatial_runs} Run(s)" if spatial_runs > 1 else ""
+        
+        if self.topology == 'Central Inverter':
+            num_cbs = self.num_devices
+            return (f"{num_cbs} CBs  |  {num_inv} Central Inv  |  {total_str} Strings  |  "
+                    f"DC:AC: {actual_ratio:.2f}  |  {split} Split Trackers{runs_str}  |  "
+                    f"{self.topology}{lock_str}")
+        else:
+            device_label = "SIs" if self.topology == 'Distributed String' else "Inverters"
+            return (f"{num_inv} {device_label}  |  {total_str} Strings  |  "
+                    f"DC:AC: {actual_ratio:.2f}  |  {split} Split Trackers{runs_str}  |  "
+                    f"{self.topology}{lock_str}")
 
     def build_layout_data(self):
         """Build a group-based layout of trackers with physical dimensions from templates.
@@ -1555,6 +1572,7 @@ class SitePreviewWindow(tk.Toplevel):
             if inv_summary and inv_summary.get('allocation_result'):
                 self.inv_summary = inv_summary
                 self.build_layout_data()
+                self._recolor_from_cb_assignments()
                 self._build_legend()
                 
                 # Update top bar summary
@@ -1565,8 +1583,8 @@ class SitePreviewWindow(tk.Toplevel):
                 spatial_runs = inv_summary.get('allocation_result', {}).get('spatial_runs', 1)
                 lock_str = "  |  🔒 LOCKED" if self.allocation_locked else ""
                 self.summary_label.config(
-                    text=f"{num_inv} Inverters  |  {total_str} Strings  |  DC:AC: {actual_ratio:.2f}  |  "
-                         f"{split} Split Trackers  |  {spatial_runs} Run(s)  |  {self.topology}{lock_str}"
+                    text=self._format_summary(num_inv, total_str, actual_ratio, split,
+                                              spatial_runs=spatial_runs, locked=self.allocation_locked)
                 )
                 
                 self.draw()

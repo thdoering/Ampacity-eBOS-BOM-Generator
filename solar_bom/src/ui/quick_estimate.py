@@ -2518,38 +2518,44 @@ class QuickEstimate(ttk.Frame):
         preview.protocol("WM_DELETE_WINDOW", _on_preview_close)
 
     def _on_strings_per_inverter_changed(self, *args):
-        """When user manually edits strings/inverter, reverse-calculate DC:AC ratio."""
+        """When user manually edits strings/device, reverse-calculate DC:AC ratio.
+        
+        For Central Inverter, this field is strings/CB — don't reverse-calc DC:AC.
+        """
         if self._updating_spi:
             return
         if not self.selected_inverter or not self.selected_module:
             return
         
+        topology = self.topology_var.get()
         spi = self._get_int_var(self.strings_per_inverter_var, 0)
         if spi <= 0:
             return
         
-        modules_per_string = self._get_int_var(self.modules_per_string_var, 28)
-        
-        # Reverse-calculate DC:AC ratio
-        module_wattage = self.selected_module.wattage
-        actual_ratio = self.selected_inverter.dc_ac_ratio(spi, module_wattage, modules_per_string)
-        
-        if actual_ratio > 0:
-            # Update DC:AC ratio without triggering forward calc
-            self._updating_spi = True
-            self.dc_ac_ratio_var.set(f"{actual_ratio:.2f}")
-            self._updating_spi = False
-        
-        # Update Isc warning for new string count
-        module_isc = self.selected_module.isc
-        total_isc = spi * module_isc
-        max_isc = getattr(self.selected_inverter, 'max_short_circuit_current', None)
-        
-        if max_isc and total_isc > max_isc:
-            self.isc_warning_label.config(
-                text=f"⚠️ Isc limit exceeded: {total_isc:.1f}A > {max_isc:.0f}A max"
-            )
+        if topology != 'Central Inverter':
+            # Reverse-calculate DC:AC ratio from strings/device
+            modules_per_string = self._get_int_var(self.modules_per_string_var, 28)
+            module_wattage = self.selected_module.wattage
+            actual_ratio = self.selected_inverter.dc_ac_ratio(spi, module_wattage, modules_per_string)
+            
+            if actual_ratio > 0:
+                self._updating_spi = True
+                self.dc_ac_ratio_var.set(f"{actual_ratio:.2f}")
+                self._updating_spi = False
+            
+            # Update Isc warning for new string count
+            module_isc = self.selected_module.isc
+            total_isc = spi * module_isc
+            max_isc = getattr(self.selected_inverter, 'max_short_circuit_current', None)
+            
+            if max_isc and total_isc > max_isc:
+                self.isc_warning_label.config(
+                    text=f"⚠️ Isc limit exceeded: {total_isc:.1f}A > {max_isc:.0f}A max"
+                )
+            else:
+                self.isc_warning_label.config(text="")
         else:
+            # Central Inverter: field is strings/CB, no DC:AC coupling
             self.isc_warning_label.config(text="")
         
         self._mark_dirty()
@@ -2721,81 +2727,79 @@ class QuickEstimate(ttk.Frame):
             if total_combiners <= 0 or not tracker_segment_map:
                 return
             
-            # Distribute trackers across combiners proportionally
-            # (same logic as _compute_devices_proportional but at the QE level)
             num_trackers = len(tracker_segment_map)
             
-            # Find max inputs for the matched CB
-            fuse_current = module_isc * nec_factor * max(
-                (max(t['harness_sizes']) if t['harness_sizes'] else 1)
-                for t in tracker_segment_map
-            )
-            fuse_holder_rating = self.get_fuse_holder_category(fuse_current)
-            combiner_library = self.load_combiner_library()
+            # Distribute CBs proportionally across groups, then trackers
+            # evenly within each group (mirrors _compute_devices_proportional
+            # in site_preview.py so positions and data always agree).
+            group_ranges = []  # (start_idx, count) per group
+            flat_cursor = 0
+            for group in self.groups:
+                group_count = sum(seg['quantity'] for seg in group['segments'])
+                group_ranges.append((flat_cursor, group_count))
+                flat_cursor += group_count
             
-            matching_cbs = [
-                cb_data for cb_data in combiner_library.values()
-                if (cb_data.get('breaker_size', 0) == breaker_size and
-                    cb_data.get('fuse_holder_rating', '') == fuse_holder_rating)
-            ]
-            if matching_cbs:
-                matching_cbs.sort(key=lambda c: c.get('max_inputs', 0), reverse=True)
-                max_inputs = matching_cbs[0].get('max_inputs', 24)
-            else:
-                max_inputs = 24
-            
-            # Simple even distribution of trackers across CBs
-            base_per_cb = num_trackers // total_combiners
-            extra = num_trackers % total_combiners
-            
-            tracker_cursor = 0
-            for cb_idx in range(total_combiners):
-                count = base_per_cb + (1 if cb_idx < extra else 0)
-                if count <= 0:
+            cb_idx = 0
+            for grp_idx, (grp_start, grp_count) in enumerate(group_ranges):
+                if grp_count == 0:
                     continue
                 
-                cb_name = self.device_names.get(cb_idx, f"CB-{cb_idx + 1:02d}")
-                connections = []
+                group_share = grp_count / num_trackers
+                group_cb_count = max(1, round(group_share * total_combiners))
+                remaining_cbs = total_combiners - cb_idx
+                group_cb_count = min(group_cb_count, remaining_cbs)
                 
-                for local_i in range(count):
-                    tidx = tracker_cursor + local_i
-                    if tidx >= num_trackers:
-                        break
-                    t_info = tracker_segment_map[tidx]
+                if group_cb_count <= 0:
+                    continue
+                
+                # Distribute this group's trackers evenly across its CBs
+                base_per_cb = grp_count // group_cb_count
+                extra = grp_count % group_cb_count
+                
+                local_cursor = 0
+                for dev_i in range(group_cb_count):
+                    sub_size = base_per_cb + (1 if dev_i < extra else 0)
+                    if sub_size <= 0:
+                        continue
                     
-                    # Build one connection per harness in this tracker
-                    for h_idx, h_size in enumerate(t_info['harness_sizes']):
-                        connections.append({
-                            'tracker_idx': tidx,
-                            'tracker_label': f"T{tidx + 1:02d}",
-                            'harness_label': f"H{h_idx + 1:02d}",
-                            'num_strings': h_size,
-                            'module_isc': module_isc,
-                            'nec_factor': nec_factor,
-                            'wire_gauge': t_info['wire_gauge'],
-                        })
-                
-                # Calculate per-CB breaker from actual total current
-                total_current = sum(
-                    c['num_strings'] * c['module_isc'] * c['nec_factor']
-                    for c in connections
-                )
-                calc_breaker = breaker_size  # fallback to global
-                for bs in BREAKER_SIZES:
-                    if bs >= total_current:
-                        calc_breaker = bs
-                        break
-                
-                self.last_combiner_assignments.append({
-                    'combiner_name': cb_name,
-                    'device_idx': cb_idx,
-                    'breaker_size': calc_breaker,
-                    'module_isc': module_isc,
-                    'nec_factor': nec_factor,
-                    'connections': connections,
-                })
-                
-                tracker_cursor += count
+                    cb_name = self.device_names.get(cb_idx, f"CB-{cb_idx + 1:02d}")
+                    connections = []
+                    
+                    for local_i in range(sub_size):
+                        tidx = grp_start + local_cursor + local_i
+                        if tidx >= num_trackers:
+                            break
+                        t_info = tracker_segment_map[tidx]
+                        
+                        # Build one connection per harness with start_string_pos
+                        pos_cursor = 0
+                        for h_idx, h_size in enumerate(t_info['harness_sizes']):
+                            connections.append({
+                                'tracker_idx': tidx,
+                                'tracker_label': f"T{tidx + 1:02d}",
+                                'harness_label': f"H{h_idx + 1:02d}",
+                                'num_strings': h_size,
+                                'start_string_pos': pos_cursor,
+                                'module_isc': module_isc,
+                                'nec_factor': nec_factor,
+                                'wire_gauge': t_info['wire_gauge'],
+                            })
+                            pos_cursor += h_size
+                    
+                    # Central Inverter: use target breaker size for all CBs
+                    calc_breaker = breaker_size
+                    
+                    self.last_combiner_assignments.append({
+                        'combiner_name': cb_name,
+                        'device_idx': cb_idx,
+                        'breaker_size': calc_breaker,
+                        'module_isc': module_isc,
+                        'nec_factor': nec_factor,
+                        'connections': connections,
+                    })
+                    
+                    cb_idx += 1
+                    local_cursor += sub_size
 
     def _read_combiner_bom_from_device_config(self):
         """Read combiner BOM data from Device Configurator (single source of truth).
@@ -3376,7 +3380,17 @@ class QuickEstimate(ttk.Frame):
                 if size not in totals['harnesses_by_size']:
                     totals['harnesses_by_size'][size] = 0
                 totals['harnesses_by_size'][size] += 1
-                    
+
+    def _update_spi_label(self):
+        """Update the Strings/Device label based on topology."""
+        if not hasattr(self, 'spi_label'):
+            return
+        topology = self.topology_var.get()
+        if topology == 'Distributed String':
+            self.spi_label.config(text="Strings/SI:")
+        else:
+            self.spi_label.config(text="Strings/CB:")
+
     def _update_strings_per_inverter(self):
         """Auto-calculate strings per inverter from DC:AC ratio and show Isc warning if needed"""
         if self._updating_spi:
@@ -3406,16 +3420,19 @@ class QuickEstimate(ttk.Frame):
         target_dc_kw = target_ratio * self.selected_inverter.rated_power_kw
         power_based_strings = round(target_dc_kw / string_power_kw)
         
-        # All topologies: strings/inverter driven by DC:AC ratio target only.
-        # Physical input limits don't cap string count because harnesses
-        # allow multiple strings per input (determined later per-segment).
-        strings_per_inv = power_based_strings
-        
-        strings_per_inv = max(strings_per_inv, 1)  # At least 1
-        self._updating_spi = True
-
-        self.strings_per_inverter_var.set(str(strings_per_inv))
-        self._updating_spi = False
+        # For Central Inverter, the field means "strings per CB" — don't overwrite it
+        # from DC:AC ratio. DC:AC drives central inverter count separately.
+        if topology == 'Central Inverter':
+            strings_per_inv = power_based_strings
+            strings_per_inv = max(strings_per_inv, 1)
+            # Don't write to strings_per_inverter_var — it holds strings/CB
+            # Still calculate actual_ratio for display purposes below
+        else:
+            strings_per_inv = power_based_strings
+            strings_per_inv = max(strings_per_inv, 1)
+            self._updating_spi = True
+            self.strings_per_inverter_var.set(str(strings_per_inv))
+            self._updating_spi = False
         
         # Calculate actual DC:AC ratio achieved
         actual_ratio = self.selected_inverter.dc_ac_ratio(
@@ -3559,7 +3576,7 @@ class QuickEstimate(ttk.Frame):
         )
         topology_combo.pack(side='left', padx=(0, 15))
         self.disable_combobox_scroll(topology_combo)
-        self.topology_var.trace_add('write', lambda *args: (self._auto_unlock_allocation(), self._update_distance_hints(), self._on_topology_changed_wire_sizing(), self._mark_stale(), self._schedule_autosave()))
+        self.topology_var.trace_add('write', lambda *args: (self._auto_unlock_allocation(), self._update_spi_label(), self._update_distance_hints(), self._on_topology_changed_wire_sizing(), self._mark_stale(), self._schedule_autosave()))
         
         ttk.Label(topology_row, text="DC:AC Ratio:").pack(side='left', padx=(0, 5))
         self.dc_ac_ratio_var = tk.StringVar(value='1.25')
@@ -3595,7 +3612,8 @@ class QuickEstimate(ttk.Frame):
         self.disable_combobox_scroll(breaker_combo)
         self.breaker_size_var.trace_add('write', lambda *args: (self._on_breaker_changed_wire_sizing(), self._mark_stale(), self._schedule_autosave()))
 
-        ttk.Label(topology_row, text="Strings/Inverter:").pack(side='left', padx=(0, 5))
+        self.spi_label = ttk.Label(topology_row, text="Strings/Device:")
+        self.spi_label.pack(side='left', padx=(0, 5))
         self.strings_per_inverter_var = tk.StringVar(value='--')
         self._updating_spi = False  # Guard to prevent infinite loop
         spi_spinbox = ttk.Spinbox(
@@ -4184,7 +4202,22 @@ class QuickEstimate(ttk.Frame):
         
         # Topology and strings-per-inverter (used throughout calculation)
         topology = self.topology_var.get()
-        strings_per_inv = self._get_int_var(self.strings_per_inverter_var, 0)
+        if topology == 'Central Inverter':
+            # For Central Inverter, the field means "strings per CB" (not per inverter).
+            # Compute strings_per_inv for the allocation from DC:AC ratio instead.
+            strings_per_cb_target = self._get_int_var(self.strings_per_inverter_var, 0)
+            strings_per_inv = 0
+            if self.selected_inverter and self.selected_module:
+                modules_per_string = self._get_int_var(self.modules_per_string_var, 28)
+                module_wattage = self.selected_module.wattage
+                string_power_kw = (module_wattage * modules_per_string) / 1000
+                if string_power_kw > 0:
+                    target_ratio = self._get_float_var(self.dc_ac_ratio_var, 1.25)
+                    target_dc_kw = target_ratio * self.selected_inverter.rated_power_kw
+                    strings_per_inv = max(round(target_dc_kw / string_power_kw), 1)
+        else:
+            strings_per_inv = self._get_int_var(self.strings_per_inverter_var, 0)
+            strings_per_cb_target = strings_per_inv  # Same thing for other topologies
         
         # Validate — need at least one linked template or a legacy fallback module
         self._derive_module_from_templates()
@@ -4336,6 +4369,9 @@ class QuickEstimate(ttk.Frame):
 
         # ==================== Module geometry (primary module for global calcs) ====================
         module_isc = self.selected_module.isc
+        nec_factor = 1.56
+        if self.current_project:
+            nec_factor = getattr(self.current_project, 'nec_safety_factor', 1.56)
         module_width_mm = self.selected_module.width_mm
         module_width_ft = module_width_mm / 304.8
         string_length_ft = module_width_ft * modules_per_string
@@ -4509,25 +4545,9 @@ class QuickEstimate(ttk.Frame):
             strings_per_cb = strings_per_inv
 
         elif topology == 'Central Inverter':
-            # Find largest matching CB to minimize combiner count
-            fuse_current = module_isc * nec_factor * max(max_harness_strings, 1)
-            fuse_holder_rating = self.get_fuse_holder_category(fuse_current)
-            combiner_library = self.load_combiner_library()
-
-            matching_cbs = [
-                cb_data for cb_data in combiner_library.values()
-                if (cb_data.get('breaker_size', 0) == breaker_size and
-                    cb_data.get('fuse_holder_rating', '') == fuse_holder_rating)
-            ]
-
-            if matching_cbs:
-                matching_cbs.sort(key=lambda c: c.get('max_inputs', 0), reverse=True)
-                max_inputs = matching_cbs[0].get('max_inputs', 24)
-            else:
-                max_inputs = 24  # fallback
-
-            if total_all_strings > 0:
-                num_combiners = math.ceil(total_all_strings / max_inputs)
+            # CB count driven by strings/CB field; breaker is the target size
+            if total_all_strings > 0 and strings_per_cb_target > 0:
+                num_combiners = math.ceil(total_all_strings / strings_per_cb_target)
                 strings_per_cb = math.ceil(total_all_strings / num_combiners)
             num_devices = num_combiners
 
