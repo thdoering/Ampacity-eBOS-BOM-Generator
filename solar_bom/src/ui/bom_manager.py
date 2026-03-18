@@ -119,6 +119,14 @@ class BOMManager(ttk.Frame):
         # Validate: numbers only
         vcmd = (self.register(lambda P: P == "" or P.isdigit()), '%P')
         rev_entry.config(validate='key', validatecommand=vcmd)
+        
+        # Segment rounding control
+        ttk.Label(rev_frame, text="Segment Rounding:").pack(side=tk.LEFT, padx=(20, 5))
+        self.segment_rounding_var = tk.StringVar(value="5 ft")
+        rounding_combo = ttk.Combobox(rev_frame, textvariable=self.segment_rounding_var, 
+                                       values=["5 ft", "10 ft"], state='readonly', width=6)
+        rounding_combo.pack(side=tk.LEFT)
+        rounding_combo.bind('<<ComboboxSelected>>', lambda e: self.update_preview())
 
         # Export button
         ttk.Button(
@@ -166,10 +174,13 @@ class BOMManager(ttk.Frame):
         # Create treeview for BOM preview with checkbox and part number columns
         self.preview_tree = ttk.Treeview(
             preview_frame, 
-            columns=('include', 'component', 'part_number', 'description', 'quantity', 'unit', 'unit_price', 'extended_price'),
+            columns=('include', 'description', 'part_number', 'quantity', 'unit', 'unit_price', 'extended_price'),
             show='headings',
             height=25  # Make it much taller
         )
+        
+        # Hidden storage for component types (needed for export but not displayed)
+        self.item_component_types = {}
         self.preview_tree.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
 
         # Configure tags for styling
@@ -179,9 +190,8 @@ class BOMManager(ttk.Frame):
 
         # Configure columns
         self.preview_tree.column('include', width=60, anchor='center')
-        self.preview_tree.column('component', width=180)
+        self.preview_tree.column('description', width=300)
         self.preview_tree.column('part_number', width=150, anchor='center')
-        self.preview_tree.column('description', width=250)
         self.preview_tree.column('quantity', width=80, anchor='center')
         self.preview_tree.column('unit', width=60, anchor='center')
         self.preview_tree.column('unit_price', width=80, anchor='e')
@@ -189,7 +199,7 @@ class BOMManager(ttk.Frame):
 
         # Add headings
         self.preview_tree.heading('include', text="Include")
-        self.preview_tree.heading('component', text="Component Type")
+        self.preview_tree.heading('description', text="Description")
         self.preview_tree.heading('part_number', text="Part Number")
         self.preview_tree.heading('description', text="Description")
         self.preview_tree.heading('quantity', text="Quantity")
@@ -335,7 +345,7 @@ class BOMManager(ttk.Frame):
         # Generate BOM
         # Get the current project
         project = getattr(self.parent, 'current_project', None) if hasattr(self, 'parent') else None
-        bom_generator = BOMGenerator(selected_blocks, project)
+        bom_generator = BOMGenerator(selected_blocks, project, segment_rounding=self.get_segment_rounding())
         quantities = bom_generator.calculate_cable_quantities()
         summary_data = bom_generator.generate_summary_data(quantities)
         
@@ -383,7 +393,7 @@ class BOMManager(ttk.Frame):
                 self.preview_tree.insert('', 'end', values=(
                     '', 
                     row['Component Type'].replace('---', '').strip(),
-                    '', '', '', '', '', ''
+                    '', '', '', '', ''
                 ), tags=('section',))
                 continue
             
@@ -400,6 +410,10 @@ class BOMManager(ttk.Frame):
             # Check if this is a 1-string harness
             is_1_string_harness = '1-String Harness' in row['Component Type']
 
+            # Check if this is an extender or string cable total feet row (segments are preferred)
+            is_extender_total = 'Extender Cable' in row['Component Type'] and row['Unit'] == 'feet'
+            is_string_cable_total = 'String Cable' in row['Component Type'] and row['Unit'] == 'feet'
+
             # Check if this is a fuse line item for a First Solar job
             # (First Solar harnesses have integrated fuses, so discrete fuses are excluded by default)
             is_integrated_fuse = False
@@ -411,7 +425,7 @@ class BOMManager(ttk.Frame):
                         break
 
             # Set default checked state - unchecked for 1-string harnesses and integrated fuses
-            should_uncheck = is_1_string_harness or is_integrated_fuse
+            should_uncheck = is_1_string_harness or is_integrated_fuse or is_extender_total or is_string_cable_total
             default_checked = '☐' if should_uncheck else '☑'
             default_tag = 'unchecked' if should_uncheck else 'checked'
 
@@ -425,9 +439,8 @@ class BOMManager(ttk.Frame):
                 '', 'end',
                 values=(
                     default_checked,
-                    row['Component Type'],
-                    part_number,
                     row['Description'],
+                    part_number,
                     quantity_str,
                     row['Unit'],
                     unit_price_str,
@@ -435,6 +448,9 @@ class BOMManager(ttk.Frame):
                 ),
                 tags=(default_tag,)
             )
+            
+            # Store component type in hidden dict for export
+            self.item_component_types[item] = row['Component Type']
 
             # Only add to checked_items if it's checked by default
             if not is_1_string_harness:
@@ -631,7 +647,7 @@ class BOMManager(ttk.Frame):
             
             # Get the current project
             project = getattr(self.parent, 'current_project', None) if hasattr(self, 'parent') else None
-            bom_generator = BOMGenerator(selected_blocks, project)
+            bom_generator = BOMGenerator(selected_blocks, project, segment_rounding=self.get_segment_rounding())
 
             # Pass the parent reference to the generator so it can access device configurator
             bom_generator.parent = self.main_app
@@ -661,17 +677,24 @@ class BOMManager(ttk.Frame):
         
         for item in self.checked_items:
             values = self.preview_tree.item(item, 'values')
-            if len(values) >= 6:  # Make sure we have all columns
+            if len(values) >= 5:  # Make sure we have all columns
                 component_info = {
-                    'component_type': values[1],
+                    'component_type': self.item_component_types.get(item, ''),
                     'part_number': values[2], 
-                    'description': values[3],
-                    'quantity': values[4],
-                    'unit': values[5]
+                    'description': values[1],
+                    'quantity': values[3],
+                    'unit': values[4]
                 }
                 checked_components.append(component_info)
         
         return checked_components
+    
+    def get_segment_rounding(self):
+        """Get the segment rounding increment from the UI control"""
+        try:
+            return int(self.segment_rounding_var.get().replace(' ft', ''))
+        except (ValueError, AttributeError):
+            return 5
     
     def get_preview_data_for_export(self):
         """Get the data currently displayed in the preview for export"""
@@ -685,7 +708,7 @@ class BOMManager(ttk.Frame):
             if item_id in self.checked_items and values[0] == '☑':
                 # Convert quantity to appropriate numeric type
                 try:
-                    quantity_str = str(values[4])
+                    quantity_str = str(values[3])
                     if '.' in quantity_str:
                         quantity = float(quantity_str)
                     else:
@@ -696,8 +719,8 @@ class BOMManager(ttk.Frame):
                 # Parse unit price (remove $ and convert to float)
                 unit_price = None
                 try:
-                    if len(values) > 6 and values[6]:
-                        price_str = str(values[6]).replace('$', '').strip()
+                    if len(values) > 5 and values[5]:
+                        price_str = str(values[5]).replace('$', '').strip()
                         if price_str:
                             unit_price = float(price_str)
                 except (ValueError, IndexError):
@@ -706,19 +729,19 @@ class BOMManager(ttk.Frame):
                 # Parse extended price (remove $ and convert to float)
                 extended_price = None
                 try:
-                    if len(values) > 7 and values[7]:
-                        price_str = str(values[7]).replace('$', '').strip()
+                    if len(values) > 6 and values[6]:
+                        price_str = str(values[6]).replace('$', '').strip()
                         if price_str:
                             extended_price = float(price_str)
                 except (ValueError, IndexError):
                     pass
                 
                 preview_data.append({
-                    'Component Type': values[1],
+                    'Component Type': self.item_component_types.get(item_id, ''),
                     'Part Number': values[2], 
-                    'Description': values[3],
+                    'Description': values[1],
                     'Quantity': quantity,
-                    'Unit': values[5],
+                    'Unit': values[4],
                     'Unit Price': unit_price,
                     'Extended Price': extended_price
                 })
@@ -813,7 +836,7 @@ class BOMManager(ttk.Frame):
             from ..utils.bom_generator import BOMGenerator
             # Get the current project
             project = getattr(self.parent, 'current_project', None) if hasattr(self, 'parent') else None
-            bom_generator = BOMGenerator(selected_blocks, project)
+            bom_generator = BOMGenerator(selected_blocks, project, segment_rounding=self.get_segment_rounding())
             
             # Extract harness info from component type
             component_type = row['Component Type']
@@ -946,7 +969,7 @@ class BOMManager(ttk.Frame):
             from ..utils.bom_generator import BOMGenerator
             # Get the current project
             project = getattr(self.parent, 'current_project', None) if hasattr(self, 'parent') else None
-            bom_generator = BOMGenerator(selected_blocks, project)
+            bom_generator = BOMGenerator(selected_blocks, project, segment_rounding=self.get_segment_rounding())
             
             component_type = row['Component Type']
             
@@ -979,7 +1002,7 @@ class BOMManager(ttk.Frame):
             from ..utils.bom_generator import BOMGenerator
             # Get the current project
             project = getattr(self.parent, 'current_project', None) if hasattr(self, 'parent') else None
-            bom_generator = BOMGenerator(selected_blocks, project)
+            bom_generator = BOMGenerator(selected_blocks, project, segment_rounding=self.get_segment_rounding())
             
             component_type = row['Component Type']
             

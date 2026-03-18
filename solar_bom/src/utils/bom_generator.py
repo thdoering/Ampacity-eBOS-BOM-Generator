@@ -17,16 +17,18 @@ class BOMGenerator:
     # Constants for BOM calculations
     CABLE_WASTE_FACTOR = 1.05  # 5% extra for waste/installation
     
-    def __init__(self, blocks: Dict[str, BlockConfig], project=None):
+    def __init__(self, blocks: Dict[str, BlockConfig], project=None, segment_rounding=5):
         """
         Initialize BOM Generator
         
         Args:
             blocks: Dictionary of block configurations
             project: Project object (optional)
+            segment_rounding: Rounding increment for extender segments (5 or 10)
         """
         self.blocks = blocks
         self.project = project
+        self.segment_rounding = segment_rounding
         # Load library json files
         self.harness_library = self.load_harness_library()
         self.fuse_library = self.load_fuse_library()
@@ -452,7 +454,9 @@ class BOMGenerator:
         return harness_info
     
     def _get_section_for_component(self, component_type):
-        """Determine section group for a component type"""
+        """Determine section group for a component type, with polarity and gauge sub-headers"""
+        import re
+        
         SECTION_ORDER = {
             'HARNESSES': 0,
             'STRING CABLES': 1,
@@ -464,24 +468,48 @@ class BOMGenerator:
             'OTHER': 7
         }
         
+        # Extract polarity
+        polarity = ''
+        if 'Positive' in component_type:
+            polarity = 'POSITIVE'
+        elif 'Negative' in component_type:
+            polarity = 'NEGATIVE'
+        
+        # Extract gauge
+        gauge = ''
+        gauge_match = re.search(r'\(([^)]*AWG|[^)]*kcmil)\)', component_type)
+        if gauge_match:
+            gauge = gauge_match.group(1)
+        
         if 'Harness' in component_type and 'Segment' not in component_type:
-            section = 'HARNESSES'
+            section = f'HARNESSES — {polarity}' if polarity else 'HARNESSES'
+            base_order = SECTION_ORDER['HARNESSES']
         elif 'String Cable' in component_type:
-            section = 'STRING CABLES'
+            section = f'STRING CABLES — {polarity} ({gauge})' if polarity and gauge else 'STRING CABLES'
+            base_order = SECTION_ORDER['STRING CABLES']
         elif 'Whip Cable' in component_type:
-            section = 'WHIP CABLES'
+            section = f'WHIPS — {polarity} ({gauge})' if polarity and gauge else 'WHIP CABLES'
+            base_order = SECTION_ORDER['WHIP CABLES']
         elif 'Extender Cable' in component_type:
-            section = 'EXTENDER CABLES'
+            section = f'EXTENDERS — {polarity} ({gauge})' if polarity and gauge else 'EXTENDER CABLES'
+            base_order = SECTION_ORDER['EXTENDER CABLES']
         elif 'Fuse' in component_type and 'Combiner' not in component_type:
             section = 'FUSES'
+            base_order = SECTION_ORDER['FUSES']
         elif 'DC Feeder' in component_type:
-            section = 'DC FEEDER CABLES'
+            section = f'DC FEEDER CABLES — {polarity}' if polarity else 'DC FEEDER CABLES'
+            base_order = SECTION_ORDER['DC FEEDER CABLES']
         elif 'Combiner' in component_type:
             section = 'COMBINER BOXES'
+            base_order = SECTION_ORDER['COMBINER BOXES']
         else:
             section = 'OTHER'
+            base_order = SECTION_ORDER['OTHER']
         
-        return section, SECTION_ORDER.get(section, 99)
+        # Sub-sort: positive before negative within each cable type
+        polarity_order = 0 if polarity == 'POSITIVE' else 1 if polarity == 'NEGATIVE' else 0
+        
+        return section, base_order + (polarity_order * 0.1)
     
     def insert_section_headers(self, summary_data_df):
         """Insert section header rows into summary DataFrame based on component type grouping"""
@@ -599,7 +627,7 @@ class BOMGenerator:
         df = pd.DataFrame(summary_data)
         if not df.empty:
             # Define desired column order
-            desired_order = ['Component Type', 'Part Number', 'Description', 
+            desired_order = ['Component Type', 'Description', 'Part Number',
                            'Quantity', 'Unit', 'Unit Price', 'Extended Price']
             # Only include columns that exist
             columns = [col for col in desired_order if col in df.columns]
@@ -800,7 +828,7 @@ class BOMGenerator:
         df = pd.DataFrame(detailed_data)
         if not df.empty:
             # Define the column order with Strings after Block
-            column_order = ['Block', 'Strings', 'Component Type', 'Description', 'Quantity', 'Unit', 'Part Number']
+            column_order = ['Block', 'Strings', 'Description', 'Part Number', 'Quantity', 'Unit']
             # Only reorder columns that exist
             existing_columns = [col for col in column_order if col in df.columns]
             df = df[existing_columns]
@@ -945,17 +973,25 @@ class BOMGenerator:
             # Create Excel writer
             writer = pd.ExcelWriter(filepath, engine='openpyxl')
             
+            # Transfer section header text to Part Number column before dropping Component Type
+            excel_summary = summary_data.copy()
+            for idx, row in excel_summary.iterrows():
+                comp_type = str(row.get('Component Type', ''))
+                if comp_type.startswith('---'):
+                    excel_summary.at[idx, 'Part Number'] = comp_type
+            excel_summary = excel_summary.drop(columns=['Component Type'], errors='ignore')
+            
             # Write summary data
-            summary_data.to_excel(writer, sheet_name='BOM Summary', index=False, startrow=15)  # Start after project info
+            excel_summary.to_excel(writer, sheet_name='BOM Summary', index=False, startrow=15)  # Start after project info
             
             # Add Excel formulas for Extended Price and Total
-            if 'Extended Price' in summary_data.columns:
+            if 'Extended Price' in excel_summary.columns:
                 summary_sheet = writer.sheets['BOM Summary']
                 
                 # Find column letters for Quantity, Unit Price, and Extended Price
-                qty_col_idx = list(summary_data.columns).index('Quantity') + 1
-                unit_price_col_idx = list(summary_data.columns).index('Unit Price') + 1
-                ext_price_col_idx = list(summary_data.columns).index('Extended Price') + 1
+                qty_col_idx = list(excel_summary.columns).index('Quantity') + 1
+                unit_price_col_idx = list(excel_summary.columns).index('Unit Price') + 1
+                ext_price_col_idx = list(excel_summary.columns).index('Extended Price') + 1
                 
                 qty_col_letter = get_column_letter(qty_col_idx)
                 unit_price_col_letter = get_column_letter(unit_price_col_idx)
@@ -963,7 +999,7 @@ class BOMGenerator:
                 
                 # Data starts at row 17 (startrow=15 + 1 header row + 1 for 1-based)
                 first_data_row = 17
-                last_data_row = first_data_row + len(summary_data) - 1
+                last_data_row = first_data_row + len(excel_summary) - 1
                 
                 # Add formulas for Extended Price: =Quantity * Unit Price
                 for row_num in range(first_data_row, last_data_row + 1):
@@ -986,8 +1022,11 @@ class BOMGenerator:
                 total_cell.font = Font(bold=True)
                 total_cell.number_format = '"$"#,##0.00'
             
+            # Drop Component Type column from detailed data before writing
+            excel_detailed = detailed_data.drop(columns=['Component Type'], errors='ignore')
+            
             # Write detailed data  
-            detailed_data.to_excel(writer, sheet_name='Block Details', index=False)
+            excel_detailed.to_excel(writer, sheet_name='Block Details', index=False)
             
             # Add harness cable size information to Block Details sheet
             self._add_harness_cable_info_to_block_details(writer, detailed_data)
@@ -1211,17 +1250,17 @@ class BOMGenerator:
             summary_sheet.cell(row=row, column=1, value="Bill of Materials").font = Font(bold=True, size=14)
             
             # Format sheets
-            self._format_excel_sheet(workbook['BOM Summary'], summary_data, start_row=16)
-            self._format_excel_sheet(workbook['Block Details'], detailed_data)
+            self._format_excel_sheet(workbook['BOM Summary'], excel_summary, start_row=16)
+            self._format_excel_sheet(workbook['Block Details'], excel_detailed)
 
             # Format block allocation sheet
             if 'Block Allocation' in workbook.sheetnames:
                 self._format_block_allocation_sheet(workbook['Block Allocation'], block_allocation_data)
             
             # Add filter - use the actual number of columns
-            num_cols = len(summary_data.columns)
+            num_cols = len(excel_summary.columns)
             last_col_letter = get_column_letter(num_cols)
-            summary_sheet.auto_filter.ref = f"A15:{last_col_letter}{15 + len(summary_data)}"
+            summary_sheet.auto_filter.ref = f"A15:{last_col_letter}{15 + len(excel_summary)}"
             
             # Save and open
             writer.close()
@@ -1385,13 +1424,13 @@ class BOMGenerator:
             row_index = start_row + 1 + i
             row_data = data.iloc[i]
             
-            # Check if this is a section header row
-            component_type = str(row_data.get('Component Type', ''))
-            is_section = component_type.startswith('---')
+            # Check if this is a section header row (section markers may be in any first column)
+            first_col_value = str(row_data.iloc[0]) if len(row_data) > 0 else ''
+            is_section = first_col_value.startswith('---')
             
             if is_section:
                 # Section header: merge across all columns, apply section style
-                section_name = component_type.replace('---', '').strip()
+                section_name = first_col_value.replace('---', '').strip()
                 
                 # Clear all cells in the row first
                 for col_num in range(1, num_cols + 1):
@@ -2124,8 +2163,11 @@ class BOMGenerator:
         # Add waste factor
         segment_lengths = [s * self.CABLE_WASTE_FACTOR for s in segment_lengths]
         
-        # Always use 5ft increment for whip cables, otherwise use the passed-in increment
-        actual_increment = 5 if "Whip Cable" in cable_type_name else round_to
+        # Always use 5ft increment for whip cables, use configurable rounding for extenders/others
+        if "Whip Cable" in cable_type_name:
+            actual_increment = 5
+        else:
+            actual_increment = self.segment_rounding
         
         # Round up to nearest increment, with minimum of 10ft
         rounded_segments = []
@@ -2165,7 +2207,7 @@ class BOMGenerator:
             block_quantities[segment_key] = {
                 'description': description,
                 'quantity': count,
-                'unit': 'segments',
+                'unit': 'ea',
                 'category': category
             }
 

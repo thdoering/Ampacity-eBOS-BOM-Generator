@@ -573,6 +573,14 @@ class DeviceConfigurator(ttk.Frame):
         
         # Iterate through all blocks
         for block_id, block in self.current_project.blocks.items():
+            # Skip if block is still a raw dict (not yet deserialized)
+            if isinstance(block, dict):
+                device_type_val = block.get('device_type', '')
+                if device_type_val != DeviceType.COMBINER_BOX.value:
+                    continue
+                # Can't fully process a raw dict block, skip it
+                continue
+            
             # Skip if not a combiner box
             if block.device_type != DeviceType.COMBINER_BOX:
                 continue
