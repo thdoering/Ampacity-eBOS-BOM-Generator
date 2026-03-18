@@ -171,9 +171,6 @@ class SolarBOMApplication:
             if self.current_project:
                 self.current_project.blocks = block_configurator.blocks
                 device_configurator.load_project(self.current_project)
-                # Ensure device configurator keeps live block references even after
-                # project.blocks gets overwritten with serialized dicts below
-                device_configurator.live_blocks = dict(block_configurator.blocks)
             
             # Store serialized blocks in project for saving
             if hasattr(self, 'current_project') and self.current_project:

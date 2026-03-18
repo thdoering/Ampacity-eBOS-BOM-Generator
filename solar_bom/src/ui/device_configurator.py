@@ -16,7 +16,6 @@ class DeviceConfigurator(ttk.Frame):
         self.combiner_configs: Dict[str, CombinerBoxConfig] = {}
         self.edited_cells: Set[str] = set()  # Track manually edited cells
         self.data_source = 'blocks'  # 'blocks' or 'quick_estimate'
-        self.live_blocks: Dict[str, BlockConfig] = {}  # Live BlockConfig objects (not serialized dicts)
         
         self.setup_ui()
         
@@ -281,20 +280,11 @@ class DeviceConfigurator(ttk.Frame):
         self.current_project = project
         self.combiner_configs.clear()
         self.edited_cells.clear()
-        self.live_blocks.clear()
         
         if not project:
             self.status_var.set("No project loaded")
             self.tree.delete(*self.tree.get_children())
             return
-        
-        # Capture live BlockConfig objects before project.blocks gets overwritten with dicts
-        if hasattr(project, 'blocks') and project.blocks:
-            for block_id, block in project.blocks.items():
-                print(f"[DeviceConfig load_project] Block '{block_id}' is {type(block).__name__}")
-                if isinstance(block, BlockConfig):
-                    self.live_blocks[block_id] = block
-        print(f"[DeviceConfig load_project] Captured {len(self.live_blocks)} live blocks")
         
         # Set NEC factor from project (or default)
         nec_factor = getattr(project, 'nec_safety_factor', 1.56)
@@ -579,31 +569,12 @@ class DeviceConfigurator(ttk.Frame):
     def generate_combiner_configs(self):
         """Generate combiner box configurations from project blocks"""
         if not self.current_project:
-            print("[DeviceConfig] No current_project, returning")
             return
         
-        # Use live BlockConfig objects if available; fall back to project.blocks
-        blocks_to_use = self.live_blocks if self.live_blocks else self.current_project.blocks
-        
-        print(f"[DeviceConfig] live_blocks count: {len(self.live_blocks)}")
-        print(f"[DeviceConfig] project.blocks count: {len(self.current_project.blocks)}")
-        print(f"[DeviceConfig] Using: {'live_blocks' if self.live_blocks else 'project.blocks'}")
-        
         # Iterate through all blocks
-        for block_id, block in blocks_to_use.items():
-            block_type = type(block).__name__
-            print(f"[DeviceConfig] Block '{block_id}' type={block_type}")
-            
-            if isinstance(block, dict):
-                print(f"  -> Is a dict with keys: {list(block.keys())[:5]}...")
-                continue
-            
-            print(f"  -> device_type={block.device_type}, wiring={block.wiring_config.wiring_type if block.wiring_config else 'None'}")
-            print(f"  -> tracker_positions={len(block.tracker_positions)}, tracker_template={block.tracker_template}")
-            
+        for block_id, block in self.current_project.blocks.items():
             # Skip if not a combiner box
             if block.device_type != DeviceType.COMBINER_BOX:
-                print(f"  -> Skipping (not combiner box)")
                 continue
             
             # Create combiner config
@@ -733,10 +704,6 @@ class DeviceConfigurator(ttk.Frame):
             
             # Add to configurations
             self.combiner_configs[combiner_id] = combiner_config
-        
-        print(f"[DeviceConfig] generate_combiner_configs finished. Total configs: {len(self.combiner_configs)}")
-        for cid, cfg in self.combiner_configs.items():
-            print(f"  {cid}: {len(cfg.connections)} connections")
     
     def refresh_display(self):
         """Refresh the treeview display"""
