@@ -2042,8 +2042,8 @@ class QuickEstimate(ttk.Frame):
         # Re-enable autosave now that loading is complete
         self._loading = False
 
-        # Auto-calculate on load
-        self.after(100, self.calculate_estimate)
+        # Auto-calculate on load (silent — skip warning if no module yet)
+        self.after(100, lambda: self.calculate_estimate(silent=True))
 
     def save_estimate(self):
         """Save estimate data to the project"""
@@ -4155,7 +4155,7 @@ class QuickEstimate(ttk.Frame):
 
     # ==================== Calculation Methods ====================
 
-    def calculate_estimate(self):
+    def calculate_estimate(self, silent=False):
         """Calculate and display the rolled-up BOM estimate"""
         # Clear previous results
         for item in self.results_tree.get_children():
@@ -4194,11 +4194,12 @@ class QuickEstimate(ttk.Frame):
             messagebox.showinfo("Not Yet Implemented", "Trunk Bus collection method is not yet implemented.")
             return
         if not self.selected_module:
-            messagebox.showwarning(
-                "No Module Available",
-                "No tracker templates are linked and no legacy module data was found.\n\n"
-                "Please link a tracker template to at least one segment before calculating."
-            )
+            if not silent:
+                messagebox.showwarning(
+                    "No Module Available",
+                    "No tracker templates are linked and no legacy module data was found.\n\n"
+                    "Please link a tracker template to at least one segment before calculating."
+                )
             return
         
         # ==================== Build tracker sequence from groups ====================
