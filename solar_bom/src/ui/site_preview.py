@@ -8,7 +8,8 @@ class SitePreviewWindow(tk.Toplevel):
     """Pop-out window for site layout preview with zoom and pan"""
     
     def __init__(self, parent, inv_summary, topology, colors, groups, enabled_templates, row_spacing_ft,
-                 num_devices=0, device_label='CB', initial_inspect=False, pads=None, device_names=None):
+                 num_devices=0, device_label='CB', initial_inspect=False, pads=None, device_names=None,
+                 device_feeder_sizes=None):
         super().__init__(parent)
         self.title("Site Preview — Inverter Allocation")
         self.geometry("1100x750")
@@ -27,6 +28,7 @@ class SitePreviewWindow(tk.Toplevel):
         self.selected_pad_inspect_idx = None  # Pad selected in inspect mode
         self.pads = list(pads) if pads else []  # Deep copy so we don't mutate caller's list
         self.device_names = dict(device_names) if device_names else {}  # {device_idx: "custom_name"}
+        self.device_feeder_sizes = dict(device_feeder_sizes) if device_feeder_sizes else {}  # {device_idx: "cable_size"}
         self.selected_pad_idx = None
         self.placing_pad = False  # True when in "click to place" mode
         self.assigning_devices = False  # True when Assign Devices dialog is open
@@ -2128,14 +2130,14 @@ class SitePreviewWindow(tk.Toplevel):
         # Size based on device count
         num_devices = len(self.device_positions)
         dialog_height = min(600, 120 + num_devices * 28)
-        dialog.geometry(f"500x{dialog_height}")
-        dialog.minsize(400, 200)
+        dialog.geometry(f"650x{dialog_height}")
+        dialog.minsize(550, 200)
         
 
         # Instructions
         ttk.Label(dialog, text="Assign each device to a collection pad:",
                   font=('Helvetica', 10)).pack(anchor='w', padx=10, pady=(10, 0))
-        ttk.Label(dialog, text="Tip: Drag the blue handle to fill multiple rows with the same pad",
+        ttk.Label(dialog, text="Tip: Drag the blue/green handles to fill multiple rows with the same value",
                   font=('Helvetica', 8), foreground='gray').pack(anchor='w', padx=10, pady=(0, 5))
         
         # Build pad label list for dropdowns
@@ -2146,6 +2148,24 @@ class SitePreviewWindow(tk.Toplevel):
         for pad_idx, pad in enumerate(self.pads):
             for dev_idx in pad.get('assigned_devices', []):
                 device_to_pad[dev_idx] = pad_idx
+        
+        # Determine feeder column based on topology
+        from src.utils.cable_sizing import get_available_sizes
+        parent_qe = self.master
+        material = 'aluminum'
+        if hasattr(parent_qe, 'wire_sizing'):
+            material = parent_qe.wire_sizing.get('feeder_material', 'aluminum')
+        feeder_sizes_list = get_available_sizes(material)
+        
+        if self.topology == 'Distributed String':
+            feeder_col_label = "AC HR Size"
+            default_feeder = getattr(parent_qe, 'wire_sizing', {}).get('ac_homerun', '')
+        else:
+            feeder_col_label = "DC Fdr Size"
+            default_feeder = getattr(parent_qe, 'wire_sizing', {}).get('dc_feeder', '')
+        
+        if not default_feeder and feeder_sizes_list:
+            default_feeder = feeder_sizes_list[0]
         
         # Scrollable frame
         container = ttk.Frame(dialog)
@@ -2173,6 +2193,8 @@ class SitePreviewWindow(tk.Toplevel):
         ttk.Label(header, text="Device", font=('Helvetica', 9, 'bold'), width=12).pack(side='left', padx=5)
         ttk.Label(header, text="Strings", font=('Helvetica', 9, 'bold'), width=8).pack(side='left', padx=5)
         ttk.Label(header, text="Group", font=('Helvetica', 9, 'bold'), width=12).pack(side='left', padx=5)
+        ttk.Label(header, text=feeder_col_label, font=('Helvetica', 9, 'bold'), width=12).pack(side='left', padx=5)
+        ttk.Label(header, text="", width=1).pack(side='left', padx=2)
         ttk.Label(header, text="Pad", font=('Helvetica', 9, 'bold'), width=12).pack(side='left', padx=5)
         ttk.Label(header, text="", width=1).pack(side='left', padx=2)
         
@@ -2181,44 +2203,78 @@ class SitePreviewWindow(tk.Toplevel):
         # One row per device
         pad_vars = []
         pad_combos = []
+        feeder_vars = []
+        feeder_combos = []
         
-        # Drag-fill handle state
-        _fill = {'active': False, 'source_idx': None, 'value': None}
-        _fill_handles = []
+        # Drag-fill handle state — pad column (blue)
+        _pad_fill = {'active': False, 'source_idx': None, 'value': None}
+        _pad_fill_handles = []
         
-        def _handle_press(event, idx):
-            """Start fill-drag from this row's handle"""
-            _fill['active'] = True
-            _fill['source_idx'] = idx
-            _fill['value'] = pad_vars[idx].get()
+        def _pad_handle_press(event, idx):
+            _pad_fill['active'] = True
+            _pad_fill['source_idx'] = idx
+            _pad_fill['value'] = pad_vars[idx].get()
             event.widget.config(cursor='sb_v_double_arrow')
         
-        def _handle_motion(event):
-            """Fill combos as drag passes over handles"""
-            if not _fill['active']:
+        def _pad_handle_motion(event):
+            if not _pad_fill['active']:
                 return
             my = event.y_root
-            src = _fill['source_idx']
-            for i, handle in enumerate(_fill_handles):
+            src = _pad_fill['source_idx']
+            for i, handle in enumerate(_pad_fill_handles):
                 try:
                     hy = handle.winfo_rooty()
                     hh = handle.winfo_height()
                     row_center = hy + hh / 2
-                    src_center = _fill_handles[src].winfo_rooty() + _fill_handles[src].winfo_height() / 2
+                    src_center = _pad_fill_handles[src].winfo_rooty() + _pad_fill_handles[src].winfo_height() / 2
                     in_range = min(my, src_center) <= row_center <= max(my, src_center)
                     if in_range:
-                        pad_vars[i].set(_fill['value'])
+                        pad_vars[i].set(_pad_fill['value'])
                         pad_combos[i].focus_set()
                 except tk.TclError:
                     pass
         
-        def _handle_release(event):
-            """End fill-drag"""
-            if _fill['active']:
+        def _pad_handle_release(event):
+            if _pad_fill['active']:
                 event.widget.config(cursor='')
-            _fill['active'] = False
-            _fill['source_idx'] = None
-            _fill['value'] = None
+            _pad_fill['active'] = False
+            _pad_fill['source_idx'] = None
+            _pad_fill['value'] = None
+        
+        # Drag-fill handle state — feeder column (green)
+        _feeder_fill = {'active': False, 'source_idx': None, 'value': None}
+        _feeder_fill_handles = []
+        
+        def _feeder_handle_press(event, idx):
+            _feeder_fill['active'] = True
+            _feeder_fill['source_idx'] = idx
+            _feeder_fill['value'] = feeder_vars[idx].get()
+            event.widget.config(cursor='sb_v_double_arrow')
+        
+        def _feeder_handle_motion(event):
+            if not _feeder_fill['active']:
+                return
+            my = event.y_root
+            src = _feeder_fill['source_idx']
+            for i, handle in enumerate(_feeder_fill_handles):
+                try:
+                    hy = handle.winfo_rooty()
+                    hh = handle.winfo_height()
+                    row_center = hy + hh / 2
+                    src_center = _feeder_fill_handles[src].winfo_rooty() + _feeder_fill_handles[src].winfo_height() / 2
+                    in_range = min(my, src_center) <= row_center <= max(my, src_center)
+                    if in_range:
+                        feeder_vars[i].set(_feeder_fill['value'])
+                        feeder_combos[i].focus_set()
+                except tk.TclError:
+                    pass
+        
+        def _feeder_handle_release(event):
+            if _feeder_fill['active']:
+                event.widget.config(cursor='')
+            _feeder_fill['active'] = False
+            _feeder_fill['source_idx'] = None
+            _feeder_fill['value'] = None
 
         for dev_idx, dev in enumerate(self.device_positions):
             row = ttk.Frame(scroll_frame)
@@ -2236,6 +2292,27 @@ class SitePreviewWindow(tk.Toplevel):
             grp_name = self.groups[grp_idx]['name'] if grp_idx < len(self.groups) else '?'
             ttk.Label(row, text=grp_name, width=12).pack(side='left', padx=5)
             
+            # Feeder size dropdown
+            current_feeder = self.device_feeder_sizes.get(dev_idx, default_feeder)
+            feeder_var = tk.StringVar(value=current_feeder)
+            feeder_combo = ttk.Combobox(row, textvariable=feeder_var, values=feeder_sizes_list,
+                                        state='readonly', width=12)
+            feeder_combo.pack(side='left', padx=5)
+            feeder_combo.bind("<MouseWheel>", lambda e: "break")
+            feeder_combo.bind("<Button-4>", lambda e: "break")
+            feeder_combo.bind("<Button-5>", lambda e: "break")
+            feeder_vars.append(feeder_var)
+            feeder_combos.append(feeder_combo)
+            
+            # Feeder fill handle — green
+            f_handle = tk.Frame(row, width=10, height=18, bg='#4A9D4A', cursor='sb_v_double_arrow')
+            f_handle.pack(side='left', padx=(2, 5))
+            f_handle.pack_propagate(False)
+            f_handle.bind('<ButtonPress-1>', lambda e, i=dev_idx: _feeder_handle_press(e, i))
+            f_handle.bind('<B1-Motion>', _feeder_handle_motion)
+            f_handle.bind('<ButtonRelease-1>', _feeder_handle_release)
+            _feeder_fill_handles.append(f_handle)
+            
             # Pad dropdown
             current_pad = device_to_pad.get(dev_idx, 0)
             if current_pad >= len(pad_labels):
@@ -2244,17 +2321,20 @@ class SitePreviewWindow(tk.Toplevel):
             combo = ttk.Combobox(row, textvariable=var, values=pad_labels,
                                  state='readonly', width=12)
             combo.pack(side='left', padx=5)
+            combo.bind("<MouseWheel>", lambda e: "break")
+            combo.bind("<Button-4>", lambda e: "break")
+            combo.bind("<Button-5>", lambda e: "break")
             pad_vars.append(var)
             pad_combos.append(combo)
             
-            # Fill handle — small draggable square
+            # Pad fill handle — blue
             handle = tk.Frame(row, width=10, height=18, bg='#4A90D9', cursor='sb_v_double_arrow')
             handle.pack(side='left', padx=(2, 0))
             handle.pack_propagate(False)
-            handle.bind('<ButtonPress-1>', lambda e, i=dev_idx: _handle_press(e, i))
-            handle.bind('<B1-Motion>', _handle_motion)
-            handle.bind('<ButtonRelease-1>', _handle_release)
-            _fill_handles.append(handle)
+            handle.bind('<ButtonPress-1>', lambda e, i=dev_idx: _pad_handle_press(e, i))
+            handle.bind('<B1-Motion>', _pad_handle_motion)
+            handle.bind('<ButtonRelease-1>', _pad_handle_release)
+            _pad_fill_handles.append(handle)
         
         # Buttons
         btn_frame = ttk.Frame(dialog)
@@ -2281,6 +2361,10 @@ class SitePreviewWindow(tk.Toplevel):
                     if pad.get('label', f'Pad {pad_idx+1}') == selected_label:
                         pad['assigned_devices'].append(dev_idx)
                         break
+            
+            # Save per-device feeder sizes
+            for dev_idx, fvar in enumerate(feeder_vars):
+                self.device_feeder_sizes[dev_idx] = fvar.get()
             
             self.assigning_devices = False
             self.draw()

@@ -30,6 +30,7 @@ class QuickEstimate(ttk.Frame):
         self.groups = []
         self.pads = []  # Collection points (inverter pads)
         self.device_names = {}  # {device_idx: "custom_name"} for CB/SI renaming
+        self.device_feeder_sizes = {}  # {device_idx: "cable_size"} per-device feeder/homerun size
         self.last_combiner_assignments = []  # Structured CB data for Device Configurator
         self._harness_combos = []  # Track harness combo widgets for LV collection disabling
         self.selected_group_idx = None
@@ -955,7 +956,7 @@ class QuickEstimate(ttk.Frame):
             manhattan = abs(dev_pos[0] - pad_cx) + abs(dev_pos[1] - pad_cy)
             
             label = f"Dev-{dev_idx+1:02d}"
-            result['feeder_distances'].append((label, manhattan))
+            result['feeder_distances'].append((dev_idx, label, manhattan))
             result['feeder_total_ft'] += manhattan
             result['feeder_count'] += 1
         
@@ -1082,35 +1083,47 @@ class QuickEstimate(ttk.Frame):
             feeder_row = ttk.Frame(self._ws_rows_frame)
             feeder_row.pack(fill='x', pady=1)
             
-            ttk.Label(feeder_row, text="DC Fdr", width=7).pack(side='left')
+            ttk.Label(feeder_row, text="DC Fdr", width=7, foreground='gray').pack(side='left')
             material = self.wire_sizing.get('feeder_material', 'aluminum')
             feeder_sizes = get_available_sizes(material)
             current_feeder = self.wire_sizing.get('dc_feeder', '')
             self._ws_feeder_var.set(current_feeder)
             feeder_combo = ttk.Combobox(
                 feeder_row, textvariable=self._ws_feeder_var,
-                values=feeder_sizes, state='readonly', width=10
+                values=feeder_sizes, state='disabled', width=10
             )
             feeder_combo.pack(side='left', padx=2)
             self.disable_combobox_scroll(feeder_combo)
-            self._ws_feeder_var.trace_add('write', lambda *a: self._on_feeder_size_changed('dc_feeder'))
+            
+            # Hint: per-device sizes in Assign Devices
+            ttk.Label(feeder_row, text="← per device", foreground='gray',
+                      font=('TkDefaultFont', 7)).pack(side='left', padx=(2, 0))
         
         # AC Homerun row (all topologies)
         homerun_row = ttk.Frame(self._ws_rows_frame)
         homerun_row.pack(fill='x', pady=1)
         
-        ttk.Label(homerun_row, text="AC HR", width=7).pack(side='left')
+        is_distributed = (topology == 'Distributed String')
+        label_color = 'gray' if is_distributed else 'black'
+        combo_state = 'disabled' if is_distributed else 'readonly'
+        
+        ttk.Label(homerun_row, text="AC HR", width=7, foreground=label_color).pack(side='left')
         material = self.wire_sizing.get('feeder_material', 'aluminum')
         homerun_sizes = get_available_sizes(material)
         current_homerun = self.wire_sizing.get('ac_homerun', '')
         self._ws_homerun_var.set(current_homerun)
         homerun_combo = ttk.Combobox(
             homerun_row, textvariable=self._ws_homerun_var,
-            values=homerun_sizes, state='readonly', width=10
+            values=homerun_sizes, state=combo_state, width=10
         )
         homerun_combo.pack(side='left', padx=2)
         self.disable_combobox_scroll(homerun_combo)
-        self._ws_homerun_var.trace_add('write', lambda *a: self._on_feeder_size_changed('ac_homerun'))
+        
+        if is_distributed:
+            ttk.Label(homerun_row, text="← per device", foreground='gray',
+                      font=('TkDefaultFont', 7)).pack(side='left', padx=(2, 0))
+        else:
+            self._ws_homerun_var.trace_add('write', lambda *a: self._on_feeder_size_changed('ac_homerun'))
     
     def _reset_wire_sizing_to_recommended(self):
         """Reset all wire sizes to calculated recommendations."""
@@ -2006,6 +2019,10 @@ class QuickEstimate(ttk.Frame):
         saved_names = estimate_data.get('device_names', {})
         self.device_names = {int(k): v for k, v in saved_names.items()}
         
+        # Load per-device feeder sizes (convert str keys back to int)
+        saved_feeder_sizes = estimate_data.get('device_feeder_sizes', {})
+        self.device_feeder_sizes = {int(k): v for k, v in saved_feeder_sizes.items()}
+        
         # Load allocation lock state
         self.allocation_locked = estimate_data.get('allocation_locked', False)
         self.locked_allocation_result = estimate_data.get('locked_allocation_result', None)
@@ -2081,6 +2098,9 @@ class QuickEstimate(ttk.Frame):
         
         # Save device names (convert int keys to str for JSON)
         estimate_data['device_names'] = {str(k): v for k, v in self.device_names.items()}
+        
+        # Save per-device feeder sizes (convert int keys to str for JSON)
+        estimate_data['device_feeder_sizes'] = {str(k): v for k, v in self.device_feeder_sizes.items()}
         
         # Save allocation lock state
         estimate_data['allocation_locked'] = self.allocation_locked
@@ -2287,6 +2307,7 @@ class QuickEstimate(ttk.Frame):
         self.groups.clear()
         self.pads.clear()
         self.device_names.clear()
+        self.device_feeder_sizes.clear()
         self.last_combiner_assignments = []
         self.allocation_locked = False
         self.locked_allocation_result = None
@@ -2477,7 +2498,8 @@ class QuickEstimate(ttk.Frame):
             self.groups, self.enabled_templates, row_spacing_ft,
             num_devices=num_devices, device_label=device_label,
             initial_inspect=initial_inspect, pads=self.pads,
-            device_names=self.device_names
+            device_names=self.device_names,
+            device_feeder_sizes=self.device_feeder_sizes
         )
         
         # When window closes, save state back
@@ -2485,6 +2507,7 @@ class QuickEstimate(ttk.Frame):
             self._last_inspect_mode = preview.inspect_mode
             self.pads = preview.pads  # Save pad positions back
             self.device_names = dict(preview.device_names)  # Save renamed devices back
+            self.device_feeder_sizes = dict(preview.device_feeder_sizes)  # Save feeder sizes back
             
             # If CB assignments were edited, refresh the estimate results
             if hasattr(self, 'last_combiner_assignments') and self.last_combiner_assignments:
@@ -3065,38 +3088,41 @@ class QuickEstimate(ttk.Frame):
                     w_pn, w_unit, w_ext = self.lookup_part_and_price('whip', polarity='negative', length_ft=length, qty=qty, num_strings=self._gauge_to_string_count('whip', gauge))
                     insert_row(f"Whip {length}ft (Neg)", w_pn, qty, 'ea', w_unit, w_ext)
         
-        # DC Feeders
-        if totals.get('dc_feeder_count', 0) > 0:
-            display = totals.get('_display', {})
-            use_routed = display.get('use_routed', False)
-            dc_feeder_avg_ft = display.get('dc_feeder_avg_ft', 0)
-
-            if totals['dc_feeder_count'] > 0:
-                routed_dc_avg = totals['dc_feeder_total_ft'] / totals['dc_feeder_count']
-            else:
-                routed_dc_avg = dc_feeder_avg_ft
-            dc_avg_display = routed_dc_avg if use_routed else dc_feeder_avg_ft
-            dc_label_suffix = " (routed)" if use_routed else ""
-            dc_wire_size = self.get_wire_size_for('dc_feeder')
-            insert_section(f'DC FEEDERS ({dc_wire_size})')
-            insert_row(f"DC Feeder {dc_wire_size} — avg {dc_avg_display:.0f}ft{dc_label_suffix} × {totals['dc_feeder_count']} runs (pos)", '', f"{totals['dc_feeder_total_ft']:.0f}", 'ft')
-            insert_row(f"DC Feeder {dc_wire_size} — avg {dc_avg_display:.0f}ft{dc_label_suffix} × {totals['dc_feeder_count']} runs (neg)", '', f"{totals['dc_feeder_total_ft']:.0f}", 'ft')
-
-        # AC Homeruns
-        if totals.get('ac_homerun_count', 0) > 0:
-            display = totals.get('_display', {})
-            use_routed = display.get('use_routed', False)
-            ac_homerun_avg_ft = display.get('ac_homerun_avg_ft', 0)
-
-            if totals['ac_homerun_count'] > 0:
-                routed_ac_avg = totals['ac_homerun_total_ft'] / totals['ac_homerun_count']
-            else:
-                routed_ac_avg = ac_homerun_avg_ft
-            ac_avg_display = routed_ac_avg if use_routed else ac_homerun_avg_ft
-            ac_label_suffix = " (routed)" if use_routed else ""
-            ac_wire_size = self.get_wire_size_for('ac_homerun')
-            insert_section(f'AC HOMERUNS ({ac_wire_size})')
-            insert_row(f"AC Homerun {ac_wire_size} — avg {ac_avg_display:.0f}ft{ac_label_suffix} × {totals['ac_homerun_count']} runs", '', f"{totals['ac_homerun_total_ft']:.0f}", 'ft')
+        # DC Feeders / AC Homeruns — per-device sizes grouped
+        display = totals.get('_display', {})
+        use_routed = display.get('use_routed', False)
+        topo = display.get('topology', 'Distributed String')
+        label_suffix = " (routed)" if use_routed else ""
+        feeders_by_size = totals.get('feeders_by_size', {})
+        
+        if topo == 'Distributed String':
+            # Primary cable is AC homerun (per-device sizes)
+            if feeders_by_size:
+                insert_section('AC HOMERUNS')
+                for wire_size, data in sorted(feeders_by_size.items()):
+                    count = data['count']
+                    total_ft = data['total_ft']
+                    avg_ft = total_ft / count if count > 0 else 0
+                    insert_row(f"AC Homerun {wire_size} — avg {avg_ft:.0f}ft{label_suffix} × {count} runs", '', f"{total_ft:.0f}", 'ft')
+        else:
+            # Primary cable is DC feeder (per-device sizes)
+            if feeders_by_size:
+                insert_section('DC FEEDERS')
+                for wire_size, data in sorted(feeders_by_size.items()):
+                    count = data['count']
+                    total_ft = data['total_ft']
+                    avg_ft = total_ft / count if count > 0 else 0
+                    insert_row(f"DC Feeder {wire_size} — avg {avg_ft:.0f}ft{label_suffix} × {count} runs (pos)", '', f"{total_ft:.0f}", 'ft')
+                    insert_row(f"DC Feeder {wire_size} — avg {avg_ft:.0f}ft{label_suffix} × {count} runs (neg)", '', f"{total_ft:.0f}", 'ft')
+            
+            # Secondary AC homeruns (blanket size, not per-device)
+            if totals.get('ac_homerun_count', 0) > 0:
+                ac_wire_size = self.get_wire_size_for('ac_homerun')
+                ac_count = totals['ac_homerun_count']
+                ac_total = totals['ac_homerun_total_ft']
+                ac_avg = ac_total / ac_count if ac_count > 0 else 0
+                insert_section(f'AC HOMERUNS ({ac_wire_size})')
+                insert_row(f"AC Homerun {ac_wire_size} — avg {ac_avg:.0f}ft × {ac_count} runs", '', f"{ac_total:.0f}", 'ft')
     
     def _build_connections_from_harness_map(self, harness_map, tracker_segment_map, module_isc, nec_factor):
         """Convert an allocation harness_map into Device Configurator connection dicts."""
@@ -4717,10 +4743,18 @@ class QuickEstimate(ttk.Frame):
         total_inverters = totals.get('inverter_summary', {}).get('total_inverters', 0)
         total_combiners = sum(totals['combiners_by_breaker'].values())
         
+        # Default feeder size for devices without a per-device override
+        if topology == 'Distributed String':
+            default_feeder_size = self.wire_sizing.get('ac_homerun', '') or '4/0 AWG'
+        else:
+            default_feeder_size = self.wire_sizing.get('dc_feeder', '') or '4/0 AWG'
+        
         use_routed = self.use_routed_var.get() if hasattr(self, 'use_routed_var') else False
 
+        # Build per-device distance list: [(dev_idx, label, distance_ft), ...]
+        per_device_distances = []
+        
         if use_routed and self.pads and allocation_result:
-            # Use routed Manhattan distances from devices to pads
             try:
                 routed = self.calculate_routed_feeder_distances(
                     allocation_result, topology, row_spacing
@@ -4731,44 +4765,46 @@ class QuickEstimate(ttk.Frame):
                 traceback.print_exc()
                 routed = {'feeder_distances': [], 'feeder_total_ft': 0, 'feeder_count': 0}
             
-            if topology == 'Distributed String':
-                # Devices are SIs, cables are AC homeruns
-                # Devices are SIs, cables are AC homeruns
-                totals['dc_feeder_count'] = 0
-                totals['dc_feeder_total_ft'] = 0
-                totals['ac_homerun_count'] = routed['feeder_count']
-                totals['ac_homerun_total_ft'] = routed['feeder_total_ft']
-            elif topology == 'Centralized String':
-                # CBs route DC feeders to pads, inverters at pads have short AC
-                totals['dc_feeder_count'] = routed['feeder_count']
-                totals['dc_feeder_total_ft'] = routed['feeder_total_ft']
-                totals['ac_homerun_count'] = total_inverters
-                totals['ac_homerun_total_ft'] = total_inverters * ac_homerun_avg_ft
-            elif topology == 'Central Inverter':
-                totals['dc_feeder_count'] = routed['feeder_count']
-                totals['dc_feeder_total_ft'] = routed['feeder_total_ft']
-                totals['ac_homerun_count'] = 1
-                totals['ac_homerun_total_ft'] = ac_homerun_avg_ft
-            
-            # Store routed details for potential export
+            per_device_distances = routed['feeder_distances']  # already (dev_idx, label, ft)
             totals['routed_feeder_details'] = routed['feeder_distances']
         else:
-            # Use average distance inputs
+            # Build per-device using average distance
             if topology == 'Distributed String':
-                totals['dc_feeder_count'] = 0
-                totals['dc_feeder_total_ft'] = 0
-                totals['ac_homerun_count'] = total_inverters
-                totals['ac_homerun_total_ft'] = total_inverters * ac_homerun_avg_ft
-            elif topology == 'Centralized String':
-                totals['dc_feeder_count'] = total_combiners
-                totals['dc_feeder_total_ft'] = total_combiners * dc_feeder_avg_ft
-                totals['ac_homerun_count'] = total_inverters
-                totals['ac_homerun_total_ft'] = total_inverters * ac_homerun_avg_ft
-            elif topology == 'Central Inverter':
-                totals['dc_feeder_count'] = total_combiners
-                totals['dc_feeder_total_ft'] = total_combiners * dc_feeder_avg_ft
-                totals['ac_homerun_count'] = 1
-                totals['ac_homerun_total_ft'] = ac_homerun_avg_ft
+                num_feeders = total_inverters
+                avg_ft = ac_homerun_avg_ft
+            else:
+                num_feeders = total_combiners
+                avg_ft = dc_feeder_avg_ft
+            per_device_distances = [(i, f"Dev-{i+1:02d}", avg_ft) for i in range(num_feeders)]
+        
+        # Group primary device-to-pad cable by per-device feeder size
+        feeders_by_size = defaultdict(lambda: {'count': 0, 'total_ft': 0.0})
+        for dev_idx, label, dist_ft in per_device_distances:
+            size = self.device_feeder_sizes.get(dev_idx, default_feeder_size)
+            feeders_by_size[size]['count'] += 1
+            feeders_by_size[size]['total_ft'] += dist_ft
+        
+        totals['feeders_by_size'] = dict(feeders_by_size)
+        
+        # Aggregate totals (backward compat)
+        total_feeder_ft = sum(v['total_ft'] for v in feeders_by_size.values())
+        total_feeder_count = sum(v['count'] for v in feeders_by_size.values())
+        
+        if topology == 'Distributed String':
+            totals['dc_feeder_count'] = 0
+            totals['dc_feeder_total_ft'] = 0
+            totals['ac_homerun_count'] = total_feeder_count
+            totals['ac_homerun_total_ft'] = total_feeder_ft
+        elif topology == 'Centralized String':
+            totals['dc_feeder_count'] = total_feeder_count
+            totals['dc_feeder_total_ft'] = total_feeder_ft
+            totals['ac_homerun_count'] = total_inverters
+            totals['ac_homerun_total_ft'] = total_inverters * ac_homerun_avg_ft
+        elif topology == 'Central Inverter':
+            totals['dc_feeder_count'] = total_feeder_count
+            totals['dc_feeder_total_ft'] = total_feeder_ft
+            totals['ac_homerun_count'] = 1
+            totals['ac_homerun_total_ft'] = ac_homerun_avg_ft
 
         # ==================== Display Results ====================
         
