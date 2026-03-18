@@ -5198,9 +5198,10 @@ class QuickEstimate(ttk.Frame):
                 if allocation_result:
                     for inv_idx, inv in enumerate(allocation_result['inverters']):
                         pattern_str = '-'.join(str(s) for s in inv['pattern'])
+                        inv_label = self.device_names.get(inv_idx, f"Inverter {inv_idx + 1}")
                         
                         inv_row = [
-                            f"Inverter {inv_idx + 1}",
+                            inv_label,
                             inv['total_strings'],
                             len(inv['tracker_indices']),
                             f"[{pattern_str}]"
