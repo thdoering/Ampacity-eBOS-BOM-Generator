@@ -2677,6 +2677,11 @@ class SitePreviewWindow(tk.Toplevel):
             messagebox.showinfo("No Data", "Run Calculate Estimate first.", parent=self)
             return
 
+        # Apply custom device names from canvas renaming
+        for dev_idx, custom_name in self.device_names.items():
+            if dev_idx < len(device_data):
+                device_data[dev_idx]['name'] = custom_name
+
         original = copy.deepcopy(device_data)
         original_locked = self.allocation_locked
         original_parent_locked = getattr(self.master, 'allocation_locked', False)
@@ -2985,8 +2990,6 @@ class SitePreviewWindow(tk.Toplevel):
                     continue
                 dev_idx = int(parent_iid.split('_')[1])
                 s_pos = int(s_iid.rsplit('_', 1)[1])
-                if s_pos < len(device_data[dev_idx]['strings']):
-                    actual_string = device_data[dev_idx]['strings'][s_pos]
                 by_source.setdefault(dev_idx, []).append(s_pos)
 
             # Validate contiguity for each source
@@ -3481,6 +3484,22 @@ class SitePreviewWindow(tk.Toplevel):
         parent_qe = self.master
         assignments = getattr(parent_qe, 'last_combiner_assignments', [])
         physical_order = getattr(self, '_tracker_physical_order', None)
+        
+        # If no cached physical order, compute it from device string data
+        if physical_order is None:
+            device_data, metadata = self._normalize_to_device_strings()
+            if device_data and metadata:
+                tracker_spt = metadata.get('tracker_spt', {})
+                physical_order = {}
+                for tidx in tracker_spt:
+                    dev_entries = []
+                    for dev_idx, dev in enumerate(device_data):
+                        positions = [p for t, p in dev['strings'] if t == tidx]
+                        if positions:
+                            dev_entries.append((min(positions), dev_idx, len(positions)))
+                    dev_entries.sort()
+                    physical_order[tidx] = [(dev_idx, count) for _, dev_idx, count in dev_entries]
+                self._tracker_physical_order = physical_order
         
         # Physical ordering takes priority — works for all topologies
         if physical_order:

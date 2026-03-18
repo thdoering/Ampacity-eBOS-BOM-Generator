@@ -3307,6 +3307,14 @@ class QuickEstimate(ttk.Frame):
                                 'strings_taken': conn['num_strings'],
                                 'start_pos': conn.get('start_string_pos', 0),
                             })
+            elif any('start_physical_pos' in e for e in entries):
+                # Use physical positions from harness_map (from manual Edit Devices)
+                for entry in entries:
+                    device_positions.append({
+                        'inv_idx': entry['inv_idx'],
+                        'strings_taken': entry['strings_taken'],
+                        'start_pos': entry['start_physical_pos'],
+                    })
             else:
                 # Fall back to allocation order (head=north, tail=south)
                 for entry in sorted_entries:
@@ -3316,7 +3324,6 @@ class QuickEstimate(ttk.Frame):
                         'start_pos': pos_cursor,
                     })
                     pos_cursor += entry['strings_taken']
-            
             # Derive harnesses for each portion
             portion_details = self._derive_harnesses_for_split(
                 original_harness_sizes, spt, device_positions
@@ -3329,7 +3336,7 @@ class QuickEstimate(ttk.Frame):
                 'portions': portion_details,
             }
             
-            # Adjust harness totals: remove originals, add derived
+            # Adjust harness totals: remove original, add derived
             for size in original_harness_sizes:
                 if size in totals['harnesses_by_size']:
                     totals['harnesses_by_size'][size] -= 1

@@ -735,8 +735,12 @@ def run_all_diagnostics(qe_widget, verbose=True):
 
     # ── 1. Combiner Assignments ──
     cb_issues = []
+    topology = getattr(qe_widget, 'topology_var', None)
+    topology_str = topology.get() if topology else ''
     assignments = getattr(qe_widget, 'last_combiner_assignments', None)
-    if assignments:
+    if topology_str == 'Distributed String':
+        cb_issues = []  # No combiner assignments expected for this topology
+    elif assignments:
         cb_issues = validate_assignments(assignments, verbose=verbose)
     else:
         cb_issues = ['NO_DATA: No combiner assignments found. Run Calculate first.']
