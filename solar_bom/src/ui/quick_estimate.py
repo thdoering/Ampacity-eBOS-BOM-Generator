@@ -40,7 +40,6 @@ class QuickEstimate(ttk.Frame):
         # Global settings defaults
         self.module_width_default = 1134
         self.modules_per_string_default = 28
-        self.row_spacing_default = 20.0
         
         # Track currently selected item
         self.checked_items = set()  # Items checked for export
@@ -480,11 +479,15 @@ class QuickEstimate(ttk.Frame):
         else:
             default_row_spacing = 20.0
 
+        # Inherit strings_per_inv from last group, or use None (means: use global)
+        default_spi = self.groups[-1].get('strings_per_inv', None) if self.groups else None
+
         group = {
             'name': f"Group {group_num}",
             'device_position': 'middle',
             'driveline_angle': 0.0,
             'row_spacing_ft': default_row_spacing,
+            'strings_per_inv': default_spi,
             'segments': [
                 {'quantity': 1, 'strings_per_tracker': default_spt, 'harness_config': str(default_spt), 'template_ref': default_ref}
             ]
@@ -1950,8 +1953,6 @@ class QuickEstimate(ttk.Frame):
         self._saved_modules_per_string = estimate_data.get('modules_per_string', 28)
         if hasattr(self, 'modules_per_string_var'):
             self.modules_per_string_var.set(str(self._saved_modules_per_string))
-        if hasattr(self, 'row_spacing_var'):
-            self.row_spacing_var.set(str(estimate_data.get('row_spacing_ft', 20.0)))
         # Load wire sizing (new format) or migrate from old wire_gauge
         saved_wire_sizing = estimate_data.get('wire_sizing')
         if saved_wire_sizing:
@@ -2007,6 +2008,9 @@ class QuickEstimate(ttk.Frame):
                 # Backward compat: older saves have no per-group row spacing
                 if 'row_spacing_ft' not in group:
                     group['row_spacing_ft'] = global_row_spacing_fallback
+                # Backward compat: older saves have no per-group strings_per_inv
+                if 'strings_per_inv' not in group:
+                    group['strings_per_inv'] = None
             self.groups = copy.deepcopy(saved_groups)
         elif saved_subarrays:
             # Backward compat: convert old subarray/block format to groups
@@ -2096,9 +2100,6 @@ class QuickEstimate(ttk.Frame):
             estimate_data['module_isc'] = self.selected_module.isc
         
         estimate_data['modules_per_string'] = self._get_int_var(self.modules_per_string_var, 28)
-        
-        estimate_data['row_spacing_ft'] = self._get_float_var(self.row_spacing_var, 20.0)
-
         estimate_data['wire_sizing'] = copy.deepcopy(self.wire_sizing)
         
         # Save inverter selection
@@ -2506,7 +2507,7 @@ class QuickEstimate(ttk.Frame):
             return
         
         topology = self.topology_var.get()
-        row_spacing_ft = self._get_float_var(self.row_spacing_var, 20.0)
+        row_spacing_ft = self.groups[0].get('row_spacing_ft', 20.0) if self.groups else 20.0
         
         # Compute device info for preview
         totals = getattr(self, 'last_totals', {})
@@ -3672,11 +3673,6 @@ class QuickEstimate(ttk.Frame):
         # Modules per string — hidden var, derived from template
         self.modules_per_string_var = tk.StringVar(value=str(getattr(self, 'modules_per_string_default', 28)))
         self.modules_per_string_var.trace_add('write', lambda *args: (self._update_strings_per_inverter(), self._mark_stale(), self._schedule_autosave()))
-        
-        ttk.Label(settings_inner, text="Row Spacing (ft):").pack(side='left', padx=(0, 5))
-        self.row_spacing_var = tk.StringVar(value=str(getattr(self, 'row_spacing_default', 20.0)))
-        ttk.Spinbox(settings_inner, from_=1, to=100, textvariable=self.row_spacing_var, width=6).pack(side='left', padx=(0, 15))
-        self.row_spacing_var.trace_add('write', lambda *args: (self._mark_stale(), self._schedule_autosave()))
 
         # Wire sizing dict — populated dynamically based on harness configs
         # Keys: 'temp_rating', 'feeder_material', 'by_string_count', 'dc_feeder', 'ac_homerun', 'user_overrides'
@@ -4027,6 +4023,41 @@ class QuickEstimate(ttk.Frame):
 
         # Populate GCR on load
         _update_gcr_from_row_spacing()
+
+        # Strings per Device override
+        ttk.Label(form_frame, text="Strings/Device:").grid(row=4, column=0, sticky='w', pady=5)
+        spi_frame = ttk.Frame(form_frame)
+        spi_frame.grid(row=4, column=1, columnspan=3, sticky='w', pady=5, padx=(10, 0))
+
+        spi_override_var = tk.StringVar(
+            value=str(group['strings_per_inv']) if group.get('strings_per_inv') is not None else ''
+        )
+        spi_entry = ttk.Entry(spi_frame, textvariable=spi_override_var, width=6)
+        spi_entry.pack(side='left')
+
+        # Compute the global-derived value to show as placeholder hint
+        def _get_global_spi_hint():
+            try:
+                spi = self._get_int_var(self.strings_per_inverter_var, 0)
+                return f"(global: {spi})" if spi > 0 else "(global default)"
+            except Exception:
+                return ""
+
+        spi_hint_label = ttk.Label(spi_frame, text=_get_global_spi_hint(), foreground='gray')
+        spi_hint_label.pack(side='left', padx=(6, 0))
+
+        def _on_spi_change(*args):
+            val = spi_override_var.get().strip()
+            if val == '':
+                group['strings_per_inv'] = None
+            else:
+                try:
+                    group['strings_per_inv'] = int(val)
+                except ValueError:
+                    pass
+            self._mark_stale()
+            self._schedule_autosave()
+        spi_override_var.trace_add('write', _on_spi_change)
 
         # Horizontal container for segments (left) and template info (right)
         content_row = ttk.Frame(scrollable_frame)
@@ -4598,13 +4629,52 @@ class QuickEstimate(ttk.Frame):
                 allocation_result = self.locked_allocation_result
                 spatial_runs = allocation_result.get('spatial_runs', 1)
             elif tracker_entries:
-                min_row_spacing_ft = min((g.get('row_spacing_ft', 20.0) for g in self.groups), default=20.0)
-                allocation_result = allocate_strings_spatial(
-                    tracker_entries, strings_per_inv, min_row_spacing_ft
-                )
-                spatial_runs = allocation_result.get('spatial_runs', 1)
-            else:
-                allocation_result = allocate_strings_sequential(tracker_sequence, strings_per_inv)
+                # Run allocation per group (respects per-group strings_per_inv override)
+                # then merge results with remapped tracker indices
+                merged_inverters = []
+                flat_offset = 0  # running global tracker index offset per group
+
+                for grp_idx, group in enumerate(self.groups):
+                    grp_count = sum(seg['quantity'] for seg in group['segments'])
+                    grp_entries = tracker_entries[flat_offset:flat_offset + grp_count]
+
+                    grp_spi = group.get('strings_per_inv') or strings_per_inv
+                    grp_pitch = group.get('row_spacing_ft', 20.0)
+
+                    if grp_entries and grp_spi > 0:
+                        grp_result = allocate_strings_spatial(grp_entries, grp_spi, grp_pitch)
+                        merged_inverters.extend(grp_result.get('inverters', []))
+
+                    flat_offset += grp_count
+
+                if merged_inverters:
+                    # Build merged summary
+                    total_inv_strings = sum(inv['total_strings'] for inv in merged_inverters)
+                    total_split = sum(
+                        1 for inv in merged_inverters
+                        for entry in inv.get('harness_map', [])
+                        if entry.get('is_split')
+                    )
+                    inv_sizes = [inv['total_strings'] for inv in merged_inverters]
+                    allocation_result = {
+                        'inverters': merged_inverters,
+                        'spatial_runs': len(self.groups),
+                        'summary': {
+                            'total_inverters': len(merged_inverters),
+                            'total_strings': total_inv_strings,
+                            'total_trackers': len(tracker_entries),
+                            'total_split_trackers': total_split,
+                            'max_strings_per_inverter': max(inv_sizes) if inv_sizes else 0,
+                            'min_strings_per_inverter': min(inv_sizes) if inv_sizes else 0,
+                            'num_larger_inverters': 0,
+                            'num_smaller_inverters': 0,
+                            'tracker_type_counts': {},
+                        }
+                    }
+                    spatial_runs = len(self.groups)
+                else:
+                    allocation_result = allocate_strings_sequential(tracker_sequence, strings_per_inv)
+                    spatial_runs = 1
 
             module_wattage = self.selected_module.wattage
             # Use site-level DC:AC (total DC power / total AC capacity)
@@ -4648,9 +4718,17 @@ class QuickEstimate(ttk.Frame):
             strings_per_cb = strings_per_inv
 
         elif topology == 'Central Inverter':
-            # CB count driven by strings/CB field; breaker is the target size
-            if total_all_strings > 0 and strings_per_cb_target > 0:
-                num_combiners = math.ceil(total_all_strings / strings_per_cb_target)
+            # CB count: sum per-group (each group may have its own strings/CB override)
+            num_combiners = 0
+            for group in self.groups:
+                grp_strings = sum(
+                    seg['quantity'] * int(seg['strings_per_tracker'])
+                    for seg in group['segments']
+                )
+                grp_spi = group.get('strings_per_inv') or strings_per_cb_target
+                if grp_strings > 0 and grp_spi > 0:
+                    num_combiners += math.ceil(grp_strings / grp_spi)
+            if num_combiners > 0:
                 strings_per_cb = math.ceil(total_all_strings / num_combiners)
             num_devices = num_combiners
 
@@ -4885,7 +4963,7 @@ class QuickEstimate(ttk.Frame):
         if use_routed and self.pads and allocation_result:
             try:
                 routed = self.calculate_routed_feeder_distances(
-                    allocation_result, topology, row_spacing
+                    allocation_result, topology, min((g.get('row_spacing_ft', 20.0) for g in self.groups), default=20.0)
                 )
             except Exception as e:
                 print(f"[Routed distance error] {e}")
@@ -5139,7 +5217,7 @@ class QuickEstimate(ttk.Frame):
         
         # Gather all the data we need
         modules_per_string = self._get_int_var(self.modules_per_string_var, 28)
-        row_spacing = self._get_float_var(self.row_spacing_var, 20.0)
+        row_spacing = self.groups[0].get('row_spacing_ft', 20.0) if self.groups else 20.0
         
         module_isc = self.selected_module.isc
         module_width_mm = self.selected_module.width_mm
@@ -5233,7 +5311,8 @@ class QuickEstimate(ttk.Frame):
                 info_items.append(("Module:", f"{self.selected_module.manufacturer} {self.selected_module.model} ({self.selected_module.wattage}W)"))
                 info_items.append(("Module Isc:", f"{module_isc} A"))
                 info_items.append(("Module Width:", f"{module_width_mm} mm"))
-            info_items.append(("Row Spacing:", f"{row_spacing} ft"))
+            for grp in self.groups:
+                info_items.append((f"Row Spacing ({grp.get('name', 'Group')}):", f"{grp.get('row_spacing_ft', 20.0):.3f} ft"))
             info_items.append(("LV Collection Method:", self.lv_collection_var.get() if hasattr(self, 'lv_collection_var') else 'Wire Harness'))
             
             if self.selected_inverter:
@@ -5276,7 +5355,7 @@ class QuickEstimate(ttk.Frame):
             info_ws.cell(row=info_row, column=1, value="Group Configuration Summary").font = title_font
             info_row += 1
             
-            row_headers = ['Group', 'Segment Configs', 'Total Strings', 'Total Trackers']
+            row_headers = ['Group', 'Segment Configs', 'Total Strings', 'Total Trackers', 'Row Spacing (ft)']
             for col, header in enumerate(row_headers, 1):
                 cell = info_ws.cell(row=info_row, column=col, value=header)
                 cell.font = header_font
@@ -5284,7 +5363,7 @@ class QuickEstimate(ttk.Frame):
                 cell.alignment = center_align
                 cell.border = thin_border
             info_row += 1
-            
+
             for r in self.groups:
                 group_strings = sum(int(s['quantity'] * s['strings_per_tracker']) for s in r['segments'])
                 group_trackers = sum(s['quantity'] for s in r['segments'])
@@ -5292,7 +5371,8 @@ class QuickEstimate(ttk.Frame):
                     f"{s['quantity']}x{s['strings_per_tracker']}S({s['harness_config']})"
                     for s in r['segments'] if s['quantity'] > 0
                 )
-                group_data = [r['name'], seg_summary, group_strings, group_trackers]
+                row_spacing_val = r.get('row_spacing_ft', 20.0)
+                group_data = [r['name'], seg_summary, group_strings, group_trackers, round(row_spacing_val, 3)]
                 for col, value in enumerate(group_data, 1):
                     cell = info_ws.cell(row=info_row, column=col, value=value)
                     cell.border = thin_border
@@ -5417,7 +5497,8 @@ class QuickEstimate(ttk.Frame):
                 bom_info_items.append(("Module:", f"{self.selected_module.manufacturer} {self.selected_module.model} ({self.selected_module.wattage}W)"))
                 bom_info_items.append(("Module Isc:", f"{module_isc} A"))
                 bom_info_items.append(("Module Width:", f"{module_width_mm} mm"))
-            bom_info_items.append(("Row Spacing:", f"{row_spacing} ft"))
+            for grp in self.groups:
+                bom_info_items.append((f"Row Spacing ({grp.get('name', 'Group')}):", f"{grp.get('row_spacing_ft', 20.0):.3f} ft"))
             
             if self.selected_inverter:
                 inv = self.selected_inverter

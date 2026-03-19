@@ -906,9 +906,11 @@ def run_all_diagnostics(qe_widget, verbose=True):
     if dc_ac_var:
         project_info.append(("DC:AC Ratio (target)", dc_ac_var.get()))
 
-    row_spacing_var = getattr(qe_widget, 'row_spacing_var', None)
-    if row_spacing_var:
-        project_info.append(("Row Spacing", f"{row_spacing_var.get()} ft"))
+    groups_for_rs = getattr(qe_widget, 'groups', [])
+    for grp in groups_for_rs:
+        grp_name = grp.get('name', 'Group')
+        rs = grp.get('row_spacing_ft', 20.0)
+        project_info.append((f"Row Spacing ({grp_name})", f"{rs:.3f} ft"))
 
     # NEC factor
     nec_factor = 1.56

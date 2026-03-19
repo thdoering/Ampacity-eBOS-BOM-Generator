@@ -199,6 +199,28 @@
       "bifaciality_factor": null,
       "default_orientation": "Portrait",
       "cells_per_module": 72
+    },
+    "CS3W-445MB-AG": {
+      "manufacturer": "CSI Solar",
+      "model": "CS3W-445MB-AG",
+      "type": "Bifacial",
+      "length_mm": 2132.0,
+      "width_mm": 1048.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 445.0,
+      "vmp": 40.9,
+      "imp": 10.89,
+      "voc": 48.9,
+      "isc": 11.54,
+      "max_system_voltage": 1500,
+      "efficiency": null,
+      "temperature_coefficient_pmax": -0.34,
+      "temperature_coefficient_voc": -0.26,
+      "temperature_coefficient_isc": 0.05,
+      "bifaciality_factor": null,
+      "default_orientation": "Portrait",
+      "cells_per_module": 72
     }
   },
   "ZnShine": {
