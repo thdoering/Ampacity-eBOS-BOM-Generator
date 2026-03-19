@@ -429,6 +429,23 @@ class QuickEstimate(ttk.Frame):
         
         return info
 
+    def _get_group_module_length_m(self, group: dict) -> float:
+        """Return the N-S module dimension (m) for the first templated segment in this group.
+        Used for GCR <-> row spacing conversion. Returns None if no template is found."""
+        for seg in group.get('segments', []):
+            ref = seg.get('template_ref')
+            if ref and ref in self.enabled_templates:
+                tdata = self.enabled_templates[ref]
+                ms = tdata.get('module_spec', {})
+                orientation = tdata.get('module_orientation', 'Portrait')
+                if orientation == 'Portrait':
+                    length_mm = ms.get('length_mm', 0)
+                else:
+                    length_mm = ms.get('width_mm', 0)
+                if length_mm > 0:
+                    return length_mm / 1000.0
+        return None
+
     def generate_id(self, prefix: str) -> str:
         """Generate a unique ID with a prefix"""
         return f"{prefix}_{uuid.uuid4().hex[:8]}"
@@ -457,10 +474,17 @@ class QuickEstimate(ttk.Frame):
         default_ref = None
         default_spt = 3
         
+        # Default row spacing: inherit from last group, or fall back to 20 ft
+        if self.groups:
+            default_row_spacing = self.groups[-1].get('row_spacing_ft', 20.0)
+        else:
+            default_row_spacing = 20.0
+
         group = {
             'name': f"Group {group_num}",
             'device_position': 'middle',
             'driveline_angle': 0.0,
+            'row_spacing_ft': default_row_spacing,
             'segments': [
                 {'quantity': 1, 'strings_per_tracker': default_spt, 'harness_config': str(default_spt), 'template_ref': default_ref}
             ]
@@ -664,7 +688,7 @@ class QuickEstimate(ttk.Frame):
         
         return whip_distances
 
-    def calculate_whip_distances_from_positions(self, allocation_result, topology, num_devices, row_spacing_ft):
+    def calculate_whip_distances_from_positions(self, allocation_result, topology, num_devices, row_spacing_ft=None):
         """Calculate whip distances using device positions derived from allocation.
         
         For Distributed String and Centralized String: uses allocation result
@@ -679,8 +703,9 @@ class QuickEstimate(ttk.Frame):
                 sum(seg['quantity'] for seg in group['segments'])
                 for group in self.groups
             )
+            fallback_spacing = self.groups[0].get('row_spacing_ft', 20.0) if self.groups else 20.0
             old_distances = self.calculate_cb_whip_distances(
-                total_trackers, num_devices, row_spacing_ft
+                total_trackers, num_devices, fallback_spacing
             )
             # Build flat spt list matching tracker order
             spt_list = []
@@ -709,10 +734,11 @@ class QuickEstimate(ttk.Frame):
             driveline_angle_deg = group.get('driveline_angle', 0.0)
             driveline_tan = math.tan(math.radians(driveline_angle_deg)) if driveline_angle_deg > 0 else 0.0
             
+            grp_row_spacing = group.get('row_spacing_ft', 20.0)
             local_idx = 0
             for seg in group['segments']:
                 for _ in range(seg['quantity']):
-                    local_x_offset = local_idx * row_spacing_ft
+                    local_x_offset = local_idx * grp_row_spacing
                     tracker_world_x.append(group_x + local_x_offset)
                     tracker_world_y.append(group_y + local_x_offset * driveline_tan)
                     tracker_group.append(grp_idx)
@@ -720,7 +746,7 @@ class QuickEstimate(ttk.Frame):
             
             # Advance auto cursor
             group_tracker_count = sum(seg['quantity'] for seg in group['segments'])
-            auto_x_cursor += group_tracker_count * row_spacing_ft + row_spacing_ft * 2
+            auto_x_cursor += group_tracker_count * grp_row_spacing + grp_row_spacing * 2
         
         # Compute device world X and metadata for each inverter
         inverters = allocation_result.get('inverters', [])
@@ -1973,10 +1999,14 @@ class QuickEstimate(ttk.Frame):
         
         if saved_groups:
             # Ensure all segments have template_ref field (backward compat)
+            global_row_spacing_fallback = estimate_data.get('row_spacing_ft', 20.0)
             for group in saved_groups:
                 for seg in group.get('segments', []):
                     if 'template_ref' not in seg:
                         seg['template_ref'] = None
+                # Backward compat: older saves have no per-group row spacing
+                if 'row_spacing_ft' not in group:
+                    group['row_spacing_ft'] = global_row_spacing_fallback
             self.groups = copy.deepcopy(saved_groups)
         elif saved_subarrays:
             # Backward compat: convert old subarray/block format to groups
@@ -3941,7 +3971,63 @@ class QuickEstimate(ttk.Frame):
             self._mark_stale()
             self._schedule_autosave()
         angle_var.trace_add('write', on_angle_change)
-        
+
+        # Row Spacing + GCR (bidirectional)
+        ttk.Label(form_frame, text="Row Spacing (ft):").grid(row=3, column=0, sticky='w', pady=5)
+        row_spacing_var = tk.StringVar(value=f"{group.get('row_spacing_ft', 20.0):.3f}")
+        row_spacing_entry = ttk.Entry(form_frame, textvariable=row_spacing_var, width=10)
+        row_spacing_entry.grid(row=3, column=1, sticky='w', pady=5, padx=(10, 0))
+
+        ttk.Label(form_frame, text="GCR:").grid(row=3, column=2, sticky='w', pady=5, padx=(15, 0))
+        gcr_var = tk.StringVar(value="--")
+        gcr_entry = ttk.Entry(form_frame, textvariable=gcr_var, width=8)
+        gcr_entry.grid(row=3, column=3, sticky='w', pady=5, padx=(5, 0))
+
+        def _update_gcr_from_row_spacing(*args):
+            try:
+                rs_ft = float(row_spacing_var.get())
+                if rs_ft <= 0:
+                    return
+                rs_m = rs_ft / 3.28084
+                mod_len_m = self._get_group_module_length_m(group)
+                if mod_len_m:
+                    gcr_var.set(f"{mod_len_m / rs_m:.3f}")
+                else:
+                    gcr_var.set("--")
+                group['row_spacing_ft'] = rs_ft
+                self._mark_stale()
+                self._schedule_autosave()
+            except ValueError:
+                pass
+
+        def _update_row_spacing_from_gcr(*args):
+            try:
+                gcr_str = gcr_var.get().strip()
+                if gcr_str == "--":
+                    return
+                gcr = float(gcr_str)
+                if gcr <= 0 or gcr > 1.0:
+                    return
+                mod_len_m = self._get_group_module_length_m(group)
+                if not mod_len_m:
+                    return
+                rs_m = mod_len_m / gcr
+                rs_ft = rs_m * 3.28084
+                row_spacing_var.set(f"{rs_ft:.3f}")
+                group['row_spacing_ft'] = rs_ft
+                self._mark_stale()
+                self._schedule_autosave()
+            except ValueError:
+                pass
+
+        row_spacing_entry.bind('<FocusOut>', _update_gcr_from_row_spacing)
+        row_spacing_entry.bind('<Return>', _update_gcr_from_row_spacing)
+        gcr_entry.bind('<FocusOut>', _update_row_spacing_from_gcr)
+        gcr_entry.bind('<Return>', _update_row_spacing_from_gcr)
+
+        # Populate GCR on load
+        _update_gcr_from_row_spacing()
+
         # Horizontal container for segments (left) and template info (right)
         content_row = ttk.Frame(scrollable_frame)
         content_row.pack(fill='both', expand=True, pady=(10, 0), padx=10)
@@ -4393,8 +4479,6 @@ class QuickEstimate(ttk.Frame):
         string_length_ft = module_width_ft * modules_per_string
 
         # ==================== Build spatial tracker entries ====================
-        row_spacing_ft = self._get_float_var(self.row_spacing_var, 20.0)
-
         fallback_width_ft = 6.0
         fallback_length_ft = 180.0
 
@@ -4420,6 +4504,7 @@ class QuickEstimate(ttk.Frame):
                 group_x = auto_x_cursor
                 group_y = 0.0
 
+            grp_row_spacing = group.get('row_spacing_ft', 20.0)
 
             # Compute group reference motor Y (same as SitePreviewWindow uses)
             # This is the motor_y of the FIRST segment's template in the group
@@ -4487,7 +4572,7 @@ class QuickEstimate(ttk.Frame):
                     else:
                         effective_spt = int(spt)
                     
-                    local_x_offset = tracker_within_group * row_spacing_ft
+                    local_x_offset = tracker_within_group * grp_row_spacing
                     tracker_entries.append({
                         'original_idx': flat_idx,
                         'spt': effective_spt,
@@ -4495,13 +4580,14 @@ class QuickEstimate(ttk.Frame):
                         'y': group_y + local_x_offset * driveline_tan,
                         'length_ft': t_length,
                         'motor_y_ft': group_ref_motor_y_ft,
+                        'row_spacing_ft': grp_row_spacing,
                     })
                     flat_idx += 1
                     tracker_within_group += 1
 
             # Advance auto-layout cursor for next group
-            group_width = group_tracker_counts[grp_idx] * row_spacing_ft
-            auto_x_cursor += group_width + row_spacing_ft * 2  # Extra gap between groups
+            group_width = group_tracker_counts[grp_idx] * grp_row_spacing
+            auto_x_cursor += group_width + grp_row_spacing * 2  # Extra gap between groups
 
         # ==================== Allocation ====================
         allocation_result = None
@@ -4512,8 +4598,9 @@ class QuickEstimate(ttk.Frame):
                 allocation_result = self.locked_allocation_result
                 spatial_runs = allocation_result.get('spatial_runs', 1)
             elif tracker_entries:
+                min_row_spacing_ft = min((g.get('row_spacing_ft', 20.0) for g in self.groups), default=20.0)
                 allocation_result = allocate_strings_spatial(
-                    tracker_entries, strings_per_inv, row_spacing_ft
+                    tracker_entries, strings_per_inv, min_row_spacing_ft
                 )
                 spatial_runs = allocation_result.get('spatial_runs', 1)
             else:
@@ -4579,10 +4666,9 @@ class QuickEstimate(ttk.Frame):
         self._adjust_harnesses_for_splits(totals)
 
         # ==================== Whip calculation ====================
-        row_spacing = self._get_float_var(self.row_spacing_var, 20.0)
         if total_all_trackers > 0 and num_devices > 0:
             whip_distances = self.calculate_whip_distances_from_positions(
-                allocation_result, topology, num_devices, row_spacing
+                allocation_result, topology, num_devices
             )
 
             split_details = getattr(self, '_split_tracker_details', {})

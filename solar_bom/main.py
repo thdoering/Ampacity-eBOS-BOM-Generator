@@ -182,6 +182,9 @@ class SolarBOMApplication:
             # Refresh templates in block configurator (this will reload filtered templates)
             if hasattr(block_configurator, 'reload_templates'):
                 block_configurator.reload_templates()
+            # Refresh templates in quick estimate
+            if hasattr(self, 'quick_estimate_widget') and self.quick_estimate_widget:
+                self.quick_estimate_widget.refresh_templates()
 
         # Define callback for tracker template deletion
         def on_template_deleted(template_name):

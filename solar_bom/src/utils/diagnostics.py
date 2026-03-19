@@ -610,18 +610,14 @@ def validate_whip_extender_relationship(totals, qe_widget, verbose=False):
     ns_offsets = getattr(qe_widget, '_tracker_ns_to_device', {})
     whips_by_length = totals.get('whips_by_length', {})
     groups = getattr(qe_widget, 'groups', [])
-    row_spacing = 20.0
-    try:
-        row_spacing = float(qe_widget.row_spacing_var.get())
-    except (ValueError, AttributeError):
-        pass
 
     # ── 1. Max whip should not exceed max E-W span ──
-    # Max E-W span = largest group tracker count × row_spacing
+    # Max E-W span = largest group (tracker count × its row spacing)
     max_ew_span = 0
     for group in groups:
         group_trackers = sum(seg.get('quantity', 0) for seg in group.get('segments', []))
-        max_ew_span = max(max_ew_span, group_trackers * row_spacing)
+        grp_spacing = group.get('row_spacing_ft', 20.0)
+        max_ew_span = max(max_ew_span, group_trackers * grp_spacing)
 
     if max_ew_span > 0 and whips_by_length:
         max_whip = max(length for (length, gauge) in whips_by_length.keys())

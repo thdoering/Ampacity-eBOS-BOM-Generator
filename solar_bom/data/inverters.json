@@ -462,5 +462,36 @@
     "weight_kg": 75.0,
     "ip_rating": "IP65",
     "max_short_circuit_current": 450.0
+  },
+  "KACO Blueplanet 155 TL3": {
+    "manufacturer": "KACO",
+    "model": "Blueplanet 155 TL3",
+    "inverter_type": "String",
+    "rated_power_kw": 155.0,
+    "max_dc_power_kw": 232.5,
+    "max_efficiency": 98.0,
+    "mppt_channels": [
+      {
+        "max_input_current": 183.0,
+        "min_voltage": 875.0,
+        "max_voltage": 1300.0,
+        "max_power": 232500.0,
+        "num_string_inputs": 1
+      }
+    ],
+    "mppt_configuration": "Independent",
+    "max_dc_voltage": 1500.0,
+    "startup_voltage": 875.0,
+    "nominal_ac_voltage": 600.0,
+    "max_ac_current": 152.0,
+    "power_factor": 0.99,
+    "dimensions_mm": [
+      1000,
+      600,
+      300
+    ],
+    "weight_kg": 75.0,
+    "ip_rating": "IP65",
+    "max_short_circuit_current": 300.0
   }
 }

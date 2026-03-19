@@ -384,6 +384,7 @@ class SitePreviewWindow(tk.Toplevel):
         for grp_idx, group_data in enumerate(self.groups):
             group_trackers = []
             group_motor_y = None  # motor Y offset for first tracker in group (used for alignment)
+            grp_pitch = group_data.get('row_spacing_ft', self.row_spacing_ft)
             
             for seg in group_data['segments']:
                 ref = seg.get('template_ref')
@@ -432,7 +433,7 @@ class SitePreviewWindow(tk.Toplevel):
             num_trackers = len(group_trackers)
             if num_trackers > 0:
                 group_max_width = max(t['width_ft'] for t in group_trackers)
-                group_width = group_max_width + (num_trackers - 1) * self.row_spacing_ft
+                group_width = group_max_width + (num_trackers - 1) * grp_pitch
                 group_length = max(t['length_ft'] for t in group_trackers)
             else:
                 group_width = 0
@@ -476,7 +477,7 @@ class SitePreviewWindow(tk.Toplevel):
                     t_motor = t.get('motor_y_ft', 0)
                     t_length_val = t.get('length_ft', group_length)
                     y_offset = ref_motor - t_motor  # Motor alignment shift (no angle)
-                    angle_y = t_i * self.row_spacing_ft * driveline_tan
+                    angle_y = t_i * grp_pitch * driveline_tan
                     # Base bounds (no angle) — for parallelogram overlap checking
                     visual_min_y_base = min(visual_min_y_base, y_offset)
                     visual_max_y_base = max(visual_max_y_base, y_offset + t_length_val)
@@ -498,6 +499,7 @@ class SitePreviewWindow(tk.Toplevel):
                 'visual_max_y_base': visual_max_y_base,
                 'driveline_angle': driveline_angle_deg,
                 'driveline_tan': driveline_tan,
+                'row_spacing_ft': grp_pitch,
             })
 
         # Flat list for backward compat
@@ -575,7 +577,6 @@ class SitePreviewWindow(tk.Toplevel):
     
     def _compute_devices_from_allocation(self, inverters, device_width_ft, device_height_ft, offset_ft):
         """Place one device per inverter, positioned at the center of that inverter's trackers."""
-        pitch = self.tracker_pitch_ft
         max_width = self.max_tracker_width_ft
         
         # Build a lookup: global_tracker_idx -> (group_idx, local_tracker_idx)
@@ -618,6 +619,7 @@ class SitePreviewWindow(tk.Toplevel):
                 if tidx in tracker_to_group and tracker_to_group[tidx][0] == primary_grp_idx:
                     local_indices.append(tracker_to_group[tidx][1])
             
+            pitch = group_data.get('row_spacing_ft', self.tracker_pitch_ft)
             if local_indices:
                 center_local = (min(local_indices) + max(local_indices)) / 2.0
                 device_x = gx + center_local * pitch + (max_width - device_width_ft) / 2
@@ -692,7 +694,6 @@ class SitePreviewWindow(tk.Toplevel):
     
     def _compute_devices_proportional(self, device_width_ft, device_height_ft, offset_ft):
         """Distribute devices proportionally across groups for Central Inverter topology."""
-        pitch = self.tracker_pitch_ft
         max_width = self.max_tracker_width_ft
         
         total_trackers = sum(len(g['trackers']) for g in self.group_layout)
@@ -745,6 +746,7 @@ class SitePreviewWindow(tk.Toplevel):
                 if sub_size <= 0:
                     continue
                 
+                pitch = group_data.get('row_spacing_ft', self.tracker_pitch_ft)
                 center_tracker = tracker_start + sub_size / 2.0 - 0.5
                 device_x = gx + center_tracker * pitch + (max_width - device_width_ft) / 2
                 device_y = base_device_y + center_tracker * pitch * driveline_tan
@@ -1170,10 +1172,10 @@ class SitePreviewWindow(tk.Toplevel):
         if not self.group_layout:
             return
         
-        pitch = getattr(self, 'tracker_pitch_ft', 20)
         max_width = getattr(self, 'max_tracker_width_ft', 6)
         
         for group_idx, group_data in enumerate(self.group_layout):
+            pitch = group_data.get('row_spacing_ft', getattr(self, 'tracker_pitch_ft', 20))
             gx = group_data['x']
             gy = group_data['y']
             is_selected = (group_idx == self.selected_group_idx)
@@ -1555,10 +1557,33 @@ class SitePreviewWindow(tk.Toplevel):
         self.fit_and_redraw()
 
     def _refresh_allocation(self):
-        """Re-run string allocation using current group positions, then refresh preview."""
+        """Re-run string allocation using current group positions, then refresh preview.
+        
+        If allocation is locked, skips string reallocation and only updates
+        device (CB/inverter) positions based on the current group layout.
+        """
         self._save_group_positions()
         
         parent = self.master
+        
+        if self.allocation_locked:
+            # Locked — keep string assignments, just reposition devices
+            self.build_layout_data()
+            self._recolor_from_cb_assignments()
+            self._build_legend()
+            inv_summary = getattr(parent, 'last_totals', {}).get('inverter_summary', {})
+            num_inv = inv_summary.get('total_inverters', 0)
+            total_str = inv_summary.get('total_strings', 0)
+            actual_ratio = inv_summary.get('actual_dc_ac', 0)
+            split = inv_summary.get('total_split_trackers', 0)
+            spatial_runs = inv_summary.get('allocation_result', {}).get('spatial_runs', 1)
+            self.summary_label.config(
+                text=self._format_summary(num_inv, total_str, actual_ratio, split,
+                                          spatial_runs=spatial_runs, locked=True)
+            )
+            self.draw()
+            return
+
         if hasattr(parent, 'calculate_estimate'):
             # Clear stale combiner assignments so calculate_estimate rebuilds them fresh
             parent.last_combiner_assignments = []
@@ -1581,7 +1606,6 @@ class SitePreviewWindow(tk.Toplevel):
                 actual_ratio = inv_summary.get('actual_dc_ac', 0)
                 split = inv_summary.get('total_split_trackers', 0)
                 spatial_runs = inv_summary.get('allocation_result', {}).get('spatial_runs', 1)
-                lock_str = "  |  🔒 LOCKED" if self.allocation_locked else ""
                 self.summary_label.config(
                     text=self._format_summary(num_inv, total_str, actual_ratio, split,
                                               spatial_runs=spatial_runs, locked=self.allocation_locked)
@@ -1825,7 +1849,7 @@ class SitePreviewWindow(tk.Toplevel):
             for grp in self.group_layout:
                 for t_i, t in enumerate(grp['trackers']):
                     if global_idx == tidx:
-                        t_x = grp['x'] + t_i * self.tracker_pitch_ft
+                        t_x = grp['x'] + t_i * grp.get('row_spacing_ft', self.tracker_pitch_ft)
                         break
                     global_idx += 1
                 if t_x is not None:
@@ -2023,10 +2047,6 @@ class SitePreviewWindow(tk.Toplevel):
 
     def _add_pad(self):
         """Enter pad placement mode — next click on canvas places a new pad."""
-        if self.inspect_mode:
-            messagebox.showinfo("Locked", "Switch to Layout mode to add pads.", parent=self)
-            return
-        
         self.placing_pad = True
         self.canvas.config(cursor='crosshair')
         self.add_pad_btn.config(state='disabled')
