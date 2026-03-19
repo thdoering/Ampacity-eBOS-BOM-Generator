@@ -2782,7 +2782,7 @@ class QuickEstimate(ttk.Frame):
                                 'start_string_pos': pos_cursor,
                                 'module_isc': module_isc,
                                 'nec_factor': nec_factor,
-                                'wire_gauge': t_info['wire_gauge'],
+                                'wire_gauge': self.get_wire_size_for('whip', h_size),
                             })
                             pos_cursor += h_size
                     
@@ -3158,7 +3158,7 @@ class QuickEstimate(ttk.Frame):
                         'start_string_pos': pos_cursor,
                         'module_isc': module_isc,
                         'nec_factor': nec_factor,
-                        'wire_gauge': wire_gauge,
+                        'wire_gauge': self.get_wire_size_for('whip', h_size),
                     })
                     pos_cursor += h_size
             else:
@@ -3185,7 +3185,7 @@ class QuickEstimate(ttk.Frame):
                         'start_string_pos': pos_cursor,
                         'module_isc': module_isc,
                         'nec_factor': nec_factor,
-                        'wire_gauge': wire_gauge,
+                        'wire_gauge': self.get_wire_size_for('whip', take),
                     })
                     pos_cursor += take
                     remaining -= take
