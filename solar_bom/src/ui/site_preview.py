@@ -1822,7 +1822,43 @@ class SitePreviewWindow(tk.Toplevel):
         if cb_data is None and self.selected_device_idx < len(assignments):
             cb_data = assignments[self.selected_device_idx]
         if cb_data is None:
-            return
+            if self.topology == 'Distributed String':
+                inv_summary = getattr(parent_qe, 'last_totals', {}).get('inverter_summary', {})
+                alloc = inv_summary.get('allocation_result')
+                if not alloc or self.selected_device_idx >= len(alloc.get('inverters', [])):
+                    return
+                inv = alloc['inverters'][self.selected_device_idx]
+                module_isc = 0.0
+                nec_factor = 1.56
+                if hasattr(parent_qe, 'selected_module') and parent_qe.selected_module:
+                    module_isc = parent_qe.selected_module.isc
+                if hasattr(parent_qe, 'current_project') and parent_qe.current_project:
+                    nec_factor = getattr(parent_qe.current_project, 'nec_safety_factor', 1.56)
+                connections = []
+                for entry in inv.get('harness_map', []):
+                    tidx = entry['tracker_idx']
+                    seg_info = tracker_seg_map[tidx] if tidx < len(tracker_seg_map) else {}
+                    wire_gauge = seg_info.get('wire_gauge', '10 AWG') if seg_info else '10 AWG'
+                    connections.append({
+                        'tracker_idx': tidx,
+                        'tracker_label': f'T{tidx+1:02d}',
+                        'harness_label': 'H01',
+                        'num_strings': entry['strings_taken'],
+                        'module_isc': module_isc,
+                        'nec_factor': nec_factor,
+                        'wire_gauge': wire_gauge,
+                        'start_string_pos': entry.get('start_physical_pos', 0),
+                    })
+                cb_data = {
+                    'combiner_name': dev_label,
+                    'device_idx': self.selected_device_idx,
+                    'breaker_size': None,
+                    'module_isc': module_isc,
+                    'nec_factor': nec_factor,
+                    'connections': connections,
+                }
+            else:
+                return
 
         inv_idx = cb_data.get('device_idx', self.selected_device_idx)
 
