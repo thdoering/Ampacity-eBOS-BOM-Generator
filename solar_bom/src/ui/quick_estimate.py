@@ -3303,7 +3303,14 @@ class QuickEstimate(ttk.Frame):
         
         for tidx, entries in split_trackers.items():
             spt = entries[0]['strings_per_tracker']
-            original_harness_sizes = self._get_harness_config_for_tracker_type(spt)
+            # Use per-tracker segment lookup to get correct harness config
+            # (multiple segments can share the same SPT with different configs)
+            if tidx < len(tracker_seg_map) and tracker_seg_map[tidx]:
+                seg = tracker_seg_map[tidx]['seg']
+                harness_config = self._get_effective_harness_config(seg)
+                original_harness_sizes = self.parse_harness_config(harness_config)
+            else:
+                original_harness_sizes = self._get_harness_config_for_tracker_type(spt)
             
             # Build device_positions with physical start positions
             # Entries come from harness_map which is ordered by allocation sequence.
@@ -4351,6 +4358,15 @@ class QuickEstimate(ttk.Frame):
                     harness_count_by_spt[spt] = len(harness_sizes)
                     harness_sizes_by_spt[spt] = harness_sizes
 
+        # Build per-tracker harness sizes (indexed by global tracker index)
+        # This handles segments with same SPT but different harness configs
+        tracker_harness_sizes_list = []
+        for group in self.groups:
+            for seg in group['segments']:
+                harness_sizes = self._get_harness_sizes(seg)
+                for _ in range(seg['quantity']):
+                    tracker_harness_sizes_list.append(list(harness_sizes))
+
         # Warn about unpaired partial strings
         unpaired_warnings = []
         for group in self.groups:
@@ -4559,8 +4575,7 @@ class QuickEstimate(ttk.Frame):
             totals['combiners_by_breaker'][breaker_size] += num_combiners
 
         # ==================== Harness split adjustment ====================
-        # NOTE: _adjust_harnesses_for_splits will be updated to use harness_map
-        # in the next batch. For now it's a no-op since allocations=[] above.
+        # For now it's a no-op since allocations=[] above.
         self._adjust_harnesses_for_splits(totals)
 
         # ==================== Whip calculation ====================
@@ -4582,12 +4597,13 @@ class QuickEstimate(ttk.Frame):
                 whip_length = self.round_whip_length(distance_ft)
                 
                 if tidx in split_details:
-                    # Split tracker — find this portion's harness count
+                    # Split tracker — collect ALL portions for this inv_idx
+                    # (a single inverter can own multiple portions when a harness
+                    #  straddles the split boundary)
                     portion_harnesses = 0
                     for portion in split_details[tidx]['portions']:
                         if portion['inv_idx'] == inv_idx:
-                            portion_harnesses = len(portion['harnesses'])
-                            break
+                            portion_harnesses += len(portion['harnesses'])
                     
                     if portion_harnesses == 0:
                         continue
@@ -4596,19 +4612,25 @@ class QuickEstimate(ttk.Frame):
                 else:
                     # Non-split tracker — skip duplicates, use original harness count
                     if tidx in seen_whip_trackers:
+                        debug_whip_skipped.append(f"T{tidx+1:02d} inv={inv_idx} DUPLICATE skipped")
                         continue
                     seen_whip_trackers.add(tidx)
                     num_harnesses = harness_count_by_spt.get(spt, 1)
                 
                 # Determine individual harness sizes for wire gauge lookup
                 if tidx in split_details:
-                    ind_harness_sizes = split_details[tidx]['portions'][0]['harnesses']
+                    # Collect harness sizes from ALL portions for this inv_idx
+                    ind_harness_sizes = []
                     for portion in split_details[tidx]['portions']:
                         if portion['inv_idx'] == inv_idx:
-                            ind_harness_sizes = portion['harnesses']
-                            break
+                            ind_harness_sizes.extend(portion['harnesses'])
+                    if not ind_harness_sizes:
+                        ind_harness_sizes = split_details[tidx]['portions'][0]['harnesses']
                 else:
-                    ind_harness_sizes = harness_sizes_by_spt.get(spt, [spt])
+                    if tidx < len(tracker_harness_sizes_list):
+                        ind_harness_sizes = tracker_harness_sizes_list[tidx]
+                    else:
+                        ind_harness_sizes = harness_sizes_by_spt.get(spt, [spt])
                 
                 for h_str_count in ind_harness_sizes:
                     gauge = self.get_wire_size_for('whip', h_str_count)
@@ -4616,7 +4638,6 @@ class QuickEstimate(ttk.Frame):
                     totals['whips_by_length'][key] += 2  # pos + neg
                     totals['total_whip_length'] += whip_length * 2
 
-        # ==================== Extenders ====================
         split_details = getattr(self, '_split_tracker_details', {})
         tracker_seg_map = getattr(self, '_tracker_to_segment', [])
         

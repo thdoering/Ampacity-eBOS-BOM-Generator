@@ -476,11 +476,16 @@ def validate_split_details(split_tracker_details, tracker_seg_map, verbose=False
 # Whip Diagnostics
 # ═══════════════════════════════════════════════════════════════
 
-def validate_whips(totals, verbose=False):
+def validate_whips(totals, groups=None, split_tracker_details=None, tracker_seg_map=None,
+                   lv_collection_method='Wire Harness', verbose=False):
     """Validate whip BOM data using invariants.
 
     Args:
         totals: the totals dict from calculate_estimate containing 'whips_by_length'.
+        groups: the QE groups list (for expected count calculation).
+        split_tracker_details: dict from _split_tracker_details.
+        tracker_seg_map: list of dicts from _tracker_to_segment.
+        lv_collection_method: 'Wire Harness' or 'String HR'.
         verbose: if True, print details even when passing.
 
     Returns:
@@ -513,13 +518,67 @@ def validate_whips(totals, verbose=False):
             f"stored total={stored_total}ft"
         )
 
+    # ── 4. Whip count should equal harness count × 2 (pos + neg) ──
+    total_whips = sum(whips_by_length.values())
+    if groups is not None:
+        # Calculate expected harness count same way as validate_harnesses
+        split_tidxs = set(split_tracker_details.keys()) if split_tracker_details else set()
+        split_seg_counts = {}
+        if tracker_seg_map:
+            for tidx in split_tidxs:
+                if tidx < len(tracker_seg_map):
+                    info = tracker_seg_map[tidx]
+                    key = (info['group_idx'], id(info['seg']))
+                    split_seg_counts[key] = split_seg_counts.get(key, 0) + 1
+
+        expected_harnesses = 0
+        for group_idx, group in enumerate(groups):
+            for seg in group.get('segments', []):
+                qty = seg.get('quantity', 0)
+                if qty <= 0:
+                    continue
+                harness_config = seg.get('harness_config', str(seg.get('strings_per_tracker', 1)))
+                if lv_collection_method == 'String HR':
+                    num_harnesses = int(seg.get('strings_per_tracker', 1))
+                else:
+                    num_harnesses = len(harness_config.split('+'))
+                key = (group_idx, id(seg))
+                num_splits = split_seg_counts.get(key, 0)
+                expected_harnesses += (qty - num_splits) * num_harnesses
+
+        for tidx, details in (split_tracker_details or {}).items():
+            for portion in details.get('portions', []):
+                expected_harnesses += len(portion.get('harnesses', []))
+
+        expected_whips = expected_harnesses * 2
+        if total_whips != expected_whips:
+            issues.append(
+                f"WHIP_COUNT_MISMATCH: BOM has {total_whips} whip cables, "
+                f"expected {expected_whips} ({expected_harnesses} harnesses × 2 pos/neg)"
+            )
+
+    # ── 5. Whip count should equal extender count ──
+    total_pos_ext = sum(totals.get('extenders_pos_by_length', {}).values())
+    total_neg_ext = sum(totals.get('extenders_neg_by_length', {}).values())
+    total_ext = total_pos_ext + total_neg_ext
+    if total_ext > 0 and total_whips != total_ext:
+        issues.append(
+            f"WHIP_EXT_COUNT_MISMATCH: {total_whips} whips != "
+            f"{total_ext} extenders ({total_pos_ext} pos + {total_neg_ext} neg) — "
+            f"every harness should have one whip and one extender per polarity"
+        )
+
     if verbose or issues:
         print("\n[WHIP DIAG] === Whip Validation ===")
-        total_whips = sum(whips_by_length.values())
         print(f"  Total whip cables: {total_whips}")
         print(f"  Total whip length: {stored_total}ft")
         if whips_by_length:
             print(f"  Breakdown: {dict(whips_by_length)}")
+        if groups is not None:
+            print(f"  Expected harnesses: {expected_harnesses}")
+            print(f"  Expected whips: {expected_whips}")
+        if total_ext > 0:
+            print(f"  Total extenders: {total_ext}")
         if issues:
             print(f"  [{len(issues)} ISSUES]:")
             for issue in issues:
@@ -665,13 +724,19 @@ def validate_whip_extender_relationship(totals, qe_widget, verbose=False):
 # Harness Diagnostics
 # ═══════════════════════════════════════════════════════════════
 
-def validate_harnesses(totals, groups, split_tracker_details, verbose=False):
+def validate_harnesses(totals, groups, split_tracker_details, tracker_seg_map=None,
+                       lv_collection_method='Wire Harness', verbose=False):
     """Validate harness BOM counts against tracker/segment data.
+
+    Independently recalculates expected harness counts from segment configs
+    and split tracker adjustments, then compares to the BOM totals.
 
     Args:
         totals: the totals dict containing 'harnesses_by_size'.
         groups: the QE groups list.
         split_tracker_details: dict from _split_tracker_details.
+        tracker_seg_map: list of dicts from _tracker_to_segment.
+        lv_collection_method: 'Wire Harness' or 'String HR'.
         verbose: if True, print details even when passing.
 
     Returns:
@@ -679,26 +744,83 @@ def validate_harnesses(totals, groups, split_tracker_details, verbose=False):
     """
     issues = []
     harnesses_by_size = totals.get('harnesses_by_size', {})
+    actual_total = sum(harnesses_by_size.values())
 
-    # ── 1. Recalculate expected harness counts from groups + splits ──
-    expected_by_size = {}
-    split_tidxs = set(split_tracker_details.keys()) if split_tracker_details else set()
-
-    # We can't easily recount without tracker_seg_map, so just do basic checks
-
-    # ── 2. No zero-size harness entries ──
+    # ── 1. No zero-size harness entries ──
     for size, qty in harnesses_by_size.items():
         if size <= 0:
             issues.append(f"HARNESS_BAD_SIZE: Harness size={size}, qty={qty}")
         if qty <= 0:
             issues.append(f"HARNESS_BAD_QTY: Harness size={size}, qty={qty}")
 
+    # ── 2. Calculate expected harness count from segments ──
+    # Step 2a: bulk count from segments (before split adjustment)
+    split_tidxs = set(split_tracker_details.keys()) if split_tracker_details else set()
+
+    # Count how many split trackers belong to each (group_idx, seg) pair
+    split_seg_counts = {}
+    if tracker_seg_map:
+        for tidx in split_tidxs:
+            if tidx < len(tracker_seg_map):
+                info = tracker_seg_map[tidx]
+                key = (info['group_idx'], id(info['seg']))
+                split_seg_counts[key] = split_seg_counts.get(key, 0) + 1
+
+    expected_by_size = {}
+    for group_idx, group in enumerate(groups):
+        for seg in group.get('segments', []):
+            qty = seg.get('quantity', 0)
+            if qty <= 0:
+                continue
+
+            harness_config = seg.get('harness_config', str(seg.get('strings_per_tracker', 1)))
+            if lv_collection_method == 'String HR':
+                harness_sizes = [1] * int(seg.get('strings_per_tracker', 1))
+            else:
+                harness_sizes = [int(float(x)) for x in harness_config.split('+')]
+
+            # Subtract split trackers — they get counted separately
+            key = (group_idx, id(seg))
+            num_splits = split_seg_counts.get(key, 0)
+            non_split_qty = qty - num_splits
+
+            for size in harness_sizes:
+                expected_by_size[size] = expected_by_size.get(size, 0) + non_split_qty
+
+    # Step 2b: add split tracker portions
+    for tidx, details in (split_tracker_details or {}).items():
+        for portion in details.get('portions', []):
+            for h_size in portion.get('harnesses', []):
+                expected_by_size[h_size] = expected_by_size.get(h_size, 0) + 1
+
+    expected_total = sum(expected_by_size.values())
+
+    # ── 3. Compare totals ──
+    if actual_total != expected_total:
+        issues.append(
+            f"HARNESS_COUNT_MISMATCH: BOM has {actual_total} harnesses, "
+            f"expected {expected_total} from segments + splits"
+        )
+
+    # ── 4. Compare per-size breakdown ──
+    all_sizes = set(list(harnesses_by_size.keys()) + list(expected_by_size.keys()))
+    for size in sorted(all_sizes):
+        actual_qty = harnesses_by_size.get(size, 0)
+        expected_qty = expected_by_size.get(size, 0)
+        if actual_qty != expected_qty:
+            issues.append(
+                f"HARNESS_SIZE_MISMATCH: {size}-string harnesses: "
+                f"BOM has {actual_qty}, expected {expected_qty}"
+            )
+
     if verbose or issues:
         print("\n[HARNESS DIAG] === Harness Validation ===")
-        total_harnesses = sum(harnesses_by_size.values())
-        print(f"  Total harness count: {total_harnesses}")
+        print(f"  Actual total: {actual_total}")
+        print(f"  Expected total: {expected_total}")
         if harnesses_by_size:
-            print(f"  By size: {dict(harnesses_by_size)}")
+            print(f"  Actual by size: {dict(harnesses_by_size)}")
+        if expected_by_size:
+            print(f"  Expected by size: {dict(expected_by_size)}")
         if issues:
             print(f"  [{len(issues)} ISSUES]:")
             for issue in issues:
@@ -730,8 +852,105 @@ def run_all_diagnostics(qe_widget, verbose=True):
                 'name': str (section label)
                 'passed': bool
                 'issues': list of str
+            'project_info': list of (label, value) tuples
     """
     sections = []
+
+    # ── Collect project info ──
+    project_info = []
+
+    # Project name
+    project = getattr(qe_widget, 'current_project', None)
+    if project and hasattr(project, 'metadata') and project.metadata:
+        meta = project.metadata
+        if meta.name:
+            project_info.append(("Project", meta.name))
+        if meta.client:
+            project_info.append(("Customer", meta.client))
+        if meta.location:
+            project_info.append(("Location", meta.location))
+
+    # Estimate name
+    estimate_id = getattr(qe_widget, 'estimate_id', None)
+    if estimate_id and project:
+        est_data = project.quick_estimates.get(estimate_id, {})
+        if est_data.get('name'):
+            project_info.append(("Estimate", est_data['name']))
+
+    # Module
+    selected_module = getattr(qe_widget, 'selected_module', None)
+    if selected_module:
+        project_info.append(("Module", f"{selected_module.manufacturer} {selected_module.model} ({selected_module.wattage}W)"))
+        project_info.append(("Module Isc", f"{selected_module.isc} A"))
+
+    # Inverter
+    selected_inverter = getattr(qe_widget, 'selected_inverter', None)
+    if selected_inverter:
+        project_info.append(("Inverter", f"{selected_inverter.manufacturer} {selected_inverter.model} ({selected_inverter.rated_power_kw}kW AC)"))
+
+    # Topology and settings
+    topology_var = getattr(qe_widget, 'topology_var', None)
+    topology_str = topology_var.get() if topology_var else ''
+    if topology_str:
+        project_info.append(("Topology", topology_str))
+
+    lv_var = getattr(qe_widget, 'lv_collection_var', None)
+    if lv_var:
+        project_info.append(("LV Collection", lv_var.get()))
+
+    breaker_var = getattr(qe_widget, 'breaker_size_var', None)
+    if breaker_var:
+        project_info.append(("Breaker Size", f"{breaker_var.get()}A"))
+
+    spi_var = getattr(qe_widget, 'strings_per_inverter_var', None)
+    if spi_var and spi_var.get() != '--':
+        project_info.append(("Strings/Inverter", spi_var.get()))
+
+    dc_ac_var = getattr(qe_widget, 'dc_ac_ratio_var', None)
+    if dc_ac_var:
+        project_info.append(("DC:AC Ratio (target)", dc_ac_var.get()))
+
+    row_spacing_var = getattr(qe_widget, 'row_spacing_var', None)
+    if row_spacing_var:
+        project_info.append(("Row Spacing", f"{row_spacing_var.get()} ft"))
+
+    # NEC factor
+    nec_factor = 1.56
+    if project:
+        nec_factor = getattr(project, 'nec_safety_factor', 1.56)
+    project_info.append(("NEC Safety Factor", f"{nec_factor}"))
+
+    # Segment summary
+    groups = getattr(qe_widget, 'groups', [])
+    total_trackers = 0
+    total_strings = 0
+    for group in groups:
+        for seg in group.get('segments', []):
+            qty = seg.get('quantity', 0)
+            spt = seg.get('strings_per_tracker', 0)
+            total_trackers += qty
+            total_strings += int(qty * spt)
+    project_info.append(("Total Trackers", str(total_trackers)))
+    project_info.append(("Total Strings", str(total_strings)))
+    project_info.append(("Groups", str(len(groups))))
+
+    # Segment details
+    for grp_idx, group in enumerate(groups):
+        grp_name = group.get('name', f'Group {grp_idx + 1}')
+        for seg_idx, seg in enumerate(group.get('segments', [])):
+            qty = seg.get('quantity', 0)
+            spt = seg.get('strings_per_tracker', 0)
+            config = seg.get('harness_config', str(int(spt)))
+            project_info.append((f"  {grp_name} Seg{seg_idx+1}", f"{qty}x {spt}S, harness={config}"))
+
+    if verbose:
+        print("\n" + "=" * 60)
+        print("PROJECT INFO")
+        print("=" * 60)
+        max_label = max((len(label) for label, _ in project_info), default=0)
+        for label, value in project_info:
+            print(f"  {label:<{max_label + 2}} {value}")
+        print("=" * 60)
 
     # ── 1. Combiner Assignments ──
     cb_issues = []
@@ -788,7 +1007,12 @@ def run_all_diagnostics(qe_widget, verbose=True):
     # ── 4. Whips ──
     whip_issues = []
     if totals:
-        whip_issues = validate_whips(totals, verbose=verbose)
+        whip_issues = validate_whips(
+            totals, groups=groups, split_tracker_details=split_details,
+            tracker_seg_map=tracker_seg_map,
+            lv_collection_method=lv_collection_method,
+            verbose=verbose,
+        )
     else:
         whip_issues = ['NO_DATA: No totals found. Run Calculate first.']
     sections.append({
@@ -812,7 +1036,12 @@ def run_all_diagnostics(qe_widget, verbose=True):
     # ── 5. Harnesses ──
     harness_issues = []
     if totals:
-        harness_issues = validate_harnesses(totals, groups, split_details, verbose=verbose)
+        harness_issues = validate_harnesses(
+            totals, groups, split_details,
+            tracker_seg_map=tracker_seg_map,
+            lv_collection_method=lv_collection_method,
+            verbose=verbose,
+        )
     else:
         harness_issues = ['NO_DATA: No totals found. Run Calculate first.']
     sections.append({
@@ -840,6 +1069,7 @@ def run_all_diagnostics(qe_widget, verbose=True):
     return {
         'all_passed': all_passed,
         'sections': sections,
+        'project_info': project_info,
     }
 
 
@@ -857,6 +1087,16 @@ def format_diagnostic_report(result):
     lines.append("  QUICK ESTIMATE DIAGNOSTIC REPORT")
     lines.append("=" * 50)
     lines.append("")
+
+    # Project info section
+    project_info = result.get('project_info', [])
+    if project_info:
+        lines.append("PROJECT INFO")
+        lines.append("-" * 50)
+        max_label = max((len(label) for label, _ in project_info), default=0)
+        for label, value in project_info:
+            lines.append(f"  {label:<{max_label + 2}} {value}")
+        lines.append("")
 
     for section in result['sections']:
         status = "PASS" if section['passed'] else "FAIL"
