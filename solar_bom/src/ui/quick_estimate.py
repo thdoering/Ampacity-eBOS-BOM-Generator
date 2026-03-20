@@ -701,7 +701,7 @@ class QuickEstimate(ttk.Frame):
         
         Returns a flat list of distance_ft values, one per tracker.
         """
-        if topology == 'Central Inverter' or not allocation_result:
+        if not allocation_result:
             total_trackers = sum(
                 sum(seg['quantity'] for seg in group['segments'])
                 for group in self.groups
@@ -1978,6 +1978,8 @@ class QuickEstimate(ttk.Frame):
         # Restore topology and DC:AC ratio
         if hasattr(self, 'topology_var'):
             self.topology_var.set(estimate_data.get('topology', 'Distributed String'))
+        if hasattr(self, 'central_inv_count_var'):
+            self.central_inv_count_var.set(str(estimate_data.get('central_inverter_count', '1')))
         if hasattr(self, 'dc_ac_ratio_var'):
             self.dc_ac_ratio_var.set(str(estimate_data.get('dc_ac_ratio', 1.25)))
         if hasattr(self, 'breaker_size_var'):
@@ -2108,6 +2110,7 @@ class QuickEstimate(ttk.Frame):
         
         # Save topology and DC:AC ratio
         estimate_data['topology'] = self.topology_var.get()
+        estimate_data['central_inverter_count'] = self.central_inv_count_var.get() if hasattr(self, 'central_inv_count_var') else '1'
         estimate_data['inspect_mode'] = getattr(self, '_last_inspect_mode', False)
         estimate_data['use_routed_distances'] = self.use_routed_var.get()
         estimate_data['breaker_size'] = self.breaker_size_var.get()
@@ -2516,8 +2519,12 @@ class QuickEstimate(ttk.Frame):
         if topology == 'Distributed String':
             num_devices = totals.get('string_inverters', 0)
             device_label = 'SI'
+        elif topology == 'Central Inverter':
+            # For Central Inverter, allocation groups = CBs
+            alloc = totals.get('inverter_summary', {}).get('allocation_result', {})
+            num_devices = alloc.get('summary', {}).get('total_inverters', total_combiners)
+            device_label = 'CB'
         else:
-            # Central Inverter and Centralized String show combiner boxes
             num_devices = total_combiners
             device_label = 'CB'
         
@@ -2753,84 +2760,33 @@ class QuickEstimate(ttk.Frame):
                     'connections': connections,
                 })
         
-        elif topology == 'Central Inverter':
-            total_combiners = sum(totals.get('combiners_by_breaker', {}).values())
-            if total_combiners <= 0 or not tracker_segment_map:
-                return
-            
-            num_trackers = len(tracker_segment_map)
-            
-            # Distribute CBs proportionally across groups, then trackers
-            # evenly within each group (mirrors _compute_devices_proportional
-            # in site_preview.py so positions and data always agree).
-            group_ranges = []  # (start_idx, count) per group
-            flat_cursor = 0
-            for group in self.groups:
-                group_count = sum(seg['quantity'] for seg in group['segments'])
-                group_ranges.append((flat_cursor, group_count))
-                flat_cursor += group_count
-            
-            cb_idx = 0
-            for grp_idx, (grp_start, grp_count) in enumerate(group_ranges):
-                if grp_count == 0:
-                    continue
+        elif topology == 'Central Inverter' and allocation_result:
+            # Central Inverter: allocation groups = CBs.
+            # Use allocation harness_map (same approach as Centralized String).
+            for inv_idx, inv in enumerate(allocation_result['inverters']):
+                cb_name = self.device_names.get(inv_idx, f"CB-{inv_idx + 1:02d}")
+                connections = self._build_connections_from_harness_map(
+                    inv['harness_map'], tracker_segment_map, module_isc, nec_factor
+                )
+                # Calculate per-CB breaker from actual total current
+                total_current = sum(
+                    c['num_strings'] * c['module_isc'] * c['nec_factor']
+                    for c in connections
+                )
+                calc_breaker = breaker_size  # fallback to global
+                for bs in BREAKER_SIZES:
+                    if bs >= total_current:
+                        calc_breaker = bs
+                        break
                 
-                group_share = grp_count / num_trackers
-                group_cb_count = max(1, round(group_share * total_combiners))
-                remaining_cbs = total_combiners - cb_idx
-                group_cb_count = min(group_cb_count, remaining_cbs)
-                
-                if group_cb_count <= 0:
-                    continue
-                
-                # Distribute this group's trackers evenly across its CBs
-                base_per_cb = grp_count // group_cb_count
-                extra = grp_count % group_cb_count
-                
-                local_cursor = 0
-                for dev_i in range(group_cb_count):
-                    sub_size = base_per_cb + (1 if dev_i < extra else 0)
-                    if sub_size <= 0:
-                        continue
-                    
-                    cb_name = self.device_names.get(cb_idx, f"CB-{cb_idx + 1:02d}")
-                    connections = []
-                    
-                    for local_i in range(sub_size):
-                        tidx = grp_start + local_cursor + local_i
-                        if tidx >= num_trackers:
-                            break
-                        t_info = tracker_segment_map[tidx]
-                        
-                        # Build one connection per harness with start_string_pos
-                        pos_cursor = 0
-                        for h_idx, h_size in enumerate(t_info['harness_sizes']):
-                            connections.append({
-                                'tracker_idx': tidx,
-                                'tracker_label': f"T{tidx + 1:02d}",
-                                'harness_label': f"H{h_idx + 1:02d}",
-                                'num_strings': h_size,
-                                'start_string_pos': pos_cursor,
-                                'module_isc': module_isc,
-                                'nec_factor': nec_factor,
-                                'wire_gauge': self.get_wire_size_for('whip', h_size),
-                            })
-                            pos_cursor += h_size
-                    
-                    # Central Inverter: use target breaker size for all CBs
-                    calc_breaker = breaker_size
-                    
-                    self.last_combiner_assignments.append({
-                        'combiner_name': cb_name,
-                        'device_idx': cb_idx,
-                        'breaker_size': calc_breaker,
-                        'module_isc': module_isc,
-                        'nec_factor': nec_factor,
-                        'connections': connections,
-                    })
-                    
-                    cb_idx += 1
-                    local_cursor += sub_size
+                self.last_combiner_assignments.append({
+                    'combiner_name': cb_name,
+                    'device_idx': inv_idx,
+                    'breaker_size': calc_breaker,
+                    'module_isc': module_isc,
+                    'nec_factor': nec_factor,
+                    'connections': connections,
+                })
 
     def _read_combiner_bom_from_device_config(self):
         """Read combiner BOM data from Device Configurator (single source of truth).
@@ -3420,14 +3376,26 @@ class QuickEstimate(ttk.Frame):
                 totals['harnesses_by_size'][size] += 1
 
     def _update_spi_label(self):
-        """Update the Strings/Device label based on topology."""
+        """Update the Strings/Device label and show/hide central inverter count."""
         if not hasattr(self, 'spi_label'):
             return
         topology = self.topology_var.get()
+        
         if topology == 'Distributed String':
             self.spi_label.config(text="Strings/SI:")
-        else:
+        elif topology == 'Centralized String':
             self.spi_label.config(text="Strings/CB:")
+        else:  # Central Inverter
+            self.spi_label.config(text="Strings/CB:")
+        
+        # Show/hide central inverter count field
+        if hasattr(self, 'central_inv_count_label'):
+            if topology == 'Central Inverter':
+                self.central_inv_count_label.pack(side='left', padx=(10, 5))
+                self.central_inv_count_spinbox.pack(side='left', padx=(0, 15))
+            else:
+                self.central_inv_count_label.pack_forget()
+                self.central_inv_count_spinbox.pack_forget()
 
     def _update_strings_per_inverter(self):
         """Auto-calculate strings per inverter from DC:AC ratio and show Isc warning if needed"""
@@ -3635,7 +3603,7 @@ class QuickEstimate(ttk.Frame):
         )
         lv_collection_combo.pack(side='left', padx=(0, 15))
         self.disable_combobox_scroll(lv_collection_combo)
-        self.lv_collection_var.trace_add('write', lambda *args: (self._on_lv_collection_changed(), self._mark_stale(), self._schedule_autosave()))
+        self.lv_collection_var.trace_add('write', lambda *args: (self._auto_unlock_allocation(), self._on_lv_collection_changed(), self._mark_stale(), self._schedule_autosave()))
 
         ttk.Label(topology_row, text="Breaker Size:").pack(side='left', padx=(0, 5))
         self.breaker_size_var = tk.StringVar(value='400')
@@ -3662,6 +3630,16 @@ class QuickEstimate(ttk.Frame):
         spi_spinbox.pack(side='left', padx=(0, 15))
         self.strings_per_inverter_var.trace_add('write', self._on_strings_per_inverter_changed)
         
+        # Central inverter count (only visible for Central Inverter topology)
+        self.central_inv_count_label = ttk.Label(topology_row, text="Central Inverters:")
+        self.central_inv_count_var = tk.StringVar(value='1')
+        self.central_inv_count_spinbox = ttk.Spinbox(
+            topology_row, from_=1, to=50,
+            textvariable=self.central_inv_count_var, width=4
+        )
+        self.central_inv_count_var.trace_add('write', lambda *args: (self._mark_stale(), self._schedule_autosave()))
+        # Hidden by default — shown when topology is Central Inverter
+
         # Isc warning label (hidden by default)
         self.isc_warning_label = ttk.Label(topology_row, text="", foreground='red')
         self.isc_warning_label.pack(side='left', padx=(5, 0))
@@ -4326,22 +4304,15 @@ class QuickEstimate(ttk.Frame):
         
         # Topology and strings-per-inverter (used throughout calculation)
         topology = self.topology_var.get()
+        
         if topology == 'Central Inverter':
-            # For Central Inverter, the field means "strings per CB" (not per inverter).
-            # Compute strings_per_inv for the allocation from DC:AC ratio instead.
-            strings_per_cb_target = self._get_int_var(self.strings_per_inverter_var, 0)
-            strings_per_inv = 0
-            if self.selected_inverter and self.selected_module:
-                modules_per_string = self._get_int_var(self.modules_per_string_var, 28)
-                module_wattage = self.selected_module.wattage
-                string_power_kw = (module_wattage * modules_per_string) / 1000
-                if string_power_kw > 0:
-                    target_ratio = self._get_float_var(self.dc_ac_ratio_var, 1.25)
-                    target_dc_kw = target_ratio * self.selected_inverter.rated_power_kw
-                    strings_per_inv = max(round(target_dc_kw / string_power_kw), 1)
+            # For Central Inverter, allocation groups = CBs.
+            # Compute strings_per_cb from library BEFORE allocation runs.
+            breaker_size_early = self._get_int_var(self.breaker_size_var, 400)
+            strings_per_inv = 0  # Will be set after we know module_isc
+            _central_inv_breaker = breaker_size_early
         else:
             strings_per_inv = self._get_int_var(self.strings_per_inverter_var, 0)
-            strings_per_cb_target = strings_per_inv  # Same thing for other topologies
         
         # Validate — need at least one linked template or a legacy fallback module
         self._derive_module_from_templates()
@@ -4620,6 +4591,34 @@ class QuickEstimate(ttk.Frame):
             group_width = group_tracker_counts[grp_idx] * grp_row_spacing
             auto_x_cursor += group_width + grp_row_spacing * 2  # Extra gap between groups
 
+        # For Central Inverter, compute strings_per_cb from library now that we have module_isc
+        if topology == 'Central Inverter':
+            _ci_fuse_current = module_isc * nec_factor * max(max_harness_strings, 1)
+            _ci_fuse_rating = self.get_fuse_holder_category(_ci_fuse_current)
+            _ci_library = self.load_combiner_library()
+            _ci_matching = [
+                cb for cb in _ci_library.values()
+                if (cb.get('breaker_size', 0) == _central_inv_breaker and
+                    cb.get('fuse_holder_rating', '') == _ci_fuse_rating)
+            ]
+            if _ci_matching:
+                _ci_matching.sort(key=lambda c: c.get('max_inputs', 0), reverse=True)
+                _ci_max_inputs = _ci_matching[0].get('max_inputs', 24)
+            else:
+                _ci_max_inputs = 24
+            
+            # User's strings/CB input takes priority; library max is the ceiling
+            user_strings_per_cb = self._get_int_var(self.strings_per_inverter_var, 0)
+            if user_strings_per_cb > 0:
+                # Cap at library max inputs
+                strings_per_inv = min(user_strings_per_cb, _ci_max_inputs)
+            else:
+                # No user input — default to library max
+                strings_per_inv = _ci_max_inputs
+                self._updating_spi = True
+                self.strings_per_inverter_var.set(str(strings_per_inv))
+                self._updating_spi = False
+
         # ==================== Allocation ====================
         allocation_result = None
 
@@ -4650,11 +4649,12 @@ class QuickEstimate(ttk.Frame):
                 if merged_inverters:
                     # Build merged summary
                     total_inv_strings = sum(inv['total_strings'] for inv in merged_inverters)
-                    total_split = sum(
-                        1 for inv in merged_inverters
-                        for entry in inv.get('harness_map', [])
-                        if entry.get('is_split')
-                    )
+                    split_tidxs = set()
+                    for inv in merged_inverters:
+                        for entry in inv.get('harness_map', []):
+                            if entry.get('is_split'):
+                                split_tidxs.add(entry['tracker_idx'])
+                    total_split = len(split_tidxs)
                     inv_sizes = [inv['total_strings'] for inv in merged_inverters]
                     allocation_result = {
                         'inverters': merged_inverters,
@@ -4678,26 +4678,51 @@ class QuickEstimate(ttk.Frame):
 
             module_wattage = self.selected_module.wattage
             # Use site-level DC:AC (total DC power / total AC capacity)
-            # Not per-inverter nominal, since allocation doesn't give every inverter the same count
             total_alloc_strings = allocation_result['summary']['total_strings']
             total_alloc_invs = allocation_result['summary']['total_inverters']
-            if total_alloc_invs > 0:
-                total_dc_kw = (total_alloc_strings * modules_per_string * module_wattage) / 1000
-                total_ac_kw = total_alloc_invs * self.selected_inverter.rated_power_kw
-                actual_dc_ac = round(total_dc_kw / total_ac_kw, 3)
+            total_dc_kw = (total_alloc_strings * modules_per_string * module_wattage) / 1000
+            
+            if topology == 'Central Inverter':
+                # For Central Inverter, allocation groups are CBs, not inverters.
+                # DC:AC uses the user-specified central inverter count.
+                central_inv_count = self._get_int_var(self.central_inv_count_var, 1)
+                total_ac_kw = central_inv_count * self.selected_inverter.rated_power_kw
+                actual_dc_ac = round(total_dc_kw / total_ac_kw, 3) if total_ac_kw > 0 else 0.0
             else:
-                actual_dc_ac = 0.0            
+                if total_alloc_invs > 0:
+                    total_ac_kw = total_alloc_invs * self.selected_inverter.rated_power_kw
+                    actual_dc_ac = round(total_dc_kw / total_ac_kw, 3)
+                else:
+                    actual_dc_ac = 0.0         
 
-            totals['string_inverters'] = allocation_result['summary']['total_inverters']
+            if topology == 'Central Inverter':
+                totals['string_inverters'] = self._get_int_var(self.central_inv_count_var, 1)
+            else:
+                totals['string_inverters'] = allocation_result['summary']['total_inverters']
+            # Recount split trackers by unique tracker_idx (avoids double-counting)
+            _split_tidxs = set()
+            for _inv in allocation_result.get('inverters', []):
+                for _entry in _inv.get('harness_map', []):
+                    if _entry.get('is_split'):
+                        _split_tidxs.add(_entry['tracker_idx'])
+            _true_split_count = len(_split_tidxs)
+            
             totals['inverter_summary'] = {
                 'strings_per_inverter': strings_per_inv,
                 'total_inverters': allocation_result['summary']['total_inverters'],
-                'total_split_trackers': allocation_result['summary']['total_split_trackers'],
+                'total_split_trackers': _true_split_count,
                 'total_strings': allocation_result['summary']['total_strings'],
                 'actual_dc_ac': actual_dc_ac,
                 'allocation_result': allocation_result,
-                'allocations': [],  # Backward compat — will be replaced in next update
+                'allocations': [],  # Backward compat
+                'central_inverter_count': self._get_int_var(self.central_inv_count_var, 1) if topology == 'Central Inverter' else 0,
             }
+
+            # For Central Inverter, update device/combiner count from allocation
+            # (allocation respects group boundaries, may differ from library estimate)
+            if topology == 'Central Inverter':
+                num_combiners = allocation_result['summary']['total_inverters']
+                num_devices = num_combiners
 
         # ==================== Topology-driven device & combiner counting ===================
 
@@ -4718,23 +4743,36 @@ class QuickEstimate(ttk.Frame):
             strings_per_cb = strings_per_inv
 
         elif topology == 'Central Inverter':
-            # CB count: sum per-group (each group may have its own strings/CB override)
-            num_combiners = 0
-            for group in self.groups:
-                grp_strings = sum(
-                    seg['quantity'] * int(seg['strings_per_tracker'])
-                    for seg in group['segments']
-                )
-                grp_spi = group.get('strings_per_inv') or strings_per_cb_target
-                if grp_strings > 0 and grp_spi > 0:
-                    num_combiners += math.ceil(grp_strings / grp_spi)
-            if num_combiners > 0:
+            # CB count from library: target breaker + fuse holder rating → max inputs
+            fuse_current = module_isc * nec_factor * max(max_harness_strings, 1)
+            fuse_holder_rating = self.get_fuse_holder_category(fuse_current)
+            combiner_library = self.load_combiner_library()
+
+            matching_cbs = [
+                cb_data for cb_data in combiner_library.values()
+                if (cb_data.get('breaker_size', 0) == breaker_size and
+                    cb_data.get('fuse_holder_rating', '') == fuse_holder_rating)
+            ]
+
+            if matching_cbs:
+                matching_cbs.sort(key=lambda c: c.get('max_inputs', 0), reverse=True)
+                max_inputs_per_cb = matching_cbs[0].get('max_inputs', 24)
+            else:
+                max_inputs_per_cb = 24  # fallback
+
+            if total_all_strings > 0:
+                num_combiners = math.ceil(total_all_strings / max_inputs_per_cb)
                 strings_per_cb = math.ceil(total_all_strings / num_combiners)
+            # Allocation may produce more CBs due to group boundaries.
+            # Update num_combiners from allocation if available.
+            if totals.get('inverter_summary', {}).get('allocation_result'):
+                num_combiners = totals['inverter_summary']['allocation_result']['summary']['total_inverters']
             num_devices = num_combiners
 
         # Preliminary combiner count (used for DC feeder/AC homerun distance calc)
         # Actual CB part matching is done later via Device Configurator or fallback
-        if num_combiners > 0:
+        # For Central Inverter, post-allocation block sets the authoritative count.
+        if num_combiners > 0 and topology != 'Central Inverter':
             if breaker_size not in totals['combiners_by_breaker']:
                 totals['combiners_by_breaker'][breaker_size] = 0
             totals['combiners_by_breaker'][breaker_size] += num_combiners
@@ -5009,8 +5047,10 @@ class QuickEstimate(ttk.Frame):
         elif topology == 'Central Inverter':
             totals['dc_feeder_count'] = total_feeder_count
             totals['dc_feeder_total_ft'] = total_feeder_ft
-            totals['ac_homerun_count'] = 1
-            totals['ac_homerun_total_ft'] = ac_homerun_avg_ft
+            central_inv_count = self._get_int_var(self.central_inv_count_var, 1)
+            totals['central_inverter_count'] = central_inv_count
+            totals['ac_homerun_count'] = central_inv_count
+            totals['ac_homerun_total_ft'] = central_inv_count * ac_homerun_avg_ft
 
         # ==================== Display Results ====================
         
@@ -5040,7 +5080,13 @@ class QuickEstimate(ttk.Frame):
 
         # Read combiner BOM from Device Configurator (single source of truth)
         # Falls back to simple assignment-based totals if DC isn't available
-        if not self._read_combiner_bom_from_device_config():
+        # For Central Inverter with unlocked allocation, always use fresh assignments
+        # (Device Configurator may have stale data from a different CB count)
+        if topology == 'Central Inverter' and not self.allocation_locked:
+            dc_had_data = False
+        else:
+            dc_had_data = self._read_combiner_bom_from_device_config()
+        if not dc_had_data:
             self._rebuild_combiner_totals_from_assignments()
             
             self.last_totals = totals
@@ -5094,9 +5140,20 @@ class QuickEstimate(ttk.Frame):
                         'quantity': qty,
                         'block_name': 'Site Total'
                     })
-            
+
             # Update last_totals since we modified totals
             self.last_totals = totals
+
+        # Push fresh combiner assignments to Device Configurator if in QE mode
+        if self.last_combiner_assignments and not self.allocation_locked:
+            main_app = getattr(self, 'main_app', None)
+            if main_app and hasattr(main_app, 'device_configurator'):
+                dc = main_app.device_configurator
+                if getattr(dc, 'data_source', 'blocks') == 'quick_estimate':
+                    try:
+                        dc.load_from_quick_estimate()
+                    except Exception as e:
+                        print(f"[QE] Device Configurator refresh failed: {e}")
 
         self._redraw_results_tree()
 

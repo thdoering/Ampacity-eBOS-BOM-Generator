@@ -315,7 +315,7 @@ class SitePreviewWindow(tk.Toplevel):
             runs_str = f"  |  {spatial_runs} spatial run(s)" if spatial_runs > 1 else ""
             ttk.Label(self.legend_frame, text=f"{size_str}  |  {split_count} split tracker(s){runs_str}",
                      font=('Helvetica', 9), foreground='#555555').pack(anchor='w')
-            
+
     def _format_summary(self, num_inv, total_str, actual_ratio, split,
                         spatial_runs=1, locked=False):
         """Format the top-bar summary string, topology-aware."""
@@ -324,12 +324,16 @@ class SitePreviewWindow(tk.Toplevel):
         
         if self.topology == 'Central Inverter':
             num_cbs = self.num_devices
-            return (f"{num_cbs} CBs  |  {num_inv} Central Inv  |  {total_str} Strings  |  "
+            central_count = self.inv_summary.get('central_inverter_count', 1)
+            return (f"{num_cbs} CBs  |  {central_count} Central Inv  |  {total_str} Strings  |  "
+                    f"DC:AC: {actual_ratio:.2f}  |  {split} Split Trackers{runs_str}  |  "
+                    f"{self.topology}{lock_str}")
+        elif self.topology == 'Centralized String':
+            return (f"{num_inv} CBs/Inv  |  {total_str} Strings  |  "
                     f"DC:AC: {actual_ratio:.2f}  |  {split} Split Trackers{runs_str}  |  "
                     f"{self.topology}{lock_str}")
         else:
-            device_label = "SIs" if self.topology == 'Distributed String' else "Inverters"
-            return (f"{num_inv} {device_label}  |  {total_str} Strings  |  "
+            return (f"{num_inv} SIs  |  {total_str} Strings  |  "
                     f"DC:AC: {actual_ratio:.2f}  |  {split} Split Trackers{runs_str}  |  "
                     f"{self.topology}{lock_str}")
 
@@ -566,11 +570,12 @@ class SitePreviewWindow(tk.Toplevel):
         alloc = self.inv_summary.get('allocation_result', {}) if hasattr(self, 'inv_summary') else {}
         inverters = alloc.get('inverters', [])
         
-        if self.topology in ('Distributed String', 'Centralized String') and inverters:
+        if inverters:
             self._compute_devices_from_allocation(
                 inverters, device_width_ft, device_height_ft, offset_ft
             )
         elif self.topology == 'Central Inverter':
+            # Fallback if no allocation available
             self._compute_devices_proportional(
                 device_width_ft, device_height_ft, offset_ft
             )
@@ -3459,8 +3464,8 @@ class SitePreviewWindow(tk.Toplevel):
             spatial_runs = alloc.get('spatial_runs', 1)
             actual_ratio = inv_summary.get('actual_dc_ac', 0)
             self.summary_label.config(
-                text=f"{num_inv} Devices  |  {total_str} Strings  |  DC:AC: {actual_ratio:.2f}  |  "
-                     f"{split} Split Trackers  |  {spatial_runs} Run(s)  |  {self.topology}  |  🔒 LOCKED"
+                text=self._format_summary(num_inv, total_str, actual_ratio, split,
+                                          spatial_runs=spatial_runs, locked=True)
             )
 
             self.draw()
