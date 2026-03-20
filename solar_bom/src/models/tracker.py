@@ -459,7 +459,8 @@ class TrackerTemplate:
                 string.append(TrackerPosition(
                     x=x_pos,
                     y=y_pos,
-                    rotation=0.0
+                    rotation=0.0,
+                    template=self
                 ))
             
             string_positions.append(string)

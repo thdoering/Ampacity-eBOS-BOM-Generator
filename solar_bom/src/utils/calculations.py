@@ -89,7 +89,16 @@ def conductor_ampacity(
         raise ValueError("Material must be 'copper' or 'aluminum'")
     
     # Temperature correction factor
-    temp_factor = sqrt((insulation_temp - ambient_temp) / (insulation_temp - 30))
+    denominator = insulation_temp - 30
+    if denominator <= 0:
+        # Edge case: insulation temp rating is at or below 30°C — invalid configuration
+        return 0.0
+    
+    if insulation_temp - ambient_temp <= 0:
+        # Ambient equals or exceeds insulation rating — cable cannot carry current
+        return 0.0
+    
+    temp_factor = sqrt((insulation_temp - ambient_temp) / denominator)
     
     # Calculate ampacity
     base_ampacity = base_ampacity_coeff[material.lower()] * size_mm2

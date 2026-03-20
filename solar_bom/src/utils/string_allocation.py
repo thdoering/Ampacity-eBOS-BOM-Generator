@@ -447,8 +447,6 @@ def allocate_strings_spatial(tracker_entries: List[Dict],
     
     # Sort by driveline Y to group into rows
     sorted_by_y = sorted(tracker_entries, key=lambda e: e['driveline_y'])
-    
-    y_debug = [f'T{e["original_idx"]}:y={e["y"]:.1f},motor={e.get("motor_y_ft", 0):.1f},dl={e["driveline_y"]:.1f}' for e in sorted_by_y]    
     rows = []  # list of lists of tracker entries
     current_row = [sorted_by_y[0]]
     current_row_y = sorted_by_y[0]['driveline_y']
@@ -466,7 +464,7 @@ def allocate_strings_spatial(tracker_entries: List[Dict],
     rows.append(current_row)
     
     for r_idx, row in enumerate(rows):
-        y_range = f"dl_y=[{min(e['driveline_y'] for e in row):.1f} .. {max(e['driveline_y'] for e in row):.1f}]"
+        pass  # rows clustered by driveline Y
     
     # --- Step 2: Within each row, sort by X and split into runs by X-gap ---
     runs = []  # list of lists of tracker entries, each run is independently allocated
@@ -583,14 +581,20 @@ def format_allocation_summary(allocation: Dict[str, Any], strings_per_tracker: i
     summary = allocation['summary']
     lines = []
     lines.append(f"Total Inverters: {summary['total_inverters']}")
-    lines.append(f"Full Inverters: {summary['full_inverters']}")
-    if summary['partial_inverter_strings'] > 0:
-        lines.append(f"Partial Inverter: {summary['partial_inverter_strings']} strings")
+    
+    full_inverters = summary.get('full_inverters')
+    if full_inverters is not None:
+        lines.append(f"Full Inverters: {full_inverters}")
+    
+    partial_strings = summary.get('partial_inverter_strings', 0)
+    if partial_strings > 0:
+        lines.append(f"Partial Inverter: {partial_strings} strings")
+    
     lines.append(f"Total Strings: {summary['total_strings']}")
     lines.append(f"Split Trackers: {summary['total_split_trackers']}")
     
-    # Show the cycle pattern
-    cycle = allocation['cycle']
+    # Show the cycle pattern (only present in allocate_strings output)
+    cycle = allocation.get('cycle')
     if cycle:
         lines.append(f"\nRepeating cycle ({len(cycle)} inverters):")
         for i, pattern in enumerate(cycle):

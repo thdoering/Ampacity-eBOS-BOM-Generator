@@ -97,7 +97,7 @@ class Project:
             blocks=data.get('blocks', {}),
             selected_modules=data.get('selected_modules', []),
             selected_inverters=data.get('selected_inverters', []),
-            default_row_spacing_m=data.get('default_row_spacing', 6.0),
+            default_row_spacing_m=data.get('default_row_spacing_m', data.get('default_row_spacing', 6.0)),
             enabled_templates=data.get('enabled_templates', []),
             wiring_mode=data.get('wiring_mode', 'daisy_chain'),
             device_configs=data.get('device_configs', {}),

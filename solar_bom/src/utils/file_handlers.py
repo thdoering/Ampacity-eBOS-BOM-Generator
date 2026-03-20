@@ -1,10 +1,9 @@
 from typing import Dict, Any, Optional
 import json
 import os
-from ..models.module import ModuleSpec
+from ..models.module import ModuleSpec, ModuleType
 from ..models.inverter import InverterSpec
 from ..utils.pan_parser import parse_pan_file as _parse_pan_file
-from ..models.module import ModuleSpec, ModuleType
 
 def parse_pan_file(content: str) -> ModuleSpec:
     """
@@ -65,59 +64,15 @@ def parse_ond_file(content: str) -> InverterSpec:
         InverterSpec: Inverter specification object
         
     Raises:
-        ValueError: If required fields are missing or invalid
+        NotImplementedError: OND file parsing is not yet implemented
     """
-    # Note: This is a placeholder implementation. Actual OND file format
-    # needs to be specified for proper implementation
-    
-    # Initialize parameters dictionary
-    params = {}
-    
-    # Split content into lines and process
-    lines = content.split('\n')
-    
-    # Parameter mapping from OND file to our names
-    param_mapping = {
-        'Model': 'model',
-        'Manufacturer': 'manufacturer',
-        'Vmax': 'max_voltage',
-        'Vmin_mppt': 'min_voltage',
-        'Imax_per_mppt': 'max_current_per_mppt',
-        'Num_mppt': 'num_mppt',
-        'Pmax': 'max_power',
-        'Efficiency': 'efficiency'
-    }
-    
-    # Extract parameters (placeholder implementation)
-    for line in lines:
-        line = line.strip()
-        if ':' in line:  # Assuming OND uses : as separator
-            key, value = line.split(':', 1)
-            key = key.strip()
-            value = value.strip()
-            
-            if key in param_mapping:
-                params[param_mapping[key]] = value
-    
-    # Add default efficiency if not specified
-    if 'efficiency' not in params:
-        params['efficiency'] = '0.98'  # 98% default efficiency
-    
-    try:
-        return InverterSpec(
-            model=params.get('model', 'Unknown'),
-            manufacturer=params.get('manufacturer', 'Unknown'),
-            max_voltage=float(params['max_voltage']),
-            min_voltage=float(params['min_voltage']),
-            max_current_per_mppt=float(params['max_current_per_mppt']),
-            num_mppt=int(params['num_mppt']),
-            max_power=float(params['max_power']),
-            efficiency=float(params['efficiency'])
-        )
-    except KeyError as e:
-        raise ValueError(f"Missing required parameter: {str(e)}")
-    except ValueError as e:
-        raise ValueError(f"Invalid parameter value: {str(e)}")
+    # OND file parsing is not yet implemented.
+    # The InverterSpec dataclass requires fields like inverter_type, rated_power_kw,
+    # mppt_channels, etc. that need proper mapping from the OND file format.
+    raise NotImplementedError(
+        "OND file parsing is not yet supported. "
+        "Please add inverters manually using the Inverter Manager."
+    )
 
 def save_json_file(data: Dict[str, Any], filepath: str, create_dirs: bool = True) -> None:
     """

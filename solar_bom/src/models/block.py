@@ -173,14 +173,14 @@ class BlockConfig:
                     neg_string_cable_length += route_length
                 elif "pos_whip" in route_id:
                     # Add underground routing vertical component if enabled
-                    if hasattr(self, 'underground_routing') and self.underground_routing:
+                    if self.underground_routing:
                         underground_addition = 2 * (self.pile_reveal_m + self.trench_depth_m)
                         pos_whip_cable_length += route_length + underground_addition
                     else:
                         pos_whip_cable_length += route_length
                 elif "neg_whip" in route_id:
                     # Add underground routing vertical component if enabled
-                    if hasattr(self, 'underground_routing') and self.underground_routing:
+                    if self.underground_routing:
                         underground_addition = 2 * (self.pile_reveal_m + self.trench_depth_m)
                         neg_whip_cable_length += route_length + underground_addition
                     else:
@@ -220,14 +220,14 @@ class BlockConfig:
                 # More flexible whip route pattern matching
                 elif "pos_main" in route_id or "pos_dev" in route_id or "whip_pos" in route_id or "pos_whip" in route_id:
                     # Add underground routing vertical component if enabled
-                    if hasattr(self, 'underground_routing') and self.underground_routing:
+                    if self.underground_routing:
                         underground_addition = 2 * (self.pile_reveal_m + self.trench_depth_m)
                         pos_whip_cable_length += route_length + underground_addition
                     else:
                         pos_whip_cable_length += route_length
                 elif "neg_main" in route_id or "neg_dev" in route_id or "whip_neg" in route_id or "neg_whip" in route_id:
                     # Add underground routing vertical component if enabled
-                    if hasattr(self, 'underground_routing') and self.underground_routing:
+                    if self.underground_routing:
                         underground_addition = 2 * (self.pile_reveal_m + self.trench_depth_m)
                         neg_whip_cable_length += route_length + underground_addition
                     else:

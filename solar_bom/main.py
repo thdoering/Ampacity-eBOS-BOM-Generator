@@ -16,7 +16,7 @@ class SolarBOMApplication:
     def __init__(self, root):
         self.root = root
         version = get_version()
-        self.root.title("Solar eBOS BOM Generator v{version}")
+        self.root.title(f"Solar eBOS BOM Generator v{version}")
         
         # Current project context
         self.current_project = None
@@ -154,27 +154,14 @@ class SolarBOMApplication:
         # Function to update BOM manager with current blocks
         def update_bom_blocks():
             """Update BOM manager with current blocks and save to project"""
-            # First convert blocks to a serializable format 
-            serialized_blocks = {}
-            
-            for block_id, block in block_configurator.blocks.items():
-                serialized_blocks[block_id] = block.to_dict()
-            
-            # Check if any blocks are missing from serialized version
-            if len(serialized_blocks) != len(block_configurator.blocks):
-                print("WARNING: Some blocks were not properly serialized!")
-            
             # UPDATE THE BOM MANAGER WITH THE ACTUAL BLOCKCONFIG OBJECTS
             bom_manager.set_blocks(block_configurator.blocks)
             
-            # Update device configurator
+            # Update device configurator and project with live BlockConfig objects
+            # (serialization to dicts happens at save time in update_project_blocks)
             if self.current_project:
                 self.current_project.blocks = block_configurator.blocks
                 device_configurator.load_project(self.current_project)
-            
-            # Store serialized blocks in project for saving
-            if hasattr(self, 'current_project') and self.current_project:
-                self.current_project.blocks = serialized_blocks
         
         # Define callback for tracker template creation
         def on_template_saved(template):
@@ -783,14 +770,7 @@ class SolarBOMApplication:
             # Update the project's blocks
             self.current_project.blocks = serialized_blocks
     
-    def show_about(self):
-        """Show about dialog"""
-        messagebox.showinfo(
-            "About Solar eBOS BOM Generator",
-            "Solar eBOS BOM Generator\n\n"
-            "A tool for designing solar project layouts and generating accurate "
-            "bills of material for electrical balance of system components."
-        )
+
 
 
 def main():
