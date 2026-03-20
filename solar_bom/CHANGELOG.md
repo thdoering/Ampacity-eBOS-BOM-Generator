@@ -5,6 +5,61 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - 2026-03-20
+
+### Added
+- **Quick Estimate Overhaul**: Completely rebuilt the Quick Estimate tab with site preview, tracker template integration, driveline angle support, half-string trackers, inverter pad placement, manual/automatic string allocation to combiner boxes, DC feeder/AC homerun cable inputs per device, and copy estimate functionality
+- **Site Preview**: Interactive site preview with panning, device selection, info pop-ups for CBs/SIs, and motor alignment controls
+- **Central Inverter Topology**: Added support for central inverter topology in Quick Estimate with dedicated BOM handling
+- **Diagnostics File**: Created diagnostics output to verify calculations for different project configurations
+- **Segment Rounding Dropdown**: Added option to consolidate line items in the BOM by rounding cable segments
+- **Combiner Boxes Tab (QE)**: Added combiner boxes tab to Quick Estimate Excel BOM export
+- **LV Collection Inputs**: Added string homerun, harness, and trunk bus inputs for low-voltage collection
+- **Inverter Allocation**: Added inverter allocation to Quick BOM with DC/AC ratio display
+- **Collapse/Expand All Button**: Added collapse/expand all in edit devices dialog
+- **Per-Device Strings Input**: Strings per device is now a per-device input instead of global
+- **Per-Device DC Feeder/AC Homerun**: DC feeder and AC homerun cable sizes assignable per device in the Assign Devices dialog
+- **Copper Rate on BOM**: Module polarity orientation and copper rate now included on BOM exports
+- **Bulk Copy DC Feeder Lengths**: Button to copy DC feeder lengths across blocks
+
+### Changed
+- **Row Spacing Moved to Group Level**: Row spacing and GCR are now per-group inputs instead of global, supporting projects with multiple modules/row spacings
+- **String Allocation Algorithm**: Updated to prefer balanced site allocations
+- **Terminology Update**: Changed internal terminology from "row" to "group" for clarity
+- **Removed String Cable Segments Header**: Cleaned up BOM section headers
+- **DC Feeder Inheritance**: New blocks inherit DC feeder size from previous block
+- **Site Preview Refactored**: Moved site preview into its own file for maintainability
+- **Configure Device Integration**: Configure device page now pulls from Quick Estimate data and vice versa
+- **Inverter Manager**: Updated to handle datasheet info more robustly
+
+### Fixed
+- Fixed pricing update bug
+- Fixed whip point dragging bug on string homerun configurations
+- Fixed device configurator outputting wrong combiner boxes/fuses for string HR configs
+- Fixed tracker motor drawing and string point bugs
+- Fixed center device between rows bug
+- Fixed tracker footprint bugs
+- Fixed device placement bug when creating new blocks
+- Fixed extender length calculation bugs (multiple fixes)
+- Fixed combiner assignment bug for split trackers
+- Fixed string reallocation bugs in site preview
+- Fixed custom device label bug for inverters
+- Fixed module selection warning
+- Fixed wire gauge highlighting in device configurator
+- Fixed whip/extender/harness calculation bugs
+- Fixed DC/AC ratio cap and display bug
+- Fixed button squishing bug in Quick Estimate
+- Fixed Quick BOM length calculation bugs
+- Fixed tracker drawing bug in Quick Estimate
+- Fixed 2-string harness display bug
+- Various Quick Estimate bug fixes and UI improvements
+- Fixed device info panel not showing in distributed string inverter topology
+
+### Enhanced
+- Significantly expanded Quick Estimate capabilities from a basic estimator to a full-featured project planning tool
+- Improved calculation accuracy with per-device cable sizing and diagnostics verification
+- Better multi-module project support with group-level row spacing
+
 ## [2.7.0] - 2026-02-07
 
 ### Added

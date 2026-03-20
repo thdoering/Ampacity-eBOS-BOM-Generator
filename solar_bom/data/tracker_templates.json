@@ -1035,6 +1035,66 @@
         "isc": 11.54,
         "max_system_voltage": 1500
       }
+    },
+    "ATI-81-700W-40/M/41-1P": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 27,
+      "strings_per_tracker": 3.0,
+      "module_spacing_m": 0.01,
+      "has_motor": true,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 2,
+      "motor_placement_type": "middle_of_string",
+      "motor_string_index": 2,
+      "motor_split_north": 13,
+      "motor_split_south": 14,
+      "modules_high": 1,
+      "partial_string_side": "north",
+      "module_spec": {
+        "manufacturer": "CSI Solar",
+        "model": "CS7N-700TB-AG",
+        "type": "Bifacial",
+        "length_mm": 2384.0,
+        "width_mm": 1303.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 700.0,
+        "vmp": 40.0,
+        "imp": 17.51,
+        "voc": 47.9,
+        "isc": 18.49,
+        "max_system_voltage": 1500
+      }
+    },
+    "ATI-27-700W-0/M/27-1P": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 27,
+      "strings_per_tracker": 1.0,
+      "module_spacing_m": 0.01,
+      "has_motor": true,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 0,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 1,
+      "motor_split_north": 13,
+      "motor_split_south": 14,
+      "modules_high": 1,
+      "partial_string_side": "north",
+      "module_spec": {
+        "manufacturer": "CSI Solar",
+        "model": "CS7N-700TB-AG",
+        "type": "Bifacial",
+        "length_mm": 2384.0,
+        "width_mm": 1303.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 700.0,
+        "vmp": 40.0,
+        "imp": 17.51,
+        "voc": 47.9,
+        "isc": 18.49,
+        "max_system_voltage": 1500
+      }
     }
   },
   "ZnShine": {
