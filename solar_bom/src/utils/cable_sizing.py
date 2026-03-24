@@ -388,3 +388,54 @@ def calculate_fuse_size(total_current: float) -> int:
     
     # If current exceeds standard sizes, return maximum
     return 100
+
+
+def recommend_trunk_cable_size(num_strings: int, module_isc: float, 
+                                nec_factor: float = 1.56,
+                                material: str = "copper",
+                                temp_rating: str = "75C") -> str:
+    """
+    Recommend cable size for a trunk bus segment.
+    
+    The trunk bus carries the combined current of all strings in the LBD block.
+    
+    Args:
+        num_strings: Total number of strings on the trunk bus segment
+        module_isc: Module short circuit current in amperes
+        nec_factor: NEC safety factor (default 1.56)
+        material: "copper" or "aluminum"
+        temp_rating: Temperature rating column to use
+        
+    Returns:
+        str: Recommended cable size string
+    """
+    required_current = num_strings * module_isc * nec_factor
+    return recommend_cable_size(required_current, material, temp_rating)
+
+
+# Standard LBD sizes in amperes (250A to 500A in 50A increments)
+LBD_SIZES = [250, 300, 350, 400, 450, 500]
+
+
+def select_lbd_size(num_strings: int, module_isc: float,
+                     nec_factor: float = 1.56) -> int:
+    """
+    Auto-select the smallest LBD (Load Break Disconnect) rating
+    that can handle the block's current.
+    
+    Args:
+        num_strings: Number of strings in the LBD block
+        module_isc: Module short circuit current in amperes
+        nec_factor: NEC safety factor (default 1.56)
+        
+    Returns:
+        int: LBD ampere rating (250, 300, 350, 400, 450, or 500)
+    """
+    required_amps = num_strings * module_isc * nec_factor
+    
+    for size in LBD_SIZES:
+        if size >= required_amps:
+            return size
+    
+    # If current exceeds all standard sizes, return largest
+    return LBD_SIZES[-1]

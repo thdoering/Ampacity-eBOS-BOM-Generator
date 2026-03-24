@@ -1363,7 +1363,7 @@ class QuickEstimate(ttk.Frame):
         
         for group in self.groups:
             for segment in group.get('segments', []):
-                if lv_method == 'String HR':
+                if lv_method in ('String HR', 'Trunk Bus'):
                     string_counts.add(1)
                 else:
                     harness_config = segment.get('harness_config', '')
@@ -1687,7 +1687,7 @@ class QuickEstimate(ttk.Frame):
         Otherwise, return the segment's stored harness_config.
         """
         lv_method = self.lv_collection_var.get() if hasattr(self, 'lv_collection_var') else 'Wire Harness'
-        if lv_method == 'String HR':
+        if lv_method in ('String HR', 'Trunk Bus'):
             spt = seg.get('strings_per_tracker', 1)
             return '+'.join(['1'] * int(spt))
         return seg.get('harness_config', str(seg.get('strings_per_tracker', 1)))
@@ -2516,6 +2516,7 @@ class QuickEstimate(ttk.Frame):
         totals = getattr(self, 'last_totals', {})
         total_combiners = sum(totals.get('combiners_by_breaker', {}).values())
         
+        lv_method = self.lv_collection_var.get() if hasattr(self, 'lv_collection_var') else 'Wire Harness'
         if topology == 'Distributed String':
             num_devices = totals.get('string_inverters', 0)
             device_label = 'SI'
@@ -2523,10 +2524,10 @@ class QuickEstimate(ttk.Frame):
             # For Central Inverter, allocation groups = CBs
             alloc = totals.get('inverter_summary', {}).get('allocation_result', {})
             num_devices = alloc.get('summary', {}).get('total_inverters', total_combiners)
-            device_label = 'CB'
+            device_label = 'LBD' if lv_method == 'Trunk Bus' else 'CB'
         else:
             num_devices = total_combiners
-            device_label = 'CB'
+            device_label = 'LBD' if lv_method == 'Trunk Bus' else 'CB'
         
         # Restore inspect mode from previous session
         initial_inspect = getattr(self, '_last_inspect_mode', False)
@@ -2761,10 +2762,12 @@ class QuickEstimate(ttk.Frame):
                 })
         
         elif topology == 'Central Inverter' and allocation_result:
-            # Central Inverter: allocation groups = CBs.
+            # Central Inverter: allocation groups = CBs (or LBDs for Trunk Bus).
             # Use allocation harness_map (same approach as Centralized String).
+            _lv = self.lv_collection_var.get() if hasattr(self, 'lv_collection_var') else 'Wire Harness'
+            _dev_prefix = 'LBD' if _lv == 'Trunk Bus' else 'CB'
             for inv_idx, inv in enumerate(allocation_result['inverters']):
-                cb_name = self.device_names.get(inv_idx, f"CB-{inv_idx + 1:02d}")
+                cb_name = self.device_names.get(inv_idx, f"{_dev_prefix}-{inv_idx + 1:02d}")
                 connections = self._build_connections_from_harness_map(
                     inv['harness_map'], tracker_segment_map, module_isc, nec_factor
                 )
@@ -3030,6 +3033,26 @@ class QuickEstimate(ttk.Frame):
                 else:
                     insert_row(f"{size}-String Harness (Pos)", pos_pn, qty, 'ea', pos_unit, pos_ext)
                     insert_row(f"{size}-String Harness (Neg)", neg_pn, qty, 'ea', neg_unit, neg_ext)
+        
+        # Trunk Bus items
+        if totals.get('trunk_cable_by_size'):
+            insert_section('TRUNK BUS CABLE')
+            for size in sorted(totals['trunk_cable_by_size'].keys()):
+                total_ft = totals['trunk_cable_by_size'][size]
+                insert_row(f"Trunk Bus {size} (Pos)", '', f"{total_ft:.0f}", 'ft')
+                insert_row(f"Trunk Bus {size} (Neg)", '', f"{total_ft:.0f}", 'ft')
+        
+        if totals.get('lbd_by_size'):
+            insert_section('LOAD BREAK DISCONNECTS')
+            for rating in sorted(totals['lbd_by_size'].keys()):
+                qty = totals['lbd_by_size'][rating]
+                insert_row(f"LBD ({rating}A)", '', qty, 'ea')
+        
+        if totals.get('ipc_by_tap'):
+            insert_section('INSULATION PIERCING CONNECTORS')
+            for tap_count in sorted(totals['ipc_by_tap'].keys()):
+                qty = totals['ipc_by_tap'][tap_count]
+                insert_row(f"{tap_count}-Tap IPC", '', qty, 'ea')
         
         # Extenders — split by wire gauge, then by polarity
         ext_gauges = sorted(set(g for (_, g) in totals['extenders_pos_by_length'].keys()) |
@@ -4300,6 +4323,10 @@ class QuickEstimate(ttk.Frame):
             'dc_feeder_count': 0,
             'ac_homerun_total_ft': 0,
             'ac_homerun_count': 0,
+            # Trunk Bus items
+            'trunk_cable_by_size': defaultdict(float),
+            'lbd_by_size': defaultdict(int),
+            'ipc_by_tap': defaultdict(int),
         }
         
         # Topology and strings-per-inverter (used throughout calculation)
@@ -4316,11 +4343,7 @@ class QuickEstimate(ttk.Frame):
         
         # Validate — need at least one linked template or a legacy fallback module
         self._derive_module_from_templates()
-        # Check for Trunk Bus — not yet implemented
         lv_method = self.lv_collection_var.get() if hasattr(self, 'lv_collection_var') else 'Wire Harness'
-        if lv_method == 'Trunk Bus':
-            messagebox.showinfo("Not Yet Implemented", "Trunk Bus collection method is not yet implemented.")
-            return
         if not self.selected_module:
             if not silent:
                 messagebox.showwarning(
@@ -4427,13 +4450,14 @@ class QuickEstimate(ttk.Frame):
                 else:
                     totals['trackers_by_string'][spt] += qty
 
-                # Count harnesses by size
-                harness_sizes = self.parse_harness_config(harness_config)
-                for size in harness_sizes:
-                    if size > max_harness_strings:
-                        max_harness_strings = size
-                    totals['harnesses_by_size'][size] += qty
-                    total_all_harnesses += qty
+                # Count harnesses by size (skip for Trunk Bus — no harnesses)
+                if lv_method != 'Trunk Bus':
+                    harness_sizes = self.parse_harness_config(harness_config)
+                    for size in harness_sizes:
+                        if size > max_harness_strings:
+                            max_harness_strings = size
+                        totals['harnesses_by_size'][size] += qty
+                        total_all_harnesses += qty
         
         # Build harness-count-per-spt lookup for whip calculation
         harness_count_by_spt = {}
@@ -4743,31 +4767,38 @@ class QuickEstimate(ttk.Frame):
             strings_per_cb = strings_per_inv
 
         elif topology == 'Central Inverter':
-            # CB count from library: target breaker + fuse holder rating → max inputs
-            fuse_current = module_isc * nec_factor * max(max_harness_strings, 1)
-            fuse_holder_rating = self.get_fuse_holder_category(fuse_current)
-            combiner_library = self.load_combiner_library()
-
-            matching_cbs = [
-                cb_data for cb_data in combiner_library.values()
-                if (cb_data.get('breaker_size', 0) == breaker_size and
-                    cb_data.get('fuse_holder_rating', '') == fuse_holder_rating)
-            ]
-
-            if matching_cbs:
-                matching_cbs.sort(key=lambda c: c.get('max_inputs', 0), reverse=True)
-                max_inputs_per_cb = matching_cbs[0].get('max_inputs', 24)
+            if lv_method == 'Trunk Bus':
+                # Trunk Bus: allocation groups = LBDs, not combiner boxes.
+                # num_devices is still needed for DC feeder distance calc.
+                if totals.get('inverter_summary', {}).get('allocation_result'):
+                    num_devices = totals['inverter_summary']['allocation_result']['summary']['total_inverters']
+                # Do NOT populate combiners_by_breaker — no combiner boxes for Trunk Bus.
             else:
-                max_inputs_per_cb = 24  # fallback
+                # CB count from library: target breaker + fuse holder rating → max inputs
+                fuse_current = module_isc * nec_factor * max(max_harness_strings, 1)
+                fuse_holder_rating = self.get_fuse_holder_category(fuse_current)
+                combiner_library = self.load_combiner_library()
 
-            if total_all_strings > 0:
-                num_combiners = math.ceil(total_all_strings / max_inputs_per_cb)
-                strings_per_cb = math.ceil(total_all_strings / num_combiners)
-            # Allocation may produce more CBs due to group boundaries.
-            # Update num_combiners from allocation if available.
-            if totals.get('inverter_summary', {}).get('allocation_result'):
-                num_combiners = totals['inverter_summary']['allocation_result']['summary']['total_inverters']
-            num_devices = num_combiners
+                matching_cbs = [
+                    cb_data for cb_data in combiner_library.values()
+                    if (cb_data.get('breaker_size', 0) == breaker_size and
+                        cb_data.get('fuse_holder_rating', '') == fuse_holder_rating)
+                ]
+
+                if matching_cbs:
+                    matching_cbs.sort(key=lambda c: c.get('max_inputs', 0), reverse=True)
+                    max_inputs_per_cb = matching_cbs[0].get('max_inputs', 24)
+                else:
+                    max_inputs_per_cb = 24  # fallback
+
+                if total_all_strings > 0:
+                    num_combiners = math.ceil(total_all_strings / max_inputs_per_cb)
+                    strings_per_cb = math.ceil(total_all_strings / num_combiners)
+                # Allocation may produce more CBs due to group boundaries.
+                # Update num_combiners from allocation if available.
+                if totals.get('inverter_summary', {}).get('allocation_result'):
+                    num_combiners = totals['inverter_summary']['allocation_result']['summary']['total_inverters']
+                num_devices = num_combiners
 
         # Preliminary combiner count (used for DC feeder/AC homerun distance calc)
         # Actual CB part matching is done later via Device Configurator or fallback
@@ -4781,8 +4812,53 @@ class QuickEstimate(ttk.Frame):
         # For now it's a no-op since allocations=[] above.
         self._adjust_harnesses_for_splits(totals)
 
-        # ==================== Whip calculation ====================
-        if total_all_trackers > 0 and num_devices > 0:
+        # ==================== Trunk Bus calculation ====================
+        if lv_method == 'Trunk Bus' and allocation_result:
+            from src.utils.cable_sizing import recommend_trunk_cable_size, select_lbd_size
+            
+            for inv_data in allocation_result.get('inverters', []):
+                block_strings = inv_data['total_strings']
+                if block_strings <= 0:
+                    continue
+                
+                # Count trackers in this LBD block
+                block_tracker_indices = [ti for ti, _ in inv_data['tracker_indices']]
+                num_trackers_in_block = len(block_tracker_indices)
+                
+                # Trunk cable length = (trackers - 1) × row_spacing
+                if num_trackers_in_block > 1:
+                    # Get row_spacing from tracker_entries for this block's trackers
+                    block_row_spacings = []
+                    for tidx in block_tracker_indices:
+                        if tidx < len(tracker_entries):
+                            block_row_spacings.append(tracker_entries[tidx].get('row_spacing_ft', 20.0))
+                    avg_row_spacing = sum(block_row_spacings) / len(block_row_spacings) if block_row_spacings else 20.0
+                    trunk_length_ft = (num_trackers_in_block - 1) * avg_row_spacing
+                else:
+                    trunk_length_ft = 0.0
+                
+                # Auto-size trunk cable
+                trunk_cable_size = recommend_trunk_cable_size(
+                    block_strings, module_isc, nec_factor
+                )
+                totals['trunk_cable_by_size'][trunk_cable_size] += trunk_length_ft
+                
+                # Auto-size LBD
+                lbd_size = select_lbd_size(block_strings, module_isc, nec_factor)
+                totals['lbd_by_size'][lbd_size] += 1
+                
+                # Count IPCs: 1 per tracker per polarity (×2), grouped by tap count
+                for tidx, strings_taken in inv_data['tracker_indices']:
+                    # Determine tap count: use strings_taken from this tracker
+                    # Auto-select: ≤2 strings → 2-tap, ≤4 strings → 4-tap
+                    if strings_taken <= 2:
+                        tap_count = 2
+                    else:
+                        tap_count = 4
+                    totals['ipc_by_tap'][tap_count] += 2  # pos + neg
+
+        # ==================== Whip calculation (skipped for Trunk Bus) ====================
+        if lv_method != 'Trunk Bus' and total_all_trackers > 0 and num_devices > 0:
             whip_distances = self.calculate_whip_distances_from_positions(
                 allocation_result, topology, num_devices
             )
@@ -5071,6 +5147,8 @@ class QuickEstimate(ttk.Frame):
         
         # Combiner assignments: preserve if allocation is locked (user edited devices),
         # otherwise rebuild from scratch with correct positions.
+        # For Trunk Bus, still build assignments (used for device positions/labels) but
+        # they represent LBDs, not combiner boxes.
         if self.allocation_locked and self.last_combiner_assignments:
             # Edit Devices locked the allocation — its assignments are the source of truth
             pass
@@ -5080,9 +5158,10 @@ class QuickEstimate(ttk.Frame):
 
         # Read combiner BOM from Device Configurator (single source of truth)
         # Falls back to simple assignment-based totals if DC isn't available
-        # For Central Inverter with unlocked allocation, always use fresh assignments
-        # (Device Configurator may have stale data from a different CB count)
-        if topology == 'Central Inverter' and not self.allocation_locked:
+        # For Trunk Bus, skip combiner BOM entirely — LBDs are handled separately.
+        if lv_method == 'Trunk Bus':
+            dc_had_data = True  # Skip combiner BOM rebuild
+        elif topology == 'Central Inverter' and not self.allocation_locked:
             dc_had_data = False
         else:
             dc_had_data = self._read_combiner_bom_from_device_config()
