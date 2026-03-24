@@ -3746,6 +3746,9 @@ class QuickEstimate(ttk.Frame):
         export_btn = ttk.Button(button_row, text="Export to Excel", command=self.export_to_excel)
         export_btn.pack(side='left')
         
+        packet_btn = ttk.Button(button_row, text="Export Packet", command=self.export_packet)
+        packet_btn.pack(side='left', padx=(10, 0))
+        
         preview_btn = ttk.Button(button_row, text="Site Preview", command=self.show_site_preview)
         preview_btn.pack(side='left', padx=(10, 0))
 
@@ -5341,8 +5344,13 @@ class QuickEstimate(ttk.Frame):
                     max_length = max(max_length, len(str(cell.value)))
             ws.column_dimensions[col_letter].width = min(max_length + 3, 30)
 
-    def export_to_excel(self):
-        """Export the quick estimate BOM to Excel"""
+    def export_to_excel(self, target_filepath=None, silent=False):
+        """Export the quick estimate BOM to Excel
+        
+        Args:
+            target_filepath: If provided, skip file dialog and write directly to this path.
+            silent: If True, skip os.startfile and success messagebox.
+        """
         
         # Run calculation first to ensure results are current
         self.calculate_estimate()
@@ -5378,15 +5386,18 @@ class QuickEstimate(ttk.Frame):
         lv_method_tag = clean_filename(self.lv_collection_var.get() if hasattr(self, 'lv_collection_var') else 'Wire Harness')
         suggested_filename = f"{client}_{project_name}_Ampacity Quick eBOM_{estimate_name}_{lv_method_tag}.xlsx"
         
-        filepath = filedialog.asksaveasfilename(
-            defaultextension=".xlsx",
-            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
-            title="Export Quick Estimate BOM",
-            initialfile=suggested_filename
-        )
+        if target_filepath:
+            filepath = target_filepath
+        else:
+            filepath = filedialog.asksaveasfilename(
+                defaultextension=".xlsx",
+                filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+                title="Export Quick Estimate BOM",
+                initialfile=suggested_filename
+            )
         
-        if not filepath:
-            return
+            if not filepath:
+                return
         
         try:
             from openpyxl import Workbook
@@ -5783,14 +5794,17 @@ class QuickEstimate(ttk.Frame):
             # Save
             wb.save(filepath)
             
-            # Try to open the file
-            import os
-            try:
-                os.startfile(filepath)
-            except Exception:
-                pass
+            if not silent:
+                # Try to open the file
+                import os
+                try:
+                    os.startfile(filepath)
+                except Exception:
+                    pass
+                
+                messagebox.showinfo("Success", f"Quick Estimate BOM exported to:\n{filepath}")
             
-            messagebox.showinfo("Success", f"Quick Estimate BOM exported to:\n{filepath}")
+            return True
             
         except PermissionError:
             messagebox.showerror(
@@ -5798,8 +5812,201 @@ class QuickEstimate(ttk.Frame):
                 f"Cannot write to {filepath}.\n\n"
                 "The file may be open in Excel. Please close it and try again."
             )
+            return False
         except Exception as e:
             messagebox.showerror("Export Error", f"Failed to export BOM:\n{str(e)}")
+            return False
+
+    def export_packet(self):
+        """Export a .zip packet containing the Excel BOM and a String Allocation PDF."""
+        import tempfile
+        import zipfile
+        import os
+
+        # Ensure estimate is calculated
+        self.calculate_estimate()
+
+        if not self.selected_module:
+            messagebox.showwarning("No Module", "Please select a module before exporting.")
+            return
+
+        inv_summary = getattr(self, 'last_totals', {}).get('inverter_summary', {})
+        if not inv_summary or not inv_summary.get('allocation_result'):
+            messagebox.showinfo("No Data", "Run Calculate Estimate first to generate preview data.")
+            return
+
+        # Build suggested filename
+        def clean_fn(s):
+            return "".join(c for c in s if c.isalnum() or c in (' ', '-', '_')).strip()
+
+        client = "Unknown_Client"
+        project_name = "Unknown_Project"
+        estimate_name = "Estimate"
+
+        if self.current_project and self.current_project.metadata:
+            client = clean_fn(self.current_project.metadata.client or "Unknown_Client")
+            project_name = clean_fn(self.current_project.metadata.name or "Unknown_Project")
+        if self.estimate_id and self.current_project:
+            est_data = self.current_project.quick_estimates.get(self.estimate_id, {})
+            estimate_name = clean_fn(est_data.get('name', 'Estimate'))
+
+        suggested_zip = f"{client}_{project_name}_Packet_{estimate_name}.zip"
+
+        zip_path = filedialog.asksaveasfilename(
+            defaultextension=".zip",
+            filetypes=[("ZIP files", "*.zip"), ("All files", "*.*")],
+            title="Export Packet (Excel BOM + Site PDF)",
+            initialfile=suggested_zip
+        )
+
+        if not zip_path:
+            return
+
+        tmp_dir = tempfile.mkdtemp()
+        try:
+            # --- Generate Excel BOM to temp file ---
+            lv_method_tag = clean_fn(self.lv_collection_var.get() if hasattr(self, 'lv_collection_var') else 'Wire Harness')
+            xlsx_name = f"{client}_{project_name}_Ampacity Quick eBOM_{estimate_name}_{lv_method_tag}.xlsx"
+            xlsx_path = os.path.join(tmp_dir, xlsx_name)
+
+            excel_ok = self.export_to_excel(target_filepath=xlsx_path, silent=True)
+            if not excel_ok:
+                messagebox.showerror("Packet Error", "Failed to generate the Excel BOM.\nPacket export aborted.")
+                return
+
+            # --- Generate Site PDF ---
+            pdf_name = f"{client}_{project_name}_String Allocation_{estimate_name}.pdf"
+            pdf_path = os.path.join(tmp_dir, pdf_name)
+
+            pdf_ok = self._generate_site_pdf(pdf_path)
+            if not pdf_ok:
+                messagebox.showerror("Packet Error", "Failed to generate the Site PDF.\nPacket export aborted.")
+                return
+
+            # --- Zip both files ---
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+                zf.write(xlsx_path, xlsx_name)
+                zf.write(pdf_path, pdf_name)
+
+            # Try to open the containing folder
+            try:
+                os.startfile(os.path.dirname(zip_path))
+            except Exception:
+                pass
+
+            messagebox.showinfo("Success", f"Packet exported to:\n{zip_path}")
+
+        except PermissionError:
+            messagebox.showerror(
+                "Permission Error",
+                f"Cannot write to {zip_path}.\n\nThe file may be open. Please close it and try again."
+            )
+        except Exception as e:
+            messagebox.showerror("Packet Error", f"Failed to export packet:\n{str(e)}")
+        finally:
+            # Clean up temp files
+            import shutil
+            try:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+            except Exception:
+                pass
+
+    def _generate_site_pdf(self, filepath):
+        """Generate the string allocation site PDF using current estimate data.
+        
+        Returns True on success, False on error.
+        """
+        from src.utils.site_pdf_generator import generate_site_pdf
+        from .site_preview import SitePreviewWindow
+
+        inv_summary = getattr(self, 'last_totals', {}).get('inverter_summary', {})
+        topology = self.topology_var.get()
+        row_spacing_ft = self.groups[0].get('row_spacing_ft', 20.0) if self.groups else 20.0
+
+        # We need layout data. Create a temporary (hidden) SitePreviewWindow to build it,
+        # then extract group_layout and device_positions.
+        totals = getattr(self, 'last_totals', {})
+        total_combiners = sum(totals.get('combiners_by_breaker', {}).values())
+
+        lv_method = self.lv_collection_var.get() if hasattr(self, 'lv_collection_var') else 'Wire Harness'
+        if topology == 'Distributed String':
+            num_devices = totals.get('string_inverters', 0)
+            device_label = 'SI'
+        elif topology == 'Central Inverter':
+            alloc = totals.get('inverter_summary', {}).get('allocation_result', {})
+            num_devices = alloc.get('summary', {}).get('total_inverters', total_combiners)
+            device_label = 'LBD' if lv_method == 'Trunk Bus' else 'CB'
+        else:
+            num_devices = total_combiners
+            device_label = 'LBD' if lv_method == 'Trunk Bus' else 'CB'
+
+        # Build layout via a temporary hidden preview window
+        temp_preview = SitePreviewWindow(
+            self, inv_summary, topology, self.INVERTER_COLORS,
+            self.groups, self.enabled_templates, row_spacing_ft,
+            num_devices=num_devices, device_label=device_label,
+            initial_inspect=False, pads=self.pads,
+            device_names=self.device_names,
+            device_feeder_sizes=self.device_feeder_sizes
+        )
+        temp_preview.withdraw()  # Keep it hidden
+
+        try:
+            group_layout = temp_preview.group_layout
+            device_positions = getattr(temp_preview, 'device_positions', [])
+
+            # Build project info dict
+            project_info = {
+                'project_name': '',
+                'customer': '',
+                'location': '',
+                'estimate_name': '',
+                'topology': topology,
+                'module_info': '',
+                'total_strings': '',
+                'total_devices': '',
+                'dc_ac_ratio': '',
+                'split_trackers': '',
+                'revision': '0',
+            }
+
+            if self.current_project and self.current_project.metadata:
+                meta = self.current_project.metadata
+                project_info['project_name'] = meta.name or ''
+                project_info['customer'] = meta.client or ''
+                project_info['location'] = meta.location or ''
+
+            if self.estimate_id and self.current_project:
+                est_data = self.current_project.quick_estimates.get(self.estimate_id, {})
+                project_info['estimate_name'] = est_data.get('name', '')
+
+            if self.selected_module:
+                mod = self.selected_module
+                project_info['module_info'] = f"{mod.manufacturer} {mod.model} ({mod.wattage}W)"
+
+            alloc_result = inv_summary.get('allocation_result', {})
+            summary = alloc_result.get('summary', {})
+            project_info['total_strings'] = str(summary.get('total_strings', ''))
+            project_info['total_devices'] = f"{num_devices} {device_label}s"
+            project_info['dc_ac_ratio'] = f"{inv_summary.get('actual_dc_ac', 0):.2f}"
+            project_info['split_trackers'] = str(summary.get('total_split_trackers', ''))
+
+            result = generate_site_pdf(
+                filepath=filepath,
+                group_layout=group_layout,
+                device_positions=device_positions,
+                pads=self.pads,
+                colors=self.INVERTER_COLORS,
+                topology=topology,
+                device_label=device_label,
+                project_info=project_info,
+                show_routes=True,
+                align_on_motor=True,
+            )
+            return result
+
+        finally:
+            temp_preview.destroy()
 
     def _run_diagnostics(self):
         """Run all diagnostic checks and display results in a dialog."""
