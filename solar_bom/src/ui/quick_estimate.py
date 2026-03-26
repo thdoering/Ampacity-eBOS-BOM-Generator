@@ -3749,6 +3749,9 @@ class QuickEstimate(ttk.Frame):
         packet_btn = ttk.Button(button_row, text="Export Packet", command=self.export_packet)
         packet_btn.pack(side='left', padx=(10, 0))
         
+        pdf_btn = ttk.Button(button_row, text="Export PDF", command=self.export_pdf_only)
+        pdf_btn.pack(side='left', padx=(5, 0))
+        
         preview_btn = ttk.Button(button_row, text="Site Preview", command=self.show_site_preview)
         preview_btn.pack(side='left', padx=(10, 0))
 
@@ -5991,6 +5994,9 @@ class QuickEstimate(ttk.Frame):
             project_info['dc_ac_ratio'] = f"{inv_summary.get('actual_dc_ac', 0):.2f}"
             project_info['split_trackers'] = str(summary.get('total_split_trackers', ''))
 
+            # --- Build wiring specs for unique tracker templates ---
+            wiring_specs = self._gather_wiring_specs()
+
             result = generate_site_pdf(
                 filepath=filepath,
                 group_layout=group_layout,
@@ -6002,11 +6008,161 @@ class QuickEstimate(ttk.Frame):
                 project_info=project_info,
                 show_routes=True,
                 align_on_motor=True,
+                wiring_specs=wiring_specs,
             )
             return result
 
         finally:
             temp_preview.destroy()
+
+    def _gather_wiring_specs(self):
+        """Gather unique tracker wiring specifications for DC cabling diagrams.
+        
+        Returns a list of dicts, one per unique (non-split) tracker template,
+        each containing the info needed to draw a wiring diagram.
+        """
+        seen_refs = set()
+        specs = []
+        
+        polarity = 'positive_north'
+        if hasattr(self, 'polarity_convention_var'):
+            pol_val = self.polarity_convention_var.get()
+            if 'south' in pol_val.lower() or 'negative' in pol_val.lower():
+                polarity = 'positive_south'
+        
+        for group in self.groups:
+            for seg in group.get('segments', []):
+                ref = seg.get('template_ref')
+                if not ref or ref in seen_refs:
+                    continue
+                if ref not in self.enabled_templates:
+                    continue
+                
+                tdata = self.enabled_templates[ref]
+                spt = tdata.get('strings_per_tracker', 1)
+                
+                # Skip half-string (non-integer SPT) trackers
+                if spt != int(spt):
+                    continue
+                
+                spt = int(spt)
+                seen_refs.add(ref)
+                
+                mps = tdata.get('modules_per_string', 28)
+                mod_spec = tdata.get('module_spec', {})
+                orientation = tdata.get('module_orientation', 'Portrait')
+                has_motor = tdata.get('has_motor', True)
+                
+                # Motor position — which string the motor comes AFTER (1-indexed)
+                motor_after = max(1, spt // 2)  # sensible default
+                if has_motor:
+                    motor_placement = tdata.get('motor_placement_type', 'between_strings')
+                    if motor_placement == 'between_strings':
+                        pos_after = tdata.get('motor_position_after_string', None)
+                        str_idx = tdata.get('motor_string_index', None)
+                        if pos_after is not None and int(pos_after) > 0:
+                            motor_after = int(pos_after)
+                        elif str_idx is not None and int(str_idx) > 0:
+                            motor_after = int(str_idx)
+                    elif motor_placement == 'middle_of_string':
+                        str_idx = tdata.get('motor_string_index', None)
+                        if str_idx is not None and int(str_idx) > 0:
+                            # Motor is in the middle of this string — treat as "after" that string
+                            motor_after = int(str_idx)
+                
+                # Harness config
+                harness_config = self._get_effective_harness_config(seg)
+                harness_sizes = self.parse_harness_config(harness_config)
+                if not harness_sizes:
+                    harness_sizes = [spt]
+                
+                # Wire gauges
+                string_gauge = self.get_wire_size_for('string', 1)
+                harness_gauge_map = {}
+                whip_gauge_map = {}
+                for h_size in set(harness_sizes):
+                    harness_gauge_map[h_size] = self.get_wire_size_for('harness', h_size)
+                    whip_gauge_map[h_size] = self.get_wire_size_for('whip', h_size)
+                
+                # Determine predominant device position from groups
+                device_pos = 'south'  # default
+                if hasattr(self, 'groups') and self.groups:
+                    pos_counts = {}
+                    for grp in self.groups:
+                        dp = grp.get('device_position', 'south')
+                        pos_counts[dp] = pos_counts.get(dp, 0) + 1
+                    if pos_counts:
+                        device_pos = max(pos_counts, key=pos_counts.get)
+
+                specs.append({
+                    'strings_per_tracker': spt,
+                    'modules_per_string': mps,
+                    'module_width_mm': mod_spec.get('width_mm', 1134),
+                    'module_length_mm': mod_spec.get('length_mm', 2384),
+                    'module_orientation': orientation,
+                    'harness_sizes': harness_sizes,
+                    'has_motor': has_motor,
+                    'motor_position_after_string': motor_after,
+                    'polarity_convention': polarity,
+                    'device_position': device_pos,
+                    'wire_gauges': {
+                        'string': string_gauge,
+                        'harness': harness_gauge_map,
+                        'whip': whip_gauge_map,
+                    },
+                })
+        
+        return specs
+
+    def export_pdf_only(self):
+        """Export just the site PDF (no Excel BOM) for quick testing."""
+        self.calculate_estimate()
+
+        if not self.selected_module:
+            messagebox.showwarning("No Module", "Please select a module before exporting.")
+            return
+
+        inv_summary = getattr(self, 'last_totals', {}).get('inverter_summary', {})
+        if not inv_summary or not inv_summary.get('allocation_result'):
+            messagebox.showinfo("No Data", "Run Calculate Estimate first to generate preview data.")
+            return
+
+        def clean_fn(s):
+            return "".join(c for c in s if c.isalnum() or c in (' ', '-', '_')).strip()
+
+        client = "Unknown_Client"
+        project_name = "Unknown_Project"
+        estimate_name = "Estimate"
+
+        if self.current_project and self.current_project.metadata:
+            client = clean_fn(self.current_project.metadata.client or "Unknown_Client")
+            project_name = clean_fn(self.current_project.metadata.name or "Unknown_Project")
+        if self.estimate_id and self.current_project:
+            est_data = self.current_project.quick_estimates.get(self.estimate_id, {})
+            estimate_name = clean_fn(est_data.get('name', 'Estimate'))
+
+        suggested_name = f"{client}_{project_name}_String Allocation_{estimate_name}.pdf"
+
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".pdf",
+            filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")],
+            title="Export Site PDF",
+            initialfile=suggested_name,
+        )
+        if not filepath:
+            return
+
+        success = self._generate_site_pdf(filepath)
+        if success:
+            import os
+            try:
+                os.startfile(filepath)
+            except Exception:
+                pass
+            messagebox.showinfo("Success", f"PDF exported to:\n{filepath}")
+        else:
+            messagebox.showerror("Error", "Failed to generate PDF.")
+    
 
     def _run_diagnostics(self):
         """Run all diagnostic checks and display results in a dialog."""
