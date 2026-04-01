@@ -6048,6 +6048,12 @@ class QuickEstimate(ttk.Frame):
                 spt = int(spt)
                 seen_refs.add(ref)
                 
+                # Extract short template name (strip manufacturer prefix)
+                if ' - ' in ref:
+                    template_short_name = ref.split(' - ', 1)[1]
+                else:
+                    template_short_name = ref
+                
                 mps = tdata.get('modules_per_string', 28)
                 mod_spec = tdata.get('module_spec', {})
                 orientation = tdata.get('module_orientation', 'Portrait')
@@ -6060,9 +6066,9 @@ class QuickEstimate(ttk.Frame):
                     if motor_placement == 'between_strings':
                         pos_after = tdata.get('motor_position_after_string', None)
                         str_idx = tdata.get('motor_string_index', None)
-                        if pos_after is not None and int(pos_after) > 0:
+                        if pos_after is not None and int(pos_after) >= 0:
                             motor_after = int(pos_after)
-                        elif str_idx is not None and int(str_idx) > 0:
+                        elif str_idx is not None and int(str_idx) >= 0:
                             motor_after = int(str_idx)
                     elif motor_placement == 'middle_of_string':
                         str_idx = tdata.get('motor_string_index', None)
@@ -6097,6 +6103,7 @@ class QuickEstimate(ttk.Frame):
                 specs.append({
                     'strings_per_tracker': spt,
                     'modules_per_string': mps,
+                    'template_name': template_short_name,
                     'module_width_mm': mod_spec.get('width_mm', 1134),
                     'module_length_mm': mod_spec.get('length_mm', 2384),
                     'module_orientation': orientation,

@@ -871,6 +871,41 @@ def _create_single_wiring_page(specs, project_info, start_idx):
     _draw_sidebar(fig, project_info)
     _draw_page_border(fig)
 
+    # --- Compass rose (north = left in horizontal wiring layout) ---
+    cx = (draw_right_edge - 0.6) / PAGE_WIDTH  # figure-fraction X
+    cy = (draw_top - 0.5) / PAGE_HEIGHT         # figure-fraction Y
+    r = 0.018  # radius in figure-fraction units
+    tick = r * 0.35
+
+    compass_ax = fig.add_axes([cx - r * 1.8, cy - r * 1.8, r * 3.6, r * 3.6])
+    compass_ax.set_xlim(-1.2, 1.2)
+    compass_ax.set_ylim(-1.2, 1.2)
+    compass_ax.set_aspect('equal')
+    compass_ax.axis('off')
+
+    # Outer circle
+    circle = plt.Circle((0, 0), 1.0, fill=False, edgecolor='#333333', linewidth=0.8)
+    compass_ax.add_patch(circle)
+
+    # North arrow (points LEFT, filled triangle)
+    compass_ax.fill([-1.0, -0.3, -0.3], [0, 0.18, -0.18], color='#333333')
+    # South tick (right)
+    compass_ax.plot([0.6, 1.0], [0, 0], color='#333333', linewidth=0.6)
+    # East tick (up)
+    compass_ax.plot([0, 0], [0.6, 1.0], color='#333333', linewidth=0.6)
+    # West tick (down)
+    compass_ax.plot([0, 0], [-0.6, -1.0], color='#333333', linewidth=0.6)
+
+    # Labels
+    compass_ax.text(-1.05, 0, 'N', fontsize=5, fontweight='bold', color='#333333',
+                    ha='right', va='center', fontfamily='sans-serif')
+    compass_ax.text(1.05, 0, 'S', fontsize=4, color='#777777',
+                    ha='left', va='center', fontfamily='sans-serif')
+    compass_ax.text(0, 1.05, 'E', fontsize=4, color='#777777',
+                    ha='center', va='bottom', fontfamily='sans-serif')
+    compass_ax.text(0, -1.05, 'W', fontsize=4, color='#777777',
+                    ha='center', va='top', fontfamily='sans-serif')
+
     return fig
 
 
@@ -901,10 +936,7 @@ def _draw_single_wiring_diagram(ax, spec, letter):
     has_motor = spec.get('has_motor', True)
     motor_after = spec.get('motor_position_after_string', spt // 2)
     if has_motor:
-        if motor_after <= 0:
-            motor_after = 1
-        if motor_after >= spt:
-            motor_after = spt - 1
+        motor_after = max(0, min(motor_after, spt))
     polarity = spec.get('polarity_convention', 'positive_north')
     device_position = spec.get('device_position', 'south')  # 'north', 'south', or 'middle'
     wire_gauges = spec.get('wire_gauges', {})
@@ -935,10 +967,12 @@ def _draw_single_wiring_diagram(ax, spec, letter):
     string_w = mps * _MOD_W + (mps - 1) * _MOD_GAP
     string_x_starts = []
     x_cursor = 0.0
+    if has_motor and motor_after == 0:
+        x_cursor += _MOTOR_GAP
     for s_idx in range(spt):
         string_x_starts.append(x_cursor)
         x_cursor += string_w
-        if has_motor and s_idx == motor_after - 1:
+        if has_motor and motor_after > 0 and s_idx == motor_after - 1:
             x_cursor += _MOTOR_GAP
         elif s_idx < spt - 1:
             x_cursor += _STRING_GAP
@@ -1014,9 +1048,16 @@ def _draw_single_wiring_diagram(ax, spec, letter):
             ax.add_patch(rect)
 
     # --- Motor gap indicator ---
-    if has_motor and 0 < motor_after < spt:
-        mg_left = string_x_starts[motor_after - 1] + string_w + _STRING_GAP * 0.15
-        mg_right = string_x_starts[motor_after] - _STRING_GAP * 0.15
+    if has_motor:
+        if motor_after == 0:
+            mg_left = 0
+            mg_right = _MOTOR_GAP
+        elif motor_after >= spt:
+            mg_left = string_x_starts[spt - 1] + string_w
+            mg_right = total_w
+        else:
+            mg_left = string_x_starts[motor_after - 1] + string_w + _STRING_GAP * 0.15
+            mg_right = string_x_starts[motor_after] - _STRING_GAP * 0.15
         mw = mg_right - mg_left
         if mw > 0.2:
             motor_rect = Rectangle((mg_left, mod_bot_y - mod_h * 0.05),
@@ -1084,11 +1125,7 @@ def _draw_single_wiring_diagram(ax, spec, letter):
             _device_x = total_w / 2
 
     # --- Routing: positive (red) and negative (blue) ---
-    print(f"\n[WIRING] {spt}-string tracker, motor_after={motor_after}, "
-          f"device_pos={device_position}, device_x={_device_x:.2f}")
     harness_string_offset = 0
-    _line_spacing = y_range * 0.015  # vertical gap between each individual line
-    _line_idx = 0  # counter for all lines to spread them out
     for h_idx, h_size in enumerate(harness_sizes):
         h_strings = list(range(harness_string_offset, harness_string_offset + h_size))
         h_gauge = harness_gauge_map.get(str(h_size), harness_gauge_map.get(h_size, '10 AWG'))
@@ -1123,8 +1160,7 @@ def _draw_single_wiring_diagram(ax, spec, letter):
                                '#CC0000', h_size, h_gauge, string_gauge,
                                'positive', label_y=Y(F_MERGE) - y_range * 0.08,
                                y_range=y_range, device_x=_device_x,
-                               hr_offset=_line_idx * _line_spacing)
-        _line_idx += 1
+                               hr_offset=0, device_position=device_position)
 
         if device_position == 'south':
             neg_merge_x = max(neg_xs)
@@ -1140,40 +1176,17 @@ def _draw_single_wiring_diagram(ax, spec, letter):
                                '#0000CC', h_size, h_gauge, string_gauge,
                                'negative', label_y=Y(F_MERGE) - y_range * 0.08,
                                y_range=y_range, device_x=_device_x,
-                               hr_offset=_line_idx * _line_spacing)
-        _line_idx += 1
+                               hr_offset=0, device_position=device_position)
 
         harness_string_offset += h_size
 
-    # --- Device location indicator ---
-    dev_y = Y(F_MERGE)
-    dev_label = 'TO DEVICE'
-    if device_position == 'south':
-        dev_x = total_w + 1.5
-        ax.annotate('', xy=(dev_x + 2.5, dev_y), xytext=(dev_x, dev_y),
-                    arrowprops=dict(arrowstyle='->', color='#333333', lw=0.8))
-        ax.text(dev_x + 3.0, dev_y, dev_label, fontsize=3.5, color='#333333',
-                ha='left', va='center', fontfamily='sans-serif', fontweight='bold')
-    elif device_position == 'north':
-        dev_x = -1.5
-        ax.annotate('', xy=(dev_x - 2.5, dev_y), xytext=(dev_x, dev_y),
-                    arrowprops=dict(arrowstyle='->', color='#333333', lw=0.8))
-        ax.text(dev_x - 3.0, dev_y, dev_label, fontsize=3.5, color='#333333',
-                ha='right', va='center', fontfamily='sans-serif', fontweight='bold')
-    else:
-        # Middle — draw arrow pointing down from center
-        dev_x = total_w / 2
-        dev_y_bot = Y(F_MERGE) - y_range * 0.06
-        ax.annotate('', xy=(dev_x, dev_y_bot - 2.0), xytext=(dev_x, dev_y_bot),
-                    arrowprops=dict(arrowstyle='->', color='#333333', lw=0.8))
-        ax.text(dev_x, dev_y_bot - 2.5, dev_label, fontsize=3.5, color='#333333',
-                ha='center', va='top', fontfamily='sans-serif', fontweight='bold')
-
     # --- Title ---
     circle_x = total_w * 0.02
-    title_x = circle_x + 2.5  # close to circle
+    title_x = circle_x + 1.5  # close to circle
     title_y = Y(F_TITLE)
-    title_text = f'TYPICAL WIRING DIAGRAM: {spt}-STRING TRACKER'
+    template_name = spec.get('template_name', '')
+    title_suffix = f' ({template_name})' if template_name else ''
+    title_text = f'TYPICAL WIRING DIAGRAM: {spt}-STRING TRACKER{title_suffix}'
 
     ax.text(circle_x, title_y, letter,
             fontsize=10, fontweight='bold', color='black',
@@ -1200,13 +1213,9 @@ def _draw_single_wiring_diagram(ax, spec, letter):
 def _draw_harness_routing(ax, string_xs, merge_x, y_top, y_merge,
                            color, harness_size, harness_gauge, string_gauge,
                            polarity_label, label_y, y_range=100, device_x=None,
-                           hr_offset=0, hr_base_y=None):
+                           hr_offset=0, hr_base_y=None, device_position='south'):
     """Draw the collection routing for one polarity of one harness group."""
     n = len(string_xs)
-    print(f"  [ROUTING] {polarity_label} harness_size={harness_size} "
-          f"y_top={y_top:.2f} y_merge={y_merge:.2f} merge_x={merge_x:.2f} "
-          f"hr_offset={hr_offset:.2f} hr_base_y={hr_base_y} "
-          f"device_x={device_x} string_xs={[f'{x:.1f}' for x in string_xs]}")
     stub_len = (y_top - y_merge) * 0.3
 
     # Per-string inline fuses: positive multi-string harnesses only
@@ -1249,22 +1258,25 @@ def _draw_harness_routing(ax, string_xs, merge_x, y_top, y_merge,
                 fontsize=2.5, color='#555555', ha='left', va='center',
                 fontfamily='sans-serif')
 
-    # Home run route toward device — horizontal from merge, then down
-    gap = y_range * 0.02
-    hr_drop = gap * 3
-    hr_y = y_merge - hr_offset
-    if device_x is not None and abs(device_x - merge_x) > 0.5:
-        if hr_offset > 0:
-            ax.plot([merge_x, merge_x], [y_merge, hr_y],
-                    color=color, linewidth=0.5)
-        # Stop short of device_x so parallel lines from each harness don't overlap
+    # Extender route from Y-connector — horizontal toward device
+    hr_drop = y_range * 0.06
+    dist_to_device = abs(device_x - merge_x) if device_x is not None else 0
+    print(f"  [EXTENDER] {polarity_label} merge_x={merge_x:.2f} device_x={device_x} "
+          f"dist={dist_to_device:.2f} device_position={device_position}")
+    if device_position == 'middle' and device_x is not None and abs(device_x - merge_x) > 0.5:
+        # Horizontal run toward motor gap center
         inset = 0.8 if merge_x < device_x else -0.8
         end_x = device_x - inset
-        ax.plot([merge_x, end_x], [hr_y, hr_y],
+        ax.plot([merge_x, end_x], [y_merge, y_merge],
                 color=color, linewidth=0.5)
-        ax.plot([end_x, end_x], [hr_y, hr_y - hr_drop],
+    elif device_x is not None and abs(device_x - merge_x) > 0.5:
+        # Horizontal run toward device (north = left, south = right)
+        inset = 0.8 if merge_x < device_x else -0.8
+        end_x = device_x - inset
+        ax.plot([merge_x, end_x], [y_merge, y_merge],
                 color=color, linewidth=0.5)
     else:
+        # Fallback: vertical drop
         ax.plot([merge_x, merge_x], [y_merge, y_merge - hr_drop],
                 color=color, linewidth=0.5)
 
@@ -1272,7 +1284,7 @@ def _draw_harness_routing(ax, string_xs, merge_x, y_top, y_merge,
     if n == 1:
         bot_label = f'1-STRING SOURCE CIRCUIT\n#{string_gauge} CU PV WIRE (TYP)'
     else:
-        bot_label = (f'{harness_size}-STRING HARNESS HOME RUN\n'
+        bot_label = (f'{harness_size}-STRING HARNESS EXTENDER\n'
                      f'#{harness_gauge} CU PV WIRE (TYP)')
     ax.text(merge_x, label_y, bot_label,
             fontsize=3, color=color, ha='center', va='top',
