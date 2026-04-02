@@ -1991,7 +1991,7 @@ class QuickEstimate(ttk.Frame):
         if hasattr(self, 'lv_collection_var'):
             self.lv_collection_var.set(estimate_data.get('lv_collection_method', 'Wire Harness'))
         if hasattr(self, 'ac_homerun_distance_var'):
-            self.ac_homerun_distance_var.set(str(estimate_data.get('ac_homerun_distance', 500)))
+            self.ac_homerun_distance_var.set(str(estimate_data.get('ac_homerun_distance', 50)))
         
         # Load groups (new format) or convert from old subarrays format
         saved_subarrays = estimate_data.get('subarrays', {})
@@ -2232,15 +2232,18 @@ class QuickEstimate(ttk.Frame):
         
         # Generate new ID and name
         estimate_id = f"estimate_{uuid.uuid4().hex[:8]}"
-        estimate_num = len(self.current_project.quick_estimates) + 1
-        estimate_name = f"Estimate {estimate_num}"
+        existing_names = {e.get('name', '') for e in self.current_project.quick_estimates.values()}
+        rev_num = 0
+        while f"rev{rev_num}" in existing_names:
+            rev_num += 1
+        estimate_name = f"rev{rev_num}"
         
         new_estimate = {
             'name': estimate_name,
             'created_date': datetime.now().isoformat(),
             'modified_date': datetime.now().isoformat(),
             'row_spacing_ft': 20.0,
-            'topology': 'Distributed String',
+            'topology': 'Centralized String',
             'dc_ac_ratio': 1.25,
             'subarrays': {},
             'groups': [],
