@@ -3746,8 +3746,8 @@ class QuickEstimate(ttk.Frame):
         export_btn = ttk.Button(button_row, text="Export to Excel", command=self.export_to_excel)
         export_btn.pack(side='left')
         
-        packet_btn = ttk.Button(button_row, text="Export Packet", command=self.export_packet)
-        packet_btn.pack(side='left', padx=(10, 0))
+        # packet_btn = ttk.Button(button_row, text="Export Packet", command=self.export_packet)
+        # packet_btn.pack(side='left', padx=(10, 0))
         
         pdf_btn = ttk.Button(button_row, text="Export PDF", command=self.export_pdf_only)
         pdf_btn.pack(side='left', padx=(5, 0))
