@@ -1206,7 +1206,7 @@ class SitePreviewWindow(tk.Toplevel):
                 gy + group_data['length_ft'] / 2
             )
             font_size = max(6, min(11, int(9 * self.scale)))
-            self.canvas.create_text(
+            self._draw_text_with_bg(
                 label_x, label_y,
                 text=group_data['name'], font=('Helvetica', font_size),
                 fill='#4A90D9' if is_selected else '#333333', anchor='e'
@@ -1408,7 +1408,7 @@ class SitePreviewWindow(tk.Toplevel):
                 pixel_width = abs(ox2 - ox1)
                 if pixel_width > 14:
                     lbl_size = max(6, min(9, int(8 * self.scale)))
-                    self.canvas.create_text(
+                    self._draw_text_with_bg(
                         label_cx, label_cy,
                         text=f"T{global_tracker_idx+1}", font=('Helvetica', lbl_size), fill='#555555'
                     )
@@ -1449,6 +1449,19 @@ class SitePreviewWindow(tk.Toplevel):
             compass_x, compass_y - arrow_len - 8,
             text='N', font=('Helvetica', 9, 'bold'), fill='#333333'
         )
+
+    def _draw_text_with_bg(self, x, y, text, font, fill='#333333', anchor='center', bg='white', pad=2):
+        """Draw canvas text with a white background rectangle for readability."""
+        tid = self.canvas.create_text(x, y, text=text, font=font, fill=fill, anchor=anchor)
+        bbox = self.canvas.bbox(tid)
+        if bbox:
+            self.canvas.create_rectangle(
+                bbox[0] - pad, bbox[1] - pad,
+                bbox[2] + pad, bbox[3] + pad,
+                fill=bg, outline='', width=0
+            )
+            self.canvas.tag_raise(tid)
+        return tid
     
     def _draw_motor_alignment_lines(self):
         """Draw a driveline across each group at its motor Y position,
@@ -1795,7 +1808,7 @@ class SitePreviewWindow(tk.Toplevel):
             cx = (x1 + x2) / 2
             font_size = max(7, min(14, int(10 * self.scale)))
             label_y = y1 - font_size - 2
-            self.canvas.create_text(
+            self._draw_text_with_bg(
                 cx, label_y,
                 text=label, font=('Helvetica', font_size, 'bold'),
                 fill='#333333', anchor='s'
@@ -2148,20 +2161,20 @@ class SitePreviewWindow(tk.Toplevel):
             cx = (x1 + x2) / 2
             cy = (y1 + y2) / 2
             font_size = max(6, min(10, int(8 * self.scale)))
-            self.canvas.create_text(
+            self._draw_text_with_bg(
                 cx, cy,
                 text=label, font=('Helvetica', font_size, 'bold'),
-                fill='white'
+                fill='white', bg='black'
             )
             
             # Device count subtitle
             num_assigned = len(pad.get('assigned_devices', []))
             if num_assigned > 0:
                 sub_size = max(5, min(8, int(6 * self.scale)))
-                self.canvas.create_text(
+                self._draw_text_with_bg(
                     cx, cy + font_size + 2,
                     text=f"({num_assigned} devices)", font=('Helvetica', sub_size),
-                    fill='#CCCCCC'
+                    fill='#CCCCCC', bg='black'
                 )
     
     def hit_test_pad(self, cx, cy):
@@ -3627,7 +3640,7 @@ class SitePreviewWindow(tk.Toplevel):
                 
                 # Place label at the corner of the L
                 font_size = max(6, min(10, int(8 * self.scale)))
-                self.canvas.create_text(
+                self._draw_text_with_bg(
                     cx_corner, cy_corner - 8,
                     text=f"{total_dist:.0f} ft",
                     font=('Helvetica', font_size, 'bold'),

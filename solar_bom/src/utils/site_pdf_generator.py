@@ -400,7 +400,8 @@ def _draw_devices(ax, device_positions, device_label, pads):
         cx = dx + dw / 2
         ax.text(cx, dy - 1.0, label,
                 fontsize=5, fontweight='bold', color='#333333',
-                ha='center', va='bottom', fontfamily='sans-serif')
+                ha='center', va='bottom', fontfamily='sans-serif',
+                bbox=dict(facecolor='white', edgecolor='none', alpha=0.85, pad=1))
 
 
 def _draw_routes(ax, device_positions, pads, topology):
@@ -455,7 +456,8 @@ def _draw_pads(ax, pads):
         cx = px + pw / 2
         cy = py + ph / 2
         ax.text(cx, cy, label, fontsize=5, fontweight='bold',
-                color='white', ha='center', va='center', fontfamily='sans-serif')
+                color='white', ha='center', va='center', fontfamily='sans-serif',
+                bbox=dict(facecolor='black', edgecolor='none', alpha=0.75, pad=1))
 
         # Device count
         num_assigned = len(pad.get('assigned_devices', []))
