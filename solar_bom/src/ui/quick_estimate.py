@@ -4711,7 +4711,8 @@ class QuickEstimate(ttk.Frame):
             total_alloc_strings = allocation_result['summary']['total_strings']
             total_alloc_invs = allocation_result['summary']['total_inverters']
             total_dc_kw = (total_alloc_strings * modules_per_string * module_wattage) / 1000
-            
+            total_ac_kw = 0.0
+
             if topology == 'Central Inverter':
                 # For Central Inverter, allocation groups are CBs, not inverters.
                 # DC:AC uses the user-specified central inverter count.
@@ -4747,6 +4748,9 @@ class QuickEstimate(ttk.Frame):
                 'allocations': [],  # Backward compat
                 'central_inverter_count': self._get_int_var(self.central_inv_count_var, 1) if topology == 'Central Inverter' else 0,
             }
+            totals['total_dc_kw'] = round(total_dc_kw, 2)
+            totals['total_ac_kw'] = round(total_ac_kw, 2)
+            totals['total_modules'] = total_alloc_strings * modules_per_string
 
             # For Central Inverter, update device/combiner count from allocation
             # (allocation respects group boundaries, may differ from library estimate)
@@ -5473,9 +5477,15 @@ class QuickEstimate(ttk.Frame):
                 if hasattr(self, 'last_totals') and self.last_totals.get('inverter_summary'):
                     inv_sum = self.last_totals['inverter_summary']
                     info_items.append(("DC:AC Ratio (actual):", f"{inv_sum.get('actual_dc_ac', 0):.2f}"))
-                    info_items.append(("Strings per Inverter (target):", str(inv_sum.get('strings_per_inverter', ''))))
                     info_items.append(("Total Inverters:", str(inv_sum.get('total_inverters', ''))))
-                    info_items.append(("Split Trackers:", str(inv_sum.get('total_split_trackers', ''))))
+                    info_items.append(("Total Strings:", f"{inv_sum.get('total_strings', 0):,}"))
+                    lt = self.last_totals
+                    if lt.get('total_modules') is not None:
+                        info_items.append(("Total Modules:", f"{lt['total_modules']:,}"))
+                    if lt.get('total_dc_kw') is not None:
+                        info_items.append(("DC Capacity:", f"{lt['total_dc_kw']:,.2f} kW"))
+                    if lt.get('total_ac_kw') is not None:
+                        info_items.append(("AC Capacity:", f"{lt['total_ac_kw']:,.2f} kW"))
             
             if self.estimate_id and self.current_project:
                 est_data = self.current_project.quick_estimates.get(self.estimate_id, {})
@@ -5658,9 +5668,15 @@ class QuickEstimate(ttk.Frame):
                 if hasattr(self, 'last_totals') and self.last_totals.get('inverter_summary'):
                     inv_sum = self.last_totals['inverter_summary']
                     bom_info_items.append(("DC:AC Ratio (actual):", f"{inv_sum.get('actual_dc_ac', 0):.2f}"))
-                    bom_info_items.append(("Strings per Inverter:", str(inv_sum.get('strings_per_inverter', ''))))
                     bom_info_items.append(("Total Inverters:", str(inv_sum.get('total_inverters', ''))))
-                    bom_info_items.append(("Split Trackers:", str(inv_sum.get('total_split_trackers', ''))))
+                    bom_info_items.append(("Total Strings:", f"{inv_sum.get('total_strings', 0):,}"))
+                    lt = self.last_totals
+                    if lt.get('total_modules') is not None:
+                        bom_info_items.append(("Total Modules:", f"{lt['total_modules']:,}"))
+                    if lt.get('total_dc_kw') is not None:
+                        bom_info_items.append(("DC Capacity:", f"{lt['total_dc_kw']:,.2f} kW"))
+                    if lt.get('total_ac_kw') is not None:
+                        bom_info_items.append(("AC Capacity:", f"{lt['total_ac_kw']:,.2f} kW"))
             
             if self.estimate_id and self.current_project:
                 est_data = self.current_project.quick_estimates.get(self.estimate_id, {})
@@ -5821,12 +5837,9 @@ class QuickEstimate(ttk.Frame):
             return False
 
     def export_packet(self):
-        """Export a .zip packet containing the Excel BOM and a String Allocation PDF."""
-        import tempfile
-        import zipfile
+        """Export a PDF containing the String Allocation and Harness Drawings."""
         import os
 
-        # Ensure estimate is calculated
         self.calculate_estimate()
 
         if not self.selected_module:
@@ -5838,7 +5851,6 @@ class QuickEstimate(ttk.Frame):
             messagebox.showinfo("No Data", "Run Calculate Estimate first to generate preview data.")
             return
 
-        # Build suggested filename
         def clean_fn(s):
             return "".join(c for c in s if c.isalnum() or c in (' ', '-', '_')).strip()
 
@@ -5853,68 +5865,32 @@ class QuickEstimate(ttk.Frame):
             est_data = self.current_project.quick_estimates.get(self.estimate_id, {})
             estimate_name = clean_fn(est_data.get('name', 'Estimate'))
 
-        suggested_zip = f"{client}_{project_name}_Packet_{estimate_name}.zip"
-
-        zip_path = filedialog.asksaveasfilename(
-            defaultextension=".zip",
-            filetypes=[("ZIP files", "*.zip"), ("All files", "*.*")],
-            title="Export Packet (Excel BOM + Site PDF)",
-            initialfile=suggested_zip
-        )
-
-        if not zip_path:
+        table_corner = self._ask_table_corner()
+        if table_corner is None:
             return
 
-        tmp_dir = tempfile.mkdtemp()
-        try:
-            # --- Generate Excel BOM to temp file ---
-            lv_method_tag = clean_fn(self.lv_collection_var.get() if hasattr(self, 'lv_collection_var') else 'Wire Harness')
-            xlsx_name = f"{client}_{project_name}_Ampacity Quick eBOM_{estimate_name}_{lv_method_tag}.xlsx"
-            xlsx_path = os.path.join(tmp_dir, xlsx_name)
+        suggested_name = f"{client}_{project_name}_Site PDF_{estimate_name}.pdf"
 
-            excel_ok = self.export_to_excel(target_filepath=xlsx_path, silent=True)
-            if not excel_ok:
-                messagebox.showerror("Packet Error", "Failed to generate the Excel BOM.\nPacket export aborted.")
-                return
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".pdf",
+            filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")],
+            title="Export Site PDF with Harness Drawings",
+            initialfile=suggested_name,
+        )
+        if not filepath:
+            return
 
-            # --- Generate Site PDF ---
-            pdf_name = f"{client}_{project_name}_String Allocation_{estimate_name}.pdf"
-            pdf_path = os.path.join(tmp_dir, pdf_name)
-
-            pdf_ok = self._generate_site_pdf(pdf_path)
-            if not pdf_ok:
-                messagebox.showerror("Packet Error", "Failed to generate the Site PDF.\nPacket export aborted.")
-                return
-
-            # --- Zip both files ---
-            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-                zf.write(xlsx_path, xlsx_name)
-                zf.write(pdf_path, pdf_name)
-
-            # Try to open the containing folder
+        success = self._generate_site_pdf(filepath, include_wiring=True, table_corner=table_corner)
+        if success:
             try:
-                os.startfile(os.path.dirname(zip_path))
+                os.startfile(filepath)
             except Exception:
                 pass
+            messagebox.showinfo("Success", f"PDF exported to:\n{filepath}")
+        else:
+            messagebox.showerror("Error", "Failed to generate PDF.")
 
-            messagebox.showinfo("Success", f"Packet exported to:\n{zip_path}")
-
-        except PermissionError:
-            messagebox.showerror(
-                "Permission Error",
-                f"Cannot write to {zip_path}.\n\nThe file may be open. Please close it and try again."
-            )
-        except Exception as e:
-            messagebox.showerror("Packet Error", f"Failed to export packet:\n{str(e)}")
-        finally:
-            # Clean up temp files
-            import shutil
-            try:
-                shutil.rmtree(tmp_dir, ignore_errors=True)
-            except Exception:
-                pass
-
-    def _generate_site_pdf(self, filepath):
+    def _generate_site_pdf(self, filepath, include_wiring=True, table_corner='top-right'):
         """Generate the string allocation site PDF using current estimate data.
         
         Returns True on success, False on error.
@@ -5986,6 +5962,11 @@ class QuickEstimate(ttk.Frame):
             if self.selected_module:
                 mod = self.selected_module
                 project_info['module_info'] = f"{mod.manufacturer} {mod.model} ({mod.wattage}W)"
+                project_info['module_name'] = f"{mod.manufacturer} {mod.model}"
+
+            if self.selected_inverter:
+                inv = self.selected_inverter
+                project_info['inverter_info'] = f"{inv.manufacturer} {inv.model}"
 
             alloc_result = inv_summary.get('allocation_result', {})
             summary = alloc_result.get('summary', {})
@@ -5993,9 +5974,24 @@ class QuickEstimate(ttk.Frame):
             project_info['total_devices'] = f"{num_devices} {device_label}s"
             project_info['dc_ac_ratio'] = f"{inv_summary.get('actual_dc_ac', 0):.2f}"
             project_info['split_trackers'] = str(summary.get('total_split_trackers', ''))
+            project_info['inverter_qty'] = str(totals.get('string_inverters', ''))
+            project_info['dc_capacity_kw'] = f"{totals.get('total_dc_kw', 0):,.2f}"
+            project_info['ac_capacity_kw'] = f"{totals.get('total_ac_kw', 0):,.2f}"
+            project_info['total_modules'] = f"{totals.get('total_modules', 0):,}"
+
+            # --- Build tracker summary for system summary table ---
+            tracker_counts = {}
+            for group in self.groups:
+                for seg in group.get('segments', []):
+                    ref = seg.get('template_ref')
+                    qty = seg.get('quantity', 0)
+                    if ref and qty > 0:
+                        short = ref.split(' - ', 1)[1] if ' - ' in ref else ref
+                        tracker_counts[short] = tracker_counts.get(short, 0) + qty
+            project_info['tracker_summary'] = list(tracker_counts.items())
 
             # --- Build wiring specs for unique tracker templates ---
-            wiring_specs = self._gather_wiring_specs()
+            wiring_specs = self._gather_wiring_specs() if include_wiring else None
 
             result = generate_site_pdf(
                 filepath=filepath,
@@ -6009,11 +6005,42 @@ class QuickEstimate(ttk.Frame):
                 show_routes=True,
                 align_on_motor=True,
                 wiring_specs=wiring_specs,
+                table_corner=table_corner,
             )
             return result
 
         finally:
             temp_preview.destroy()
+
+    def _ask_table_corner(self):
+        """Ask the user where to place the system summary table on the PDF.
+        Returns 'top-right', 'bottom-right', or None if cancelled."""
+        import tkinter as tk
+        result = [None]
+
+        dialog = tk.Toplevel(self)
+        dialog.title("Summary Table Position")
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        tk.Label(dialog, text="Where should the System Summary table be placed?",
+                 padx=20, pady=12).pack()
+
+        btn_frame = tk.Frame(dialog)
+        btn_frame.pack(pady=(0, 15))
+
+        def choose(val):
+            result[0] = val
+            dialog.destroy()
+
+        tk.Button(btn_frame, text="Top Right", width=12,
+                  command=lambda: choose('top-right')).pack(side='left', padx=10)
+        tk.Button(btn_frame, text="Bottom Right", width=12,
+                  command=lambda: choose('bottom-right')).pack(side='left', padx=10)
+
+        dialog.bind('<Escape>', lambda e: dialog.destroy())
+        self.wait_window(dialog)
+        return result[0]
 
     def _gather_wiring_specs(self):
         """Gather unique tracker wiring specifications for DC cabling diagrams.
@@ -6148,6 +6175,10 @@ class QuickEstimate(ttk.Frame):
             est_data = self.current_project.quick_estimates.get(self.estimate_id, {})
             estimate_name = clean_fn(est_data.get('name', 'Estimate'))
 
+        table_corner = self._ask_table_corner()
+        if table_corner is None:
+            return
+
         suggested_name = f"{client}_{project_name}_String Allocation_{estimate_name}.pdf"
 
         filepath = filedialog.asksaveasfilename(
@@ -6159,7 +6190,7 @@ class QuickEstimate(ttk.Frame):
         if not filepath:
             return
 
-        success = self._generate_site_pdf(filepath)
+        success = self._generate_site_pdf(filepath, include_wiring=False, table_corner=table_corner)
         if success:
             import os
             try:

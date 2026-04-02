@@ -26,7 +26,7 @@ PAGE_HEIGHT = 11.0
 PAGE_MARGIN = 0.25
 
 # Layout regions (inches)
-SIDEBAR_WIDTH = 2.75
+SIDEBAR_WIDTH = 1.75
 DRAWING_LEFT = PAGE_MARGIN + 0.15
 DRAWING_BOTTOM = PAGE_MARGIN + 0.15
 DRAWING_TOP = PAGE_MARGIN + 0.15
@@ -53,7 +53,8 @@ def generate_site_pdf(filepath: str,
                       project_info: Dict[str, Any],
                       show_routes: bool = True,
                       align_on_motor: bool = True,
-                      wiring_specs: Optional[List[Dict]] = None) -> bool:
+                      wiring_specs: Optional[List[Dict]] = None,
+                      table_corner: str = 'top-right') -> bool:
     """
     Generate an 11x17 landscape PDF of the string allocation site preview,
     optionally followed by DC cabling wiring diagram pages.
@@ -81,7 +82,7 @@ def generate_site_pdf(filepath: str,
             # ===== Page 1: Site Preview =====
             fig = _create_site_page(group_layout, device_positions, pads,
                                      colors, topology, device_label, project_info,
-                                     show_routes, align_on_motor)
+                                     show_routes, align_on_motor, table_corner)
             pdf.savefig(fig)
             plt.close(fig)
 
@@ -104,7 +105,7 @@ def generate_site_pdf(filepath: str,
 
 def _create_site_page(group_layout, device_positions, pads, colors,
                        topology, device_label, project_info,
-                       show_routes, align_on_motor):
+                       show_routes, align_on_motor, table_corner='top-right'):
     """Create the Page 1 figure (site preview)."""
     fig = plt.figure(figsize=(PAGE_WIDTH, PAGE_HEIGHT))
 
@@ -173,6 +174,9 @@ def _create_site_page(group_layout, device_positions, pads, colors,
 
     # --- Draw sidebar titleblock ---
     _draw_sidebar(fig, project_info)
+
+    # --- Draw system summary table ---
+    _draw_summary_table(fig, project_info, corner=table_corner)
 
     # --- Draw page border ---
     _draw_page_border(fig)
@@ -489,6 +493,111 @@ def _draw_motor_alignment_lines(ax, group_layout):
         ax.plot([x_start, x_end], [y_start, y_end],
                 color='#FF8800', linewidth=0.4, linestyle='--', alpha=0.5)
 
+def _draw_summary_table(fig, project_info, corner='top-right'):
+    """Draw a system summary table in the drawing area just left of the titleblock.
+    corner: 'top-right' or 'bottom-right'
+    """
+    tracker_summary = project_info.get('tracker_summary', [])
+
+    HEADER_H   = 0.22
+    ROW_H      = 0.19
+    TABLE_W    = 3.0
+    FIXED_ROWS = 10
+    TOTAL_ROWS = FIXED_ROWS + (1 + len(tracker_summary) if tracker_summary else 0)
+
+    TABLE_H        = HEADER_H + TOTAL_ROWS * ROW_H
+    TABLE_RIGHT_IN = SIDEBAR_LEFT
+    TABLE_LEFT_IN  = TABLE_RIGHT_IN - TABLE_W
+
+    if corner == 'bottom-right':
+        TABLE_BOT_IN = PAGE_MARGIN
+        TABLE_TOP_IN = TABLE_BOT_IN + TABLE_H
+    else:  # top-right
+        TABLE_TOP_IN = PAGE_HEIGHT - PAGE_MARGIN
+        TABLE_BOT_IN = TABLE_TOP_IN - TABLE_H
+
+    ax = fig.add_axes([
+        TABLE_LEFT_IN / PAGE_WIDTH,
+        TABLE_BOT_IN  / PAGE_HEIGHT,
+        TABLE_W       / PAGE_WIDTH,
+        TABLE_H       / PAGE_HEIGHT,
+    ])
+    ax.set_xlim(0, TABLE_W)
+    ax.set_ylim(0, TABLE_H)
+    ax.axis('off')
+
+    LW   = 0.6
+    COL1 = TABLE_W * 0.52
+    W    = TABLE_W
+    H    = TABLE_H
+
+    # Outer border
+    ax.add_patch(Rectangle((0, 0), W, H,
+                            facecolor='white', edgecolor='black', linewidth=LW * 1.5))
+
+    # Header band
+    ax.add_patch(Rectangle((0, H - HEADER_H), W, HEADER_H,
+                            facecolor='#1A3A5C', edgecolor='black', linewidth=LW))
+    ax.text(W / 2, H - HEADER_H / 2, 'SYSTEM SUMMARY',
+            fontsize=6, fontweight='bold', color='white',
+            ha='center', va='center', fontfamily='sans-serif')
+
+    fixed_rows = [
+        ('Topology',      project_info.get('topology', '--')),
+        ('DC Capacity',   f"{project_info.get('dc_capacity_kw', '--')} kW"),
+        ('AC Capacity',   f"{project_info.get('ac_capacity_kw', '--')} kW"),
+        ('DC:AC Ratio',   project_info.get('dc_ac_ratio', '--')),
+        ('Total Modules', project_info.get('total_modules', '--')),
+        ('Total Strings', project_info.get('total_strings', '--')),
+        ('Devices',       project_info.get('total_devices', '--')),
+        ('Inverter Qty',  project_info.get('inverter_qty', '--')),
+        ('Inverter',      project_info.get('inverter_info', '--')),
+        ('Module',        project_info.get('module_name', '--')),
+    ]
+
+    current_y = H - HEADER_H
+
+    for i, (label, value) in enumerate(fixed_rows):
+        y_bot = current_y - ROW_H
+        if i % 2 == 0:
+            ax.add_patch(Rectangle((0, y_bot), W, ROW_H,
+                                   facecolor='#F0F4F8', edgecolor='none'))
+        ax.plot([0, W], [current_y, current_y], color='black', linewidth=LW * 0.7)
+        ax.plot([COL1, COL1], [y_bot, current_y], color='black', linewidth=LW * 0.7)
+        ax.text(COL1 * 0.05, y_bot + ROW_H / 2, label,
+                fontsize=5.5, color='#333333',
+                ha='left', va='center', fontfamily='sans-serif')
+        ax.text(COL1 + (W - COL1) * 0.05, y_bot + ROW_H / 2, value,
+                fontsize=5.2, fontweight='bold', color='#1A3A5C',
+                ha='left', va='center', fontfamily='sans-serif')
+        current_y = y_bot
+
+    if tracker_summary:
+        # Tracker subheader row
+        y_bot = current_y - ROW_H
+        ax.add_patch(Rectangle((0, y_bot), W, ROW_H,
+                               facecolor='#2C5282', edgecolor='none'))
+        ax.plot([0, W], [current_y, current_y], color='black', linewidth=LW * 0.7)
+        ax.text(W / 2, y_bot + ROW_H / 2, 'TRACKER SUMMARY',
+                fontsize=5.5, fontweight='bold', color='white',
+                ha='center', va='center', fontfamily='sans-serif')
+        current_y = y_bot
+
+        for i, (name, count) in enumerate(tracker_summary):
+            y_bot = current_y - ROW_H
+            if i % 2 == 0:
+                ax.add_patch(Rectangle((0, y_bot), W, ROW_H,
+                                       facecolor='#F0F4F8', edgecolor='none'))
+            ax.plot([0, W], [current_y, current_y], color='black', linewidth=LW * 0.7)
+            ax.plot([COL1, COL1], [y_bot, current_y], color='black', linewidth=LW * 0.7)
+            ax.text(COL1 * 0.05, y_bot + ROW_H / 2, name,
+                    fontsize=5.0, color='#333333',
+                    ha='left', va='center', fontfamily='sans-serif')
+            ax.text(COL1 + (W - COL1) * 0.05, y_bot + ROW_H / 2, str(count),
+                    fontsize=5.0, fontweight='bold', color='#1A3A5C',
+                    ha='left', va='center', fontfamily='sans-serif')
+            current_y = y_bot
+
 
 def _draw_compass(ax):
     """Draw a north arrow in the top-right corner of the drawing area."""
@@ -753,31 +862,20 @@ def _draw_sidebar(fig, project_info):
     if estimate:
         project_lines.append(f'ESTIMATE: {estimate.upper()}')
 
-    # Add technical summary lines
-    tech_parts = []
-    if topology:
-        tech_parts.append(topology)
-    if total_devices:
-        tech_parts.append(f'{total_devices}')
-    if total_strings:
-        tech_parts.append(f'{total_strings} Strings')
-    if dc_ac:
-        tech_parts.append(f'DC:AC {dc_ac}')
-    if split:
-        tech_parts.append(f'{split} Split Trackers')
-    if tech_parts:
-        project_lines.append(' | '.join(tech_parts))
+    project_lines = []
+    if customer:
+        project_lines.append(customer.upper())
+    if project_name:
+        project_lines.append(project_name.upper())
+    if location:
+        project_lines.append(location.upper())
+    if estimate:
+        project_lines.append(f'ESTIMATE: {estimate.upper()}')
 
-    if module_info:
-        project_lines.append(module_info.upper())
-
-    project_text = '\n'.join(project_lines)
     project_box_cy = (y_project_bot + y_project_top) / 2
-    project_box_height = y_project_top - y_project_bot
 
-    # Rotated 90° text (read from bottom to top)
-    ax.text(W / 2, project_box_cy, project_text,
-            fontsize=6.5, fontweight='bold', color='black',
+    ax.text(W / 2, project_box_cy, '\n'.join(project_lines),
+            fontsize=8, fontweight='bold', color='black',
             ha='center', va='center', fontfamily='sans-serif',
             rotation=90, linespacing=1.5)
 
@@ -1260,9 +1358,6 @@ def _draw_harness_routing(ax, string_xs, merge_x, y_top, y_merge,
 
     # Extender route from Y-connector — horizontal toward device
     hr_drop = y_range * 0.06
-    dist_to_device = abs(device_x - merge_x) if device_x is not None else 0
-    print(f"  [EXTENDER] {polarity_label} merge_x={merge_x:.2f} device_x={device_x} "
-          f"dist={dist_to_device:.2f} device_position={device_position}")
     if device_position == 'middle' and device_x is not None and abs(device_x - merge_x) > 0.5:
         # Horizontal run toward motor gap center
         inset = 0.8 if merge_x < device_x else -0.8
