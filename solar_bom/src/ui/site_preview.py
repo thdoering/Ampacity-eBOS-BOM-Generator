@@ -471,7 +471,7 @@ class SitePreviewWindow(tk.Toplevel):
             # Driveline angle: each tracker offset in Y by t_idx * pitch * tan(angle)
             driveline_angle_deg = group_data.get('driveline_angle', 0.0)
             driveline_angle_rad = math.radians(driveline_angle_deg)
-            driveline_tan = math.tan(driveline_angle_rad) if driveline_angle_deg > 0 else 0.0
+            driveline_tan = math.tan(driveline_angle_rad) if driveline_angle_deg != 0 else 0.0
             
             visual_min_y_base = 0.0
             visual_max_y_base = 0.0

@@ -735,7 +735,7 @@ class QuickEstimate(ttk.Frame):
             group_y = saved_y if saved_y is not None else 0.0
             
             driveline_angle_deg = group.get('driveline_angle', 0.0)
-            driveline_tan = math.tan(math.radians(driveline_angle_deg)) if driveline_angle_deg > 0 else 0.0
+            driveline_tan = math.tan(math.radians(driveline_angle_deg)) if driveline_angle_deg != 0 else 0.0
             
             grp_row_spacing = group.get('row_spacing_ft', 20.0)
             local_idx = 0
@@ -3963,14 +3963,14 @@ class QuickEstimate(ttk.Frame):
         # Driveline Angle
         ttk.Label(form_frame, text="Driveline Angle (°):").grid(row=2, column=0, sticky='w', pady=5)
         angle_var = tk.StringVar(value=str(group.get('driveline_angle', 0.0)))
-        angle_spinbox = ttk.Spinbox(form_frame, from_=0, to=45, increment=0.5,
+        angle_spinbox = ttk.Spinbox(form_frame, from_=-45, to=45, increment=0.5,
                                      textvariable=angle_var, width=8)
         angle_spinbox.grid(row=2, column=1, sticky='w', pady=5, padx=(10, 0))
         
         def on_angle_change(*args):
             try:
                 val = float(angle_var.get())
-                val = max(0.0, min(45.0, val))
+                val = max(-45.0, min(45.0, val))
                 group['driveline_angle'] = val
             except ValueError:
                 pass
@@ -4581,7 +4581,7 @@ class QuickEstimate(ttk.Frame):
 
             # Driveline angle for this group
             driveline_angle_deg = group.get('driveline_angle', 0.0)
-            driveline_tan = math.tan(math.radians(driveline_angle_deg)) if driveline_angle_deg > 0 else 0.0
+            driveline_tan = math.tan(math.radians(driveline_angle_deg)) if driveline_angle_deg != 0 else 0.0
 
             tracker_within_group = 0
             for seg in group['segments']:
