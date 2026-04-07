@@ -423,6 +423,28 @@
       "bifaciality_factor": null,
       "default_orientation": "Portrait",
       "cells_per_module": 72
+    },
+    "VSUN575N-144BMH-DG": {
+      "manufacturer": "VSUN",
+      "model": "VSUN575N-144BMH-DG",
+      "type": "Mono PERC",
+      "length_mm": 2278.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 575.0,
+      "vmp": 42.53,
+      "imp": 13.54,
+      "voc": 51.26,
+      "isc": 14.31,
+      "max_system_voltage": 1500,
+      "efficiency": null,
+      "temperature_coefficient_pmax": -0.3,
+      "temperature_coefficient_voc": -0.26,
+      "temperature_coefficient_isc": 0.046,
+      "bifaciality_factor": null,
+      "default_orientation": "Portrait",
+      "cells_per_module": 72
     }
   },
   "JA Solar": {

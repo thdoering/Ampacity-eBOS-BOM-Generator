@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-04-07
+
+### Added
+- **PDF Export — Site Preview**: New PDF deliverable of the string allocation site preview with professional titleblock and summary tables
+- **Background Labels**: Added background labels to site preview for better orientation and readability
+
+### Changed
+- Updated default values across the application
+
 ## [3.0.0] - 2026-03-20
 
 ### Added

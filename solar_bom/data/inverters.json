@@ -562,5 +562,36 @@
     "weight_kg": 75.0,
     "ip_rating": "IP65",
     "max_short_circuit_current": 53.0
+  },
+  "Solectria XGI 1500-1MW-600": {
+    "manufacturer": "Solectria",
+    "model": "XGI 1500-1MW-600",
+    "inverter_type": "String",
+    "rated_power_kw": 1000.0,
+    "max_dc_power_kw": 2500.0,
+    "max_efficiency": 98.0,
+    "mppt_channels": [
+      {
+        "max_input_current": 800.0,
+        "min_voltage": 860.0,
+        "max_voltage": 1450.0,
+        "max_power": 2500000.0,
+        "num_string_inputs": 4
+      }
+    ],
+    "mppt_configuration": "Independent",
+    "max_dc_voltage": 1500.0,
+    "startup_voltage": 860.0,
+    "nominal_ac_voltage": 600.0,
+    "max_ac_current": 960.0,
+    "power_factor": 0.99,
+    "dimensions_mm": [
+      1000,
+      600,
+      300
+    ],
+    "weight_kg": 75.0,
+    "ip_rating": "IP65",
+    "max_short_circuit_current": 2400.0
   }
 }
