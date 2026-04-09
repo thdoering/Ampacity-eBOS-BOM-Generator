@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import Dict, List, Optional, Set
 import json
+import re
 from ..models.block import BlockConfig, DeviceType, WiringType
 from ..models.device import HarnessConnection, CombinerBoxConfig
 from ..utils.calculations import STANDARD_FUSE_SIZES
@@ -719,7 +720,7 @@ class DeviceConfigurator(ttk.Frame):
         self.tree.delete(*self.tree.get_children())
         
         # Add combiner boxes
-        for combiner_id in sorted(self.combiner_configs.keys()):
+        for combiner_id in sorted(self.combiner_configs.keys(), key=lambda x: [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', x)]):
             config = self.combiner_configs[combiner_id]
             
             # Add combiner box as parent item

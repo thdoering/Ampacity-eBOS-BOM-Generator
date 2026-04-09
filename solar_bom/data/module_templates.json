@@ -1251,6 +1251,28 @@
       "bifaciality_factor": null,
       "default_orientation": "Portrait",
       "cells_per_module": 72
+    },
+    "Q.PEAK DUO XL-G10.3/BFG 485W": {
+      "manufacturer": "QCells",
+      "model": "Q.PEAK DUO XL-G10.3/BFG 485W",
+      "type": "Bifacial",
+      "length_mm": 2216.0,
+      "width_mm": 1045.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 485.0,
+      "vmp": 45.63,
+      "imp": 10.63,
+      "voc": 53.63,
+      "isc": 11.16,
+      "max_system_voltage": 1500,
+      "efficiency": null,
+      "temperature_coefficient_pmax": -0.34,
+      "temperature_coefficient_voc": -0.27,
+      "temperature_coefficient_isc": 0.04,
+      "bifaciality_factor": null,
+      "default_orientation": "Portrait",
+      "cells_per_module": 72
     }
   },
   "Heliene": {
@@ -1530,9 +1552,31 @@
     }
   },
   "Astronergy": {
-    "CHSM72M(DG)/F-BH": {
+    "CHSM72M(DG)/F-BH 555W": {
       "manufacturer": "Astronergy",
-      "model": "CHSM72M(DG)/F-BH",
+      "model": "CHSM72M(DG)/F-BH 555W",
+      "type": "Bifacial",
+      "length_mm": 2278.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 555.0,
+      "vmp": 42.44,
+      "imp": 13.08,
+      "voc": 50.5,
+      "isc": 13.89,
+      "max_system_voltage": 1500,
+      "efficiency": null,
+      "temperature_coefficient_pmax": -0.34,
+      "temperature_coefficient_voc": -0.25,
+      "temperature_coefficient_isc": 0.04,
+      "bifaciality_factor": null,
+      "default_orientation": "Portrait",
+      "cells_per_module": 72
+    },
+    "CHSM72M(DG)/F-BH 540W": {
+      "manufacturer": "Astronergy",
+      "model": "CHSM72M(DG)/F-BH 540W",
       "type": "Bifacial",
       "length_mm": 2278.0,
       "width_mm": 1134.0,
@@ -1552,9 +1596,9 @@
       "default_orientation": "Portrait",
       "cells_per_module": 72
     },
-    "CHSM72RN(DG)/F-BH": {
+    "CHSM72RN(DG)/F-BH 590W": {
       "manufacturer": "Astronergy",
-      "model": "CHSM72RN(DG)/F-BH",
+      "model": "CHSM72RN(DG)/F-BH 590W",
       "type": "Bifacial",
       "length_mm": 2382.0,
       "width_mm": 1134.0,

@@ -557,6 +557,25 @@ def _draw_summary_table(fig, project_info, corner='top-right'):
         ('Module',        project_info.get('module_name', '--')),
     ]
 
+    # Dynamic column split — measure longest label, add padding
+    all_labels = [r[0] for r in fixed_rows]
+    if tracker_summary:
+        all_labels.append('Trackers')
+        all_labels.extend([name for name, _ in tracker_summary])
+    _tmp_txt = ax.text(0, 0, '', fontsize=5.5, fontfamily='sans-serif')
+    fig.canvas.draw()
+    max_label_w = 0
+    for lbl in all_labels:
+        _tmp_txt.set_text(lbl)
+        bbox = _tmp_txt.get_window_extent(renderer=fig.canvas.get_renderer())
+        inv = ax.transData.inverted()
+        w_data = inv.transform((bbox.width, 0))[0] - inv.transform((0, 0))[0]
+        max_label_w = max(max_label_w, w_data)
+    _tmp_txt.remove()
+    COL1 = max_label_w + TABLE_W * 0.08  # pad ~8% of table width
+    COL1 = max(COL1, TABLE_W * 0.25)     # floor: don't go narrower than 25%
+    COL1 = min(COL1, TABLE_W * 0.45)     # ceiling: don't exceed 45%
+    
     current_y = H - HEADER_H
 
     for i, (label, value) in enumerate(fixed_rows):
