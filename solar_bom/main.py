@@ -642,17 +642,321 @@ class SolarBOMApplication:
         
         try:
             import json
+            from pathlib import Path
             
             # Update modified date before export
             self.current_project.update_modified_date()
             
-            with open(filepath, 'w') as f:
-                json.dump(self.current_project.to_dict(), f, indent=2)
+            # Start with the standard project dict
+            export_data = self.current_project.to_dict()
             
-            messagebox.showinfo("Success", f"Project exported successfully to:\n{filepath}")
+            # --- Embed tracker templates ---
+            embedded_tracker_templates = {}
+            try:
+                tracker_path = Path('data/tracker_templates.json')
+                if tracker_path.exists():
+                    with open(tracker_path, 'r') as f:
+                        all_tracker_data = json.load(f)
+                    
+                    # Flatten hierarchical format to find matching enabled templates
+                    flat_templates = {}
+                    if all_tracker_data:
+                        first_value = next(iter(all_tracker_data.values()))
+                        if isinstance(first_value, dict) and not any(
+                            key in first_value for key in ['module_orientation', 'modules_per_string']
+                        ):
+                            # Hierarchical format
+                            for manufacturer, template_group in all_tracker_data.items():
+                                for template_name, template_data in template_group.items():
+                                    unique_name = f"{manufacturer} - {template_name}"
+                                    flat_templates[unique_name] = template_data
+                        else:
+                            flat_templates = all_tracker_data
+                    
+                    # Only embed templates that this project actually uses
+                    for template_key in self.current_project.enabled_templates:
+                        if template_key in flat_templates:
+                            embedded_tracker_templates[template_key] = flat_templates[template_key]
+            except Exception as e:
+                print(f"Warning: Could not embed tracker templates: {e}")
+            
+            if embedded_tracker_templates:
+                export_data['embedded_tracker_templates'] = embedded_tracker_templates
+            
+            # --- Embed module templates ---
+            embedded_module_templates = {}
+            try:
+                module_path = Path('data/module_templates.json')
+                if module_path.exists():
+                    with open(module_path, 'r') as f:
+                        all_module_data = json.load(f)
+                    
+                    # Flatten hierarchical format
+                    flat_modules = {}
+                    if all_module_data:
+                        for manufacturer, models in all_module_data.items():
+                            if isinstance(models, dict):
+                                for model_name, model_data in models.items():
+                                    module_key = f"{manufacturer} {model_name}"
+                                    flat_modules[module_key] = model_data
+                                    flat_modules[module_key]['_manufacturer'] = manufacturer
+                                    flat_modules[module_key]['_model'] = model_name
+                    
+                    # Embed modules referenced by selected_modules
+                    for module_id in self.current_project.selected_modules:
+                        if module_id in flat_modules:
+                            embedded_module_templates[module_id] = flat_modules[module_id]
+                    
+                    # Also embed any modules referenced by embedded tracker templates
+                    for template_key, template_data in embedded_tracker_templates.items():
+                        module_spec = template_data.get('module_spec', {})
+                        mfr = module_spec.get('manufacturer', '')
+                        model = module_spec.get('model', '')
+                        module_id = f"{mfr} {model}"
+                        if module_id and module_id not in embedded_module_templates:
+                            if module_id in flat_modules:
+                                embedded_module_templates[module_id] = flat_modules[module_id]
+            except Exception as e:
+                print(f"Warning: Could not embed module templates: {e}")
+            
+            if embedded_module_templates:
+                export_data['embedded_module_templates'] = embedded_module_templates
+            
+            # --- Embed inverters ---
+            embedded_inverters = {}
+            try:
+                inverter_path = Path('data/inverters.json')
+                if inverter_path.exists():
+                    with open(inverter_path, 'r') as f:
+                        all_inverter_data = json.load(f)
+                    
+                    # Embed inverters referenced by selected_inverters
+                    for inverter_id in self.current_project.selected_inverters:
+                        if inverter_id in all_inverter_data:
+                            embedded_inverters[inverter_id] = all_inverter_data[inverter_id]
+                    
+                    # Also check blocks for inverter_id references
+                    for block_id, block_data in self.current_project.blocks.items():
+                        inv_id = None
+                        if isinstance(block_data, dict):
+                            inv_id = block_data.get('inverter_id')
+                        elif hasattr(block_data, 'inverter') and block_data.inverter:
+                            inv_id = f"{block_data.inverter.manufacturer} {block_data.inverter.model}"
+                        
+                        if inv_id and inv_id not in embedded_inverters:
+                            if inv_id in all_inverter_data:
+                                embedded_inverters[inv_id] = all_inverter_data[inv_id]
+            except Exception as e:
+                print(f"Warning: Could not embed inverters: {e}")
+            
+            if embedded_inverters:
+                export_data['embedded_inverters'] = embedded_inverters
+            
+            # Write the enriched export
+            with open(filepath, 'w') as f:
+                json.dump(export_data, f, indent=2)
+            
+            # Build summary of what was embedded
+            summary_parts = [f"Project exported successfully to:\n{filepath}"]
+            embedded_counts = []
+            if embedded_tracker_templates:
+                embedded_counts.append(f"{len(embedded_tracker_templates)} tracker template(s)")
+            if embedded_module_templates:
+                embedded_counts.append(f"{len(embedded_module_templates)} module(s)")
+            if embedded_inverters:
+                embedded_counts.append(f"{len(embedded_inverters)} inverter(s)")
+            
+            if embedded_counts:
+                summary_parts.append(f"\nEmbedded equipment data: {', '.join(embedded_counts)}")
+            
+            messagebox.showinfo("Success", '\n'.join(summary_parts))
         except Exception as e:
             messagebox.showerror("Export Error", f"Failed to export project:\n{str(e)}")
     
+    def _merge_embedded_equipment(self, data):
+        """Merge embedded equipment data from an imported .ebom file into local libraries.
+        
+        Prompts user for conflicts. Returns a summary dict of what was added/skipped.
+        """
+        import json
+        from pathlib import Path
+        
+        summary = {'tracker_added': 0, 'tracker_skipped': 0, 'tracker_overwritten': 0,
+                    'module_added': 0, 'module_skipped': 0, 'module_overwritten': 0,
+                    'inverter_added': 0, 'inverter_skipped': 0, 'inverter_overwritten': 0}
+        
+        overwrite_all = {'tracker': None, 'module': None, 'inverter': None}
+        
+        def prompt_conflict(item_type, item_name, overwrite_key):
+            """Prompt user for a single conflict. Returns 'overwrite', 'skip', or 'skip_all'."""
+            if overwrite_all[overwrite_key] is not None:
+                return overwrite_all[overwrite_key]
+            
+            result = messagebox.askyesnocancel(
+                f"{item_type} Conflict",
+                f"A {item_type.lower()} named '{item_name}' already exists locally "
+                f"but differs from the imported version.\n\n"
+                f"Yes = Overwrite local with imported\n"
+                f"No = Skip (keep local)\n"
+                f"Cancel = Skip all remaining {item_type.lower()} conflicts"
+            )
+            
+            if result is True:
+                return 'overwrite'
+            elif result is False:
+                return 'skip'
+            else:  # Cancel
+                overwrite_all[overwrite_key] = 'skip'
+                return 'skip'
+        
+        # --- Merge tracker templates ---
+        embedded_trackers = data.pop('embedded_tracker_templates', None)
+        if embedded_trackers:
+            try:
+                tracker_path = Path('data/tracker_templates.json')
+                tracker_path.parent.mkdir(parents=True, exist_ok=True)
+                
+                # Load existing local file (hierarchical format)
+                local_hierarchical = {}
+                if tracker_path.exists():
+                    with open(tracker_path, 'r') as f:
+                        content = f.read().strip()
+                        local_hierarchical = json.loads(content) if content else {}
+                
+                # Flatten local templates for comparison
+                local_flat = {}
+                if local_hierarchical:
+                    first_value = next(iter(local_hierarchical.values()), None)
+                    if isinstance(first_value, dict) and not any(
+                        key in first_value for key in ['module_orientation', 'modules_per_string']
+                    ):
+                        for mfr, group in local_hierarchical.items():
+                            for tname, tdata in group.items():
+                                local_flat[f"{mfr} - {tname}"] = tdata
+                    else:
+                        local_flat = dict(local_hierarchical)
+                
+                for template_key, template_data in embedded_trackers.items():
+                    if template_key in local_flat:
+                        # Check if they're actually different
+                        if json.dumps(local_flat[template_key], sort_keys=True) == json.dumps(template_data, sort_keys=True):
+                            summary['tracker_skipped'] += 1
+                            continue
+                        
+                        action = prompt_conflict('Tracker Template', template_key, 'tracker')
+                        if action == 'skip':
+                            summary['tracker_skipped'] += 1
+                            continue
+                        summary['tracker_overwritten'] += 1
+                    else:
+                        summary['tracker_added'] += 1
+                    
+                    # Insert into hierarchical structure
+                    # Template key format: "Manufacturer - Template Name"
+                    if ' - ' in template_key:
+                        mfr, tname = template_key.split(' - ', 1)
+                    else:
+                        mfr = template_data.get('module_spec', {}).get('manufacturer', 'Imported')
+                        tname = template_key
+                    
+                    if mfr not in local_hierarchical:
+                        local_hierarchical[mfr] = {}
+                    local_hierarchical[mfr][tname] = template_data
+                
+                # Save updated file
+                with open(tracker_path, 'w') as f:
+                    json.dump(local_hierarchical, f, indent=2)
+                    
+            except Exception as e:
+                print(f"Warning: Error merging tracker templates: {e}")
+        
+        # --- Merge module templates ---
+        embedded_modules = data.pop('embedded_module_templates', None)
+        if embedded_modules:
+            try:
+                module_path = Path('data/module_templates.json')
+                module_path.parent.mkdir(parents=True, exist_ok=True)
+                
+                local_modules = {}
+                if module_path.exists():
+                    with open(module_path, 'r') as f:
+                        content = f.read().strip()
+                        local_modules = json.loads(content) if content else {}
+                
+                for module_key, module_data in embedded_modules.items():
+                    # Extract manufacturer and model from the embedded data or key
+                    mfr = module_data.pop('_manufacturer', None)
+                    model = module_data.pop('_model', None)
+                    
+                    if not mfr or not model:
+                        # Try to extract from the key "Manufacturer Model"
+                        mfr = module_data.get('manufacturer', 'Unknown')
+                        model = module_data.get('model', module_key)
+                    
+                    # Check if exists locally
+                    local_model_data = local_modules.get(mfr, {}).get(model)
+                    
+                    if local_model_data is not None:
+                        # Check if different
+                        if json.dumps(local_model_data, sort_keys=True) == json.dumps(module_data, sort_keys=True):
+                            summary['module_skipped'] += 1
+                            continue
+                        
+                        action = prompt_conflict('Module', f"{mfr} {model}", 'module')
+                        if action == 'skip':
+                            summary['module_skipped'] += 1
+                            continue
+                        summary['module_overwritten'] += 1
+                    else:
+                        summary['module_added'] += 1
+                    
+                    if mfr not in local_modules:
+                        local_modules[mfr] = {}
+                    local_modules[mfr][model] = module_data
+                
+                with open(module_path, 'w') as f:
+                    json.dump(local_modules, f, indent=2)
+                    
+            except Exception as e:
+                print(f"Warning: Error merging module templates: {e}")
+        
+        # --- Merge inverters ---
+        embedded_inverters = data.pop('embedded_inverters', None)
+        if embedded_inverters:
+            try:
+                inverter_path = Path('data/inverters.json')
+                inverter_path.parent.mkdir(parents=True, exist_ok=True)
+                
+                local_inverters = {}
+                if inverter_path.exists():
+                    with open(inverter_path, 'r') as f:
+                        content = f.read().strip()
+                        local_inverters = json.loads(content) if content else {}
+                
+                for inv_key, inv_data in embedded_inverters.items():
+                    if inv_key in local_inverters:
+                        if json.dumps(local_inverters[inv_key], sort_keys=True) == json.dumps(inv_data, sort_keys=True):
+                            summary['inverter_skipped'] += 1
+                            continue
+                        
+                        action = prompt_conflict('Inverter', inv_key, 'inverter')
+                        if action == 'skip':
+                            summary['inverter_skipped'] += 1
+                            continue
+                        summary['inverter_overwritten'] += 1
+                    else:
+                        summary['inverter_added'] += 1
+                    
+                    local_inverters[inv_key] = inv_data
+                
+                with open(inverter_path, 'w') as f:
+                    json.dump(local_inverters, f, indent=2)
+                    
+            except Exception as e:
+                print(f"Warning: Error merging inverters: {e}")
+        
+        return summary
+
     def import_project(self):
         """Import a .ebom project file and copy it to local projects folder"""
         filepath = filedialog.askopenfilename(
@@ -672,6 +976,10 @@ class SolarBOMApplication:
             # Load the project from the external file
             with open(filepath, 'r') as f:
                 data = json.load(f)
+            
+            # Merge embedded equipment into local libraries BEFORE creating Project
+            # (This also pops the embedded_ keys out of data so from_dict ignores them)
+            equipment_summary = self._merge_embedded_equipment(data)
             
             project = Project.from_dict(data)
             
@@ -703,10 +1011,30 @@ class SolarBOMApplication:
             
             # Save to local projects folder
             if project_manager.save_project(project):
-                messagebox.showinfo(
-                    "Success", 
-                    f"Project '{project.metadata.name}' imported successfully!"
-                )
+                # Build success message with equipment summary
+                msg_parts = [f"Project '{project.metadata.name}' imported successfully!"]
+                
+                equip_lines = []
+                for equip_type, label in [('tracker', 'Tracker templates'), 
+                                           ('module', 'Modules'), 
+                                           ('inverter', 'Inverters')]:
+                    added = equipment_summary.get(f'{equip_type}_added', 0)
+                    overwritten = equipment_summary.get(f'{equip_type}_overwritten', 0)
+                    skipped = equipment_summary.get(f'{equip_type}_skipped', 0)
+                    total = added + overwritten + skipped
+                    if total > 0:
+                        parts = []
+                        if added: parts.append(f"{added} added")
+                        if overwritten: parts.append(f"{overwritten} overwritten")
+                        if skipped: parts.append(f"{skipped} skipped")
+                        equip_lines.append(f"  {label}: {', '.join(parts)}")
+                
+                if equip_lines:
+                    msg_parts.append(f"\nEquipment library updates:")
+                    msg_parts.extend(equip_lines)
+                
+                messagebox.showinfo("Success", '\n'.join(msg_parts))
+                
                 # Open the imported project
                 self.load_project(project)
             else:

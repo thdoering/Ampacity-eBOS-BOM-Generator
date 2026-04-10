@@ -1297,6 +1297,28 @@
       "bifaciality_factor": null,
       "default_orientation": "Portrait",
       "cells_per_module": 72
+    },
+    "156HC M10 SL 585W": {
+      "manufacturer": "Heliene",
+      "model": "156HC M10 SL 585W",
+      "type": "Bifacial",
+      "length_mm": 2464.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 585.0,
+      "vmp": 45.85,
+      "imp": 12.77,
+      "voc": 54.41,
+      "isc": 13.5,
+      "max_system_voltage": 1500,
+      "efficiency": null,
+      "temperature_coefficient_pmax": -0.34,
+      "temperature_coefficient_voc": -0.25,
+      "temperature_coefficient_isc": 0.05,
+      "bifaciality_factor": null,
+      "default_orientation": "Portrait",
+      "cells_per_module": 72
     }
   },
   "Hyperion": {

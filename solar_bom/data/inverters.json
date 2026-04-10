@@ -593,5 +593,197 @@
     "weight_kg": 75.0,
     "ip_rating": "IP65",
     "max_short_circuit_current": 2400.0
+  },
+  "SMA Sunny Central 2660 UP-US": {
+    "manufacturer": "SMA",
+    "model": "Sunny Central 2660 UP-US",
+    "inverter_type": "Central",
+    "rated_power_kw": 2267.0,
+    "max_dc_power_kw": 2134.0,
+    "max_efficiency": 98.0,
+    "mppt_channels": [
+      {
+        "max_input_current": 3200.0,
+        "min_voltage": 880.0,
+        "max_voltage": 1325.0,
+        "max_power": 88916.66666666667,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 3200.0,
+        "min_voltage": 880.0,
+        "max_voltage": 1325.0,
+        "max_power": 88916.66666666667,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 3200.0,
+        "min_voltage": 880.0,
+        "max_voltage": 1325.0,
+        "max_power": 88916.66666666667,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 3200.0,
+        "min_voltage": 880.0,
+        "max_voltage": 1325.0,
+        "max_power": 88916.66666666667,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 3200.0,
+        "min_voltage": 880.0,
+        "max_voltage": 1325.0,
+        "max_power": 88916.66666666667,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 3200.0,
+        "min_voltage": 880.0,
+        "max_voltage": 1325.0,
+        "max_power": 88916.66666666667,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 3200.0,
+        "min_voltage": 880.0,
+        "max_voltage": 1325.0,
+        "max_power": 88916.66666666667,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 3200.0,
+        "min_voltage": 880.0,
+        "max_voltage": 1325.0,
+        "max_power": 88916.66666666667,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 3200.0,
+        "min_voltage": 880.0,
+        "max_voltage": 1325.0,
+        "max_power": 88916.66666666667,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 3200.0,
+        "min_voltage": 880.0,
+        "max_voltage": 1325.0,
+        "max_power": 88916.66666666667,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 3200.0,
+        "min_voltage": 880.0,
+        "max_voltage": 1325.0,
+        "max_power": 88916.66666666667,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 3200.0,
+        "min_voltage": 880.0,
+        "max_voltage": 1325.0,
+        "max_power": 88916.66666666667,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 3200.0,
+        "min_voltage": 880.0,
+        "max_voltage": 1325.0,
+        "max_power": 88916.66666666667,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 3200.0,
+        "min_voltage": 880.0,
+        "max_voltage": 1325.0,
+        "max_power": 88916.66666666667,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 3200.0,
+        "min_voltage": 880.0,
+        "max_voltage": 1325.0,
+        "max_power": 88916.66666666667,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 3200.0,
+        "min_voltage": 880.0,
+        "max_voltage": 1325.0,
+        "max_power": 88916.66666666667,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 3200.0,
+        "min_voltage": 880.0,
+        "max_voltage": 1325.0,
+        "max_power": 88916.66666666667,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 3200.0,
+        "min_voltage": 880.0,
+        "max_voltage": 1325.0,
+        "max_power": 88916.66666666667,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 3200.0,
+        "min_voltage": 880.0,
+        "max_voltage": 1325.0,
+        "max_power": 88916.66666666667,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 3200.0,
+        "min_voltage": 880.0,
+        "max_voltage": 1325.0,
+        "max_power": 88916.66666666667,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 3200.0,
+        "min_voltage": 880.0,
+        "max_voltage": 1325.0,
+        "max_power": 88916.66666666667,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 3200.0,
+        "min_voltage": 880.0,
+        "max_voltage": 1325.0,
+        "max_power": 88916.66666666667,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 3200.0,
+        "min_voltage": 880.0,
+        "max_voltage": 1325.0,
+        "max_power": 88916.66666666667,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 3200.0,
+        "min_voltage": 880.0,
+        "max_voltage": 1325.0,
+        "max_power": 88916.66666666667,
+        "num_string_inputs": 2
+      }
+    ],
+    "mppt_configuration": "Independent",
+    "max_dc_voltage": 1500.0,
+    "startup_voltage": 880.0,
+    "nominal_ac_voltage": 720.0,
+    "max_ac_current": 2566.0,
+    "power_factor": 0.99,
+    "dimensions_mm": [
+      1000,
+      600,
+      300
+    ],
+    "weight_kg": 75.0,
+    "ip_rating": "IP65",
+    "max_short_circuit_current": 4800.0
   }
 }

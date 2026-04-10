@@ -9252,6 +9252,36 @@
         "isc": 14.06,
         "max_system_voltage": 1500
       }
+    },
+    "NXT-12-585W-12-2P": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 24,
+      "strings_per_tracker": 0.5,
+      "module_spacing_m": 0.01,
+      "has_motor": false,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 0,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 0,
+      "motor_split_north": 12,
+      "motor_split_south": 12,
+      "modules_high": 2,
+      "partial_string_side": "south",
+      "module_spec": {
+        "manufacturer": "Heliene",
+        "model": "156HC M10 SL 585W",
+        "type": "Bifacial",
+        "length_mm": 2464.0,
+        "width_mm": 1134.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 585.0,
+        "vmp": 45.85,
+        "imp": 12.77,
+        "voc": 54.41,
+        "isc": 13.5,
+        "max_system_voltage": 1500
+      }
     }
   },
   "Hyperion": {

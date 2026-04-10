@@ -982,14 +982,23 @@ class TrackerTemplateCreator(ttk.Frame):
 
         # Calculate layout based on motor placement type
         if template.motor_placement_type == "middle_of_string":
+            # Partial string info
+            partial_mods = template.partial_module_count
+            partial_side = getattr(template, 'partial_string_side', 'north')
+            partial_north = partial_mods if partial_side == 'north' else 0
+            partial_south = partial_mods if partial_side == 'south' else 0
+
             # Calculate total height for middle_of_string placement
-            total_modules = template.strings_per_tracker * template.modules_per_string
-            total_height = (total_modules * module_height) + \
-                        ((total_modules - 1) * template.module_spacing_m) + \
-                        template.motor_gap_m
+            total_full_modules = template.full_string_count * template.modules_per_string
+            total_all_modules = total_full_modules + partial_mods
+            total_height = (total_all_modules * module_height) + \
+                        ((total_all_modules - 1) * template.module_spacing_m) + \
+                        (template.motor_gap_m if getattr(template, 'has_motor', True) else 0)
             
-            scale = min(280 / total_tracker_width, 580 / total_height)
+            scale = min(280 / total_tracker_width, 580 / max(total_height, 0.1))
             x_start = (300 - total_tracker_width * scale) / 2
+            
+            partial_color = '#FFD700'  # Gold for partial string modules
             
             # Draw torque tube (centered across all columns)
             self.canvas.create_line(
@@ -1005,6 +1014,16 @@ class TrackerTemplateCreator(ttk.Frame):
                 
                 # Draw strings
                 current_y = 10
+
+                # Draw partial string on north (if applicable)
+                for i in range(partial_north):
+                    self.canvas.create_rectangle(
+                        x_center, current_y,
+                        x_center + module_width * scale, current_y + module_height * scale,
+                        fill=partial_color, outline="orange", tags=f"module_col_{col}_partial_north"
+                    )
+                    current_y += (module_height + template.module_spacing_m) * scale
+
                 for string_idx in range(template.full_string_count):
                     if string_idx + 1 == template.motor_string_index:  # This string has the motor
                         # Draw north modules
@@ -1055,6 +1074,16 @@ class TrackerTemplateCreator(ttk.Frame):
                             )
                         
                         current_y += (template.modules_per_string * (module_height + template.module_spacing_m)) * scale
+
+                # Draw partial string on south (if applicable)
+                for i in range(partial_south):
+                    self.canvas.create_rectangle(
+                        x_center, current_y,
+                        x_center + module_width * scale, current_y + module_height * scale,
+                        fill=partial_color, outline="orange", tags=f"module_col_{col}_partial_south"
+                    )
+                    current_y += (module_height + template.module_spacing_m) * scale
+
         else:
             # Original between_strings logic
             motor_position = template.get_motor_position()
