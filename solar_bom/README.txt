@@ -1,34 +1,38 @@
 ================================================================================
-Solar eBOS BOM Generator v3.1.0
+Solar eBOS BOM Generator v3.2.0
 ================================================================================
 
 INSTALLATION INSTRUCTIONS
 -------------------------
 
 1. Download the executable from SharePoint
-   - Click on "Solar eBOS BOM Generator v3.1.0.exe"
+   - Click on "Solar eBOS BOM Generator v3.2.0.exe"
    - When you see the warning "isn't commonly downloaded", click the three dots (...)
    - Click "Keep"
    - Confirm again if prompted
 
 2. Run the Application
    - Navigate to your Downloads folder
-   - Double-click "Solar eBOS BOM Generator v3.1.0.exe"
+   - Double-click "Solar eBOS BOM Generator v3.2.0.exe"
    - If Windows SmartScreen appears, click "More info" then "Run anyway"
 
 This is our internal tool - these warnings are normal for unsigned applications.
 
-WHAT'S NEW IN VERSION 3.1.0 (April 7, 2026)
+WHAT'S NEW IN VERSION 3.2.0 (April 10, 2026)
 ----------------------------------------------
 
-NEW FEATURES:
-- PDF Export — Site Preview: Generate a PDF deliverable of the string
-  allocation site preview with professional titleblock and summary tables
-- Background Labels: Added background labels to site preview for better
-  orientation and readability
-
 IMPROVEMENTS:
-- Updated default values across the application
+- Driveline Angle Range: Expanded from 0-45 to -45 to 45 degrees
+- Import/Export: Now includes module, inverter, and tracker template
+  data so equipment libraries transfer with the project file
+
+BUG FIXES:
+- Fixed sorting bug in the Configure Device tab
+
+PREVIOUS VERSION HIGHLIGHTS (v3.1.0):
+- PDF Export of Site Preview with professional titleblock
+- Background labels in site preview
+- Updated default values
 
 PREVIOUS VERSION HIGHLIGHTS (v3.0.0):
 - Quick Estimate Overhaul with site preview, tracker templates, inverter pads

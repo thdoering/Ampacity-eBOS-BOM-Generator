@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0] - 2026-04-10
+
+### Changed
+- **Driveline Angle Range**: Expanded driveline angle range from 0–45° to -45–45° to support negative angles
+
+### Fixed
+- **Configure Device Sorting**: Fixed sorting bug in the Configure Device tab
+
+### Enhanced
+- **Import/Export Equipment Data**: Project import/export now includes module, inverter, and tracker template information so equipment libraries don't have to be recreated by the importer
+
 ## [3.1.0] - 2026-04-07
 
 ### Added
