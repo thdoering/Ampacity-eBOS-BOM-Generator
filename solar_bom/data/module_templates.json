@@ -1640,5 +1640,51 @@
       "default_orientation": "Portrait",
       "cells_per_module": 72
     }
+  },
+  "SEG Solar": {
+    "SEG-590-BTA-BG": {
+      "manufacturer": "SEG Solar",
+      "model": "SEG-590-BTA-BG",
+      "type": "Mono PERC",
+      "length_mm": 2278.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 590.0,
+      "vmp": 44.43,
+      "imp": 13.28,
+      "voc": 52.37,
+      "isc": 13.94,
+      "max_system_voltage": 1500,
+      "efficiency": null,
+      "temperature_coefficient_pmax": -0.3,
+      "temperature_coefficient_voc": -0.25,
+      "temperature_coefficient_isc": 0.046,
+      "bifaciality_factor": null,
+      "default_orientation": "Portrait",
+      "cells_per_module": 72
+    },
+    "SEG-595-BTA-BG": {
+      "manufacturer": "SEG Solar",
+      "model": "SEG-595-BTA-BG",
+      "type": "Mono PERC",
+      "length_mm": 2278.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 595.0,
+      "vmp": 44.64,
+      "imp": 13.33,
+      "voc": 52.58,
+      "isc": 13.99,
+      "max_system_voltage": 1500,
+      "efficiency": null,
+      "temperature_coefficient_pmax": -0.3,
+      "temperature_coefficient_voc": -0.25,
+      "temperature_coefficient_isc": 0.046,
+      "bifaciality_factor": null,
+      "default_orientation": "Portrait",
+      "cells_per_module": 72
+    }
   }
 }

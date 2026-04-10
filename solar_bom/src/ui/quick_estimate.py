@@ -2475,6 +2475,11 @@ class QuickEstimate(ttk.Frame):
             )
             self._update_strings_per_inverter()
             self._on_inverter_changed_wire_sizing()
+            # Add inverter to project's selected_inverters so export embeds it
+            if self.current_project and inv:
+                inv_id = f"{inv.manufacturer} {inv.model}"
+                if inv_id not in self.current_project.selected_inverters:
+                    self.current_project.selected_inverters.append(inv_id)
             # Auto-save when inverter changes (but not during load)
             if not getattr(self, '_loading', False):
                 self._auto_unlock_allocation()

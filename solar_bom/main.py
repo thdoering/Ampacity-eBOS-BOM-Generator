@@ -749,6 +749,13 @@ class SolarBOMApplication:
             except Exception as e:
                 print(f"Warning: Could not embed inverters: {e}")
             
+            # Also check Quick Estimate data for inverter references
+            for est_id, est_data in self.current_project.quick_estimates.items():
+                inv_name = est_data.get('inverter_name', '')
+                if inv_name and inv_name not in embedded_inverters:
+                    if inv_name in all_inverter_data:
+                        embedded_inverters[inv_name] = all_inverter_data[inv_name]
+
             if embedded_inverters:
                 export_data['embedded_inverters'] = embedded_inverters
             
