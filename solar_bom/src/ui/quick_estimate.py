@@ -1380,6 +1380,15 @@ class QuickEstimate(ttk.Frame):
                         if spt > 0:
                             string_counts.add(spt)
         
+        # Also include string counts from split tracker harness portions
+        split_details = getattr(self, '_split_tracker_details', {})
+        tracker_seg_map = getattr(self, '_tracker_to_segment', [])
+        for tidx, details in split_details.items():
+            for portion in details.get('portions', []):
+                for h_size in portion.get('harnesses', []):
+                    if h_size > 0:
+                        string_counts.add(h_size)
+
         result = sorted(string_counts)
 
         return result
@@ -1407,7 +1416,24 @@ class QuickEstimate(ttk.Frame):
         entry = by_sc.get(num_strings) or by_sc.get(str(num_strings))
         if entry:
             return entry.get(cable_type, '10 AWG')
-        
+
+        # No exact match — find the nearest configured string count.
+        # Split trackers (e.g. 1-string) inherit from the closest configured count.
+        if by_sc and num_strings is not None:
+            int_keys = []
+            for k in by_sc.keys():
+                try:
+                    int_keys.append(int(k))
+                except (ValueError, TypeError):
+                    pass
+            if int_keys:
+                # Prefer the closest count <= num_strings; otherwise use the minimum
+                floor_keys = [k for k in int_keys if k <= num_strings]
+                closest = max(floor_keys) if floor_keys else min(int_keys)
+                fallback_entry = by_sc.get(closest) or by_sc.get(str(closest))
+                if fallback_entry:
+                    return fallback_entry.get(cable_type, '10 AWG')
+
         return '10 AWG'
     
     def _gauge_to_string_count(self, cable_type, gauge):
