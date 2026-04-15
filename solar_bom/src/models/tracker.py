@@ -101,6 +101,54 @@ class TrackerPosition:
         self._polarity_convention = polarity_convention_value
         self._device_y = device_y
 
+    def _get_module_physical_position(self, row, col):
+        """Convert a module grid position (row, col) to physical (x, y) coordinates.
+        row = position along tracker (0=north), col = 0(west) or 1(east).
+        Returns (x, y) where x is the center of the module column, y is the center of the module row."""
+        
+        if not self.template:
+            return (0, 0)
+        
+        if self.template.module_orientation == ModuleOrientation.PORTRAIT:
+            module_height = self.template.module_spec.width_mm / 1000
+            module_width = self.template.module_spec.length_mm / 1000
+        else:
+            module_height = self.template.module_spec.length_mm / 1000
+            module_width = self.template.module_spec.width_mm / 1000
+        
+        # X: center of the column
+        x = col * module_width + module_width / 2
+        
+        # Y: need to account for motor gap
+        module_step = module_height + self.template.module_spacing_m
+        
+        partial_mods = self.template.partial_module_count
+        partial_side = getattr(self.template, 'partial_string_side', 'north')
+        partial_north = partial_mods if partial_side == 'north' else 0
+        
+        has_motor = getattr(self.template, 'has_motor', True)
+        
+        # Determine at which row the motor gap falls
+        motor_row = None
+        if has_motor:
+            if self.template.motor_placement_type == "middle_of_string":
+                motor_row = partial_north
+                for s in range(self.template.motor_string_index - 1):
+                    motor_row += self.template.modules_per_string
+                motor_row += self.template.motor_split_north
+            else:
+                motor_position = self.template.get_motor_position()
+                motor_row = partial_north + motor_position * self.template.modules_per_string
+        
+        y = row * module_step
+        if motor_row is not None and row >= motor_row:
+            y += self.template.motor_gap_m
+        
+        # Return center of module
+        y += module_height / 2
+        
+        return (x, y)
+
     def calculate_string_positions(self) -> None:
         """Calculate string positions and their source points"""
         if not self.template:
@@ -109,6 +157,40 @@ class TrackerPosition:
 
         # Clear existing strings
         self.strings.clear()
+
+        # If source_point_config is set (2P+ custom stringing), use it directly
+        if (self.template.source_point_config and 
+            self.template.modules_high >= 2):
+            
+            if self.template.module_orientation == ModuleOrientation.PORTRAIT:
+                module_width = self.template.module_spec.length_mm / 1000
+            else:
+                module_width = self.template.module_spec.width_mm / 1000
+            
+            for sp in self.template.source_point_config:
+                pos_row, pos_col = sp['positive']
+                neg_row, neg_col = sp['negative']
+                
+                pos_x, pos_y = self._get_module_physical_position(pos_row, pos_col)
+                neg_x, neg_y = self._get_module_physical_position(neg_row, neg_col)
+                
+                string = StringPosition(
+                    index=sp['string_index'],
+                    positive_source_x=pos_x,
+                    positive_source_y=pos_y,
+                    negative_source_x=neg_x,
+                    negative_source_y=neg_y,
+                    num_modules=self.template.modules_per_string
+                )
+                self.strings.append(string)
+            
+            # Apply polarity convention if set
+            if hasattr(self, '_polarity_convention') and self._polarity_convention:
+                self._apply_polarity_convention(
+                    self._polarity_convention,
+                    getattr(self, '_device_y', None)
+                )
+            return
 
         # Get module dimensions based on orientation
         if self.template.module_orientation == ModuleOrientation.PORTRAIT:
@@ -253,6 +335,12 @@ class TrackerTemplate:
     # Multi-module-high configuration (1p, 2p, 4p, 1l, 2l, 4l)
     # Each column of stacked modules is a separate string
     modules_high: int = 1  # Number of modules stacked E/W (1, 2, or 4)
+
+    # Source point configuration for multi-row trackers (2P+)
+    # List of dicts: [{'string_index': 0, 'positive': [row, col], 'negative': [row, col]}, ...]
+    # row = position along tracker (0=north), col = 0(west) or 1(east)
+    # None means use default (auto-calculated)
+    source_point_config: Optional[list] = None
     
     @property
     def full_string_count(self) -> int:

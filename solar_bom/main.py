@@ -328,7 +328,8 @@ class SolarBOMApplication:
                                     motor_split_north=template_data.get('motor_split_north', default_split_north),
                                     motor_split_south=template_data.get('motor_split_south', default_split_south),
                                     # Multi-module-high configuration
-                                    modules_high=template_data.get('modules_high', 1)
+                                    modules_high=template_data.get('modules_high', 1),
+                                    source_point_config=template_data.get('source_point_config', None)
                                 )
                                 
                                 # Also store with the old name for backwards compatibility

@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 import json
+import copy
 from pathlib import Path
 from typing import Optional, Callable
 from ..models.tracker import TrackerTemplate, ModuleOrientation
@@ -19,10 +20,16 @@ class TrackerTemplateCreator(ttk.Frame):
         self.on_template_deleted = on_template_deleted
         self.on_template_enabled_changed = on_template_enabled_changed
         self._module_spec = None
+        self._source_point_config = None  # Source point config for 2P+ trackers
+        self._loading_template = False  # Guard against intermediate update_preview calls
+        # DEBUG — trace modifications to _source_point_config
+        self._debug_spc_len = 0
         self.templates = self.load_templates()
         self.setup_ui()  # Creates current_module_label
         self.module_spec = module_spec  # Now safe to call
         self.update_template_list()
+        # Set initial visibility of source point controls
+        self._update_source_point_visibility()
 
     @property 
     def module_spec(self):
@@ -238,6 +245,8 @@ class TrackerTemplateCreator(ttk.Frame):
         self.motor_string_var.trace('w', self.auto_generate_template_name)
         self.motor_split_north_var.trace('w', self.auto_generate_template_name)
         self.modules_high_var.trace('w', self.auto_generate_template_name)
+        self.modules_high_var.trace('w', self._update_source_point_visibility)
+        self.strings_tracker_var.trace('w', self._update_string_combo)
         self.orientation_var.trace('w', self.auto_generate_template_name)
         self.has_motor_var.trace('w', self.auto_generate_template_name)
 
@@ -267,6 +276,10 @@ class TrackerTemplateCreator(ttk.Frame):
 
         self.canvas = tk.Canvas(preview_frame, width=300, height=600, bg='white')
         self.canvas.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.N, tk.S))
+
+        # Source point configuration controls (for 2P+ trackers)
+        self.setup_source_point_controls(preview_frame)
+        self.canvas.bind('<Button-1>', self._on_canvas_click_source_point)
         
         # Bind events for real-time preview updates
         for var in [self.modules_string_var, self.strings_tracker_var, 
@@ -287,6 +300,191 @@ class TrackerTemplateCreator(ttk.Frame):
         # Initialize visibility
         self.update_motor_placement_visibility()
         self.update_motor_split_calculation()
+
+    def setup_source_point_controls(self, preview_frame):
+        """Set up source point configuration controls below the preview canvas.
+        Only visible when modules_high >= 2."""
+        
+        self.source_point_frame = ttk.LabelFrame(preview_frame, text="Source Point Configuration", padding="5")
+        # Don't grid it yet — visibility is controlled by on_modules_high_changed
+        
+        # String selector
+        selector_frame = ttk.Frame(self.source_point_frame)
+        selector_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=2)
+        
+        ttk.Label(selector_frame, text="String:").pack(side=tk.LEFT, padx=(0, 5))
+        self.sp_string_var = tk.StringVar(value="1")
+        self.sp_string_combo = ttk.Combobox(selector_frame, textvariable=self.sp_string_var, 
+                                             state='readonly', width=5)
+        self.sp_string_combo['values'] = ['1']
+        self.sp_string_combo.pack(side=tk.LEFT, padx=(0, 10))
+        
+        # Polarity selector
+        ttk.Label(selector_frame, text="Placing:").pack(side=tk.LEFT, padx=(0, 5))
+        self.sp_polarity_var = tk.StringVar(value="positive")
+        ttk.Radiobutton(selector_frame, text="+", variable=self.sp_polarity_var, 
+                        value="positive").pack(side=tk.LEFT, padx=2)
+        ttk.Radiobutton(selector_frame, text="−", variable=self.sp_polarity_var, 
+                        value="negative").pack(side=tk.LEFT, padx=2)
+        
+        # Status label
+        self.sp_status_label = ttk.Label(self.source_point_frame, text="Click a module to place source point",
+                                          foreground="gray")
+        self.sp_status_label.grid(row=1, column=0, sticky=tk.W, pady=2)
+        
+        # Button row
+        button_frame = ttk.Frame(self.source_point_frame)
+        button_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=2)
+        
+        ttk.Button(button_frame, text="Clear String", 
+                   command=self._clear_current_string_source_points).pack(side=tk.LEFT, padx=2)
+        ttk.Button(button_frame, text="Clear All", 
+                   command=self._clear_all_source_points).pack(side=tk.LEFT, padx=2)
+        
+    def _on_canvas_click_source_point(self, event):
+        """Handle canvas click for source point placement."""
+        if not hasattr(self, '_module_position_map') or not self._module_position_map:
+            return
+        
+        # Only active when modules_high >= 2
+        try:
+            if int(self.modules_high_var.get()) < 2:
+                return
+        except ValueError:
+            return
+        
+        # Find which module was clicked
+        clicked_pos = None
+        for (row, col), (mx, my, mw, mh) in self._module_position_map.items():
+            if mx <= event.x <= mx + mw and my <= event.y <= my + mh:
+                clicked_pos = (row, col)
+                break
+        
+        if clicked_pos is None:
+            return
+        
+        # Get current string index and polarity
+        try:
+            string_idx = int(self.sp_string_var.get()) - 1  # Convert to 0-based
+        except ValueError:
+            return
+        polarity = self.sp_polarity_var.get()  # "positive" or "negative"
+        
+        # Check that clicked position isn't already used by the OTHER polarity of this string
+        if self._source_point_config:
+            for sp in self._source_point_config:
+                if sp['string_index'] == string_idx:
+                    other_key = 'negative' if polarity == 'positive' else 'positive'
+                    if sp.get(other_key) == list(clicked_pos):
+                        self.sp_status_label.config(
+                            text="+ and − must be on different modules!", foreground="red")
+                        return
+        
+        # Initialize config list if needed
+        if self._source_point_config is None:
+            self._source_point_config = []
+        
+        # Find or create entry for this string
+        entry = None
+        for sp in self._source_point_config:
+            if sp['string_index'] == string_idx:
+                entry = sp
+                break
+        
+        if entry is None:
+            entry = {'string_index': string_idx, 'positive': None, 'negative': None}
+            self._source_point_config.append(entry)
+            # Keep sorted by string_index
+            self._source_point_config.sort(key=lambda x: x['string_index'])
+        
+        # Place the source point
+        entry[polarity] = list(clicked_pos)
+        
+        # Update status and auto-advance polarity
+        if polarity == 'positive':
+            self.sp_polarity_var.set('negative')
+            self.sp_status_label.config(
+                text=f"S{string_idx+1} + placed at ({clicked_pos[0]},{clicked_pos[1]}). Now place −",
+                foreground="blue")
+        else:
+            self.sp_status_label.config(
+                text=f"S{string_idx+1} complete: + and − placed", foreground="green")
+            # Auto-advance to next string if available
+            try:
+                max_strings = self._get_total_string_count()
+                if string_idx + 1 < max_strings:
+                    self.sp_string_var.set(str(string_idx + 2))  # Next string (1-based)
+                    self.sp_polarity_var.set('positive')
+                    self.sp_status_label.config(
+                        text=f"S{string_idx+1} complete. Now configuring S{string_idx+2}",
+                        foreground="green")
+            except Exception:
+                pass
+        
+        # Redraw preview to show markers
+        self.update_preview()
+
+    def _get_total_string_count(self):
+        """Get total number of strings for current template (accounting for modules_high).
+        For 2P systems, each string spans both rows, so total = spt * modules_high."""
+        try:
+            spt = float(self.strings_tracker_var.get())
+            modules_high = int(self.modules_high_var.get())
+            return int(spt * modules_high)
+        except ValueError:
+            return 1
+
+    def _clear_current_string_source_points(self):
+        """Clear source points for the currently selected string."""
+        if not self._source_point_config:
+            return
+        try:
+            string_idx = int(self.sp_string_var.get()) - 1
+        except ValueError:
+            return
+        
+        self._source_point_config = [
+            sp for sp in self._source_point_config 
+            if sp['string_index'] != string_idx
+        ]
+        if not self._source_point_config:
+            self._source_point_config = None
+        
+        self.sp_polarity_var.set('positive')
+        self.sp_status_label.config(text=f"S{string_idx+1} cleared", foreground="gray")
+        self.update_preview()
+
+    def _clear_all_source_points(self):
+        """Clear all source point configurations."""
+        self._source_point_config = None
+        self.sp_polarity_var.set('positive')
+        self.sp_string_var.set('1')
+        self.sp_status_label.config(text="All source points cleared", foreground="gray")
+        self.update_preview()
+
+    def _update_source_point_visibility(self, *args):
+        """Show/hide source point controls based on modules_high."""
+        try:
+            modules_high = int(self.modules_high_var.get())
+        except ValueError:
+            modules_high = 1
+        
+        if modules_high >= 2:
+            self.source_point_frame.grid(row=1, column=0, padx=5, pady=5, sticky=(tk.W, tk.E))
+            self._update_string_combo()
+        else:
+            self.source_point_frame.grid_remove()
+    
+    def _update_string_combo(self, *args):
+        """Update the string selector combo based on current template settings."""
+        total = self._get_total_string_count()
+        self.sp_string_combo['values'] = [str(i+1) for i in range(total)]
+        try:
+            current = int(self.sp_string_var.get())
+            if current > total:
+                self.sp_string_var.set('1')
+        except ValueError:
+            self.sp_string_var.set('1')
 
     def update_motor_position_range(self, *args):
         """Update the motor position spinbox range based on strings per tracker"""
@@ -446,6 +644,11 @@ class TrackerTemplateCreator(ttk.Frame):
             modules_high = int(self.modules_high_var.get())
             orientation_letter = "P" if self.orientation_var.get() == ModuleOrientation.PORTRAIT.value else "L"
             config_suffix = f"-{modules_high}{orientation_letter}"
+            
+            # Account for multi-module-high configurations in naming
+            total_modules *= modules_high
+            north_modules *= modules_high
+            south_modules *= modules_high
             
             # Generate the template name
             if not self.has_motor_var.get():
@@ -676,7 +879,9 @@ class TrackerTemplateCreator(ttk.Frame):
                 motor_split_north=int(self.motor_split_north_var.get()),
                 motor_split_south=int(self.motor_split_south_var.get()),
                 # Multi-module-high configuration
-                modules_high=int(self.modules_high_var.get())
+                modules_high=int(self.modules_high_var.get()),
+                # Source point configuration for 2P+ trackers (deep copy to prevent mutation)
+                source_point_config=copy.deepcopy(getattr(self, '_source_point_config', None))
             )
             template.validate()
             return template
@@ -693,12 +898,21 @@ class TrackerTemplateCreator(ttk.Frame):
                 messagebox.showerror("Error", "Template name is required")
                 return
                 
-            if name in self.templates:
+            # Build full template key with manufacturer prefix
+            manufacturer = template.module_spec.manufacturer
+            full_template_key = f"{manufacturer} - {name}"
+            
+            # Check for existing template under either key format
+            if full_template_key in self.templates or name in self.templates:
                 if not messagebox.askyesno("Confirm", f"Template '{name}' already exists. Overwrite?"):
                     return
-                    
-            # Save template data
-            self.templates[name] = {
+            
+            # Remove old short-name entry if it exists (prevent duplicates)
+            if name in self.templates and name != full_template_key:
+                del self.templates[name]
+            
+            # Save template data under full key
+            self.templates[full_template_key] = {
                 "module_orientation": template.module_orientation.value,
                 "modules_per_string": template.modules_per_string,
                 "strings_per_tracker": template.strings_per_tracker,
@@ -713,6 +927,7 @@ class TrackerTemplateCreator(ttk.Frame):
                 "motor_split_south": template.motor_split_south,
                 # Multi-module-high configuration
                 "modules_high": template.modules_high,
+                "source_point_config": template.source_point_config,
                 "partial_string_side": template.partial_string_side,
                 "module_spec": {
                     "manufacturer": template.module_spec.manufacturer,
@@ -736,9 +951,6 @@ class TrackerTemplateCreator(ttk.Frame):
 
             # Auto-enable newly created template with full key including manufacturer
             if self.current_project:
-                # Get the manufacturer from the template's module spec
-                manufacturer = template.module_spec.manufacturer
-                full_template_key = f"{manufacturer} - {name}"
                 self._add_enabled_template(full_template_key)
 
             # Update the UI to show the template as enabled
@@ -797,6 +1009,16 @@ class TrackerTemplateCreator(ttk.Frame):
         template_key = self.tree_item_to_template[item]
         template_data = self.templates[template_key]
         
+        # Load source point configuration early (before UI vars trigger update_preview)
+        self._source_point_config = copy.deepcopy(template_data.get("source_point_config", None))
+
+        # DEBUG - remove after fixing
+        print(f"load_template key: {template_key}")
+        print(f"load_template source_point_config: {template_data.get('source_point_config', 'NOT FOUND')}")
+        print(f"All template keys: {list(self.templates.keys())}")
+        
+        self._loading_template = True
+
         self.name_var.set(template_key.split(' - ', 1)[-1] if ' - ' in template_key else template_key)
         # Try to extract manufacturer from template name
         template_name = template_key.split(' - ', 1)[-1] if ' - ' in template_key else template_key
@@ -822,12 +1044,21 @@ class TrackerTemplateCreator(ttk.Frame):
         self.motor_split_south_var.set(str(template_data.get("motor_split_south", 14)))
         
         # Load modules_high with default of 1 for backward compatibility
+        self.modules_high_var.set(str(template_data.get("modules_high", 1)))
         self.partial_string_side_var.set(template_data.get("partial_string_side", "north"))
+
+        # TEMPORARY TEST - remove after verifying markers work
+        if template_data.get('modules_high', 1) >= 2:
+            self._source_point_config = [
+                {'string_index': 0, 'positive': [0, 0], 'negative': [0, 1]}
+    ]
         
         # Update UI visibility and calculations
         self.update_motor_placement_visibility()
         self.update_motor_split_calculation()
         self.update_motor_controls_state()
+
+        
         
         # If we have module spec data, use it
         if "module_spec" in template_data:
@@ -849,6 +1080,7 @@ class TrackerTemplateCreator(ttk.Frame):
             )
             self.module_spec = module_spec
         
+        self._loading_template = False
         self.update_preview()
         
     def delete_template(self):
@@ -957,9 +1189,119 @@ class TrackerTemplateCreator(ttk.Frame):
             # Call the deletion callback if provided
             if self.on_template_deleted:
                 self.on_template_deleted(template_key)
+
+    def _build_module_position_map(self, template, scale, x_start, module_width, module_height):
+        """Build a mapping of (row, col) -> (canvas_x, canvas_y, width, height) for all module positions.
+        Stored as self._module_position_map for use in source point drawing and click handling."""
+        
+        partial_mods = template.partial_module_count
+        partial_side = getattr(template, 'partial_string_side', 'north')
+        partial_north = partial_mods if partial_side == 'north' else 0
+        partial_south = partial_mods if partial_side == 'south' else 0
+        
+        module_step = (module_height + template.module_spacing_m) * scale
+        has_motor = getattr(template, 'has_motor', True)
+        
+        # Determine at which row the motor gap falls
+        motor_row = None
+        if has_motor:
+            if template.motor_placement_type == "middle_of_string":
+                motor_string_idx = template.motor_string_index - 1  # 0-based
+                motor_row = partial_north
+                for s in range(motor_string_idx):
+                    motor_row += template.modules_per_string
+                motor_row += template.motor_split_north
+            else:
+                motor_position = template.get_motor_position()
+                motor_row = partial_north + motor_position * template.modules_per_string
+        
+        # Total rows along tracker
+        total_rows = partial_north + template.full_string_count * template.modules_per_string + partial_south
+        
+        position_map = {}
+        for row in range(total_rows):
+            for col in range(template.modules_high):
+                cx = x_start + col * module_width * scale
+                cy = 10 + row * module_step
+                if motor_row is not None and row >= motor_row:
+                    cy += template.motor_gap_m * scale
+                position_map[(row, col)] = (cx, cy, module_width * scale, module_height * scale)
+        
+        self._module_position_map = position_map
+        return position_map
+
+    def _draw_source_point_markers(self, template):
+        """Draw source point markers (+/−) on the preview canvas for 2P+ configurations."""
+        # DEBUG - detect when config changes size
+        import traceback
+        current_len = len(self._source_point_config) if self._source_point_config else 0
+        if current_len != self._debug_spc_len:
+            print(f"!!! source_point_config changed: {self._debug_spc_len} -> {current_len}")
+            traceback.print_stack(limit=8)
+            self._debug_spc_len = current_len
+        
+        if not self._source_point_config or template.modules_high < 2:
+            return
+        if not hasattr(self, '_module_position_map') or not self._module_position_map:
+            return
+        
+        # Color pairs (positive, negative) per string index — supports up to 8 strings
+        string_colors = [
+            ('#FF0000', '#0000FF'),   # S1: red / blue
+            ('#FF6600', '#0066CC'),   # S2: orange / med blue
+            ('#CC00CC', '#00CCCC'),   # S3: magenta / cyan
+            ('#CCAA00', '#6600CC'),   # S4: gold / purple
+            ('#00AA00', '#CC0066'),   # S5: green / rose
+            ('#AA4400', '#006666'),   # S6: brown / teal
+            ('#880088', '#008888'),   # S7: plum / dark cyan
+            ('#555500', '#000099'),   # S8: olive / navy
+        ]
+        
+        for sp in self._source_point_config:
+            idx = sp['string_index']
+            pos_color, neg_color = string_colors[idx % len(string_colors)]
+            
+            for coords, polarity, color in [
+                (sp['positive'], '+', pos_color),
+                (sp['negative'], '−', neg_color),
+            ]:
+                if coords is None:
+                    continue
+                row, col = coords
+                key = (row, col)
+                if key not in self._module_position_map:
+                    continue
+                mx, my, mw, mh = self._module_position_map[key]
+                
+                # Center of the module
+                cx = mx + mw / 2
+                cy = my + mh / 2
+                r = min(mw, mh) * 0.3
+                
+                # Colored circle
+                self.canvas.create_oval(
+                    cx - r, cy - r, cx + r, cy + r,
+                    fill=color, outline='white', width=2,
+                    tags="source_point"
+                )
+                # Polarity symbol
+                font_size = int(max(8, r))
+                self.canvas.create_text(
+                    cx, cy, text=polarity,
+                    fill='white', font=('Arial', font_size, 'bold'),
+                    tags="source_point"
+                )
+                # String label (small, outside the circle)
+                self.canvas.create_text(
+                    cx, cy - r - 6, text=f"S{idx + 1}",
+                    fill=color, font=('Arial', 7, 'bold'),
+                    tags="source_point"
+                )
             
     def update_preview(self):
         """Update the preview canvas with current template layout"""
+        if self._loading_template:
+            return
         template = self.create_template()
         if not template:
             return
@@ -1178,6 +1520,12 @@ class TrackerTemplateCreator(ttk.Frame):
                     )
                     current_y += (module_height + template.module_spacing_m) * scale
 
+        # Build module position map (used for source point markers and click handling)
+        self._build_module_position_map(template, scale, x_start, module_width, module_height)
+        
+        # Draw source point markers if configured
+        self._draw_source_point_markers(template)
+        
         # Update dimension labels
         dims = template.get_physical_dimensions()
         self.length_label.config(text=f"Length: {dims[0]:.2f}m")

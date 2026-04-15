@@ -1896,7 +1896,8 @@ class BlockConfigurator(ttk.Frame):
                                     motor_split_north=template_data.get('motor_split_north', 14),
                                     motor_split_south=template_data.get('motor_split_south', 14),
                                     # Multi-module-high configuration
-                                    modules_high=template_data.get('modules_high', 1)
+                                    modules_high=template_data.get('modules_high', 1),
+                                    source_point_config=template_data.get('source_point_config', None)
                                 )
                                 
                                 self.tracker_templates[template_key] = template
