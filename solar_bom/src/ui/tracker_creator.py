@@ -22,8 +22,6 @@ class TrackerTemplateCreator(ttk.Frame):
         self._module_spec = None
         self._source_point_config = None  # Source point config for 2P+ trackers
         self._loading_template = False  # Guard against intermediate update_preview calls
-        # DEBUG — trace modifications to _source_point_config
-        self._debug_spc_len = 0
         self.templates = self.load_templates()
         self.setup_ui()  # Creates current_module_label
         self.module_spec = module_spec  # Now safe to call
@@ -1011,11 +1009,6 @@ class TrackerTemplateCreator(ttk.Frame):
         
         # Load source point configuration early (before UI vars trigger update_preview)
         self._source_point_config = copy.deepcopy(template_data.get("source_point_config", None))
-
-        # DEBUG - remove after fixing
-        print(f"load_template key: {template_key}")
-        print(f"load_template source_point_config: {template_data.get('source_point_config', 'NOT FOUND')}")
-        print(f"All template keys: {list(self.templates.keys())}")
         
         self._loading_template = True
 
@@ -1046,12 +1039,6 @@ class TrackerTemplateCreator(ttk.Frame):
         # Load modules_high with default of 1 for backward compatibility
         self.modules_high_var.set(str(template_data.get("modules_high", 1)))
         self.partial_string_side_var.set(template_data.get("partial_string_side", "north"))
-
-        # TEMPORARY TEST - remove after verifying markers work
-        if template_data.get('modules_high', 1) >= 2:
-            self._source_point_config = [
-                {'string_index': 0, 'positive': [0, 0], 'negative': [0, 1]}
-    ]
         
         # Update UI visibility and calculations
         self.update_motor_placement_visibility()
@@ -1081,6 +1068,9 @@ class TrackerTemplateCreator(ttk.Frame):
             self.module_spec = module_spec
         
         self._loading_template = False
+        # Restore source_point_config AFTER all UI vars are set,
+        # because some trace callback is mutating it during var loading
+        self._source_point_config = copy.deepcopy(template_data.get("source_point_config", None))
         self.update_preview()
         
     def delete_template(self):
@@ -1231,15 +1221,7 @@ class TrackerTemplateCreator(ttk.Frame):
         return position_map
 
     def _draw_source_point_markers(self, template):
-        """Draw source point markers (+/−) on the preview canvas for 2P+ configurations."""
-        # DEBUG - detect when config changes size
-        import traceback
-        current_len = len(self._source_point_config) if self._source_point_config else 0
-        if current_len != self._debug_spc_len:
-            print(f"!!! source_point_config changed: {self._debug_spc_len} -> {current_len}")
-            traceback.print_stack(limit=8)
-            self._debug_spc_len = current_len
-        
+        """Draw source point markers (+/−) on the preview canvas for 2P+ configurations."""        
         if not self._source_point_config or template.modules_high < 2:
             return
         if not hasattr(self, '_module_position_map') or not self._module_position_map:

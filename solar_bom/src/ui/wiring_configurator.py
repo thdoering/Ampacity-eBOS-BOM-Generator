@@ -3415,83 +3415,92 @@ class WiringConfigurator(tk.Toplevel):
             # Get physical dimensions for torque tube
             dims = template.get_physical_dimensions()
             
-            # Draw torque tube through center
+            # Get modules_high for multi-column support (2P, 4P)
+            modules_high = getattr(template, 'modules_high', 1)
+            total_tracker_width = module_width * modules_high
+            
+            # Draw torque tube through center (centered across all columns)
             self.canvas.create_line(
-                x_base + module_width * scale/2, y_base,
-                x_base + module_width * scale/2, y_base + dims[1] * scale,
+                x_base + total_tracker_width * scale/2, y_base,
+                x_base + total_tracker_width * scale/2, y_base + dims[1] * scale,
                 width=3, fill='gray'
             )
             
             # Handle different motor placement types
             if template.motor_placement_type == "middle_of_string":
                 # Motor is in the middle of a specific string
-                current_y = y_base
                 
                 # Partial string info
                 partial_mods = template.partial_module_count
                 partial_side = getattr(template, 'partial_string_side', 'north')
                 partial_color = '#FFD700'  # Gold
                 
-                # Draw partial string on north (if applicable)
-                if partial_mods > 0 and partial_side == 'north':
-                    for i in range(partial_mods):
-                        self.canvas.create_rectangle(
-                            x_base, current_y,
-                            x_base + module_width * scale, current_y + module_height * scale,
-                            fill=partial_color, outline='orange'
-                        )
-                        current_y += (module_height + template.module_spacing_m) * scale
-                
-                for string_idx in range(template.full_string_count):
-                    if string_idx + 1 == template.motor_string_index and getattr(template, 'has_motor', True):  # This string has the motor
-                        # This string has the motor (1-based index)
-                        # Draw north modules
-                        for i in range(template.motor_split_north):
+                # Draw modules for each column (modules_high)
+                for col in range(modules_high):
+                    x_col = x_base + col * module_width * scale
+                    current_y = y_base
+                    
+                    # Draw partial string on north (if applicable)
+                    if partial_mods > 0 and partial_side == 'north':
+                        for i in range(partial_mods):
                             self.canvas.create_rectangle(
-                                x_base, current_y,
-                                x_base + module_width * scale, current_y + module_height * scale,
-                                fill='lightblue', outline='blue'
+                                x_col, current_y,
+                                x_col + module_width * scale, current_y + module_height * scale,
+                                fill=partial_color, outline='orange'
                             )
                             current_y += (module_height + template.module_spacing_m) * scale
-                        
-                        # Draw motor gap with red circle
-                        motor_y = current_y
-                        gap_height = template.motor_gap_m * scale
-                        circle_radius = min(gap_height / 3, module_width * scale / 4)
-                        circle_center_x = x_base + module_width * scale / 2
-                        circle_center_y = motor_y + gap_height / 2
-                        
-                        self.canvas.create_oval(
-                            circle_center_x - circle_radius, circle_center_y - circle_radius,
-                            circle_center_x + circle_radius, circle_center_y + circle_radius,
-                            fill='red', outline='darkred', width=2
-                        )
-                        current_y += gap_height
-                        
-                        # Draw south modules
-                        for i in range(template.motor_split_south):
-                            self.canvas.create_rectangle(
-                                x_base, current_y,
-                                x_base + module_width * scale, current_y + module_height * scale,
-                                fill='lightblue', outline='blue'
-                            )
-                            current_y += (module_height + template.module_spacing_m) * scale
-                    else:
-                        # Draw normal string without motor
-                        for i in range(template.modules_per_string):
-                            self.canvas.create_rectangle(
-                                x_base, current_y,
-                                x_base + module_width * scale, current_y + module_height * scale,
-                                fill='lightblue', outline='blue'
-                            )
-                            current_y += (module_height + template.module_spacing_m) * scale
+                    
+                    for string_idx in range(template.full_string_count):
+                        if string_idx + 1 == template.motor_string_index and getattr(template, 'has_motor', True):
+                            # This string has the motor (1-based index)
+                            # Draw north modules
+                            for i in range(template.motor_split_north):
+                                self.canvas.create_rectangle(
+                                    x_col, current_y,
+                                    x_col + module_width * scale, current_y + module_height * scale,
+                                    fill='lightblue', outline='blue'
+                                )
+                                current_y += (module_height + template.module_spacing_m) * scale
+                            
+                            # Draw motor gap with red circle (only once for center column)
+                            if col == modules_high // 2 or (modules_high == 1 and col == 0):
+                                motor_y = current_y
+                                gap_height = template.motor_gap_m * scale
+                                circle_radius = min(gap_height / 3, total_tracker_width * scale / 4)
+                                circle_center_x = x_base + total_tracker_width * scale / 2
+                                circle_center_y = motor_y + gap_height / 2
+                                
+                                self.canvas.create_oval(
+                                    circle_center_x - circle_radius, circle_center_y - circle_radius,
+                                    circle_center_x + circle_radius, circle_center_y + circle_radius,
+                                    fill='red', outline='darkred', width=2
+                                )
+                            current_y += template.motor_gap_m * scale
+                            
+                            # Draw south modules
+                            for i in range(template.motor_split_south):
+                                self.canvas.create_rectangle(
+                                    x_col, current_y,
+                                    x_col + module_width * scale, current_y + module_height * scale,
+                                    fill='lightblue', outline='blue'
+                                )
+                                current_y += (module_height + template.module_spacing_m) * scale
+                        else:
+                            # Draw normal string without motor
+                            for i in range(template.modules_per_string):
+                                self.canvas.create_rectangle(
+                                    x_col, current_y,
+                                    x_col + module_width * scale, current_y + module_height * scale,
+                                    fill='lightblue', outline='blue'
+                                )
+                                current_y += (module_height + template.module_spacing_m) * scale
                     
                     # Draw partial string on south (if applicable)
                     if partial_mods > 0 and partial_side == 'south':
                         for i in range(partial_mods):
                             self.canvas.create_rectangle(
-                                x_base, current_y,
-                                x_base + module_width * scale, current_y + module_height * scale,
+                                x_col, current_y,
+                                x_col + module_width * scale, current_y + module_height * scale,
                                 fill=partial_color, outline='orange'
                             )
                             current_y += (module_height + template.module_spacing_m) * scale
@@ -3511,63 +3520,67 @@ class WiringConfigurator(tk.Toplevel):
                 partial_south = partial_mods if partial_side == 'south' else 0
                 partial_color = '#FFD700'  # Gold
                 
-                # Draw all modules
-                y_pos = y_base
-                
-                # Draw partial string on north (if applicable)
-                for i in range(partial_north):
-                    self.canvas.create_rectangle(
-                        x_base, y_pos,
-                        x_base + module_width * scale, 
-                        y_pos + module_height * scale,
-                        fill=partial_color, outline='orange'
-                    )
-                    y_pos += (module_height + template.module_spacing_m) * scale
-                
-                # Draw modules above motor
-                for i in range(modules_above_motor):
-                    self.canvas.create_rectangle(
-                        x_base, y_pos,
-                        x_base + module_width * scale, 
-                        y_pos + module_height * scale,
-                        fill='lightblue', outline='blue'
-                    )
-                    y_pos += (module_height + template.module_spacing_m) * scale
-                
-                # Draw motor if has_motor is True
-                if getattr(template, 'has_motor', True):
-                    motor_y = y_pos
-                    gap_height = template.motor_gap_m * scale
-                    circle_radius = min(gap_height / 3, module_width * scale / 4)
-                    circle_center_x = x_base + module_width * scale / 2
-                    circle_center_y = motor_y + gap_height / 2
+                # Draw modules for each column (modules_high)
+                for col in range(modules_high):
+                    x_col = x_base + col * module_width * scale
+                    y_pos = y_base
                     
-                    self.canvas.create_oval(
-                        circle_center_x - circle_radius, circle_center_y - circle_radius,
-                        circle_center_x + circle_radius, circle_center_y + circle_radius,
-                        fill='red', outline='darkred', width=2
-                    )
-                    y_pos += gap_height
-                
-                # Draw modules below motor
-                for i in range(modules_below_motor):
-                    self.canvas.create_rectangle(
-                        x_base, y_pos,
-                        x_base + module_width * scale,
-                        y_pos + module_height * scale,
-                        fill='lightblue', outline='blue'
-                    )
-                    y_pos += (module_height + template.module_spacing_m) * scale
+                    # Draw partial string on north (if applicable)
+                    for i in range(partial_north):
+                        self.canvas.create_rectangle(
+                            x_col, y_pos,
+                            x_col + module_width * scale, 
+                            y_pos + module_height * scale,
+                            fill=partial_color, outline='orange'
+                        )
+                        y_pos += (module_height + template.module_spacing_m) * scale
+                    
+                    # Draw modules above motor
+                    for i in range(modules_above_motor):
+                        self.canvas.create_rectangle(
+                            x_col, y_pos,
+                            x_col + module_width * scale, 
+                            y_pos + module_height * scale,
+                            fill='lightblue', outline='blue'
+                        )
+                        y_pos += (module_height + template.module_spacing_m) * scale
+                    
+                    # Draw motor if has_motor is True (only once for center column)
+                    if getattr(template, 'has_motor', True) and (col == modules_high // 2 or (modules_high == 1 and col == 0)):
+                        motor_y = y_pos
+                        gap_height = template.motor_gap_m * scale
+                        circle_radius = min(gap_height / 3, total_tracker_width * scale / 4)
+                        circle_center_x = x_base + total_tracker_width * scale / 2
+                        circle_center_y = motor_y + gap_height / 2
+                        
+                        self.canvas.create_oval(
+                            circle_center_x - circle_radius, circle_center_y - circle_radius,
+                            circle_center_x + circle_radius, circle_center_y + circle_radius,
+                            fill='red', outline='darkred', width=2
+                        )
+                    
+                    if getattr(template, 'has_motor', True):
+                        y_pos += template.motor_gap_m * scale
+                    
+                    # Draw modules below motor
+                    for i in range(modules_below_motor):
+                        self.canvas.create_rectangle(
+                            x_col, y_pos,
+                            x_col + module_width * scale,
+                            y_pos + module_height * scale,
+                            fill='lightblue', outline='blue'
+                        )
+                        y_pos += (module_height + template.module_spacing_m) * scale
 
-                # Draw partial string on south (if applicable)
-                for i in range(partial_south):
-                    self.canvas.create_rectangle(
-                        x_base, y_pos,
-                        x_base + module_width * scale,
-                        y_pos + module_height * scale,
-                        fill=partial_color, outline='orange'
-                    )
-                    y_pos += (module_height + template.module_spacing_m) * scale
+                    # Draw partial string on south (if applicable)
+                    for i in range(partial_south):
+                        self.canvas.create_rectangle(
+                            x_col, y_pos,
+                            x_col + module_width * scale,
+                            y_pos + module_height * scale,
+                            fill=partial_color, outline='orange'
+                        )
+                        y_pos += (module_height + template.module_spacing_m) * scale
         
             # Draw source points for this tracker
             self.draw_collection_points(pos, x_base, y_base, scale)

@@ -613,7 +613,7 @@ class DeviceConfigurator(ttk.Frame):
                     if not tracker_pos.template:
                         continue
                     
-                    strings_in_tracker = int(tracker_pos.template.strings_per_tracker)
+                    strings_in_tracker = len(tracker_pos.strings) if tracker_pos.strings else int(tracker_pos.template.strings_per_tracker)
                     whip_size = block.wiring_config.whip_cable_size if block.wiring_config else "10 AWG"
                     
                     for s_idx in range(strings_in_tracker):
@@ -640,7 +640,7 @@ class DeviceConfigurator(ttk.Frame):
                     if not tracker_pos.template:
                         continue
                     
-                    strings_in_tracker = tracker_pos.template.strings_per_tracker
+                    strings_in_tracker = len(tracker_pos.strings) if tracker_pos.strings else int(tracker_pos.template.strings_per_tracker)
                     
                     # Look for harness configuration for this tracker's string count
                     if strings_in_tracker in block.wiring_config.harness_groupings:
@@ -686,11 +686,12 @@ class DeviceConfigurator(ttk.Frame):
                     tracker_id = f"T{idx+1:02d}"
                     
                     if tracker_pos.template:
+                        strings_in_tracker = len(tracker_pos.strings) if tracker_pos.strings else int(tracker_pos.template.strings_per_tracker)
                         connection = HarnessConnection(
                             block_id=block_id,
                             tracker_id=tracker_id,
                             harness_id="H01",
-                            num_strings=tracker_pos.template.strings_per_tracker,
+                            num_strings=strings_in_tracker,
                             module_isc=module_isc,
                             nec_factor=self.current_project.nec_safety_factor,
                             actual_cable_size=block.wiring_config.whip_cable_size if block.wiring_config else "8 AWG"

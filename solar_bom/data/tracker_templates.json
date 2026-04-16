@@ -9737,18 +9737,18 @@
             0
           ],
           "negative": [
-            23,
-            0
+            0,
+            1
           ]
         },
         {
           "string_index": 1,
           "positive": [
-            0,
-            1
+            12,
+            0
           ],
           "negative": [
-            23,
+            12,
             1
           ]
         }
@@ -9819,6 +9819,954 @@
         }
       ],
       "partial_string_side": "south",
+      "module_spec": {
+        "manufacturer": "Heliene",
+        "model": "156HC M10 SL 585W",
+        "type": "Bifacial",
+        "length_mm": 2464.0,
+        "width_mm": 1134.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 585.0,
+        "vmp": 45.85,
+        "imp": 12.77,
+        "voc": 54.41,
+        "isc": 13.5,
+        "max_system_voltage": 1500
+      }
+    },
+    "NXT-72-585W-24/M/48-2P": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 24,
+      "strings_per_tracker": 1.5,
+      "module_spacing_m": 0.01,
+      "has_motor": true,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 0,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 0,
+      "motor_split_north": 12,
+      "motor_split_south": 12,
+      "modules_high": 2,
+      "source_point_config": [
+        {
+          "string_index": 0,
+          "positive": [
+            0,
+            0
+          ],
+          "negative": [
+            0,
+            1
+          ]
+        },
+        {
+          "string_index": 1,
+          "positive": [
+            12,
+            0
+          ],
+          "negative": [
+            12,
+            1
+          ]
+        },
+        {
+          "string_index": 2,
+          "positive": [
+            24,
+            0
+          ],
+          "negative": [
+            24,
+            1
+          ]
+        }
+      ],
+      "partial_string_side": "north",
+      "module_spec": {
+        "manufacturer": "Heliene",
+        "model": "156HC M10 SL 585W",
+        "type": "Bifacial",
+        "length_mm": 2464.0,
+        "width_mm": 1134.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 585.0,
+        "vmp": 45.85,
+        "imp": 12.77,
+        "voc": 54.41,
+        "isc": 13.5,
+        "max_system_voltage": 1500
+      }
+    },
+    "NXT-96-585W-48/M/48-2P": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 24,
+      "strings_per_tracker": 2.0,
+      "module_spacing_m": 0.01,
+      "has_motor": true,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 1,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 0,
+      "motor_split_north": 12,
+      "motor_split_south": 12,
+      "modules_high": 2,
+      "source_point_config": [
+        {
+          "string_index": 0,
+          "positive": [
+            0,
+            0
+          ],
+          "negative": [
+            0,
+            1
+          ]
+        },
+        {
+          "string_index": 1,
+          "positive": [
+            12,
+            0
+          ],
+          "negative": [
+            12,
+            1
+          ]
+        },
+        {
+          "string_index": 2,
+          "positive": [
+            24,
+            0
+          ],
+          "negative": [
+            24,
+            1
+          ]
+        },
+        {
+          "string_index": 3,
+          "positive": [
+            36,
+            0
+          ],
+          "negative": [
+            36,
+            1
+          ]
+        }
+      ],
+      "partial_string_side": "north",
+      "module_spec": {
+        "manufacturer": "Heliene",
+        "model": "156HC M10 SL 585W",
+        "type": "Bifacial",
+        "length_mm": 2464.0,
+        "width_mm": 1134.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 585.0,
+        "vmp": 45.85,
+        "imp": 12.77,
+        "voc": 54.41,
+        "isc": 13.5,
+        "max_system_voltage": 1500
+      }
+    },
+    "NXT-120-585W-72/M/48-2P": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 24,
+      "strings_per_tracker": 2.5,
+      "module_spacing_m": 0.01,
+      "has_motor": true,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 1,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 0,
+      "motor_split_north": 12,
+      "motor_split_south": 12,
+      "modules_high": 2,
+      "source_point_config": [
+        {
+          "string_index": 0,
+          "positive": [
+            0,
+            0
+          ],
+          "negative": [
+            0,
+            1
+          ]
+        },
+        {
+          "string_index": 1,
+          "positive": [
+            12,
+            0
+          ],
+          "negative": [
+            12,
+            1
+          ]
+        },
+        {
+          "string_index": 2,
+          "positive": [
+            24,
+            0
+          ],
+          "negative": [
+            24,
+            1
+          ]
+        },
+        {
+          "string_index": 3,
+          "positive": [
+            36,
+            0
+          ],
+          "negative": [
+            36,
+            1
+          ]
+        },
+        {
+          "string_index": 4,
+          "positive": [
+            48,
+            0
+          ],
+          "negative": [
+            48,
+            1
+          ]
+        }
+      ],
+      "partial_string_side": "north",
+      "module_spec": {
+        "manufacturer": "Heliene",
+        "model": "156HC M10 SL 585W",
+        "type": "Bifacial",
+        "length_mm": 2464.0,
+        "width_mm": 1134.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 585.0,
+        "vmp": 45.85,
+        "imp": 12.77,
+        "voc": 54.41,
+        "isc": 13.5,
+        "max_system_voltage": 1500
+      }
+    },
+    "NXT-144-585W-48/M/96-2P": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 24,
+      "strings_per_tracker": 3.0,
+      "module_spacing_m": 0.01,
+      "has_motor": true,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 1,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 0,
+      "motor_split_north": 12,
+      "motor_split_south": 12,
+      "modules_high": 2,
+      "source_point_config": [
+        {
+          "string_index": 0,
+          "positive": [
+            0,
+            0
+          ],
+          "negative": [
+            0,
+            1
+          ]
+        },
+        {
+          "string_index": 1,
+          "positive": [
+            12,
+            0
+          ],
+          "negative": [
+            12,
+            1
+          ]
+        },
+        {
+          "string_index": 2,
+          "positive": [
+            24,
+            0
+          ],
+          "negative": [
+            24,
+            1
+          ]
+        },
+        {
+          "string_index": 3,
+          "positive": [
+            36,
+            0
+          ],
+          "negative": [
+            36,
+            1
+          ]
+        },
+        {
+          "string_index": 4,
+          "positive": [
+            48,
+            0
+          ],
+          "negative": [
+            48,
+            1
+          ]
+        },
+        {
+          "string_index": 5,
+          "positive": [
+            60,
+            0
+          ],
+          "negative": [
+            60,
+            1
+          ]
+        }
+      ],
+      "partial_string_side": "north",
+      "module_spec": {
+        "manufacturer": "Heliene",
+        "model": "156HC M10 SL 585W",
+        "type": "Bifacial",
+        "length_mm": 2464.0,
+        "width_mm": 1134.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 585.0,
+        "vmp": 45.85,
+        "imp": 12.77,
+        "voc": 54.41,
+        "isc": 13.5,
+        "max_system_voltage": 1500
+      }
+    },
+    "NXT-168-585W-72/M/96-2P": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 24,
+      "strings_per_tracker": 3.5,
+      "module_spacing_m": 0.01,
+      "has_motor": true,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 1,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 0,
+      "motor_split_north": 12,
+      "motor_split_south": 12,
+      "modules_high": 2,
+      "source_point_config": [
+        {
+          "string_index": 0,
+          "positive": [
+            0,
+            0
+          ],
+          "negative": [
+            0,
+            1
+          ]
+        },
+        {
+          "string_index": 1,
+          "positive": [
+            12,
+            0
+          ],
+          "negative": [
+            12,
+            1
+          ]
+        },
+        {
+          "string_index": 2,
+          "positive": [
+            24,
+            0
+          ],
+          "negative": [
+            24,
+            1
+          ]
+        },
+        {
+          "string_index": 3,
+          "positive": [
+            36,
+            0
+          ],
+          "negative": [
+            36,
+            1
+          ]
+        },
+        {
+          "string_index": 4,
+          "positive": [
+            48,
+            0
+          ],
+          "negative": [
+            48,
+            1
+          ]
+        },
+        {
+          "string_index": 5,
+          "positive": [
+            60,
+            0
+          ],
+          "negative": [
+            60,
+            1
+          ]
+        },
+        {
+          "string_index": 6,
+          "positive": [
+            72,
+            0
+          ],
+          "negative": [
+            72,
+            1
+          ]
+        }
+      ],
+      "partial_string_side": "north",
+      "module_spec": {
+        "manufacturer": "Heliene",
+        "model": "156HC M10 SL 585W",
+        "type": "Bifacial",
+        "length_mm": 2464.0,
+        "width_mm": 1134.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 585.0,
+        "vmp": 45.85,
+        "imp": 12.77,
+        "voc": 54.41,
+        "isc": 13.5,
+        "max_system_voltage": 1500
+      }
+    },
+    "NXT-192-585W-48/M/144-2P": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 24,
+      "strings_per_tracker": 4.0,
+      "module_spacing_m": 0.01,
+      "has_motor": true,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 1,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 0,
+      "motor_split_north": 12,
+      "motor_split_south": 12,
+      "modules_high": 2,
+      "source_point_config": [
+        {
+          "string_index": 0,
+          "positive": [
+            0,
+            0
+          ],
+          "negative": [
+            0,
+            1
+          ]
+        },
+        {
+          "string_index": 1,
+          "positive": [
+            12,
+            0
+          ],
+          "negative": [
+            12,
+            1
+          ]
+        },
+        {
+          "string_index": 2,
+          "positive": [
+            24,
+            0
+          ],
+          "negative": [
+            24,
+            1
+          ]
+        },
+        {
+          "string_index": 3,
+          "positive": [
+            36,
+            0
+          ],
+          "negative": [
+            36,
+            1
+          ]
+        },
+        {
+          "string_index": 4,
+          "positive": [
+            48,
+            0
+          ],
+          "negative": [
+            48,
+            1
+          ]
+        },
+        {
+          "string_index": 5,
+          "positive": [
+            60,
+            0
+          ],
+          "negative": [
+            60,
+            1
+          ]
+        },
+        {
+          "string_index": 6,
+          "positive": [
+            72,
+            0
+          ],
+          "negative": [
+            72,
+            1
+          ]
+        },
+        {
+          "string_index": 7,
+          "positive": [
+            84,
+            0
+          ],
+          "negative": [
+            84,
+            1
+          ]
+        }
+      ],
+      "partial_string_side": "north",
+      "module_spec": {
+        "manufacturer": "Heliene",
+        "model": "156HC M10 SL 585W",
+        "type": "Bifacial",
+        "length_mm": 2464.0,
+        "width_mm": 1134.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 585.0,
+        "vmp": 45.85,
+        "imp": 12.77,
+        "voc": 54.41,
+        "isc": 13.5,
+        "max_system_voltage": 1500
+      }
+    },
+    "NXT-192-585W-96/M/96-2P": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 24,
+      "strings_per_tracker": 4.0,
+      "module_spacing_m": 0.01,
+      "has_motor": true,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 2,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 0,
+      "motor_split_north": 12,
+      "motor_split_south": 12,
+      "modules_high": 2,
+      "source_point_config": [
+        {
+          "string_index": 0,
+          "positive": [
+            0,
+            0
+          ],
+          "negative": [
+            0,
+            1
+          ]
+        },
+        {
+          "string_index": 1,
+          "positive": [
+            12,
+            0
+          ],
+          "negative": [
+            12,
+            1
+          ]
+        },
+        {
+          "string_index": 2,
+          "positive": [
+            24,
+            0
+          ],
+          "negative": [
+            24,
+            1
+          ]
+        },
+        {
+          "string_index": 3,
+          "positive": [
+            36,
+            0
+          ],
+          "negative": [
+            36,
+            1
+          ]
+        },
+        {
+          "string_index": 4,
+          "positive": [
+            48,
+            0
+          ],
+          "negative": [
+            48,
+            1
+          ]
+        },
+        {
+          "string_index": 5,
+          "positive": [
+            60,
+            0
+          ],
+          "negative": [
+            60,
+            1
+          ]
+        },
+        {
+          "string_index": 6,
+          "positive": [
+            72,
+            0
+          ],
+          "negative": [
+            72,
+            1
+          ]
+        },
+        {
+          "string_index": 7,
+          "positive": [
+            84,
+            0
+          ],
+          "negative": [
+            84,
+            1
+          ]
+        }
+      ],
+      "partial_string_side": "north",
+      "module_spec": {
+        "manufacturer": "Heliene",
+        "model": "156HC M10 SL 585W",
+        "type": "Bifacial",
+        "length_mm": 2464.0,
+        "width_mm": 1134.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 585.0,
+        "vmp": 45.85,
+        "imp": 12.77,
+        "voc": 54.41,
+        "isc": 13.5,
+        "max_system_voltage": 1500
+      }
+    },
+    "NXT-216-585W-120/M/96-2P": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 24,
+      "strings_per_tracker": 4.5,
+      "module_spacing_m": 0.01,
+      "has_motor": true,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 2,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 0,
+      "motor_split_north": 12,
+      "motor_split_south": 12,
+      "modules_high": 2,
+      "source_point_config": [
+        {
+          "string_index": 0,
+          "positive": [
+            0,
+            0
+          ],
+          "negative": [
+            0,
+            1
+          ]
+        },
+        {
+          "string_index": 1,
+          "positive": [
+            12,
+            0
+          ],
+          "negative": [
+            12,
+            1
+          ]
+        },
+        {
+          "string_index": 2,
+          "positive": [
+            24,
+            0
+          ],
+          "negative": [
+            24,
+            1
+          ]
+        },
+        {
+          "string_index": 3,
+          "positive": [
+            36,
+            0
+          ],
+          "negative": [
+            36,
+            1
+          ]
+        },
+        {
+          "string_index": 4,
+          "positive": [
+            48,
+            0
+          ],
+          "negative": [
+            48,
+            1
+          ]
+        },
+        {
+          "string_index": 5,
+          "positive": [
+            60,
+            0
+          ],
+          "negative": [
+            60,
+            1
+          ]
+        },
+        {
+          "string_index": 6,
+          "positive": [
+            72,
+            0
+          ],
+          "negative": [
+            72,
+            1
+          ]
+        },
+        {
+          "string_index": 7,
+          "positive": [
+            84,
+            0
+          ],
+          "negative": [
+            84,
+            1
+          ]
+        },
+        {
+          "string_index": 8,
+          "positive": [
+            96,
+            0
+          ],
+          "negative": [
+            96,
+            1
+          ]
+        }
+      ],
+      "partial_string_side": "north",
+      "module_spec": {
+        "manufacturer": "Heliene",
+        "model": "156HC M10 SL 585W",
+        "type": "Bifacial",
+        "length_mm": 2464.0,
+        "width_mm": 1134.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 585.0,
+        "vmp": 45.85,
+        "imp": 12.77,
+        "voc": 54.41,
+        "isc": 13.5,
+        "max_system_voltage": 1500
+      }
+    },
+    "NXT-240-585W-144/M/96-2P": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 24,
+      "strings_per_tracker": 5.0,
+      "module_spacing_m": 0.01,
+      "has_motor": true,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 3,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 0,
+      "motor_split_north": 12,
+      "motor_split_south": 12,
+      "modules_high": 2,
+      "source_point_config": [
+        {
+          "string_index": 0,
+          "positive": [
+            0,
+            0
+          ],
+          "negative": [
+            0,
+            1
+          ]
+        },
+        {
+          "string_index": 1,
+          "positive": [
+            12,
+            0
+          ],
+          "negative": [
+            12,
+            1
+          ]
+        },
+        {
+          "string_index": 2,
+          "positive": [
+            24,
+            0
+          ],
+          "negative": [
+            24,
+            1
+          ]
+        },
+        {
+          "string_index": 3,
+          "positive": [
+            36,
+            0
+          ],
+          "negative": [
+            36,
+            1
+          ]
+        },
+        {
+          "string_index": 4,
+          "positive": [
+            48,
+            0
+          ],
+          "negative": [
+            48,
+            1
+          ]
+        },
+        {
+          "string_index": 5,
+          "positive": [
+            60,
+            0
+          ],
+          "negative": [
+            60,
+            1
+          ]
+        },
+        {
+          "string_index": 6,
+          "positive": [
+            72,
+            0
+          ],
+          "negative": [
+            72,
+            1
+          ]
+        },
+        {
+          "string_index": 7,
+          "positive": [
+            84,
+            0
+          ],
+          "negative": [
+            84,
+            1
+          ]
+        },
+        {
+          "string_index": 8,
+          "positive": [
+            96,
+            0
+          ],
+          "negative": [
+            96,
+            1
+          ]
+        },
+        {
+          "string_index": 9,
+          "positive": [
+            108,
+            0
+          ],
+          "negative": [
+            108,
+            1
+          ]
+        }
+      ],
+      "partial_string_side": "north",
       "module_spec": {
         "manufacturer": "Heliene",
         "model": "156HC M10 SL 585W",
