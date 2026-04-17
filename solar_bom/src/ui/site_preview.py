@@ -635,13 +635,51 @@ class SitePreviewWindow(tk.Toplevel):
             # Driveline angle Y offset based on device's X position in group
             angle_y_offset = center_local * pitch * group_data.get('driveline_tan', 0.0)
             
-            # Compute Y based on position setting
-            if device_position == 'north':
-                vis_min = group_data.get('visual_min_y', 0)
-                device_y = gy + vis_min - offset_ft - device_height_ft + angle_y_offset
-            elif device_position == 'south':
-                vis_max = group_data.get('visual_max_y', group_data['length_ft'])
-                device_y = gy + vis_max + offset_ft + angle_y_offset
+            # Compute Y based on position setting.
+            # For 'north' and 'south', find the tracker among THIS device's own trackers
+            # whose X position is closest to the device's X, and anchor to that tracker's
+            # edge. This places the combiner just off the tracker nearest to it, even
+            # when the device's trackers have varying lengths.
+            if device_position in ('north', 'south'):
+                group_trackers_list = group_data.get('trackers', [])
+                group_motor_y_ref = group_data.get('motor_y_ft', None)
+                group_length = group_data.get('length_ft', 0)
+                driveline_tan = group_data.get('driveline_tan', 0.0)
+                align_on_motor = getattr(self, 'align_on_motor', False)
+                
+                # Find the tracker closest to the device's X position (center_local)
+                closest_local_idx = None
+                closest_dist = float('inf')
+                for local_idx in local_indices:
+                    if local_idx >= len(group_trackers_list):
+                        continue
+                    dist = abs(local_idx - center_local)
+                    if dist < closest_dist:
+                        closest_dist = dist
+                        closest_local_idx = local_idx
+                
+                if closest_local_idx is not None:
+                    t = group_trackers_list[closest_local_idx]
+                    t_length = t.get('length_ft', group_length)
+                    t_angle_y = closest_local_idx * pitch * driveline_tan
+                    
+                    if align_on_motor and t.get('has_motor', False) and group_motor_y_ref is not None:
+                        ty = gy + (group_motor_y_ref - t.get('motor_y_ft', 0)) + t_angle_y
+                    else:
+                        ty = gy + (group_length - t_length) / 2 + t_angle_y
+                    
+                    if device_position == 'north':
+                        device_y = ty - offset_ft - device_height_ft
+                    else:  # 'south'
+                        device_y = ty + t_length + offset_ft
+                else:
+                    # Fallback to group bounds if no trackers found
+                    if device_position == 'north':
+                        vis_min = group_data.get('visual_min_y', 0)
+                        device_y = gy + vis_min - offset_ft - device_height_ft + angle_y_offset
+                    else:
+                        vis_max = group_data.get('visual_max_y', group_data['length_ft'])
+                        device_y = gy + vis_max + offset_ft + angle_y_offset
             else:  # 'middle'
                 motor_y = group_data.get('motor_y_ft', group_data['length_ft'] / 2)
                 device_y = gy + motor_y - device_height_ft / 2 + angle_y_offset

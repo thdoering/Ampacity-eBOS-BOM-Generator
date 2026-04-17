@@ -1798,5 +1798,29 @@
       "default_orientation": "Portrait",
       "cells_per_module": 72
     }
+  },
+  "SILFAB": {
+    "SILFAB SIL-580 XM+": {
+      "manufacturer": "SILFAB",
+      "model": "SILFAB SIL-580 XM+",
+      "type": "Mono PERC",
+      "length_mm": 2278.0,
+      "width_mm": 1133.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 580.0,
+      "vmp": 44.27,
+      "imp": 13.1,
+      "voc": 52.27,
+      "isc": 13.85,
+      "max_system_voltage": 1500,
+      "efficiency": null,
+      "temperature_coefficient_pmax": -0.29,
+      "temperature_coefficient_voc": -0.24,
+      "temperature_coefficient_isc": 0.04,
+      "bifaciality_factor": null,
+      "default_orientation": "Portrait",
+      "cells_per_module": 72
+    }
   }
 }
