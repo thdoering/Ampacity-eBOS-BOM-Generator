@@ -305,14 +305,25 @@ class BlockConfigurator(ttk.Frame):
         dc_feeder_cable_combo['values'] = self.DC_FEEDER_SIZES
         dc_feeder_cable_combo.grid(row=1, column=1, columnspan=2, padx=5, pady=2, sticky=(tk.W, tk.E))
 
+        # DC Feeder Parallel Count
+        ttk.Label(dc_feeder_frame, text="Parallel Sets:").grid(row=2, column=0, padx=5, pady=2, sticky=tk.W)
+        self.dc_feeder_parallel_count_var = tk.StringVar(value="1")
+        self.dc_feeder_parallel_count_spinbox = ttk.Spinbox(
+            dc_feeder_frame, from_=1, to=10, increment=1,
+            textvariable=self.dc_feeder_parallel_count_var, width=8
+        )
+        self.dc_feeder_parallel_count_spinbox.grid(row=2, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        ttk.Label(dc_feeder_frame, text="per pole").grid(row=2, column=2, padx=2, pady=2, sticky=tk.W)
+
         # Add traces to save DC feeder settings when changed
         self.dc_feeder_distance_var.trace('w', lambda *args: self.save_dc_feeder_settings())
         self.dc_feeder_cable_size_var.trace('w', lambda *args: self.save_dc_feeder_settings())
+        self.dc_feeder_parallel_count_var.trace('w', lambda *args: self.save_dc_feeder_settings())
 
         # Bulk edit button
         ttk.Button(dc_feeder_frame, text="Edit All Blocks...",
                    command=self.open_dc_feeder_dialog).grid(
-                   row=2, column=0, columnspan=3, padx=5, pady=(4, 2), sticky=(tk.W, tk.E))
+                   row=3, column=0, columnspan=3, padx=5, pady=(4, 2), sticky=(tk.W, tk.E))
 
         # Initially disable the inputs
         self.pile_reveal_m_entry.config(state='disabled')
@@ -711,6 +722,7 @@ class BlockConfigurator(ttk.Frame):
                 self.updating_ui = True
                 self.dc_feeder_distance_var.set(str(getattr(block, 'dc_feeder_distance_ft', 0.0)))
                 self.dc_feeder_cable_size_var.set(getattr(block, 'dc_feeder_cable_size', '4/0 AWG'))
+                self.dc_feeder_parallel_count_var.set(str(getattr(block, 'dc_feeder_parallel_count', 1)))
                 self.updating_ui = False
             self._notify_blocks_changed()
 
@@ -729,6 +741,14 @@ class BlockConfigurator(ttk.Frame):
             block.dc_feeder_distance_ft = 0.0
         
         block.dc_feeder_cable_size = self.dc_feeder_cable_size_var.get()
+        
+        try:
+            parallel_count = int(self.dc_feeder_parallel_count_var.get())
+            if parallel_count < 1:
+                parallel_count = 1
+        except (ValueError, TypeError):
+            parallel_count = 1
+        block.dc_feeder_parallel_count = parallel_count
         
         # Notify that blocks have changed
         self._notify_blocks_changed()
@@ -887,8 +907,9 @@ class BlockConfigurator(ttk.Frame):
                 source_block = self.blocks[source_block_id]
                 if hasattr(source_block, 'enabled_templates') and source_block.enabled_templates:
                     block.enabled_templates = list(source_block.enabled_templates)  # Copy the list
-                # Inherit DC feeder cable size (distance stays at 0 since it varies per block)
+                # Inherit DC feeder cable size and parallel count (distance stays at 0 since it varies per block)
                 block.dc_feeder_cable_size = getattr(source_block, 'dc_feeder_cable_size', '4/0 AWG')
+                block.dc_feeder_parallel_count = getattr(source_block, 'dc_feeder_parallel_count', 1)
             
             # Add to blocks dictionary
             self.blocks[block_id] = block
@@ -1016,6 +1037,7 @@ class BlockConfigurator(ttk.Frame):
             self.updating_ui = True
             self.dc_feeder_distance_var.set(str(getattr(block, 'dc_feeder_distance_ft', 0.0)))
             self.dc_feeder_cable_size_var.set(getattr(block, 'dc_feeder_cable_size', '4/0 AWG'))
+            self.dc_feeder_parallel_count_var.set(str(getattr(block, 'dc_feeder_parallel_count', 1)))
             self.updating_ui = False
 
             # Update polarity convention
@@ -2893,6 +2915,8 @@ class BlockConfigurator(ttk.Frame):
             new_block.dc_feeder_distance_ft = 0.0
         if not hasattr(new_block, 'dc_feeder_cable_size'):
             new_block.dc_feeder_cable_size = '4/0 AWG'
+        if not hasattr(new_block, 'dc_feeder_parallel_count'):
+            new_block.dc_feeder_parallel_count = 1
         
         # Ensure enabled_templates is copied (for backward compatibility)
         if not hasattr(new_block, 'enabled_templates'):

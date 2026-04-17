@@ -207,19 +207,22 @@ class BOMGenerator:
                 # Add DC Feeder cable even if no wiring config
                 dc_feeder_distance = getattr(block, 'dc_feeder_distance_ft', 0.0)
                 dc_feeder_cable_size = getattr(block, 'dc_feeder_cable_size', '4/0 AWG')
+                dc_feeder_parallel = max(1, int(getattr(block, 'dc_feeder_parallel_count', 1)))
                 
                 if dc_feeder_distance > 0:
-                    feeder_length_with_waste = round(dc_feeder_distance * self.CABLE_WASTE_FACTOR, 1)
+                    feeder_length_with_waste = round(dc_feeder_distance * self.CABLE_WASTE_FACTOR * dc_feeder_parallel, 1)
+                    parallel_suffix = f' ×{dc_feeder_parallel} parallel' if dc_feeder_parallel > 1 else ''
+                    parallel_desc_suffix = f' ({dc_feeder_parallel} parallel)' if dc_feeder_parallel > 1 else ''
                     
-                    block_quantities[f'Positive DC Feeder ({dc_feeder_cable_size})'] = {
-                        'description': f'DC Positive Feeder Cable {dc_feeder_cable_size}',
+                    block_quantities[f'Positive DC Feeder ({dc_feeder_cable_size}){parallel_suffix}'] = {
+                        'description': f'DC Positive Feeder Cable {dc_feeder_cable_size}{parallel_desc_suffix}',
                         'quantity': feeder_length_with_waste,
                         'unit': 'feet',
                         'category': 'eBOS'
                     }
                     
-                    block_quantities[f'Negative DC Feeder ({dc_feeder_cable_size})'] = {
-                        'description': f'DC Negative Feeder Cable {dc_feeder_cable_size}',
+                    block_quantities[f'Negative DC Feeder ({dc_feeder_cable_size}){parallel_suffix}'] = {
+                        'description': f'DC Negative Feeder Cable {dc_feeder_cable_size}{parallel_desc_suffix}',
                         'quantity': feeder_length_with_waste,
                         'unit': 'feet',
                         'category': 'eBOS'
@@ -1849,19 +1852,22 @@ class BOMGenerator:
             # Add DC Feeder cable if distance is specified
             dc_feeder_distance = getattr(block, 'dc_feeder_distance_ft', 0.0)
             dc_feeder_cable_size = getattr(block, 'dc_feeder_cable_size', '4/0 AWG')
+            dc_feeder_parallel = max(1, int(getattr(block, 'dc_feeder_parallel_count', 1)))
             
             if dc_feeder_distance > 0:
-                feeder_length_with_waste = round(dc_feeder_distance * self.CABLE_WASTE_FACTOR, 1)
+                feeder_length_with_waste = round(dc_feeder_distance * self.CABLE_WASTE_FACTOR * dc_feeder_parallel, 1)
+                parallel_suffix = f' ×{dc_feeder_parallel} parallel' if dc_feeder_parallel > 1 else ''
+                parallel_desc_suffix = f' ({dc_feeder_parallel} parallel)' if dc_feeder_parallel > 1 else ''
                 
-                block_quantities[f'Positive DC Feeder ({dc_feeder_cable_size})'] = {
-                    'description': f'DC Positive Feeder Cable {dc_feeder_cable_size}',
+                block_quantities[f'Positive DC Feeder ({dc_feeder_cable_size}){parallel_suffix}'] = {
+                    'description': f'DC Positive Feeder Cable {dc_feeder_cable_size}{parallel_desc_suffix}',
                     'quantity': feeder_length_with_waste,
                     'unit': 'feet',
                     'category': 'eBOS'
                 }
                 
-                block_quantities[f'Negative DC Feeder ({dc_feeder_cable_size})'] = {
-                    'description': f'DC Negative Feeder Cable {dc_feeder_cable_size}',
+                block_quantities[f'Negative DC Feeder ({dc_feeder_cable_size}){parallel_suffix}'] = {
+                    'description': f'DC Negative Feeder Cable {dc_feeder_cable_size}{parallel_desc_suffix}',
                     'quantity': feeder_length_with_waste,
                     'unit': 'feet',
                     'category': 'eBOS'

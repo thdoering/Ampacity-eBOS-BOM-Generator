@@ -82,6 +82,7 @@ class BlockConfig:
     trench_depth_m: float = 0.91  # 3ft default
     dc_feeder_distance_ft: float = 0.0  # DC feeder distance in feet
     dc_feeder_cable_size: str = "4/0 AWG"  # DC feeder cable size (default)
+    dc_feeder_parallel_count: int = 1  # Number of parallel conductors per pole (pos and neg each get this many)
     polarity_convention: PolarityConvention = PolarityConvention.NEGATIVE_SOUTH  # Default: current behavior
     
     # Optional fields with defaults must come after
@@ -327,6 +328,7 @@ class BlockConfig:
         # Add DC feeder config
         data['dc_feeder_distance_ft'] = getattr(self, 'dc_feeder_distance_ft', 0.0)
         data['dc_feeder_cable_size'] = getattr(self, 'dc_feeder_cable_size', '4/0 AWG')
+        data['dc_feeder_parallel_count'] = getattr(self, 'dc_feeder_parallel_count', 1)
 
         # Add enabled templates
         data['enabled_templates'] = self.enabled_templates
@@ -421,6 +423,7 @@ class BlockConfig:
             enabled_templates=data.get('enabled_templates', []),
             dc_feeder_distance_ft=data.get('dc_feeder_distance_ft', 0.0),
             dc_feeder_cable_size=data.get('dc_feeder_cable_size', '4/0 AWG'),
+            dc_feeder_parallel_count=data.get('dc_feeder_parallel_count', 1),
             polarity_convention=PolarityConvention(data.get('polarity_convention', PolarityConvention.NEGATIVE_SOUTH.value)),
         )
         

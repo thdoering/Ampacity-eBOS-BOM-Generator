@@ -9,7 +9,7 @@ class SitePreviewWindow(tk.Toplevel):
     
     def __init__(self, parent, inv_summary, topology, colors, groups, enabled_templates, row_spacing_ft,
                  num_devices=0, device_label='CB', initial_inspect=False, pads=None, device_names=None,
-                 device_feeder_sizes=None):
+                 device_feeder_sizes=None, device_feeder_parallel_counts=None):
         super().__init__(parent)
         self.title("Site Preview — Inverter Allocation")
         self.geometry("1100x750")
@@ -29,6 +29,7 @@ class SitePreviewWindow(tk.Toplevel):
         self.pads = list(pads) if pads else []  # Deep copy so we don't mutate caller's list
         self.device_names = dict(device_names) if device_names else {}  # {device_idx: "custom_name"}
         self.device_feeder_sizes = dict(device_feeder_sizes) if device_feeder_sizes else {}  # {device_idx: "cable_size"}
+        self.device_feeder_parallel_counts = dict(device_feeder_parallel_counts) if device_feeder_parallel_counts else {}  # {device_idx: int parallel sets per pole}
         self.selected_pad_idx = None
         self.placing_pad = False  # True when in "click to place" mode
         self.assigning_devices = False  # True when Assign Devices dialog is open
@@ -2260,8 +2261,8 @@ class SitePreviewWindow(tk.Toplevel):
         # Size based on device count
         num_devices = len(self.device_positions)
         dialog_height = min(600, 120 + num_devices * 28)
-        dialog.geometry(f"650x{dialog_height}")
-        dialog.minsize(550, 200)
+        dialog.geometry(f"760x{dialog_height}")
+        dialog.minsize(660, 200)
         
 
         # Instructions
@@ -2325,6 +2326,7 @@ class SitePreviewWindow(tk.Toplevel):
         ttk.Label(header, text="Group", font=('Helvetica', 9, 'bold'), width=12).pack(side='left', padx=5)
         ttk.Label(header, text=feeder_col_label, font=('Helvetica', 9, 'bold'), width=12).pack(side='left', padx=5)
         ttk.Label(header, text="", width=1).pack(side='left', padx=2)
+        ttk.Label(header, text="Parallel", font=('Helvetica', 9, 'bold'), width=8).pack(side='left', padx=5)
         ttk.Label(header, text="Pad", font=('Helvetica', 9, 'bold'), width=12).pack(side='left', padx=5)
         ttk.Label(header, text="", width=1).pack(side='left', padx=2)
         
@@ -2335,6 +2337,8 @@ class SitePreviewWindow(tk.Toplevel):
         pad_combos = []
         feeder_vars = []
         feeder_combos = []
+        parallel_vars = []
+        parallel_spinboxes = []
         
         # Drag-fill handle state — pad column (blue)
         _pad_fill = {'active': False, 'source_idx': None, 'value': None}
@@ -2443,6 +2447,18 @@ class SitePreviewWindow(tk.Toplevel):
             f_handle.bind('<ButtonRelease-1>', _feeder_handle_release)
             _feeder_fill_handles.append(f_handle)
             
+            # Parallel sets spinbox (per-device parallel count for primary feeder)
+            current_parallel = self.device_feeder_parallel_counts.get(dev_idx, 1)
+            parallel_var = tk.StringVar(value=str(current_parallel))
+            parallel_spin = ttk.Spinbox(row, from_=1, to=10, increment=1,
+                                        textvariable=parallel_var, width=6)
+            parallel_spin.pack(side='left', padx=5)
+            parallel_spin.bind("<MouseWheel>", lambda e: "break")
+            parallel_spin.bind("<Button-4>", lambda e: "break")
+            parallel_spin.bind("<Button-5>", lambda e: "break")
+            parallel_vars.append(parallel_var)
+            parallel_spinboxes.append(parallel_spin)
+            
             # Pad dropdown
             current_pad = device_to_pad.get(dev_idx, 0)
             if current_pad >= len(pad_labels):
@@ -2495,6 +2511,18 @@ class SitePreviewWindow(tk.Toplevel):
             # Save per-device feeder sizes
             for dev_idx, fvar in enumerate(feeder_vars):
                 self.device_feeder_sizes[dev_idx] = fvar.get()
+            
+            # Save per-device parallel counts
+            for dev_idx, pvar in enumerate(parallel_vars):
+                try:
+                    pval = int(pvar.get())
+                    if pval < 1:
+                        pval = 1
+                    elif pval > 10:
+                        pval = 10
+                except (ValueError, TypeError):
+                    pval = 1
+                self.device_feeder_parallel_counts[dev_idx] = pval
             
             self.assigning_devices = False
             self.draw()

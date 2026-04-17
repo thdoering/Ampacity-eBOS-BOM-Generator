@@ -31,6 +31,7 @@ class QuickEstimate(ttk.Frame):
         self.pads = []  # Collection points (inverter pads)
         self.device_names = {}  # {device_idx: "custom_name"} for CB/SI renaming
         self.device_feeder_sizes = {}  # {device_idx: "cable_size"} per-device feeder/homerun size
+        self.device_feeder_parallel_counts = {}  # {device_idx: int} per-device parallel sets per pole
         self.last_combiner_assignments = []  # Structured CB data for Device Configurator
         self._harness_combos = []  # Track harness combo widgets for LV collection disabling
         self.selected_group_idx = None
@@ -2085,6 +2086,10 @@ class QuickEstimate(ttk.Frame):
         saved_feeder_sizes = estimate_data.get('device_feeder_sizes', {})
         self.device_feeder_sizes = {int(k): v for k, v in saved_feeder_sizes.items()}
         
+        # Load per-device parallel counts (convert str keys back to int)
+        saved_parallel_counts = estimate_data.get('device_feeder_parallel_counts', {})
+        self.device_feeder_parallel_counts = {int(k): int(v) for k, v in saved_parallel_counts.items()}
+        
         # Load allocation lock state
         self.allocation_locked = estimate_data.get('allocation_locked', False)
         self.locked_allocation_result = estimate_data.get('locked_allocation_result', None)
@@ -2161,6 +2166,9 @@ class QuickEstimate(ttk.Frame):
         
         # Save per-device feeder sizes (convert int keys to str for JSON)
         estimate_data['device_feeder_sizes'] = {str(k): v for k, v in self.device_feeder_sizes.items()}
+        
+        # Save per-device parallel counts (convert int keys to str for JSON)
+        estimate_data['device_feeder_parallel_counts'] = {str(k): v for k, v in self.device_feeder_parallel_counts.items()}
         
         # Save allocation lock state
         estimate_data['allocation_locked'] = self.allocation_locked
@@ -2572,7 +2580,8 @@ class QuickEstimate(ttk.Frame):
             num_devices=num_devices, device_label=device_label,
             initial_inspect=initial_inspect, pads=self.pads,
             device_names=self.device_names,
-            device_feeder_sizes=self.device_feeder_sizes
+            device_feeder_sizes=self.device_feeder_sizes,
+            device_feeder_parallel_counts=self.device_feeder_parallel_counts
         )
         
         # When window closes, save state back
@@ -2581,6 +2590,7 @@ class QuickEstimate(ttk.Frame):
             self.pads = preview.pads  # Save pad positions back
             self.device_names = dict(preview.device_names)  # Save renamed devices back
             self.device_feeder_sizes = dict(preview.device_feeder_sizes)  # Save feeder sizes back
+            self.device_feeder_parallel_counts = dict(preview.device_feeder_parallel_counts)  # Save parallel counts back
             
             # If CB assignments were edited, refresh the estimate results
             if hasattr(self, 'last_combiner_assignments') and self.last_combiner_assignments:
@@ -3143,25 +3153,47 @@ class QuickEstimate(ttk.Frame):
         label_suffix = " (routed)" if use_routed else ""
         feeders_by_size = totals.get('feeders_by_size', {})
         
+        def _unpack_feeder_key(k):
+            """Accept either tuple (size, parallel) or legacy string size; return (size, parallel)."""
+            if isinstance(k, tuple):
+                return k[0], int(k[1]) if len(k) > 1 else 1
+            return k, 1
+        
         if topo == 'Distributed String':
             # Primary cable is AC homerun (per-device sizes)
             if feeders_by_size:
                 insert_section('AC HOMERUNS')
-                for wire_size, data in sorted(feeders_by_size.items()):
+                for raw_key, data in sorted(feeders_by_size.items(), key=lambda kv: _unpack_feeder_key(kv[0])):
+                    wire_size, parallel = _unpack_feeder_key(raw_key)
                     count = data['count']
                     total_ft = data['total_ft']
-                    avg_ft = total_ft / count if count > 0 else 0
-                    insert_row(f"AC Homerun {wire_size} — avg {avg_ft:.0f}ft{label_suffix} × {count} runs", '', f"{total_ft:.0f}", 'ft')
+                    # avg distance uses raw (unmultiplied) distance so the label stays intuitive
+                    dist_ft = data.get('distance_ft', total_ft / max(parallel, 1))
+                    avg_ft = dist_ft / count if count > 0 else 0
+                    parallel_suffix = f" ×{parallel} parallel" if parallel > 1 else ""
+                    insert_row(
+                        f"AC Homerun {wire_size} — avg {avg_ft:.0f}ft{label_suffix} × {count} runs{parallel_suffix}",
+                        '', f"{total_ft:.0f}", 'ft'
+                    )
         else:
             # Primary cable is DC feeder (per-device sizes)
             if feeders_by_size:
                 insert_section('DC FEEDERS')
-                for wire_size, data in sorted(feeders_by_size.items()):
+                for raw_key, data in sorted(feeders_by_size.items(), key=lambda kv: _unpack_feeder_key(kv[0])):
+                    wire_size, parallel = _unpack_feeder_key(raw_key)
                     count = data['count']
                     total_ft = data['total_ft']
-                    avg_ft = total_ft / count if count > 0 else 0
-                    insert_row(f"DC Feeder {wire_size} — avg {avg_ft:.0f}ft{label_suffix} × {count} runs (pos)", '', f"{total_ft:.0f}", 'ft')
-                    insert_row(f"DC Feeder {wire_size} — avg {avg_ft:.0f}ft{label_suffix} × {count} runs (neg)", '', f"{total_ft:.0f}", 'ft')
+                    dist_ft = data.get('distance_ft', total_ft / max(parallel, 1))
+                    avg_ft = dist_ft / count if count > 0 else 0
+                    parallel_suffix = f" ×{parallel} parallel" if parallel > 1 else ""
+                    insert_row(
+                        f"DC Feeder {wire_size} — avg {avg_ft:.0f}ft{label_suffix} × {count} runs{parallel_suffix} (pos)",
+                        '', f"{total_ft:.0f}", 'ft'
+                    )
+                    insert_row(
+                        f"DC Feeder {wire_size} — avg {avg_ft:.0f}ft{label_suffix} × {count} runs{parallel_suffix} (neg)",
+                        '', f"{total_ft:.0f}", 'ft'
+                    )
             
             # Secondary AC homeruns (blanket size, not per-device)
             if totals.get('ac_homerun_count', 0) > 0:
@@ -5141,16 +5173,27 @@ class QuickEstimate(ttk.Frame):
                 avg_ft = dc_feeder_avg_ft
             per_device_distances = [(i, f"Dev-{i+1:02d}", avg_ft) for i in range(num_feeders)]
         
-        # Group primary device-to-pad cable by per-device feeder size
-        feeders_by_size = defaultdict(lambda: {'count': 0, 'total_ft': 0.0})
+        # Group primary device-to-pad cable by (per-device feeder size, parallel count)
+        # - 'count'       = number of physical runs (devices)
+        # - 'distance_ft' = sum of raw run distances (not multiplied) — used for avg display
+        # - 'total_ft'    = distance_ft × parallel_count (actual cable footage needed)
+        feeders_by_size = defaultdict(lambda: {'count': 0, 'distance_ft': 0.0, 'total_ft': 0.0})
         for dev_idx, label, dist_ft in per_device_distances:
             size = self.device_feeder_sizes.get(dev_idx, default_feeder_size)
-            feeders_by_size[size]['count'] += 1
-            feeders_by_size[size]['total_ft'] += dist_ft
+            try:
+                parallel = int(self.device_feeder_parallel_counts.get(dev_idx, 1))
+                if parallel < 1:
+                    parallel = 1
+            except (ValueError, TypeError):
+                parallel = 1
+            key = (size, parallel)
+            feeders_by_size[key]['count'] += 1
+            feeders_by_size[key]['distance_ft'] += dist_ft
+            feeders_by_size[key]['total_ft'] += dist_ft * parallel
         
         totals['feeders_by_size'] = dict(feeders_by_size)
         
-        # Aggregate totals (backward compat)
+        # Aggregate totals (backward compat) — total_feeder_ft reflects parallel-multiplied cable
         total_feeder_ft = sum(v['total_ft'] for v in feeders_by_size.values())
         total_feeder_count = sum(v['count'] for v in feeders_by_size.values())
         
@@ -5960,7 +6003,8 @@ class QuickEstimate(ttk.Frame):
             num_devices=num_devices, device_label=device_label,
             initial_inspect=False, pads=self.pads,
             device_names=self.device_names,
-            device_feeder_sizes=self.device_feeder_sizes
+            device_feeder_sizes=self.device_feeder_sizes,
+            device_feeder_parallel_counts=self.device_feeder_parallel_counts
         )
         temp_preview.withdraw()  # Keep it hidden
 
