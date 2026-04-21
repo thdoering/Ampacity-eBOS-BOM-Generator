@@ -1936,5 +1936,29 @@
       "default_orientation": "Portrait",
       "cells_per_module": 72
     }
+  },
+  "ELITE SOLAR": {
+    "ET-N772TBH590GL": {
+      "manufacturer": "ELITE SOLAR",
+      "model": "ET-N772TBH590GL",
+      "type": "Bifacial",
+      "length_mm": 2278.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 590.0,
+      "vmp": 45.08,
+      "imp": 13.09,
+      "voc": 52.48,
+      "isc": 13.81,
+      "max_system_voltage": 1500,
+      "efficiency": null,
+      "temperature_coefficient_pmax": -0.3,
+      "temperature_coefficient_voc": -0.22,
+      "temperature_coefficient_isc": 0.042,
+      "bifaciality_factor": null,
+      "default_orientation": "Portrait",
+      "cells_per_module": 72
+    }
   }
 }

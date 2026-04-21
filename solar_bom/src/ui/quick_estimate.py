@@ -354,81 +354,6 @@ class QuickEstimate(ttk.Frame):
             )
         return False
 
-    def get_group_summary_info(self, group):
-        """Build summary info lines for a group based on its linked templates.
-        Returns a list of (label, value) tuples."""
-        info = []
-        
-        # Collect unique templates used in this group
-        template_refs = set()
-        for seg in group.get('segments', []):
-            ref = seg.get('template_ref')
-            if ref and ref in self.enabled_templates:
-                template_refs.add(ref)
-        
-        if not template_refs:
-            info.append(("Templates", "No templates linked (unlinked segments)"))
-            return info
-        
-        # Module info (should be consistent within a group)
-        first_ref = next(iter(template_refs))
-        first_data = self.enabled_templates[first_ref]
-        module_spec = first_data.get('module_spec', {})
-        
-        module_str = f"{module_spec.get('manufacturer', '?')} {module_spec.get('model', '?')} ({module_spec.get('wattage', '?')}W)"
-        info.append(("Module", module_str))
-        info.append(("Module Isc", f"{module_spec.get('isc', '?')} A"))
-        info.append(("Module Width", f"{module_spec.get('width_mm', '?')} mm"))
-        
-        # Per-template info
-        for ref in sorted(template_refs):
-            tdata = self.enabled_templates[ref]
-            spt = tdata.get('strings_per_tracker', '?')
-            mps = tdata.get('modules_per_string', '?')
-            modules_high = tdata.get('modules_high', 1)
-            orientation = tdata.get('module_orientation', 'Portrait')
-            has_motor = tdata.get('has_motor', True)
-            motor_type = tdata.get('motor_placement_type', 'between_strings')
-            
-            # Calculate physical width
-            width_mm = module_spec.get('width_mm', 1000)
-            length_mm = module_spec.get('length_mm', 2000)
-            spacing_m = tdata.get('module_spacing_m', 0.02)
-            motor_gap_m = tdata.get('motor_gap_m', 1.0) if has_motor else 0
-            
-            if orientation == 'Portrait':
-                module_dim_along_tracker = length_mm / 1000  # meters
-            else:
-                module_dim_along_tracker = width_mm / 1000
-            
-            try:
-                full_spt_info = int(float(spt))
-                mps_info = int(mps)
-                partial_info = round((float(spt) - full_spt_info) * mps_info) if float(spt) != full_spt_info else 0
-                total_modules = full_spt_info * mps_info + partial_info
-                modules_in_row = total_modules
-                tracker_length_m = (modules_in_row * module_dim_along_tracker + 
-                                   (modules_in_row - 1) * spacing_m +
-                                   (motor_gap_m if has_motor else 0))
-            except (ValueError, TypeError):
-                total_modules = '?'
-                tracker_length_m = None
-            tracker_length_ft = f"{tracker_length_m * 3.28084:.1f} ft" if tracker_length_m else '?'
-            
-            short_name = ref.split(' - ', 1)[1] if ' - ' in ref else ref
-            info.append(("", ""))  # spacer
-            info.append(("Template", short_name))
-            info.append(("  Strings/Tracker", str(spt)))
-            info.append(("  Modules/String", str(mps)))
-            info.append(("  Modules High", str(modules_high)))
-            info.append(("  Orientation", orientation))
-            info.append(("  Total Modules", str(total_modules)))
-            info.append(("  Tracker Length", tracker_length_ft))
-            if has_motor:
-                info.append(("  Motor", motor_type.replace('_', ' ').title()))
-        
-        return info
-
     def _get_group_module_length_m(self, group: dict) -> float:
         """Return the N-S module dimension (m) for the first templated segment in this group.
         Used for GCR <-> row spacing conversion. Returns None if no template is found."""
@@ -4050,9 +3975,13 @@ class QuickEstimate(ttk.Frame):
         canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _on_mousewheel))
         canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
         
+        # Two-column layout: group inputs (left) | segments (right)
+        two_col_frame = ttk.Frame(scrollable_frame)
+        two_col_frame.pack(fill='both', expand=True)
+
         # Row name
-        form_frame = ttk.Frame(scrollable_frame, padding="10")
-        form_frame.pack(fill='x')
+        form_frame = ttk.Frame(two_col_frame, padding="10")
+        form_frame.pack(side='left', fill='y')
         
         ttk.Label(form_frame, text="Group Name:").grid(row=0, column=0, sticky='w', pady=5)
         name_var = tk.StringVar(value=group['name'])
@@ -4208,28 +4137,9 @@ class QuickEstimate(ttk.Frame):
             self._schedule_autosave()
         spi_override_var.trace_add('write', _on_spi_change)
 
-        # Horizontal container for segments (left) and template info (right)
-        content_row = ttk.Frame(scrollable_frame)
-        content_row.pack(fill='both', expand=True, pady=(10, 0), padx=10)
-        
-        # Segments section (left side)
-        seg_frame = ttk.LabelFrame(content_row, text="Segments (left to right)", padding="10")
-        seg_frame.pack(side='left', fill='both', expand=True)
-        
-        # Summary card — template info (right side)
-        summary_info = self.get_group_summary_info(group)
-        if summary_info:
-            summary_frame = ttk.LabelFrame(content_row, text="Template Info", padding="10")
-            summary_frame.pack(side='left', fill='y', padx=(10, 0))
-            
-            for label, value in summary_info:
-                if label == "" and value == "":
-                    ttk.Separator(summary_frame, orient='horizontal').pack(fill='x', pady=5)
-                    continue
-                info_row = ttk.Frame(summary_frame)
-                info_row.pack(fill='x', pady=1)
-                ttk.Label(info_row, text=label, font=('Helvetica', 9, 'bold'), width=18, anchor='e').pack(side='left')
-                ttk.Label(info_row, text=value, font=('Helvetica', 9), foreground='#333333').pack(side='left', padx=(8, 0))
+        # Segments section
+        seg_frame = ttk.LabelFrame(two_col_frame, text="Segments (left to right)", padding="10")
+        seg_frame.pack(side='left', fill='both', expand=True, pady=10, padx=(0, 10))
         
         # String count display
         self.group_string_count_label = ttk.Label(seg_frame, text="", font=('Helvetica', 10, 'bold'))
