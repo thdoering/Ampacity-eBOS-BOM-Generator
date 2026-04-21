@@ -429,7 +429,32 @@ class SitePreviewWindow(tk.Toplevel):
                             group_motor_y = motor_y
 
                         group_trackers.append(tracker)
-                        
+
+                        max_tracker_width_ft = max(max_tracker_width_ft, tracker['width_ft'])
+                        max_tracker_length_ft = max(max_tracker_length_ft, tracker['length_ft'])
+                    else:
+                        # Tracker added after allocation was locked — render as unallocated (gray)
+                        tracker = {
+                            'strings_per_tracker': 0,
+                            'assignments': [],
+                            'template_ref': ref,
+                        }
+                        if dims:
+                            tracker['width_ft'] = dims[0]
+                            tracker['length_ft'] = dims[1]
+                        else:
+                            tracker['width_ft'] = fallback_width_ft
+                            tracker['length_ft'] = fallback_length_ft
+                        motor_y, motor_gap, has_motor = self.get_motor_position_in_tracker(ref)
+                        tracker['motor_y_ft'] = motor_y
+                        tracker['motor_gap_ft'] = motor_gap
+                        tracker['has_motor'] = has_motor
+                        tracker['partial_module_count'] = 0
+                        tracker['partial_string_side'] = 'north'
+                        tracker['full_string_count'] = 0
+                        if group_motor_y is None and has_motor:
+                            group_motor_y = motor_y
+                        group_trackers.append(tracker)
                         max_tracker_width_ft = max(max_tracker_width_ft, tracker['width_ft'])
                         max_tracker_length_ft = max(max_tracker_length_ft, tracker['length_ft'])
                     global_idx += 1
@@ -1691,28 +1716,39 @@ class SitePreviewWindow(tk.Toplevel):
         parent = self.master
         
         if self.allocation_locked:
-            # Locked — keep string assignments, just reposition devices
-            self.build_layout_data()
-            self._recolor_from_cb_assignments()
-            self._build_legend()
-            inv_summary = getattr(parent, 'last_totals', {}).get('inverter_summary', {})
-            num_inv = inv_summary.get('total_inverters', 0)
-            total_str = inv_summary.get('total_strings', 0)
-            actual_ratio = inv_summary.get('actual_dc_ac', 0)
-            split = inv_summary.get('total_split_trackers', 0)
-            spatial_runs = inv_summary.get('allocation_result', {}).get('spatial_runs', 1)
-            self.summary_label.config(
-                text=self._format_summary(num_inv, total_str, actual_ratio, split,
-                                          spatial_runs=spatial_runs, locked=True)
+            manually_edited = getattr(parent, 'manually_edited', False)
+            detail = " (including manual device assignments)" if manually_edited else ""
+            confirmed = messagebox.askyesno(
+                "Refresh Allocation",
+                f"Re-run allocation from scratch? All current device assignments{detail} will be replaced.\n\n"
+                "Click No to keep the current lock and just refresh the display.",
+                parent=self
             )
-            self.draw()
-            return
+            if not confirmed:
+                # Keep lock — just refresh positions and display
+                self.build_layout_data()
+                self._recolor_from_cb_assignments()
+                self._build_legend()
+                inv_summary = getattr(parent, 'last_totals', {}).get('inverter_summary', {})
+                num_inv = inv_summary.get('total_inverters', 0)
+                total_str = inv_summary.get('total_strings', 0)
+                actual_ratio = inv_summary.get('actual_dc_ac', 0)
+                split = inv_summary.get('total_split_trackers', 0)
+                spatial_runs = inv_summary.get('allocation_result', {}).get('spatial_runs', 1)
+                self.summary_label.config(
+                    text=self._format_summary(num_inv, total_str, actual_ratio, split,
+                                              spatial_runs=spatial_runs, locked=True)
+                )
+                self.draw()
+                return
+            # Confirmed — fall through to full reallocation below
 
         if hasattr(parent, 'calculate_estimate'):
             # Clear stale combiner assignments so calculate_estimate rebuilds them fresh
             parent.last_combiner_assignments = []
             parent.allocation_locked = False
             parent.locked_allocation_result = None
+            parent.manually_edited = False
             self.allocation_locked = False
             self._tracker_physical_order = None
             parent.calculate_estimate()
@@ -3002,10 +3038,42 @@ class SitePreviewWindow(tk.Toplevel):
             messagebox.showinfo("No Data", "Run Calculate Estimate first.", parent=self)
             return
 
-        # Apply custom device names from canvas renaming
+        # Apply custom device names from canvas renaming (indices match allocated devices only)
         for dev_idx, custom_name in self.device_names.items():
             if dev_idx < len(device_data):
                 device_data[dev_idx]['name'] = custom_name
+
+        # Compute SPT for every tracker (including unallocated ones added after lock)
+        all_tracker_spt = {}
+        _g_idx = 0
+        for _grp in self.groups:
+            for _seg in _grp.get('segments', []):
+                _ref = _seg.get('template_ref')
+                _raw = 1
+                if _ref and _ref in self.enabled_templates:
+                    _raw = self.enabled_templates[_ref].get('strings_per_tracker', 1)
+                _spt = int(_raw) + (1 if _raw != int(_raw) else 0)
+                for _ in range(_seg.get('quantity', 0)):
+                    all_tracker_spt[_g_idx] = _spt
+                    _g_idx += 1
+        metadata['tracker_spt'].update(
+            {k: v for k, v in all_tracker_spt.items() if k not in metadata['tracker_spt']}
+        )
+
+        # Identify tracker indices not covered by any device
+        covered_trackers = {tidx for dev in device_data for tidx, _ in dev['strings']}
+        unallocated_strings = []
+        for tidx, spt in sorted(all_tracker_spt.items()):
+            if tidx not in covered_trackers:
+                for phys_pos in range(spt):
+                    unallocated_strings.append((tidx, phys_pos))
+
+        if unallocated_strings:
+            device_data.insert(0, {
+                'name': 'Unallocated',
+                'strings': unallocated_strings,
+                'is_unallocated': True,
+            })
 
         original = copy.deepcopy(device_data)
         original_locked = self.allocation_locked
@@ -3033,12 +3101,18 @@ class SitePreviewWindow(tk.Toplevel):
             dev['strings'].sort(key=lambda s: (s[0], s[1]))
 
         def _sort_device_data():
-            """Sort device_data in-place by natural name order (e.g. CB-02 before CB-10)."""
+            """Sort device_data in-place by natural name order; keeps unallocated device at top."""
             import re
             def _natural_key(dev):
                 return [int(c) if c.isdigit() else c.lower()
                         for c in re.split(r'(\d+)', dev['name'])]
-            device_data.sort(key=_natural_key)
+            has_ua = device_data and device_data[0].get('is_unallocated')
+            if has_ua:
+                rest = device_data[1:]
+                rest.sort(key=_natural_key)
+                device_data[1:] = rest
+            else:
+                device_data.sort(key=_natural_key)
 
         def _validate_move(source_dev_idx, positions_to_move, target_dev_idx):
             """Check that moving strings preserves contiguity on both sides.
@@ -3097,14 +3171,23 @@ class SitePreviewWindow(tk.Toplevel):
                   font=('Helvetica', 9)).pack(fill='x', padx=10)
 
         def _update_summary():
-            total_devs = len(device_data)
-            total_strings = sum(len(d['strings']) for d in device_data)
+            ua_dev = next((d for d in device_data if d.get('is_unallocated')), None)
+            ua_count = len(ua_dev['strings']) if ua_dev else 0
+            real_devs = [d for d in device_data if not d.get('is_unallocated')]
+            total_devs = len(real_devs)
+            total_strings = sum(len(d['strings']) for d in real_devs)
             tracker_dev_map = {}
-            for dev_idx, dev in enumerate(device_data):
+            for dev_idx, dev in enumerate(real_devs):
                 for tidx, _pos in dev['strings']:
                     tracker_dev_map.setdefault(tidx, set()).add(dev_idx)
             splits = sum(1 for devs in tracker_dev_map.values() if len(devs) > 1)
-            summary_var.set(f"{total_devs} devices  |  {total_strings} strings  |  {splits} split trackers")
+            if ua_count:
+                summary_var.set(
+                    f"{total_devs} devices  |  {total_strings} strings allocated"
+                    f"  |  {ua_count} unallocated"
+                )
+            else:
+                summary_var.set(f"{total_devs} devices  |  {total_strings} strings  |  {splits} split trackers")
 
         # Holds a reference to any open inline-rename Entry widget so refresh_tree can clean it up
         inline_entry_ref = [None]
@@ -3125,8 +3208,15 @@ class SitePreviewWindow(tk.Toplevel):
             if select_device is not None and select_device < len(device_data):
                 select_name = device_data[select_device]['name']
 
-            device_data.sort(key=lambda d: [int(c) if c.isdigit() else c.lower()
-                                            for c in _sort_re.split(r'(\d+)', d['name'])])
+            _has_ua = device_data and device_data[0].get('is_unallocated')
+            _sort_key = lambda d: [int(c) if c.isdigit() else c.lower()
+                                   for c in _sort_re.split(r'(\d+)', d['name'])]
+            if _has_ua:
+                _rest = device_data[1:]
+                _rest.sort(key=_sort_key)
+                device_data[1:] = _rest
+            else:
+                device_data.sort(key=_sort_key)
 
             # If we had a name to select, find its new index
             if select_name is not None:
@@ -3144,17 +3234,21 @@ class SitePreviewWindow(tk.Toplevel):
             for dev_idx, dev in enumerate(device_data):
                 total = len(dev['strings'])
                 dev_iid = f'dev_{dev_idx}'
-                # Preserve previous open state; default to open=(total <= 40) for new nodes
-                is_open = open_state.get(dev_idx, False)
-                tree.insert('', 'end', 
+                is_ua = dev.get('is_unallocated', False)
+                is_open = open_state.get(dev_idx, True if is_ua else False)
+                label = f"{dev['name']}  ({total} strings)"
+                node_tags = ('unallocated',) if is_ua else ()
+                tree.insert('', 'end',
                             iid=dev_iid,
-                            text=f"{dev['name']}  ({total} strings)",
-                            open=is_open)
+                            text=label,
+                            open=is_open,
+                            tags=node_tags)
 
                 for s_pos, (tidx, phys_pos) in enumerate(dev['strings']):
                     str_iid = f'dev_{dev_idx}_s_{s_pos}'
                     tree.insert(dev_iid, 'end', iid=str_iid,
-                                text=f"  T{tidx+1:02d} - S{phys_pos+1:02d}")
+                                text=f"  T{tidx+1:02d} - S{phys_pos+1:02d}",
+                                tags=node_tags)
                     string_tracker[str_iid] = (tidx, phys_pos)
 
             if select_device is not None:
@@ -3193,6 +3287,7 @@ class SitePreviewWindow(tk.Toplevel):
 
         # Tag for highlighting the drop target device row
         tree.tag_configure('drop_target', background='#BBDEFB')
+        tree.tag_configure('unallocated', foreground='#B71C1C')
 
         def _resolve_device_iid(y):
             """Given a y coordinate, resolve to the device iid the user is hovering over."""
@@ -3317,9 +3412,12 @@ class SitePreviewWindow(tk.Toplevel):
                 s_pos = int(s_iid.rsplit('_', 1)[1])
                 by_source.setdefault(dev_idx, []).append(s_pos)
 
-            # Validate contiguity for each source
+            # Validate contiguity for each source (skip when moving to/from unallocated pool)
             for src_dev, positions in by_source.items():
                 if src_dev == target_dev:
+                    continue
+                if (device_data[src_dev].get('is_unallocated') or
+                        device_data[target_dev].get('is_unallocated')):
                     continue
                 ok, err = _validate_move(src_dev, positions, target_dev)
                 if not ok:
@@ -3399,6 +3497,9 @@ class SitePreviewWindow(tk.Toplevel):
         def _on_double_click(event):
             iid = tree.identify_row(event.y)
             if iid and iid.startswith('dev_') and iid not in string_tracker:
+                dev_idx = int(iid.split('_')[1])
+                if device_data[dev_idx].get('is_unallocated'):
+                    return 'break'
                 _begin_inline_rename(iid)
                 return 'break'
 
@@ -3484,6 +3585,8 @@ class SitePreviewWindow(tk.Toplevel):
                                     "Select a device node to remove.", parent=dialog)
                 return
             for idx in sorted(dev_indices, reverse=True):
+                if device_data[idx].get('is_unallocated'):
+                    continue
                 if device_data[idx]['strings']:
                     if not messagebox.askyesno(
                         "Remove Device",
@@ -3583,58 +3686,43 @@ class SitePreviewWindow(tk.Toplevel):
         ttk.Button(action_frame, text="Remove", command=remove_device).pack(side='left', padx=2)
         ttk.Button(action_frame, text="Rename", command=rename_device).pack(side='left', padx=2)
 
-        # --- Live preview update ---
+        # --- Live preview update / autosave ---
         def _update_live_preview():
-            # Sync device count, names, and rebuild
-            self.num_devices = len(device_data)
-            self.device_names = {i: dev['name'] for i, dev in enumerate(device_data)}
+            # Commit changes immediately — every mutation autosaves to parent state
+            real_devs = [d for d in device_data if not d.get('is_unallocated')]
+            self.num_devices = len(real_devs)
+            self.device_names = {i: dev['name'] for i, dev in enumerate(real_devs)}
 
-            self._rebuild_from_device_strings(device_data, metadata)
-
-            inv_summary = getattr(self.master, 'last_totals', {}).get('inverter_summary', {})
-            if inv_summary and inv_summary.get('allocation_result'):
-                self.inv_summary = inv_summary
-                self.build_layout_data()
-                self._recolor_from_cb_assignments()
-                self._build_legend()
-                self.draw()
-
-        # --- Apply / Cancel ---
-        bottom_frame = ttk.Frame(dialog, padding="10")
-        bottom_frame.pack(fill='x')
-
-        def apply_changes():
-            self.num_devices = len(device_data)
-            self.device_names = {i: dev['name'] for i, dev in enumerate(device_data)}
-            self._rebuild_from_device_strings(device_data, metadata)
+            self._rebuild_from_device_strings(real_devs, metadata)
             self._update_lock_button()
             self._highlighted_strings = set()
+            if hasattr(self.master, 'manually_edited'):
+                self.master.manually_edited = True
 
             inv_summary = getattr(self.master, 'last_totals', {}).get('inverter_summary', {})
             if inv_summary and inv_summary.get('allocation_result'):
                 self.inv_summary = inv_summary
-
+                alloc = inv_summary.get('allocation_result', {})
+                num_inv = alloc.get('summary', {}).get('total_inverters', 0)
+                total_str = alloc.get('summary', {}).get('total_strings', 0)
+                split = alloc.get('summary', {}).get('total_split_trackers', 0)
+                spatial_runs = alloc.get('spatial_runs', 1)
+                actual_ratio = inv_summary.get('actual_dc_ac', 0)
+                self.summary_label.config(
+                    text=self._format_summary(num_inv, total_str, actual_ratio, split,
+                                              spatial_runs=spatial_runs, locked=True)
+                )
             self.build_layout_data()
             self._recolor_from_cb_assignments()
             self._build_legend()
-
-            # Update top bar summary
-            alloc = inv_summary.get('allocation_result', {})
-            num_inv = alloc.get('summary', {}).get('total_inverters', 0)
-            total_str = alloc.get('summary', {}).get('total_strings', 0)
-            split = alloc.get('summary', {}).get('total_split_trackers', 0)
-            spatial_runs = alloc.get('spatial_runs', 1)
-            actual_ratio = inv_summary.get('actual_dc_ac', 0)
-            self.summary_label.config(
-                text=self._format_summary(num_inv, total_str, actual_ratio, split,
-                                          spatial_runs=spatial_runs, locked=True)
-            )
-
             self.draw()
-            dialog.destroy()
 
-        def cancel():
-            # Restore full parent state from snapshot — no rebuild needed
+        # --- Undo All Changes ---
+        bottom_frame = ttk.Frame(dialog, padding="10")
+        bottom_frame.pack(fill='x')
+
+        def undo_changes():
+            # Restore full parent state from the snapshot taken at dialog open
             self.allocation_locked = original_locked
             self.master.allocation_locked = original_parent_locked
             self.master.locked_allocation_result = original_locked_result
@@ -3642,8 +3730,11 @@ class SitePreviewWindow(tk.Toplevel):
             self.master.last_combiner_assignments = original_combiner_assignments
             self._tracker_physical_order = original_physical_order
             self._update_lock_button()
-
             self._highlighted_strings = set()
+
+            # Restore device_data in-place so the tree can refresh from it
+            device_data.clear()
+            device_data.extend(copy.deepcopy(original))
 
             if original_inv_summary is not None:
                 self.inv_summary = original_inv_summary
@@ -3651,12 +3742,11 @@ class SitePreviewWindow(tk.Toplevel):
             self._recolor_from_cb_assignments()
             self._build_legend()
             self.draw()
-            dialog.destroy()
+            refresh_tree()
 
-        dialog.protocol("WM_DELETE_WINDOW", cancel)
+        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
 
-        ttk.Button(bottom_frame, text="Apply", command=apply_changes).pack(side='right', padx=2)
-        ttk.Button(bottom_frame, text="Cancel", command=cancel).pack(side='right', padx=2)
+        ttk.Button(bottom_frame, text="Undo All Changes", command=undo_changes).pack(side='right', padx=2)
         ttk.Button(bottom_frame, text="Collapse All",
                    command=lambda: [tree.item(c, open=False) for c in tree.get_children()]).pack(side='left', padx=2)
         ttk.Button(bottom_frame, text="Expand All",

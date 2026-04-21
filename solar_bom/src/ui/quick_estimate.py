@@ -51,6 +51,7 @@ class QuickEstimate(ttk.Frame):
         # Allocation lock state
         self.allocation_locked = False
         self.locked_allocation_result = None
+        self.manually_edited = False  # True once Edit Devices autosaves a change
         
         self.setup_ui()
         
@@ -429,10 +430,9 @@ class QuickEstimate(ttk.Frame):
         self.group_listbox.see(idx)
         self.on_group_select(None)
         
-        self._auto_unlock_allocation()
         self._mark_dirty()
         return idx
-    
+
     def copy_selected_group(self):
         """Copy the currently selected group"""
         sel = self.group_listbox.curselection()
@@ -453,9 +453,8 @@ class QuickEstimate(ttk.Frame):
         self.group_listbox.see(insert_idx)
         self.on_group_select(None)
         
-        self._auto_unlock_allocation()
         self._mark_dirty()
-    
+
     def delete_selected_group(self):
         """Delete the currently selected group"""
         sel = self.group_listbox.curselection()
@@ -464,6 +463,7 @@ class QuickEstimate(ttk.Frame):
         
         idx = sel[0]
         del self.groups[idx]
+        self._reconcile_locked_allocation()
         self.selected_group_idx = None
         self._refresh_group_listbox(preserve_selection=False)
         
@@ -2353,6 +2353,129 @@ class QuickEstimate(ttk.Frame):
             parent=self
         )
 
+    def _reconcile_locked_allocation(self):
+        """Drop connections for tracker indices that no longer exist.
+
+        Called after subtractive structural changes (delete segment, decrease qty,
+        delete group). The device simply loses those strings — no prompt, no unlock.
+        """
+        if not self.allocation_locked or self.locked_allocation_result is None:
+            return
+
+        total_trackers = sum(
+            seg.get('quantity', 0)
+            for group in self.groups
+            for seg in group.get('segments', [])
+        )
+
+        for inv in self.locked_allocation_result.get('inverters', []):
+            inv['harness_map'] = [
+                e for e in inv.get('harness_map', [])
+                if e.get('tracker_idx', 0) < total_trackers
+            ]
+            inv['total_strings'] = sum(
+                e.get('strings_taken', 0) for e in inv['harness_map']
+            )
+
+        # Update summary counts
+        total_strings = sum(
+            inv.get('total_strings', 0)
+            for inv in self.locked_allocation_result.get('inverters', [])
+        )
+        split_tidxs = set(
+            e['tracker_idx']
+            for inv in self.locked_allocation_result.get('inverters', [])
+            for e in inv.get('harness_map', [])
+            if e.get('is_split')
+        )
+        summary = self.locked_allocation_result.setdefault('summary', {})
+        summary['total_strings'] = total_strings
+        summary['total_split_trackers'] = len(split_tidxs)
+
+        # Also drop invalid entries from combiner assignments
+        for cb in getattr(self, 'last_combiner_assignments', []):
+            cb['connections'] = [
+                c for c in cb.get('connections', [])
+                if c.get('tracker_idx', 0) < total_trackers
+            ]
+
+    def _shift_locked_allocation(self, insertion_point, delta):
+        """Shift tracker_idx values in locked allocation after a qty insert or delete.
+
+        insertion_point: first global index affected by the change
+        delta: +N trackers inserted (shift existing up), -N trackers removed (drop then shift down)
+        """
+        if not self.allocation_locked or self.locked_allocation_result is None:
+            return
+
+        if delta > 0:
+            for inv in self.locked_allocation_result.get('inverters', []):
+                for e in inv.get('harness_map', []):
+                    if e.get('tracker_idx', 0) >= insertion_point:
+                        e['tracker_idx'] += delta
+            for cb in getattr(self, 'last_combiner_assignments', []):
+                for c in cb.get('connections', []):
+                    if c.get('tracker_idx', 0) >= insertion_point:
+                        c['tracker_idx'] += delta
+        else:
+            removed_end = insertion_point - delta  # delta negative → removed_end > insertion_point
+            for inv in self.locked_allocation_result.get('inverters', []):
+                inv['harness_map'] = [
+                    e for e in inv.get('harness_map', [])
+                    if not (insertion_point <= e.get('tracker_idx', 0) < removed_end)
+                ]
+                for e in inv['harness_map']:
+                    if e.get('tracker_idx', 0) >= removed_end:
+                        e['tracker_idx'] += delta
+                inv['total_strings'] = sum(e.get('strings_taken', 0) for e in inv['harness_map'])
+            for cb in getattr(self, 'last_combiner_assignments', []):
+                cb['connections'] = [
+                    c for c in cb.get('connections', [])
+                    if not (insertion_point <= c.get('tracker_idx', 0) < removed_end)
+                ]
+                for c in cb['connections']:
+                    if c.get('tracker_idx', 0) >= removed_end:
+                        c['tracker_idx'] += delta
+
+        total_strings = sum(
+            e.get('strings_taken', 0)
+            for inv in self.locked_allocation_result.get('inverters', [])
+            for e in inv.get('harness_map', [])
+        )
+        split_tidxs = set(
+            e['tracker_idx']
+            for inv in self.locked_allocation_result.get('inverters', [])
+            for e in inv.get('harness_map', [])
+            if e.get('is_split')
+        )
+        summary = self.locked_allocation_result.setdefault('summary', {})
+        summary['total_strings'] = total_strings
+        summary['total_split_trackers'] = len(split_tidxs)
+
+    def _count_unallocated_strings(self):
+        """Return the number of strings not yet assigned to any device in the locked allocation."""
+        if not self.allocation_locked or self.locked_allocation_result is None:
+            return 0
+        allocated_trackers = {
+            e.get('tracker_idx')
+            for inv in self.locked_allocation_result.get('inverters', [])
+            for e in inv.get('harness_map', [])
+        }
+        count = 0
+        global_idx = 0
+        for group in self.groups:
+            for seg in group.get('segments', []):
+                ref = seg.get('template_ref')
+                raw_spt = 1
+                if ref and ref in getattr(self, 'enabled_templates', {}):
+                    raw_spt = self.enabled_templates[ref].get('strings_per_tracker', 1)
+                spt = int(raw_spt) + (1 if raw_spt != int(raw_spt) else 0)
+                for _ in range(seg.get('quantity', 0)):
+                    if global_idx not in allocated_trackers:
+                        count += spt
+                    global_idx += 1
+        return count
+
     def _clear_estimate_ui(self):
         """Clear the groups and details when switching/deleting estimates"""
         # Clear groups and pads
@@ -2363,6 +2486,7 @@ class QuickEstimate(ttk.Frame):
         self.last_combiner_assignments = []
         self.allocation_locked = False
         self.locked_allocation_result = None
+        self.manually_edited = False
         self.last_combiner_assignments = []
         if hasattr(self, 'group_listbox'):
             self._refresh_group_listbox()
@@ -2443,7 +2567,6 @@ class QuickEstimate(ttk.Frame):
             widget.destroy()
         self.show_group_details(group_idx)
         self._refresh_wire_sizing_for_segments()
-        self._auto_unlock_allocation()
         self._mark_dirty()
 
     def _on_lv_collection_changed(self, *args):
@@ -4354,11 +4477,30 @@ class QuickEstimate(ttk.Frame):
         
         def on_qty_change(*args):
             try:
-                segment['quantity'] = max(1, int(qty_var.get()))
+                new_qty = max(1, int(qty_var.get()))
             except ValueError:
-                pass
+                return
+            old_qty = segment.get('quantity', 1)
+            segment['quantity'] = new_qty
+            delta = new_qty - old_qty
             self._update_group_string_count(group)
-            self._auto_unlock_allocation()
+            if delta != 0 and self.allocation_locked and self.locked_allocation_result is not None:
+                # Compute global start index of this segment
+                seg_global_start = 0
+                found = False
+                for g in self.groups:
+                    for s in g.get('segments', []):
+                        if s is segment:
+                            found = True
+                            break
+                        seg_global_start += s.get('quantity', 0)
+                    if found:
+                        break
+                if found:
+                    insertion_point = seg_global_start + (old_qty if delta > 0 else new_qty)
+                    self._shift_locked_allocation(insertion_point, delta)
+                else:
+                    self._reconcile_locked_allocation()
             self._mark_stale()
             self._schedule_autosave()
         qty_var.trace_add('write', on_qty_change)
@@ -4400,6 +4542,7 @@ class QuickEstimate(ttk.Frame):
         if new_idx < 0 or new_idx >= len(group['segments']):
             return
         group['segments'][seg_idx], group['segments'][new_idx] = group['segments'][new_idx], group['segments'][seg_idx]
+        self._auto_unlock_allocation()
         self._rebuild_group_details(group_idx)
 
     def _delete_segment(self, group: dict, group_idx: int, seg_idx: int):
@@ -4407,6 +4550,7 @@ class QuickEstimate(ttk.Frame):
         if len(group['segments']) <= 1:
             return  # Keep at least one segment
         del group['segments'][seg_idx]
+        self._reconcile_locked_allocation()
         self._rebuild_group_details(group_idx)
     
     def _update_group_string_count(self, group: dict):
@@ -5526,11 +5670,22 @@ class QuickEstimate(ttk.Frame):
         
         # Run calculation first to ensure results are current
         self.calculate_estimate()
-        
+
+        unalloc = self._count_unallocated_strings()
+        if unalloc > 0:
+            messagebox.showerror(
+                "Unallocated Strings",
+                f"{unalloc} string(s) are not yet assigned to a device.\n\n"
+                "Open Edit Devices in the Site Preview and drag all unallocated strings "
+                "to a device before exporting.",
+                parent=self,
+            )
+            return
+
         if not self.selected_module:
             messagebox.showwarning("No Module", "Please select a module before exporting.")
             return
-        
+
         # Gather all the data we need
         modules_per_string = self._get_int_var(self.modules_per_string_var, 28)
         row_spacing = self.groups[0].get('row_spacing_ft', 20.0) if self.groups else 20.0
@@ -6317,6 +6472,17 @@ class QuickEstimate(ttk.Frame):
     def export_pdf_only(self):
         """Export just the site PDF (no Excel BOM) for quick testing."""
         self.calculate_estimate()
+
+        unalloc = self._count_unallocated_strings()
+        if unalloc > 0:
+            messagebox.showerror(
+                "Unallocated Strings",
+                f"{unalloc} string(s) are not yet assigned to a device.\n\n"
+                "Open Edit Devices in the Site Preview and drag all unallocated strings "
+                "to a device before exporting.",
+                parent=self,
+            )
+            return
 
         if not self.selected_module:
             messagebox.showwarning("No Module", "Please select a module before exporting.")
