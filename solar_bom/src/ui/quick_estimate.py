@@ -3059,6 +3059,49 @@ class QuickEstimate(ttk.Frame):
                     insert_row(f"{size}-String Harness (Pos)", pos_pn, qty, 'ea', pos_unit, pos_ext)
                     insert_row(f"{size}-String Harness (Neg)", neg_pn, qty, 'ea', neg_unit, neg_ext)
         
+        # Inline DC string fuses (Wire Harness only)
+        if totals.get('inline_fuses_by_rating'):
+            import os as _os
+            is_first_solar = totals.get('has_first_solar', False)
+
+            fuse_library = {}
+            try:
+                _cur = _os.path.dirname(_os.path.abspath(__file__))
+                _root = _os.path.dirname(_os.path.dirname(_cur))
+                with open(_os.path.join(_root, 'data', 'fuse_library.json'), 'r') as _f:
+                    fuse_library = json.load(_f)
+            except Exception:
+                pass
+
+            def _fuse_pn(rating):
+                for pn, spec in fuse_library.items():
+                    if spec.get('fuse_rating_amps') == rating:
+                        return pn
+                candidates = [(spec.get('fuse_rating_amps', 0), pn)
+                              for pn, spec in fuse_library.items()
+                              if spec.get('fuse_rating_amps', 0) >= rating]
+                return min(candidates)[1] if candidates else 'N/A'
+
+            insert_section('FUSES')
+            for rating in sorted(totals['inline_fuses_by_rating'].keys()):
+                qty = totals['inline_fuses_by_rating'][rating]
+                pn = _fuse_pn(rating)
+                try:
+                    from src.utils.pricing_lookup import PricingLookup as _PL
+                    _up = _PL().get_price(pn) if pn != 'N/A' else None
+                    unit_cost_str = f"${_up:,.2f}" if _up else ''
+                    ext_cost_str = f"${_up * qty:,.2f}" if _up else ''
+                except Exception:
+                    unit_cost_str = ''
+                    ext_cost_str = ''
+                item_name = f"{rating}A Inline DC String Fuse (Pos)"
+                if is_first_solar:
+                    self.results_tree.insert('', 'end',
+                        values=('☐', item_name, pn, qty, 'ea', unit_cost_str, ext_cost_str),
+                        tags=('unchecked',))
+                else:
+                    insert_row(item_name, pn, qty, 'ea', unit_cost_str, ext_cost_str)
+
         # Trunk Bus items
         if totals.get('trunk_cable_by_size'):
             insert_section('TRUNK BUS CABLE')
@@ -3321,6 +3364,27 @@ class QuickEstimate(ttk.Frame):
             })
         
         return result
+
+    def _calc_inline_fuse_rating(self, module_spec) -> int:
+        """Return the inline DC string fuse rating for a single string.
+        Uses fixed 1.25 NEC factor regardless of project setting."""
+        _FUSE_RATINGS = [5, 10, 15, 20, 25, 30, 35, 40, 45]
+        try:
+            if isinstance(module_spec, dict):
+                isc = float(module_spec.get('isc', 0))
+            elif module_spec is not None:
+                isc = float(module_spec.isc)
+            elif self.selected_module:
+                isc = float(self.selected_module.isc)
+            else:
+                return 15
+            nec_min = isc * 1.25
+            for rating in _FUSE_RATINGS:
+                if rating >= nec_min:
+                    return rating
+        except (ValueError, TypeError):
+            pass
+        return 15
 
     def _adjust_harnesses_for_splits(self, totals):
         """Derive harness configs for split trackers based on allocation boundaries.
@@ -4373,6 +4437,7 @@ class QuickEstimate(ttk.Frame):
             'string_inverters': 0,
             'trackers_by_string': defaultdict(int),
             'harnesses_by_size': defaultdict(int),
+            'inline_fuses_by_rating': defaultdict(int),
             'whips_by_length': defaultdict(int),
             'extenders_pos_by_length': defaultdict(int),
             'extenders_neg_by_length': defaultdict(int),
@@ -4516,6 +4581,13 @@ class QuickEstimate(ttk.Frame):
                             max_harness_strings = size
                         totals['harnesses_by_size'][size] += qty
                         total_all_harnesses += qty
+
+                # Count inline fuses (Wire Harness only, positive side, size >= 2)
+                if lv_method == 'Wire Harness':
+                    for size in harness_sizes:
+                        if size >= 2:
+                            fuse_rating = self._calc_inline_fuse_rating(seg_module)
+                            totals['inline_fuses_by_rating'][fuse_rating] += size * qty
         
         # Build harness-count-per-spt lookup for whip calculation
         harness_count_by_spt = {}
@@ -4874,6 +4946,30 @@ class QuickEstimate(ttk.Frame):
         # For now it's a no-op since allocations=[] above.
         self._adjust_harnesses_for_splits(totals)
 
+        # Adjust inline fuse counts for split trackers to match harness adjustments
+        if lv_method == 'Wire Harness' and self._split_tracker_details:
+            _tsm = getattr(self, '_tracker_to_segment', [])
+            for tidx, split_info in self._split_tracker_details.items():
+                _seg_module = None
+                if tidx < len(_tsm):
+                    _seg = _tsm[tidx].get('seg')
+                    if _seg:
+                        _ref = _seg.get('template_ref')
+                        if _ref and _ref in self.enabled_templates:
+                            _seg_module = self.enabled_templates[_ref].get('module_spec')
+                _fuse_rating = self._calc_inline_fuse_rating(_seg_module)
+                for size in split_info['original_config']:
+                    if size >= 2:
+                        totals['inline_fuses_by_rating'][_fuse_rating] -= size
+                for portion in split_info['portions']:
+                    for size in portion['harnesses']:
+                        if size >= 2:
+                            totals['inline_fuses_by_rating'][_fuse_rating] += size
+            # Clean up zero/negative entries
+            zero_keys = [r for r, v in totals['inline_fuses_by_rating'].items() if v <= 0]
+            for r in zero_keys:
+                del totals['inline_fuses_by_rating'][r]
+
         # ==================== Trunk Bus calculation ====================
         if lv_method == 'Trunk Bus' and allocation_result:
             from src.utils.cable_sizing import recommend_trunk_cable_size, select_lbd_size
@@ -5213,6 +5309,12 @@ class QuickEstimate(ttk.Frame):
             'dc_feeder_avg_ft': dc_feeder_avg_ft if 'dc_feeder_avg_ft' in dir() else 0,
             'ac_homerun_avg_ft': ac_homerun_avg_ft if 'ac_homerun_avg_ft' in dir() else 0,
         }
+        totals['unique_modules'] = unique_modules
+        totals['segment_module_data'] = segment_module_data
+        totals['has_first_solar'] = any(
+            'first solar' in (m.get('manufacturer', '') or '').lower()
+            for m in unique_modules.values()
+        )
 
         # Store totals for Excel export
         self.last_totals = totals
