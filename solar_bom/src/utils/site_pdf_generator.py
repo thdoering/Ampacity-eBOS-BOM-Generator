@@ -16,6 +16,7 @@ import matplotlib.patches as mpatches
 from matplotlib.patches import FancyBboxPatch, Rectangle
 from matplotlib.backends.backend_pdf import PdfPages
 import matplotlib.patheffects as pe
+from matplotlib.transforms import Affine2D
 
 
 # Page dimensions in inches (11x17 landscape)
@@ -162,9 +163,9 @@ def _create_site_page(group_layout, device_positions, pads, colors,
     max_width = _get_max_tracker_width(group_layout)
 
     _draw_groups(ax, group_layout, max_width)
-    _draw_devices(ax, device_positions, device_label, pads)
+    _draw_devices(ax, device_positions, device_label, pads, group_layout)
     if show_routes:
-        _draw_routes(ax, device_positions, pads, topology)
+        _draw_routes(ax, device_positions, pads, topology, group_layout)
     _draw_pads(ax, pads)
     if align_on_motor:
         _draw_motor_alignment_lines(ax, group_layout)
@@ -187,6 +188,26 @@ def _create_site_page(group_layout, device_positions, pads, colors,
 # ---------------------------------------------------------------------------
 # World bounds
 # ---------------------------------------------------------------------------
+
+def _rotate_pt(cx, cy, x, y, angle_deg):
+    """Rotate (x, y) around (cx, cy) by angle_deg degrees (positive = CW geographic)."""
+    rad = math.radians(angle_deg)
+    dx, dy = x - cx, y - cy
+    return (cx + dx * math.cos(rad) - dy * math.sin(rad),
+            cy + dx * math.sin(rad) + dy * math.cos(rad))
+
+
+def _group_rotation_info(group_data):
+    """Return (rot_cx, rot_cy, rotation_deg) for a group layout dict."""
+    rd = group_data.get('rotation_deg', 0.0)
+    if not rd:
+        return None, None, 0.0
+    vis_min = group_data.get('visual_min_y', 0)
+    vis_max = group_data.get('visual_max_y', group_data.get('length_ft', 0))
+    rcx = group_data['x'] + group_data['width_ft'] / 2
+    rcy = group_data['y'] + (vis_min + vis_max) / 2
+    return rcx, rcy, rd
+
 
 def _compute_world_bounds(group_layout, device_positions, pads):
     """Compute the bounding box of all drawn elements in world feet."""
@@ -217,8 +238,18 @@ def _compute_world_bounds(group_layout, device_positions, pads):
                 max_group_length = group.get('length_ft', tracker.get('length_ft', 100))
                 ty = gy + (max_group_length - tracker.get('length_ft', 100)) / 2 + angle_y_offset
 
-            xs.extend([tx + tx_offset, tx + tx_offset + t_width])
-            ys.extend([ty, ty + t_length])
+            rcx, rcy, rd = _group_rotation_info(group)
+            corners = [
+                (tx + tx_offset,          ty),
+                (tx + tx_offset + t_width, ty),
+                (tx + tx_offset + t_width, ty + t_length),
+                (tx + tx_offset,           ty + t_length),
+            ]
+            for cx2, cy2 in corners:
+                if rd:
+                    cx2, cy2 = _rotate_pt(rcx, rcy, cx2, cy2, rd)
+                xs.append(cx2)
+                ys.append(cy2)
 
     for dev in (device_positions or []):
         xs.extend([dev['x'], dev['x'] + dev['width_ft']])
@@ -257,6 +288,12 @@ def _draw_groups(ax, group_layout, max_width):
         pitch = group_data.get('row_spacing_ft', 20)
         gx = group_data['x']
         gy = group_data['y']
+
+        rcx, rcy, rotation_deg = _group_rotation_info(group_data)
+        if rotation_deg:
+            group_transform = Affine2D().rotate_deg_around(rcx, rcy, rotation_deg) + ax.transData
+        else:
+            group_transform = ax.transData
 
         for t_idx, tracker in enumerate(group_data['trackers']):
             spt = tracker['strings_per_tracker']
@@ -327,7 +364,8 @@ def _draw_groups(ax, group_layout, max_width):
 
                 rect = Rectangle(
                     (tx + tx_offset, sy), t_width, sh,
-                    facecolor=color, edgecolor='#555555', linewidth=0.3
+                    facecolor=color, edgecolor='#555555', linewidth=0.3,
+                    transform=group_transform
                 )
                 ax.add_patch(rect)
 
@@ -335,7 +373,8 @@ def _draw_groups(ax, group_layout, max_width):
             outline = Rectangle(
                 (tx + tx_offset - 0.5, ty - 0.5),
                 t_width + 1.0, t_length + 1.0,
-                facecolor='none', edgecolor='#222222', linewidth=0.4
+                facecolor='none', edgecolor='#222222', linewidth=0.4,
+                transform=group_transform
             )
             ax.add_patch(outline)
 
@@ -348,17 +387,20 @@ def _draw_groups(ax, group_layout, max_width):
                 motor_w = t_width + 0.6
                 motor_rect = Rectangle(
                     (motor_x1, motor_world_y), motor_w, motor_gap,
-                    facecolor='#666666', edgecolor='#444444', linewidth=0.3
+                    facecolor='#666666', edgecolor='#444444', linewidth=0.3,
+                    transform=group_transform
                 )
                 ax.add_patch(motor_rect)
-                # Motor dot
+                # Motor dot — rotate position manually since ax.plot doesn't use patch transforms
                 motor_cx = motor_x1 + motor_w / 2
                 motor_cy = motor_world_y + motor_gap / 2
+                if rotation_deg:
+                    motor_cx, motor_cy = _rotate_pt(rcx, rcy, motor_cx, motor_cy, rotation_deg)
                 ax.plot(motor_cx, motor_cy, 'o', color='#FF8800',
                         markersize=2, markeredgecolor='#CC6600', markeredgewidth=0.3)
 
 
-def _draw_devices(ax, device_positions, device_label, pads):
+def _draw_devices(ax, device_positions, device_label, pads, group_layout=None):
     """Draw CB/SI device markers."""
     if not device_positions:
         return
@@ -377,6 +419,15 @@ def _draw_devices(ax, device_positions, device_label, pads):
         dh = dev['height_ft']
         label = dev.get('label', f'{device_label}{dev_idx + 1}')
 
+        # Rotation from the device's group
+        grp_idx = dev.get('group_idx')
+        rd = 0.0
+        dev_transform = ax.transData
+        if group_layout and grp_idx is not None and grp_idx < len(group_layout):
+            rcx, rcy, rd = _group_rotation_info(group_layout[grp_idx])
+            if rd:
+                dev_transform = Affine2D().rotate_deg_around(rcx, rcy, rd) + ax.transData
+
         # Fill color
         if device_label == 'CB':
             fill_color = '#FF9800'
@@ -392,20 +443,24 @@ def _draw_devices(ax, device_positions, device_label, pads):
 
         rect = Rectangle(
             (dx, dy), dw, dh,
-            facecolor=fill_color, edgecolor=outline_color, linewidth=0.8
+            facecolor=fill_color, edgecolor=outline_color, linewidth=0.8,
+            transform=dev_transform
         )
         ax.add_patch(rect)
 
-        # Label above device
-        cx = dx + dw / 2
-        ax.text(cx, dy - 1.0, label,
+        # Label above device (rotate anchor point if needed)
+        lx = dx + dw / 2
+        ly = dy - 1.0
+        if rd:
+            lx, ly = _rotate_pt(rcx, rcy, lx, ly, rd)
+        ax.text(lx, ly, label,
                 fontsize=5, fontweight='bold', color='#333333',
                 ha='center', va='bottom', fontfamily='sans-serif',
                 bbox=dict(facecolor='white', edgecolor='none', alpha=0.85, pad=1))
 
 
-def _draw_routes(ax, device_positions, pads, topology):
-    """Draw L-shaped Manhattan routes from devices to their assigned pads."""
+def _draw_routes(ax, device_positions, pads, topology, group_layout=None):
+    """Draw routes from devices to their assigned pads, following the driveline direction."""
     if not pads or not device_positions:
         return
 
@@ -420,16 +475,45 @@ def _draw_routes(ax, device_positions, pads, topology):
             continue
 
         pad = pads[pad_idx]
+
+        # Device center — apply group rotation
         dev_cx = dev['x'] + dev['width_ft'] / 2
         dev_cy = dev['y'] + dev['height_ft'] / 2
+        grp_idx = dev.get('group_idx')
+        if group_layout and grp_idx is not None and grp_idx < len(group_layout):
+            rcx, rcy, rd = _group_rotation_info(group_layout[grp_idx])
+            if rd:
+                dev_cx, dev_cy = _rotate_pt(rcx, rcy, dev_cx, dev_cy, rd)
+            grp = group_layout[grp_idx]
+        else:
+            rd = 0.0
+            grp = {}
+
         pad_cx = pad['x'] + pad.get('width_ft', 10) / 2
         pad_cy = pad['y'] + pad.get('height_ft', 8) / 2
+
+        # Row direction: E-W tilted by driveline_angle, then rotated by azimuth
+        driveline_tan = grp.get('driveline_tan', 0.0)
+        rotation_deg = grp.get('rotation_deg', 0.0)
+        mag = math.sqrt(1.0 + driveline_tan ** 2)
+        dx_u, dy_u = 1.0 / mag, driveline_tan / mag
+        if rotation_deg:
+            cos_r = math.cos(math.radians(rotation_deg))
+            sin_r = math.sin(math.radians(rotation_deg))
+            row_dx = dx_u * cos_r - dy_u * sin_r
+            row_dy = dx_u * sin_r + dy_u * cos_r
+        else:
+            row_dx, row_dy = dx_u, dy_u
+
+        # Corner: projection of pad onto line through device in row direction
+        t = (pad_cx - dev_cx) * row_dx + (pad_cy - dev_cy) * row_dy
+        corner_x = dev_cx + t * row_dx
+        corner_y = dev_cy + t * row_dy
 
         color = PAD_COLORS[pad_idx % len(PAD_COLORS)]
         linestyle = '--' if topology == 'Distributed String' else '-'
 
-        # L-shaped: E-W first, then N-S
-        ax.plot([dev_cx, pad_cx, pad_cx], [dev_cy, dev_cy, pad_cy],
+        ax.plot([dev_cx, corner_x, pad_cx], [dev_cy, corner_y, pad_cy],
                 color=color, linewidth=0.4, linestyle=linestyle, alpha=0.6)
 
 
@@ -488,9 +572,15 @@ def _draw_motor_alignment_lines(ax, group_layout):
         x_start = gx - 2
         x_end = gx + (n_trackers - 1) * pitch + trackers[-1].get('width_ft', 6) + 2
 
-        # Y positions at start and end (following angle)
+        # Y positions at start and end (following driveline angle)
         y_start = gy + motor_y_ft
         y_end = gy + motor_y_ft + (x_end - x_start) * math.tan(math.radians(angle))
+
+        # Apply group azimuth rotation
+        rcx, rcy, rd = _group_rotation_info(group)
+        if rd:
+            x_start, y_start = _rotate_pt(rcx, rcy, x_start, y_start, rd)
+            x_end, y_end = _rotate_pt(rcx, rcy, x_end, y_end, rd)
 
         ax.plot([x_start, x_end], [y_start, y_end],
                 color='#FF8800', linewidth=0.4, linestyle='--', alpha=0.5)

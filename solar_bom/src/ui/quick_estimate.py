@@ -487,6 +487,7 @@ class QuickEstimate(ttk.Frame):
             'name': f"Group {group_num}",
             'device_position': 'middle',
             'driveline_angle': 0.0,
+            'azimuth': 180,
             'row_spacing_ft': default_row_spacing,
             'strings_per_inv': default_spi,
             'segments': [
@@ -850,7 +851,7 @@ class QuickEstimate(ttk.Frame):
         return whip_distances
     
     def calculate_routed_feeder_distances(self, allocation_result, topology, row_spacing_ft):
-        """Calculate Manhattan feeder distances from each device to its assigned pad.
+        """Calculate routed feeder distances from each device to its assigned pad.
         
         Returns a dict with:
             'feeder_distances': list of (device_label, distance_ft) tuples
@@ -893,19 +894,21 @@ class QuickEstimate(ttk.Frame):
         # Recompute device centers (same logic as whip calc and site preview)
         tracker_world_x = []
         tracker_grp = []
+        group_x_map = {}
         auto_x_cursor = 0.0
-        
+
         for grp_idx, group in enumerate(self.groups):
             saved_x = group.get('position_x')
             group_x = saved_x if saved_x is not None else auto_x_cursor
-            
+            group_x_map[grp_idx] = group_x
+
             local_idx = 0
             for seg in group['segments']:
                 for _ in range(seg['quantity']):
                     tracker_world_x.append(group_x + local_idx * row_spacing_ft)
                     tracker_grp.append(grp_idx)
                     local_idx += 1
-            
+
             group_tracker_count = sum(seg['quantity'] for seg in group['segments'])
             auto_x_cursor += group_tracker_count * row_spacing_ft + row_spacing_ft * 2
         
@@ -962,7 +965,7 @@ class QuickEstimate(ttk.Frame):
             else:
                 dev_y = group_y + tracker_length_ft / 2.0
             
-            device_positions.append((dev_x, dev_y))
+            device_positions.append((dev_x, dev_y, primary_grp))
         
         # Build device -> pad lookup
         device_to_pad = {}
@@ -970,24 +973,77 @@ class QuickEstimate(ttk.Frame):
             for dev_idx in pad.get('assigned_devices', []):
                 device_to_pad[dev_idx] = pad_idx
         
-        # Compute Manhattan distance from each device to its pad
+        # Compute routed feeder distance (row-direction projection) from each device to its pad
         for dev_idx, dev_pos in enumerate(device_positions):
             if dev_pos is None:
                 continue
-            
+
             pad_idx = device_to_pad.get(dev_idx)
             if pad_idx is None or pad_idx >= len(self.pads):
                 continue
-            
+
             pad = self.pads[pad_idx]
             pad_cx = pad['x'] + pad.get('width_ft', 10.0) / 2
             pad_cy = pad['y'] + pad.get('height_ft', 8.0) / 2
-            
-            manhattan = abs(dev_pos[0] - pad_cx) + abs(dev_pos[1] - pad_cy)
-            
+
+            dev_x, dev_y, primary_grp = dev_pos
+            group_source = self.groups[primary_grp] if primary_grp < len(self.groups) else {}
+
+            azimuth = group_source.get('azimuth', 180)
+            rotation_deg = azimuth - 180
+            driveline_angle_deg = group_source.get('driveline_angle', 0.0)
+
+            # Rotation center: horizontal midpoint of group, vertical midpoint of tracker length
+            gx = group_x_map.get(primary_grp, 0)
+            gy = group_source.get('position_y', 0) or 0
+            grp_count = sum(seg['quantity'] for seg in group_source.get('segments', []))
+            first_ref_r = None
+            for seg in group_source.get('segments', []):
+                ref = seg.get('template_ref')
+                if ref and ref in self.enabled_templates:
+                    first_ref_r = ref
+                    break
+            tlen_r = 180.0
+            twid_r = 0.0
+            if first_ref_r:
+                dims_r = self._get_estimate_tracker_dims_ft(first_ref_r)
+                if dims_r:
+                    twid_r, tlen_r = dims_r[0], dims_r[1]
+            rot_cx = gx + (twid_r + max(0, grp_count - 1) * row_spacing_ft) / 2
+            rot_cy = gy + tlen_r / 2
+
+            # Rotate device center by group azimuth
+            if rotation_deg != 0:
+                rad = math.radians(rotation_deg)
+                cos_r = math.cos(rad)
+                sin_r = math.sin(rad)
+                dx = dev_x - rot_cx
+                dy = dev_y - rot_cy
+                dev_x = rot_cx + dx * cos_r - dy * sin_r
+                dev_y = rot_cy + dx * sin_r + dy * cos_r
+
+            # Row direction vector (driveline + azimuth rotation)
+            driveline_tan = math.tan(math.radians(driveline_angle_deg)) if driveline_angle_deg != 0 else 0.0
+            mag = math.sqrt(1.0 + driveline_tan ** 2)
+            rdx_u, rdy_u = 1.0 / mag, driveline_tan / mag
+            if rotation_deg != 0:
+                cos_r = math.cos(math.radians(rotation_deg))
+                sin_r = math.sin(math.radians(rotation_deg))
+                row_dx = rdx_u * cos_r - rdy_u * sin_r
+                row_dy = rdx_u * sin_r + rdy_u * cos_r
+            else:
+                row_dx, row_dy = rdx_u, rdy_u
+
+            # Corner via projection onto row direction line through device
+            t = (pad_cx - dev_x) * row_dx + (pad_cy - dev_y) * row_dy
+            corner_x = dev_x + t * row_dx
+            corner_y = dev_y + t * row_dy
+            leg2 = math.sqrt((pad_cx - corner_x) ** 2 + (pad_cy - corner_y) ** 2)
+            routed = abs(t) + leg2
+
             label = f"Dev-{dev_idx+1:02d}"
-            result['feeder_distances'].append((dev_idx, label, manhattan))
-            result['feeder_total_ft'] += manhattan
+            result['feeder_distances'].append((dev_idx, label, routed))
+            result['feeder_total_ft'] += routed
             result['feeder_count'] += 1
         
         return result
@@ -4041,16 +4097,36 @@ class QuickEstimate(ttk.Frame):
             self._schedule_autosave()
         angle_var.trace_add('write', on_angle_change)
 
+        # Azimuth
+        ttk.Label(form_frame, text="Azimuth (°):").grid(row=3, column=0, sticky='w', pady=5)
+        azimuth_var = tk.StringVar(value=str(group.get('azimuth', 180)))
+        azimuth_spinbox = ttk.Spinbox(form_frame, from_=0, to=359, increment=1,
+                                      textvariable=azimuth_var, width=8)
+        azimuth_spinbox.grid(row=3, column=1, sticky='w', pady=5, padx=(10, 0))
+        ttk.Label(form_frame, text="(180 = south-facing)", foreground='gray').grid(
+            row=3, column=2, columnspan=2, sticky='w', pady=5, padx=(10, 0))
+
+        def on_azimuth_change(*args):
+            try:
+                val = float(azimuth_var.get())
+                val = val % 360
+                group['azimuth'] = val
+            except ValueError:
+                pass
+            self._mark_stale()
+            self._schedule_autosave()
+        azimuth_var.trace_add('write', on_azimuth_change)
+
         # Row Spacing + GCR (bidirectional)
-        ttk.Label(form_frame, text="Row Spacing (ft):").grid(row=3, column=0, sticky='w', pady=5)
+        ttk.Label(form_frame, text="Row Spacing (ft):").grid(row=4, column=0, sticky='w', pady=5)
         row_spacing_var = tk.StringVar(value=f"{group.get('row_spacing_ft', 20.0):.3f}")
         row_spacing_entry = ttk.Entry(form_frame, textvariable=row_spacing_var, width=10)
-        row_spacing_entry.grid(row=3, column=1, sticky='w', pady=5, padx=(10, 0))
+        row_spacing_entry.grid(row=4, column=1, sticky='w', pady=5, padx=(10, 0))
 
-        ttk.Label(form_frame, text="GCR:").grid(row=3, column=2, sticky='w', pady=5, padx=(15, 0))
+        ttk.Label(form_frame, text="GCR:").grid(row=4, column=2, sticky='w', pady=5, padx=(15, 0))
         gcr_var = tk.StringVar(value="--")
         gcr_entry = ttk.Entry(form_frame, textvariable=gcr_var, width=8)
-        gcr_entry.grid(row=3, column=3, sticky='w', pady=5, padx=(5, 0))
+        gcr_entry.grid(row=4, column=3, sticky='w', pady=5, padx=(5, 0))
 
         def _update_gcr_from_row_spacing(*args):
             try:
@@ -4098,9 +4174,9 @@ class QuickEstimate(ttk.Frame):
         _update_gcr_from_row_spacing()
 
         # Strings per Device override
-        ttk.Label(form_frame, text="Strings/Device:").grid(row=4, column=0, sticky='w', pady=5)
+        ttk.Label(form_frame, text="Strings/Device:").grid(row=5, column=0, sticky='w', pady=5)
         spi_frame = ttk.Frame(form_frame)
-        spi_frame.grid(row=4, column=1, columnspan=3, sticky='w', pady=5, padx=(10, 0))
+        spi_frame.grid(row=5, column=1, columnspan=3, sticky='w', pady=5, padx=(10, 0))
 
         spi_override_var = tk.StringVar(
             value=str(group['strings_per_inv']) if group.get('strings_per_inv') is not None else ''

@@ -490,6 +490,7 @@ class SitePreviewWindow(tk.Toplevel):
                     visual_min_y_offset = min(visual_min_y_offset, y_offset + angle_y)
                     visual_max_y_offset = max(visual_max_y_offset, y_offset + angle_y + t_length_val)
             
+            azimuth_deg = group_data.get('azimuth', 180)
             self.group_layout.append({
                 'name': group_data['name'],
                 'trackers': group_trackers,
@@ -505,6 +506,8 @@ class SitePreviewWindow(tk.Toplevel):
                 'driveline_angle': driveline_angle_deg,
                 'driveline_tan': driveline_tan,
                 'row_spacing_ft': grp_pitch,
+                'azimuth': azimuth_deg,
+                'rotation_deg': azimuth_deg - 180,
             })
 
         # Flat list for backward compat
@@ -833,10 +836,25 @@ class SitePreviewWindow(tk.Toplevel):
             self.world_height = 0
             return
         
-        min_x = min(g['x'] for g in self.group_layout)
-        max_x = max(g['x'] + g['width_ft'] for g in self.group_layout)
-        min_y = min(g['y'] for g in self.group_layout)
-        max_y = max(g['y'] + g['length_ft'] for g in self.group_layout)
+        all_xs, all_ys = [], []
+        for g in self.group_layout:
+            gx, gy = g['x'], g['y']
+            vis_min = g.get('visual_min_y', 0)
+            vis_max = g.get('visual_max_y', g['length_ft'])
+            rd = g.get('rotation_deg', 0.0)
+            rcx = gx + g['width_ft'] / 2
+            rcy = gy + (vis_min + vis_max) / 2
+            corners = [
+                (gx, gy + vis_min), (gx + g['width_ft'], gy + vis_min),
+                (gx + g['width_ft'], gy + vis_max), (gx, gy + vis_max),
+            ]
+            for cx2, cy2 in corners:
+                if rd != 0:
+                    cx2, cy2 = self._rotate_point(rcx, rcy, cx2, cy2, rd)
+                all_xs.append(cx2)
+                all_ys.append(cy2)
+        min_x, max_x = min(all_xs), max(all_xs)
+        min_y, max_y = min(all_ys), max(all_ys)
         
         # Include device positions in bounds
         if hasattr(self, 'device_positions') and self.device_positions:
@@ -903,6 +921,30 @@ class SitePreviewWindow(tk.Toplevel):
         self.fit_to_canvas()
         self.draw()
     
+    def _rotate_point(self, cx, cy, x, y, angle_deg):
+        """Rotate (x, y) around (cx, cy) by angle_deg degrees (positive = clockwise geographic)."""
+        rad = math.radians(angle_deg)
+        dx, dy = x - cx, y - cy
+        rx = dx * math.cos(rad) - dy * math.sin(rad) + cx
+        ry = dx * math.sin(rad) + dy * math.cos(rad) + cy
+        return rx, ry
+
+    def _device_rotation_info(self, dev):
+        """Return (rot_cx, rot_cy, rotation_deg) for the group a device belongs to.
+        Returns (None, None, 0.0) when there is no rotation."""
+        grp_idx = dev.get('group_idx')
+        if grp_idx is None or grp_idx >= len(self.group_layout):
+            return None, None, 0.0
+        g = self.group_layout[grp_idx]
+        rd = g.get('rotation_deg', 0.0)
+        if not rd:
+            return None, None, 0.0
+        vis_min = g.get('visual_min_y', 0)
+        vis_max = g.get('visual_max_y', g['length_ft'])
+        rcx = g['x'] + g['width_ft'] / 2
+        rcy = g['y'] + (vis_min + vis_max) / 2
+        return rcx, rcy, rd
+
     def world_to_canvas(self, wx, wy):
         """Convert world coordinates to canvas coordinates"""
         cx = self.pan_x + wx * self.scale
@@ -948,8 +990,16 @@ class SitePreviewWindow(tk.Toplevel):
             g = self.group_layout[i]
             vis_min = g.get('visual_min_y', 0)
             vis_max = g.get('visual_max_y', g['length_ft'])
-            if (g['x'] <= wx <= g['x'] + g['width_ft'] and
-                g['y'] + vis_min <= wy <= g['y'] + vis_max):
+            rd = g.get('rotation_deg', 0.0)
+            if rd != 0:
+                # Un-rotate click point into group's local (unrotated) space
+                rcx = g['x'] + g['width_ft'] / 2
+                rcy = g['y'] + (vis_min + vis_max) / 2
+                lwx, lwy = self._rotate_point(rcx, rcy, wx, wy, -rd)
+            else:
+                lwx, lwy = wx, wy
+            if (g['x'] <= lwx <= g['x'] + g['width_ft'] and
+                    g['y'] + vis_min <= lwy <= g['y'] + vis_max):
                 return i
         return None
     
@@ -1223,24 +1273,42 @@ class SitePreviewWindow(tk.Toplevel):
             gx = group_data['x']
             gy = group_data['y']
             is_selected = (group_idx == self.selected_group_idx)
-            
+            rotation_deg = group_data.get('rotation_deg', 0.0)
+            vis_min = group_data.get('visual_min_y', 0)
+            vis_max = group_data.get('visual_max_y', group_data['length_ft'])
+            rot_cx = gx + group_data['width_ft'] / 2
+            rot_cy = gy + (vis_min + vis_max) / 2
+
+            def _wc(wx, wy, _rcx=rot_cx, _rcy=rot_cy, _rd=rotation_deg):
+                """World-to-canvas with optional group rotation applied."""
+                if _rd != 0:
+                    wx, wy = self._rotate_point(_rcx, _rcy, wx, wy, _rd)
+                return self.world_to_canvas(wx, wy)
+
+            def _rect_as_poly(x1, y1, x2, y2, _rcx=rot_cx, _rcy=rot_cy, _rd=rotation_deg):
+                """Return flat canvas coord list for a rotated rectangle polygon."""
+                corners = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
+                pts = []
+                for wx, wy in corners:
+                    if _rd != 0:
+                        wx, wy = self._rotate_point(_rcx, _rcy, wx, wy, _rd)
+                    cx2, cy2 = self.world_to_canvas(wx, wy)
+                    pts.extend([cx2, cy2])
+                return pts
+
             # Draw selection highlight behind group (using visual bounds)
             if is_selected:
                 pad = max_width * 0.3
-                vis_min = group_data.get('visual_min_y', 0)
-                vis_max = group_data.get('visual_max_y', group_data['length_ft'])
-                hx1, hy1 = self.world_to_canvas(gx - pad, gy + vis_min - pad)
-                hx2, hy2 = self.world_to_canvas(
-                    gx + group_data['width_ft'] + pad,
-                    gy + vis_max + pad
+                h_poly = _rect_as_poly(
+                    gx - pad, gy + vis_min - pad,
+                    gx + group_data['width_ft'] + pad, gy + vis_max + pad
                 )
-                self.canvas.create_rectangle(
-                    hx1, hy1, hx2, hy2,
-                    fill='', outline='#4A90D9', width=2, dash=(6, 3)
+                self.canvas.create_polygon(
+                    *h_poly, fill='', outline='#4A90D9', width=2
                 )
             
             # Draw group label
-            label_x, label_y = self.world_to_canvas(
+            label_x, label_y = _wc(
                 gx - max_width * 0.5,
                 gy + group_data['length_ft'] / 2
             )
@@ -1395,55 +1463,49 @@ class SitePreviewWindow(tk.Toplevel):
                     
                     sy = ty + sum(string_heights[:s_idx])
                     sh = string_heights[s_idx] if s_idx < len(string_heights) else string_heights[-1]
-                    
-                    sx1, sy1 = self.world_to_canvas(tx + tx_offset, sy)
-                    sx2, sy2 = self.world_to_canvas(tx + tx_offset + t_width, sy + sh)
-                    
-                    self.canvas.create_rectangle(
-                        sx1, sy1, sx2, sy2,
-                        fill=color, outline=outline_color, width=outline_width
+
+                    poly = _rect_as_poly(tx + tx_offset, sy, tx + tx_offset + t_width, sy + sh)
+                    self.canvas.create_polygon(
+                        *poly, fill=color, outline=outline_color, width=outline_width
                     )
-                
+
                 # Tracker outline
-                ox1, oy1 = self.world_to_canvas(tx + tx_offset - 0.5, ty - 0.5)
-                ox2, oy2 = self.world_to_canvas(tx + tx_offset + t_width + 0.5, ty + t_length + 0.5)
-                
-                self.canvas.create_rectangle(
-                    ox1, oy1, ox2, oy2,
-                    fill='', outline='#222222', width=1
+                out_poly = _rect_as_poly(
+                    tx + tx_offset - 0.5, ty - 0.5,
+                    tx + tx_offset + t_width + 0.5, ty + t_length + 0.5
                 )
-                
+                self.canvas.create_polygon(
+                    *out_poly, fill='', outline='#222222', width=1
+                )
+                # Keep ox1/oy1 for pixel_width calculation (use first two corners)
+                ox1, oy1 = out_poly[0], out_poly[1]
+                ox2, oy2 = out_poly[2], out_poly[3]
+
                 # Motor indicator
                 if tracker.get('has_motor', False):
                     motor_y = tracker['motor_y_ft']
                     motor_gap = tracker['motor_gap_ft']
-                    
+
                     motor_world_y = ty + motor_y
                     motor_x1 = tx + tx_offset - 0.3
                     motor_x2 = tx + tx_offset + t_width + 0.3
-                    
-                    mx1, my1 = self.world_to_canvas(motor_x1, motor_world_y)
-                    mx2, my2 = self.world_to_canvas(motor_x2, motor_world_y + motor_gap)
-                    
-                    self.canvas.create_rectangle(
-                        mx1, my1, mx2, my2,
-                        fill='#666666', outline='#444444', width=1
+
+                    m_poly = _rect_as_poly(motor_x1, motor_world_y, motor_x2, motor_world_y + motor_gap)
+                    self.canvas.create_polygon(
+                        *m_poly, fill='#666666', outline='#444444', width=1
                     )
-                    
-                    motor_cx = (mx1 + mx2) / 2
-                    motor_cy = (my1 + my2) / 2
+
+                    motor_cx = sum(m_poly[0::2]) / 4
+                    motor_cy = sum(m_poly[1::2]) / 4
                     dot_r = max(2, min(4, 3 * self.scale))
                     self.canvas.create_oval(
                         motor_cx - dot_r, motor_cy - dot_r,
                         motor_cx + dot_r, motor_cy + dot_r,
                         fill='#FF8800', outline='#CC6600', width=1
                     )
-                
+
                 # Tracker label — use global tracker index to match info panel / assignments
-                label_cx, label_cy = self.world_to_canvas(
-                    tx + tx_offset + t_width / 2,
-                    ty + t_length + 2
-                )
+                label_cx, label_cy = _wc(tx + tx_offset + t_width / 2, ty + t_length + 2)
                 pixel_width = abs(ox2 - ox1)
                 if pixel_width > 14:
                     lbl_size = max(6, min(9, int(8 * self.scale)))
@@ -1593,8 +1655,13 @@ class SitePreviewWindow(tk.Toplevel):
             return None
         wx, wy = self.canvas_to_world(cx, cy)
         for i, dev in enumerate(self.device_positions):
-            if (dev['x'] <= wx <= dev['x'] + dev['width_ft'] and
-                dev['y'] <= wy <= dev['y'] + dev['height_ft']):
+            rcx, rcy, rd = self._device_rotation_info(dev)
+            if rd:
+                lwx, lwy = self._rotate_point(rcx, rcy, wx, wy, -rd)
+            else:
+                lwx, lwy = wx, wy
+            if (dev['x'] <= lwx <= dev['x'] + dev['width_ft'] and
+                    dev['y'] <= lwy <= dev['y'] + dev['height_ft']):
                 return i
         return None
     
@@ -1816,16 +1883,26 @@ class SitePreviewWindow(tk.Toplevel):
             dh = dev['height_ft']
             label = dev['label']
             is_selected = (self.selected_device_idx == dev_idx)
-            
-            x1, y1 = self.world_to_canvas(dx, dy)
-            x2, y2 = self.world_to_canvas(dx + dw, dy + dh)
-            
+
+            rcx, rcy, rd = self._device_rotation_info(dev)
+
+            def _rot_dev(wx, wy, _rcx=rcx, _rcy=rcy, _rd=rd):
+                if _rd:
+                    wx, wy = self._rotate_point(_rcx, _rcy, wx, wy, _rd)
+                return self.world_to_canvas(wx, wy)
+
+            corners = [(dx, dy), (dx + dw, dy), (dx + dw, dy + dh), (dx, dy + dh)]
+            poly_pts = []
+            for wx, wy in corners:
+                px2, py2 = _rot_dev(wx, wy)
+                poly_pts.extend([px2, py2])
+
             # Device fill color
             if self.device_label == 'CB':
                 fill_color = '#FFB74D' if is_selected else '#FF9800'
             else:
                 fill_color = '#64B5F6' if is_selected else '#2196F3'
-            
+
             # Outline color: pad color if assigned, else default
             if dev_idx in device_to_pad and self.pads:
                 pad_idx = device_to_pad[dev_idx]
@@ -1834,21 +1911,19 @@ class SitePreviewWindow(tk.Toplevel):
             else:
                 outline_color = '#E65100' if self.device_label == 'CB' else '#0D47A1'
                 outline_width = 3 if is_selected else 2
-            
+
             if is_selected:
                 outline_width = 4
-            
-            self.canvas.create_rectangle(
-                x1, y1, x2, y2,
-                fill=fill_color, outline=outline_color, width=outline_width
+
+            self.canvas.create_polygon(
+                *poly_pts, fill=fill_color, outline=outline_color, width=outline_width
             )
-            
-            # Label — offset above device for readability
-            cx = (x1 + x2) / 2
+
+            # Label — above the rotated device center-top
+            cx, cy_top = _rot_dev(dx + dw / 2, dy)
             font_size = max(7, min(14, int(10 * self.scale)))
-            label_y = y1 - font_size - 2
             self._draw_text_with_bg(
-                cx, label_y,
+                cx, cy_top - font_size - 2,
                 text=label, font=('Helvetica', font_size, 'bold'),
                 fill='#333333', anchor='s'
             )
@@ -2032,9 +2107,12 @@ class SitePreviewWindow(tk.Toplevel):
         panel_width = max_text_px + pad * 3
         panel_height = len(lines) * line_height + pad * 2
 
-        # Anchor point on device (center-top)
+        # Anchor point on device (center-top), rotated with group
         anchor_wx = dev['x'] + dev['width_ft'] / 2
         anchor_wy = dev['y']
+        rcx, rcy, rd = self._device_rotation_info(dev)
+        if rd:
+            anchor_wx, anchor_wy = self._rotate_point(rcx, rcy, anchor_wx, anchor_wy, rd)
         ax, ay = self.world_to_canvas(anchor_wx, anchor_wy)
 
         # Panel position — use stored drag offset or default above device
@@ -2235,11 +2313,16 @@ class SitePreviewWindow(tk.Toplevel):
             return None
         wx, wy = self.canvas_to_world(cx, cy)
         for i, dev in enumerate(self.device_positions):
-            if (dev['x'] <= wx <= dev['x'] + dev['width_ft'] and
-                dev['y'] <= wy <= dev['y'] + dev['height_ft']):
+            rcx, rcy, rd = self._device_rotation_info(dev)
+            if rd:
+                lwx, lwy = self._rotate_point(rcx, rcy, wx, wy, -rd)
+            else:
+                lwx, lwy = wx, wy
+            if (dev['x'] <= lwx <= dev['x'] + dev['width_ft'] and
+                    dev['y'] <= lwy <= dev['y'] + dev['height_ft']):
                 return i
         return None
-    
+
     def _show_assignment_dialog(self):
         """Show a dialog to assign devices to pads."""
         if not self.pads:
@@ -3659,40 +3742,59 @@ class SitePreviewWindow(tk.Toplevel):
             
             pad = self.pads[pad_idx]
             
-            # Device center
+            # Device center — apply group rotation
             dev_cx = dev['x'] + dev['width_ft'] / 2
             dev_cy = dev['y'] + dev['height_ft'] / 2
-            
+            rcx, rcy, rd = self._device_rotation_info(dev)
+            if rd:
+                dev_cx, dev_cy = self._rotate_point(rcx, rcy, dev_cx, dev_cy, rd)
+
             # Pad center
             pad_cx = pad['x'] + pad.get('width_ft', 10.0) / 2
             pad_cy = pad['y'] + pad.get('height_ft', 8.0) / 2
-            
-            # L-shaped route: go E-W first, then N-S
-            corner_x = pad_cx
-            corner_y = dev_cy
-            
+
+            # Row direction: E-W tilted by driveline_angle, then rotated by azimuth
+            grp_idx = dev.get('group_idx')
+            grp = self.group_layout[grp_idx] if (grp_idx is not None and grp_idx < len(self.group_layout)) else {}
+            driveline_tan = grp.get('driveline_tan', 0.0)
+            rotation_deg = grp.get('rotation_deg', 0.0)
+            mag = math.sqrt(1.0 + driveline_tan ** 2)
+            dx_u, dy_u = 1.0 / mag, driveline_tan / mag
+            if rotation_deg:
+                cos_r = math.cos(math.radians(rotation_deg))
+                sin_r = math.sin(math.radians(rotation_deg))
+                row_dx = dx_u * cos_r - dy_u * sin_r
+                row_dy = dx_u * sin_r + dy_u * cos_r
+            else:
+                row_dx, row_dy = dx_u, dy_u
+
+            # Corner: projection of pad onto the line through device in row direction
+            t = (pad_cx - dev_cx) * row_dx + (pad_cy - dev_cy) * row_dy
+            corner_x = dev_cx + t * row_dx
+            corner_y = dev_cy + t * row_dy
+
             # Convert to canvas coords
             cx1, cy1 = self.world_to_canvas(dev_cx, dev_cy)
             cx_corner, cy_corner = self.world_to_canvas(corner_x, corner_y)
             cx2, cy2 = self.world_to_canvas(pad_cx, pad_cy)
-            
+
             color = PAD_COLORS[pad_idx % len(PAD_COLORS)]
-            
+
             # Determine line style based on topology
             if self.topology == 'Distributed String':
                 dash_pattern = (4, 4)  # Dashed for AC
             else:
                 dash_pattern = ()  # Solid for DC
-            
+
             line_width = 1
-            
-            # Draw E-W leg
+
+            # Leg 1: along the row/driveline direction
             self.canvas.create_line(
                 cx1, cy1, cx_corner, cy_corner,
                 fill=color, width=line_width, dash=dash_pattern
             )
-            
-            # Draw N-S leg
+
+            # Leg 2: from turn point to pad
             self.canvas.create_line(
                 cx_corner, cy_corner, cx2, cy2,
                 fill=color, width=line_width, dash=dash_pattern
@@ -3700,10 +3802,10 @@ class SitePreviewWindow(tk.Toplevel):
 
             # Show distance label if this device is selected in inspect mode
             if self.inspect_mode and self.selected_device_idx == dev_idx:
-                ew_dist = abs(dev_cx - pad_cx)
-                ns_dist = abs(dev_cy - pad_cy)
-                total_dist = ew_dist + ns_dist  # Manhattan
-                
+                leg1 = abs(t)
+                leg2 = math.sqrt((pad_cx - corner_x) ** 2 + (pad_cy - corner_y) ** 2)
+                total_dist = leg1 + leg2
+
                 # Place label at the corner of the L
                 font_size = max(6, min(10, int(8 * self.scale)))
                 self._draw_text_with_bg(
