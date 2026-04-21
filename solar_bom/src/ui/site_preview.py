@@ -50,7 +50,33 @@ class SitePreviewWindow(tk.Toplevel):
         
         # Read lock state from parent (QuickEstimate)
         self.allocation_locked = getattr(self.master, 'allocation_locked', False)
-        
+
+        # Shared device-string state — used by both the Edit Devices dialog and canvas edits.
+        # None means "needs to be (re)built from allocation data". Set by _show_edit_devices_dialog
+        # and canvas drag operations; cleared by _invalidate_device_data().
+        self._device_data = None
+        self._device_metadata = None
+        self._highlighted_strings = set()
+
+        # Canvas string selection state (inspect mode only)
+        self._last_clicked_string = None   # (tracker_idx, s_idx) of last plain/shift click
+        self._string_rects = []            # cache populated by draw(); used by hit_test_string
+        self._box_selecting = False        # True during Shift+drag rubber-band box select
+        self._box_select_start = (0, 0)   # canvas coords where Shift+drag began
+
+        # Dialog↔canvas sync references (set while Edit Devices dialog is open)
+        self._edit_dialog_tree = None
+        self._edit_dialog_string_tracker = None
+        self._edit_dialog_refresh_tree = None
+        self._canvas_syncing_tree = False  # guard flag — prevents <<TreeviewSelect>> bounce
+
+        # String drag state (inspect mode only)
+        self._pending_string_drag = False     # press on string, waiting to see if drag starts
+        self._dragging_strings = False        # drag threshold exceeded, drag is active
+        self._drag_string_payload = set()     # snapshot of _highlighted_strings at drag start
+        self._drag_string_start_xy = (0, 0)  # canvas coords where drag began
+        self._drag_hover_device_idx = None    # device currently under cursor during drag
+
         self.setup_ui()
         self.build_layout_data()
         self._recolor_from_cb_assignments()
@@ -1064,6 +1090,44 @@ class SitePreviewWindow(tk.Toplevel):
                 self.dragging_group = False
                 return
             
+            # Check strings (before devices so individual strings are selectable)
+            hit_str = self.hit_test_string(event.x, event.y)
+            if hit_str is not None:
+                tracker_idx, s_idx = hit_str
+                ctrl = event.state & 0x4
+                shift = event.state & 0x1
+                if ctrl:
+                    key = (tracker_idx, s_idx)
+                    if key in self._highlighted_strings:
+                        self._highlighted_strings.discard(key)
+                    else:
+                        self._highlighted_strings.add(key)
+                elif shift and self._last_clicked_string is not None:
+                    last_tidx, last_sidx = self._last_clicked_string
+                    if last_tidx == tracker_idx:
+                        lo, hi = min(last_sidx, s_idx), max(last_sidx, s_idx)
+                        for i in range(lo, hi + 1):
+                            self._highlighted_strings.add((tracker_idx, i))
+                    else:
+                        self._highlighted_strings = {(tracker_idx, s_idx)}
+                else:
+                    key = (tracker_idx, s_idx)
+                    if key not in self._highlighted_strings:
+                        # Clicking an unselected string — replace selection
+                        self._highlighted_strings = {key}
+                    # Clicking an already-selected string — keep current selection so
+                    # a subsequent drag carries all selected strings, not just this one
+                self._last_clicked_string = (tracker_idx, s_idx)
+                self.selected_device_idx = None
+                self.selected_pad_inspect_idx = None
+                self.dragging_canvas = False
+                self.dragging_group = False
+                self._pending_string_drag = True
+                self._drag_string_start_xy = (event.x, event.y)
+                self._sync_tree_from_canvas()
+                self.draw()
+                return
+
             # Then check devices
             hit_dev = self.hit_test_device(event.x, event.y)
             if hit_dev is not None:
@@ -1075,10 +1139,14 @@ class SitePreviewWindow(tk.Toplevel):
                 self.dragging_canvas = False
                 self.draw()
             else:
-                # Empty space — clear selections and start panning
+                # Empty space — always start a potential box select.
+                # Whether it's a click (clears selection) or a drag (box select)
+                # is decided at release time based on how far the mouse moved.
                 self.selected_device_idx = None
                 self.selected_pad_inspect_idx = None
-                self.dragging_canvas = True
+                self._box_selecting = True
+                self._box_select_start = (event.x, event.y)
+                self.dragging_canvas = False
                 self.draw()
             self.dragging_group = False
             return
@@ -1148,12 +1216,75 @@ class SitePreviewWindow(tk.Toplevel):
             self._panel_drag_start = (event.x, event.y)
             self.draw()
             return
+        if getattr(self, '_box_selecting', False):
+            self.canvas.delete('selection_box')
+            sx, sy = self._box_select_start
+            self.canvas.create_rectangle(
+                min(sx, event.x), min(sy, event.y),
+                max(sx, event.x), max(sy, event.y),
+                outline='#4A90D9', width=1, dash=(4, 3),
+                tags='selection_box'
+            )
+            return
+
+        # Promote pending string drag to active once threshold is exceeded
+        if getattr(self, '_pending_string_drag', False):
+            if (abs(event.x - self.drag_start_x) > 3 or
+                    abs(event.y - self.drag_start_y) > 3):
+                self._pending_string_drag = False
+                self._dragging_strings = True
+                self._drag_string_payload = set(self._highlighted_strings)
+
+        # String drag in progress — draw ghost badge and device hover highlight
+        if getattr(self, '_dragging_strings', False):
+            self.canvas.delete('string_drag_ghost')
+            self.canvas.delete('device_drop_target')
+
+            n = len(self._drag_string_payload)
+            badge_text = f"{n} string{'s' if n != 1 else ''}"
+            tid = self.canvas.create_text(
+                event.x + 14, event.y - 10,
+                text=badge_text, font=('Helvetica', 9, 'bold'),
+                fill='white', anchor='w', tags='string_drag_ghost'
+            )
+            bbox = self.canvas.bbox(tid)
+            if bbox:
+                self.canvas.create_rectangle(
+                    bbox[0] - 4, bbox[1] - 3, bbox[2] + 4, bbox[3] + 3,
+                    fill='#4A90D9', outline='#2266AA', width=1,
+                    tags='string_drag_ghost'
+                )
+                self.canvas.tag_raise(tid)
+
+            hit = self.hit_test_device_loose(event.x, event.y)
+            self._drag_hover_device_idx = hit
+            if hit is not None and hasattr(self, 'device_positions') and hit < len(self.device_positions):
+                dev = self.device_positions[hit]
+                rcx, rcy, rd = self._device_rotation_info(dev)
+                corners = [
+                    (dev['x'], dev['y']),
+                    (dev['x'] + dev['width_ft'], dev['y']),
+                    (dev['x'] + dev['width_ft'], dev['y'] + dev['height_ft']),
+                    (dev['x'], dev['y'] + dev['height_ft']),
+                ]
+                poly_pts = []
+                for wx2, wy2 in corners:
+                    if rd:
+                        wx2, wy2 = self._rotate_point(rcx, rcy, wx2, wy2, rd)
+                    px2, py2 = self.world_to_canvas(wx2, wy2)
+                    poly_pts.extend([px2, py2])
+                self.canvas.create_polygon(
+                    *poly_pts, fill='', outline='#00CC44', width=3,
+                    tags='device_drop_target'
+                )
+            return
+
         dx_px = event.x - self.drag_start_x
         dy_px = event.y - self.drag_start_y
-        
+
         if abs(dx_px) > 3 or abs(dy_px) > 3:
             self._drag_moved = True
-        
+
         if getattr(self, '_dragging_pad', False) and self.selected_pad_idx is not None:
             dx_world = dx_px / self.scale if self.scale != 0 else 0
             dy_world = dy_px / self.scale if self.scale != 0 else 0
@@ -1187,6 +1318,47 @@ class SitePreviewWindow(tk.Toplevel):
         if getattr(self, '_dragging_panel', False):
             self._dragging_panel = False
             self._panel_drag_start = None
+            return
+
+        if getattr(self, '_box_selecting', False):
+            self._box_selecting = False
+            self.canvas.delete('selection_box')
+            sx, sy = self._box_select_start
+            if abs(event.x - sx) < 5 and abs(event.y - sy) < 5:
+                # Treat as a plain click — clear all string selection
+                self._highlighted_strings = set()
+                self._last_clicked_string = None
+            else:
+                # Real drag — add strings inside the box to the current selection
+                hits = self.hit_test_strings_in_box(sx, sy, event.x, event.y)
+                for tidx, sidx in hits:
+                    self._highlighted_strings.add((tidx, sidx))
+                self._sync_tree_from_canvas()
+            self.draw()
+            return
+
+        if getattr(self, '_pending_string_drag', False):
+            # Press on string, no drag motion — plain click already handled in on_press.
+            self._pending_string_drag = False
+            return
+
+        if getattr(self, '_dragging_strings', False):
+            self._dragging_strings = False
+            self._pending_string_drag = False
+            self.canvas.delete('string_drag_ghost')
+            self.canvas.delete('device_drop_target')
+
+            target_dev_idx = self.hit_test_device_loose(event.x, event.y)
+            if target_dev_idx is not None and self._drag_string_payload:
+                ok, err = self._canvas_move_strings(self._drag_string_payload, target_dev_idx)
+                if ok:
+                    self._highlighted_strings = set()
+                    self._last_clicked_string = None
+                    self._apply_canvas_string_edit()
+                    self._sync_tree_from_canvas()
+                elif err:
+                    messagebox.showwarning("Invalid Move", err, parent=self)
+            self.draw()
             return
 
         if getattr(self, '_dragging_pad', False) and self._drag_moved:
@@ -1287,7 +1459,8 @@ class SitePreviewWindow(tk.Toplevel):
         World units = feet.
         """
         self.canvas.delete('all')
-        
+        self._string_rects = []
+
         if not self.group_layout:
             return
         
@@ -1493,6 +1666,12 @@ class SitePreviewWindow(tk.Toplevel):
                     self.canvas.create_polygon(
                         *poly, fill=color, outline=outline_color, width=outline_width
                     )
+                    self._string_rects.append({
+                        'tracker_idx': global_tracker_idx,
+                        's_idx': s_idx,
+                        'poly_canvas': poly,
+                        'is_unowned_partial': is_unowned_partial,
+                    })
 
                 # Tracker outline
                 out_poly = _rect_as_poly(
@@ -1690,6 +1869,215 @@ class SitePreviewWindow(tk.Toplevel):
                 return i
         return None
     
+    def hit_test_device_loose(self, cx, cy, padding_px=20):
+        """Like hit_test_device but with an enlarged hitbox — used during string drag.
+
+        padding_px is in canvas pixels so the hitbox stays consistently grabbable
+        regardless of zoom level.
+        """
+        if not hasattr(self, 'device_positions') or not self.device_positions:
+            return None
+        wx, wy = self.canvas_to_world(cx, cy)
+        pad = padding_px / self.scale if self.scale > 0 else 0
+        for i, dev in enumerate(self.device_positions):
+            rcx, rcy, rd = self._device_rotation_info(dev)
+            if rd:
+                lwx, lwy = self._rotate_point(rcx, rcy, wx, wy, -rd)
+            else:
+                lwx, lwy = wx, wy
+            if (dev['x'] - pad <= lwx <= dev['x'] + dev['width_ft'] + pad and
+                    dev['y'] - pad <= lwy <= dev['y'] + dev['height_ft'] + pad):
+                return i
+        return None
+
+    def _canvas_move_strings(self, payload, target_dev_idx):
+        """Move strings in payload (set of (tracker_idx, phys_pos)) to target device.
+
+        Validates contiguity on source and target before executing. Returns (ok, error_msg).
+        """
+        device_data = self._device_data
+        if not device_data or target_dev_idx >= len(device_data):
+            return False, "No device data available."
+
+        target_dev = device_data[target_dev_idx]
+
+        # Build lookup: (tidx, phys_pos) -> source device index
+        string_to_dev = {}
+        for dev_idx, dev in enumerate(device_data):
+            for key in dev['strings']:
+                string_to_dev[key] = dev_idx
+
+        # Group payload by source device
+        by_source = {}
+        for key in payload:
+            src_idx = string_to_dev.get(key)
+            if src_idx is not None:
+                by_source.setdefault(src_idx, set()).add(key)
+
+        if not by_source:
+            return False, "Selected strings not found in any device."
+
+        # Validate contiguity for each source→target pair
+        for src_idx, src_strings in by_source.items():
+            if src_idx == target_dev_idx:
+                continue
+            src_dev = device_data[src_idx]
+            if src_dev.get('is_unallocated') or target_dev.get('is_unallocated'):
+                continue
+
+            by_tracker = {}
+            for tidx, phys_pos in src_strings:
+                by_tracker.setdefault(tidx, set()).add(phys_pos)
+
+            for tidx, moving in by_tracker.items():
+                src_all = {p for t, p in src_dev['strings'] if t == tidx}
+                remaining = src_all - moving
+                if len(remaining) > 1 and max(remaining) - min(remaining) + 1 != len(remaining):
+                    return False, (f"Cannot move: would leave a gap in T{tidx+1:02d} "
+                                   f"on {src_dev['name']}")
+
+                tgt_all = {p for t, p in target_dev['strings'] if t == tidx}
+                combined = tgt_all | moving
+                if len(combined) > 1 and max(combined) - min(combined) + 1 != len(combined):
+                    return False, (f"Cannot move: would create a gap in T{tidx+1:02d} "
+                                   f"on {target_dev['name']}")
+
+        # Execute moves
+        any_moved = False
+        for src_idx, src_strings in by_source.items():
+            if src_idx == target_dev_idx:
+                continue
+            src_dev = device_data[src_idx]
+            src_dev['strings'] = [(t, p) for t, p in src_dev['strings'] if (t, p) not in src_strings]
+            target_dev['strings'].extend(src_strings)
+            any_moved = True
+
+        if not any_moved:
+            return False, ""  # no-op: strings already on target
+
+        target_dev['strings'].sort(key=lambda s: (s[0], s[1]))
+        return True, ""
+
+    def _apply_canvas_string_edit(self):
+        """Rebuild allocation and redraw after a canvas-initiated string move.
+
+        Mirrors _update_live_preview from the Edit Devices dialog.
+        """
+        if not self._device_data or not self._device_metadata:
+            return
+        real_devs = [d for d in self._device_data if not d.get('is_unallocated')]
+        self._rebuild_from_device_strings(real_devs, self._device_metadata)
+        self._update_lock_button()
+        if hasattr(self.master, 'manually_edited'):
+            self.master.manually_edited = True
+
+        inv_summary = getattr(self.master, 'last_totals', {}).get('inverter_summary', {})
+        if inv_summary and inv_summary.get('allocation_result'):
+            self.inv_summary = inv_summary
+            alloc = inv_summary.get('allocation_result', {})
+            num_inv = alloc.get('summary', {}).get('total_inverters', 0)
+            total_str = alloc.get('summary', {}).get('total_strings', 0)
+            split = alloc.get('summary', {}).get('total_split_trackers', 0)
+            spatial_runs = alloc.get('spatial_runs', 1)
+            actual_ratio = inv_summary.get('actual_dc_ac', 0)
+            self.summary_label.config(
+                text=self._format_summary(num_inv, total_str, actual_ratio, split,
+                                          spatial_runs=spatial_runs, locked=True)
+            )
+
+        self.build_layout_data()
+        self._recolor_from_cb_assignments()
+        self._build_legend()
+
+        # Refresh dialog tree if open
+        refresh_fn = self._edit_dialog_refresh_tree
+        if refresh_fn is not None:
+            try:
+                refresh_fn()
+            except Exception:
+                pass
+
+    def _point_in_polygon(self, px, py, flat_poly):
+        """Ray-casting point-in-polygon. flat_poly is [x0,y0,x1,y1,...] in canvas coords."""
+        n = len(flat_poly) // 2
+        inside = False
+        j = n - 1
+        for i in range(n):
+            xi, yi = flat_poly[i * 2], flat_poly[i * 2 + 1]
+            xj, yj = flat_poly[j * 2], flat_poly[j * 2 + 1]
+            if ((yi > py) != (yj > py)) and (px < (xj - xi) * (py - yi) / (yj - yi) + xi):
+                inside = not inside
+            j = i
+        return inside
+
+    def hit_test_string(self, cx, cy):
+        """Return (tracker_idx, s_idx) for the string under canvas coords, or None.
+
+        Iterates _string_rects in reverse (topmost drawn wins). Unowned partial
+        bands are excluded — they have no device owner to move.
+        """
+        for rect in reversed(self._string_rects):
+            if rect['is_unowned_partial']:
+                continue
+            if self._point_in_polygon(cx, cy, rect['poly_canvas']):
+                return rect['tracker_idx'], rect['s_idx']
+        return None
+
+    def hit_test_strings_in_box(self, cx1, cy1, cx2, cy2):
+        """Return list of (tracker_idx, s_idx) whose polygon overlaps the canvas box.
+
+        Uses the polygon's axis-aligned bounding box, so any contact with the
+        selection rectangle is enough to select the string.
+        """
+        x_lo, x_hi = min(cx1, cx2), max(cx1, cx2)
+        y_lo, y_hi = min(cy1, cy2), max(cy1, cy2)
+        results = []
+        for rect in self._string_rects:
+            if rect['is_unowned_partial']:
+                continue
+            poly = rect['poly_canvas']
+            n = len(poly) // 2
+            px_vals = [poly[i * 2] for i in range(n)]
+            py_vals = [poly[i * 2 + 1] for i in range(n)]
+            # Overlap: neither box is fully outside the other on either axis
+            if (max(px_vals) >= x_lo and min(px_vals) <= x_hi and
+                    max(py_vals) >= y_lo and min(py_vals) <= y_hi):
+                results.append((rect['tracker_idx'], rect['s_idx']))
+        return results
+
+    def _sync_tree_from_canvas(self):
+        """Push current canvas string selection into the Edit Devices dialog tree (if open)."""
+        tree = self._edit_dialog_tree
+        if tree is None:
+            return
+        try:
+            if not tree.winfo_exists():
+                self._edit_dialog_tree = None
+                self._edit_dialog_string_tracker = None
+                return
+        except Exception:
+            self._edit_dialog_tree = None
+            self._edit_dialog_string_tracker = None
+            return
+
+        string_tracker = self._edit_dialog_string_tracker or {}
+        # Build reverse map: (tracker_idx, phys_pos) -> list of iids
+        reverse = {}
+        for iid, key in string_tracker.items():
+            reverse.setdefault(key, []).append(iid)
+
+        target_iids = []
+        for key in self._highlighted_strings:
+            target_iids.extend(reverse.get(key, []))
+
+        self._canvas_syncing_tree = True
+        try:
+            tree.selection_set(target_iids)
+        except Exception:
+            pass
+        finally:
+            self._canvas_syncing_tree = False
+
     def _reset_positions(self):
         """Reset all group positions to auto-layout and clear saved positions."""
         if not messagebox.askyesno("Reset Positions",
@@ -1751,6 +2139,7 @@ class SitePreviewWindow(tk.Toplevel):
             parent.manually_edited = False
             self.allocation_locked = False
             self._tracker_physical_order = None
+            self._invalidate_device_data()
             parent.calculate_estimate()
             
             inv_summary = getattr(parent, 'last_totals', {}).get('inverter_summary', {})
@@ -1782,6 +2171,7 @@ class SitePreviewWindow(tk.Toplevel):
             self.allocation_locked = False
             parent.allocation_locked = False
             parent.locked_allocation_result = None
+            self._invalidate_device_data()
             self._update_lock_button()
         else:
             # Lock — snapshot the current allocation
@@ -1807,6 +2197,11 @@ class SitePreviewWindow(tk.Toplevel):
             self.lock_btn.config(text="🔒 Unlock Allocation")
         else:
             self.lock_btn.config(text="🔓 Lock Allocation")
+
+    def _invalidate_device_data(self):
+        """Clear the shared device-string state so it is rebuilt on next dialog open or canvas edit."""
+        self._device_data = None
+        self._device_metadata = None
 
     def _check_overlaps(self):
         """Check for overlapping groups and return list of overlapping pair indices."""
@@ -3033,47 +3428,62 @@ class SitePreviewWindow(tk.Toplevel):
 
     def _show_edit_devices_dialog(self):
         """Show dialog to reassign string-level connections between devices."""
-        device_data, metadata = self._normalize_to_device_strings()
-        if not device_data:
-            messagebox.showinfo("No Data", "Run Calculate Estimate first.", parent=self)
-            return
+        if self._device_data is not None:
+            # Reuse in-memory state from prior dialog session or canvas edits.
+            device_data = self._device_data
+            metadata = self._device_metadata
+            if not device_data:
+                messagebox.showinfo("No Data", "Run Calculate Estimate first.", parent=self)
+                return
+        else:
+            # Fresh build from allocation data.
+            raw_data, metadata = self._normalize_to_device_strings()
+            if not raw_data:
+                messagebox.showinfo("No Data", "Run Calculate Estimate first.", parent=self)
+                return
 
-        # Apply custom device names from canvas renaming (indices match allocated devices only)
-        for dev_idx, custom_name in self.device_names.items():
-            if dev_idx < len(device_data):
-                device_data[dev_idx]['name'] = custom_name
+            device_data = raw_data
 
-        # Compute SPT for every tracker (including unallocated ones added after lock)
-        all_tracker_spt = {}
-        _g_idx = 0
-        for _grp in self.groups:
-            for _seg in _grp.get('segments', []):
-                _ref = _seg.get('template_ref')
-                _raw = 1
-                if _ref and _ref in self.enabled_templates:
-                    _raw = self.enabled_templates[_ref].get('strings_per_tracker', 1)
-                _spt = int(_raw) + (1 if _raw != int(_raw) else 0)
-                for _ in range(_seg.get('quantity', 0)):
-                    all_tracker_spt[_g_idx] = _spt
-                    _g_idx += 1
-        metadata['tracker_spt'].update(
-            {k: v for k, v in all_tracker_spt.items() if k not in metadata['tracker_spt']}
-        )
+            # Apply custom device names from canvas renaming (indices match allocated devices only)
+            for dev_idx, custom_name in self.device_names.items():
+                if dev_idx < len(device_data):
+                    device_data[dev_idx]['name'] = custom_name
 
-        # Identify tracker indices not covered by any device
-        covered_trackers = {tidx for dev in device_data for tidx, _ in dev['strings']}
-        unallocated_strings = []
-        for tidx, spt in sorted(all_tracker_spt.items()):
-            if tidx not in covered_trackers:
-                for phys_pos in range(spt):
-                    unallocated_strings.append((tidx, phys_pos))
+            # Compute SPT for every tracker (including unallocated ones added after lock)
+            all_tracker_spt = {}
+            _g_idx = 0
+            for _grp in self.groups:
+                for _seg in _grp.get('segments', []):
+                    _ref = _seg.get('template_ref')
+                    _raw = 1
+                    if _ref and _ref in self.enabled_templates:
+                        _raw = self.enabled_templates[_ref].get('strings_per_tracker', 1)
+                    _spt = int(_raw) + (1 if _raw != int(_raw) else 0)
+                    for _ in range(_seg.get('quantity', 0)):
+                        all_tracker_spt[_g_idx] = _spt
+                        _g_idx += 1
+            metadata['tracker_spt'].update(
+                {k: v for k, v in all_tracker_spt.items() if k not in metadata['tracker_spt']}
+            )
 
-        if unallocated_strings:
-            device_data.insert(0, {
-                'name': 'Unallocated',
-                'strings': unallocated_strings,
-                'is_unallocated': True,
-            })
+            # Identify tracker indices not covered by any device
+            covered_trackers = {tidx for dev in device_data for tidx, _ in dev['strings']}
+            unallocated_strings = []
+            for tidx, spt in sorted(all_tracker_spt.items()):
+                if tidx not in covered_trackers:
+                    for phys_pos in range(spt):
+                        unallocated_strings.append((tidx, phys_pos))
+
+            if unallocated_strings:
+                device_data.insert(0, {
+                    'name': 'Unallocated',
+                    'strings': unallocated_strings,
+                    'is_unallocated': True,
+                })
+
+            # Store on instance so the canvas and future dialog opens share this state.
+            self._device_data = device_data
+            self._device_metadata = metadata
 
         original = copy.deepcopy(device_data)
         original_locked = self.allocation_locked
@@ -3093,8 +3503,9 @@ class SitePreviewWindow(tk.Toplevel):
 
         self._highlighted_strings = set()
 
-        # Lookup: tree item iid -> tracker_idx
+        # Lookup: tree item iid -> (tracker_idx, phys_pos)
         string_tracker = {}
+        self._edit_dialog_string_tracker = string_tracker  # kept alive for canvas sync
 
         def _regroup(dev):
             """Sort strings by (tracker_idx, physical_pos) to keep contiguous."""
@@ -3158,6 +3569,7 @@ class SitePreviewWindow(tk.Toplevel):
         tree.config(yscrollcommand=tree_scroll.set)
         tree.pack(side='left', fill='both', expand=True)
         tree_scroll.pack(side='right', fill='y')
+        self._edit_dialog_tree = tree  # kept alive for canvas sync
 
         # Drop target feedback
         drop_label_var = tk.StringVar(value="")
@@ -3259,9 +3671,11 @@ class SitePreviewWindow(tk.Toplevel):
 
             _update_summary()
 
+        self._edit_dialog_refresh_tree = refresh_tree  # canvas drag calls this after moves
+
         # --- Selection → highlight on canvas ---
         def on_tree_select(event=None):
-            if drag_state.get('suppressing'):
+            if drag_state.get('suppressing') or self._canvas_syncing_tree:
                 return
             selected = [iid for iid in tree.selection() if iid in string_tracker]
             self._highlighted_strings = set()
@@ -3744,7 +4158,13 @@ class SitePreviewWindow(tk.Toplevel):
             self.draw()
             refresh_tree()
 
-        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
+        def _on_dialog_close():
+            self._edit_dialog_tree = None
+            self._edit_dialog_string_tracker = None
+            self._edit_dialog_refresh_tree = None
+            dialog.destroy()
+
+        dialog.protocol("WM_DELETE_WINDOW", _on_dialog_close)
 
         ttk.Button(bottom_frame, text="Undo All Changes", command=undo_changes).pack(side='right', padx=2)
         ttk.Button(bottom_frame, text="Collapse All",
