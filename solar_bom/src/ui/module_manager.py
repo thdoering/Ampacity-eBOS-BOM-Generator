@@ -149,12 +149,18 @@ class ModuleManager(ttk.Frame):
                 except ValueError:
                     pass
             
+            length_mm = float(self.length_var.get())
+            width_mm = float(self.width_var.get())
+            if width_mm > length_mm:
+                messagebox.showerror("Error", f"Module width ({width_mm:.0f} mm) cannot be larger than length ({length_mm:.0f} mm). Please check the dimensions.")
+                return None
+
             return ModuleSpec(
                 manufacturer=self.manufacturer_var.get(),
                 model=self.model_var.get(),
                 type=ModuleType(self.type_var.get()),
-                length_mm=float(self.length_var.get()),
-                width_mm=float(self.width_var.get()),
+                length_mm=length_mm,
+                width_mm=width_mm,
                 depth_mm=40,  # Default
                 weight_kg=25,  # Default
                 wattage=float(self.wattage_var.get()),
@@ -280,6 +286,9 @@ class ModuleManager(ttk.Frame):
                 content = f.read()
             
             params = parse_pan_file(content)
+            if params.get('width_mm', 0) > params.get('length_mm', 0):
+                messagebox.showerror("Error", f"Module width ({params['width_mm']:.0f} mm) cannot be larger than length ({params['length_mm']:.0f} mm). Please check the dimensions.")
+                return
             module = ModuleSpec(
                 type=ModuleType.MONO_PERC,  # Default type
                 **params
