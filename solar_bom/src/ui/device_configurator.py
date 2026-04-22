@@ -379,6 +379,22 @@ class DeviceConfigurator(ttk.Frame):
             
             self.combiner_configs[combiner_id] = config
 
+        # QE doesn't exist yet at project-load time; refresh cable sizes once the
+        # event loop resumes and all widgets (including QE) have been created.
+        self.after_idle(self._refresh_cable_sizes_from_qe)
+
+    def _refresh_cable_sizes_from_qe(self):
+        """Re-derive actual_cable_size from QE's live wire_sizing for all connections."""
+        qe_widget = None
+        if hasattr(self, 'main_app') and hasattr(self.main_app, 'quick_estimate_widget'):
+            qe_widget = self.main_app.quick_estimate_widget
+        if not qe_widget or not hasattr(qe_widget, 'get_wire_size_for'):
+            return
+        for config in self.combiner_configs.values():
+            for conn in config.connections:
+                conn.actual_cable_size = qe_widget.get_wire_size_for('whip', conn.num_strings)
+        self.refresh_display()
+
     def load_saved_configurations(self, saved_configs: Dict[str, dict]):
         """Load saved device configurations"""
         for combiner_id, saved_config in saved_configs.items():
@@ -472,6 +488,28 @@ class DeviceConfigurator(ttk.Frame):
                 combiner_count = len(self.combiner_configs)
                 self.status_var.set(f"Loaded {combiner_count} combiner box(es) from Block/Wiring Config")
     
+    def update_cable_sizes_from_qe(self, assignments):
+        """Update cable sizes from QE wire sizing without overwriting manual edits.
+
+        Called by QE whenever the user changes a wire size in the Wire Sizing table.
+        Only updates connections where cable_manually_set is False.
+        """
+        gauge_lookup = {}  # (combiner_name, tracker_label, harness_label) -> wire_gauge
+        for cb in assignments:
+            cb_name = cb['combiner_name']
+            for conn in cb.get('connections', []):
+                key = (cb_name, conn['tracker_label'], conn['harness_label'])
+                gauge_lookup[key] = conn.get('wire_gauge', '10 AWG')
+
+        for combiner_id, config in self.combiner_configs.items():
+            for conn in config.connections:
+                if not conn.cable_manually_set:
+                    key = (combiner_id, conn.tracker_id, conn.harness_id)
+                    if key in gauge_lookup:
+                        conn.actual_cable_size = gauge_lookup[key]
+
+        self.refresh_display()
+
     def load_from_quick_estimate(self):
         """Load combiner box configurations from Quick Estimate data."""
         # Get the QE widget via main_app
@@ -520,7 +558,7 @@ class DeviceConfigurator(ttk.Frame):
                     num_strings=conn_data['num_strings'],
                     module_isc=conn_data['module_isc'],
                     nec_factor=conn_data['nec_factor'],
-                    actual_cable_size=conn_data.get('wire_gauge', '10 AWG'),
+                    actual_cable_size=qe_widget.get_wire_size_for('whip', conn_data['num_strings']),
                 )
                 connections.append(connection)
             
@@ -729,16 +767,9 @@ class DeviceConfigurator(ttk.Frame):
             for conn in config.connections:
                 tags = []
                 
-                # Check for cable mismatch
-                if conn.is_cable_size_mismatch():
-                    tags.append('mismatch')
-                
-                # Check for edited cells
-                cell_ids = [
-                    f"{combiner_id}_{conn.tracker_id}_{conn.harness_id}_fuse",
-                    f"{combiner_id}_{conn.tracker_id}_{conn.harness_id}_cable"
-                ]
-                if any(cell_id in self.edited_cells for cell_id in cell_ids):
+                # Check for edited cells (fuse only — cable size is not editable)
+                cell_id_fuse = f"{combiner_id}_{conn.tracker_id}_{conn.harness_id}_fuse"
+                if cell_id_fuse in self.edited_cells:
                     tags.append('edited')
                 
                 # Check for warnings (fuse > 90A)
@@ -754,7 +785,7 @@ class DeviceConfigurator(ttk.Frame):
                     f"{conn.nec_factor}",
                     f"{conn.harness_current:.2f}",
                     f"{conn.get_display_fuse_size()}",
-                    conn.get_display_cable_size(),
+                    conn.actual_cable_size,
                     "",  # Total current only on first row
                     ""   # Breaker size only on first row
                 )
@@ -794,8 +825,8 @@ class DeviceConfigurator(ttk.Frame):
         # Get column index
         col_idx = int(column.replace('#', '')) - 1
         
-        # Only allow editing fuse size (col 6), cable size (col 7), and breaker size (col 9)
-        if col_idx not in [6, 7, 9]:
+        # Only allow editing fuse size (col 6) and breaker size (col 9)
+        if col_idx not in [6, 9]:
             return
         
         # Check if it's a combiner header or connection row
@@ -834,11 +865,8 @@ class DeviceConfigurator(ttk.Frame):
         
         connection = config.connections[conn_idx]
         
-        # Create inline editor based on column
         if col_idx == 6:  # Fuse size
             self.create_inline_fuse_combo(item, column, connection, combiner_id)
-        elif col_idx == 7:  # Cable size
-            self.create_inline_cable_combo(item, column, connection, combiner_id)
 
     def create_inline_fuse_combo(self, item, column, connection, combiner_id):
         """Create inline combobox for fuse size editing"""
@@ -893,62 +921,6 @@ class DeviceConfigurator(ttk.Frame):
         
         combo.bind('<<ComboboxSelected>>', save_fuse)
         combo.bind('<Return>', save_fuse)
-        combo.bind('<Escape>', cancel)
-        combo.bind('<FocusOut>', cancel)
-        combo.focus_set()
-        combo.event_generate('<Button-1>')  # Open dropdown immediately
-
-    def create_inline_cable_combo(self, item, column, connection, combiner_id):
-        """Create inline combobox for cable size editing"""
-        # Get the bounding box of the cell
-        bbox = self.tree.bbox(item, column)
-        if not bbox:
-            return
-        
-        # Create combobox
-        cable_var = tk.StringVar(value=connection.get_display_cable_size())
-        combo = ttk.Combobox(self.tree, textvariable=cable_var, state='readonly', width=10)
-        combo['values'] = ["14 AWG", "12 AWG", "10 AWG", "8 AWG", "6 AWG", "4 AWG", "2 AWG", "1/0 AWG", "2/0 AWG", "4/0 AWG"]
-        
-        # Position the combobox
-        combo.place(x=bbox[0], y=bbox[1], width=bbox[2], height=bbox[3])
-        
-        def save_cable(event=None):
-            new_size = cable_var.get()
-            
-            # Validate ampacity
-            from ..utils.cable_sizing import get_cable_ampacity
-            ampacity = get_cable_ampacity(new_size)
-            required_ampacity = connection.get_display_fuse_size()
-
-            if ampacity < required_ampacity:
-                messagebox.showerror("Invalid Size", 
-                                    f"Cable ampacity ({ampacity}A) must be at least "
-                                    f"equal to fuse rating ({required_ampacity}A).")
-                combo.destroy()
-                return
-            
-            # Update connection
-            if new_size == connection.calculated_cable_size:
-                connection.user_cable_size = None
-                connection.cable_manually_set = False
-                cell_id = f"{combiner_id}_{connection.tracker_id}_{connection.harness_id}_cable"
-                self.edited_cells.discard(cell_id)
-            else:
-                connection.user_cable_size = new_size
-                connection.cable_manually_set = True
-                cell_id = f"{combiner_id}_{connection.tracker_id}_{connection.harness_id}_cable"
-                self.edited_cells.add(cell_id)
-            
-            self.refresh_display()
-            self.save_configuration_to_project()
-            combo.destroy()
-        
-        def cancel(event=None):
-            combo.destroy()
-        
-        combo.bind('<<ComboboxSelected>>', save_cable)
-        combo.bind('<Return>', save_cable)
         combo.bind('<Escape>', cancel)
         combo.bind('<FocusOut>', cancel)
         combo.focus_set()

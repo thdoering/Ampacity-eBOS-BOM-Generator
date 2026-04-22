@@ -1483,6 +1483,10 @@ class SitePreviewWindow(tk.Toplevel):
         
         return snapped_x, snapped_y
     
+    def refresh_wire_gauges(self):
+        """Redraw the canvas so the device info panel reflects updated wire gauges."""
+        self.draw()
+
     def draw(self):
         """Draw the site layout with to-scale trackers at their group positions.
         

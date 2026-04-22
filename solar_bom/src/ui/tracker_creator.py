@@ -22,6 +22,7 @@ class TrackerTemplateCreator(ttk.Frame):
         self._module_spec = None
         self._source_point_config = None  # Source point config for 2P+ trackers
         self._loading_template = False  # Guard against intermediate update_preview calls
+        self._updating_split = False    # Guard against trace-callback loop in split calc
         self.templates = self.load_templates()
         self.setup_ui()  # Creates current_module_label
         self.module_spec = module_spec  # Now safe to call
@@ -573,19 +574,23 @@ class TrackerTemplateCreator(ttk.Frame):
 
     def update_motor_split_calculation(self, *args):
         """Auto-calculate south split when north split or modules per string changes"""
+        if self._updating_split:
+            return
+        self._updating_split = True
         try:
             modules_per_string = int(self.modules_string_var.get())
             north_split = int(self.motor_split_north_var.get())
+            if north_split > modules_per_string:
+                north_split = modules_per_string
+                self.motor_split_north_var.set(str(north_split))
             south_split = modules_per_string - north_split
-            
-            # Update the south label
-            self.south_label.config(text=str(max(0, south_split)))
-            self.motor_split_south_var.set(str(max(0, south_split)))
-            
-            # Update north spinbox range
+            self.south_label.config(text=str(south_split))
+            self.motor_split_south_var.set(str(south_split))
             self.north_spinbox.config(to=modules_per_string)
         except ValueError:
             self.south_label.config(text="--")
+        finally:
+            self._updating_split = False
 
     def auto_generate_template_name(self, *args):
         """Auto-generate template name based on current settings"""

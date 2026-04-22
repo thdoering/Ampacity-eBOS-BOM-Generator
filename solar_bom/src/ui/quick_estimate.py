@@ -1227,20 +1227,55 @@ class QuickEstimate(ttk.Frame):
         # Track as user override
         overrides = self.wire_sizing.setdefault('user_overrides', {})
         overrides[f"{string_count}_{cable_type}"] = True
-        
+
         self._mark_dirty()
-    
+        self._propagate_wire_sizing_to_devices()
+
     def _on_feeder_size_changed(self, feeder_type):
         """Handle user changing DC feeder or AC homerun size."""
         if feeder_type == 'dc_feeder':
             self.wire_sizing['dc_feeder'] = self._ws_feeder_var.get()
         elif feeder_type == 'ac_homerun':
             self.wire_sizing['ac_homerun'] = self._ws_homerun_var.get()
-        
+
         overrides = self.wire_sizing.setdefault('user_overrides', {})
         overrides[feeder_type] = True
-        
+
         self._mark_dirty()
+        self._propagate_wire_sizing_to_devices()
+
+    def _propagate_wire_sizing_to_devices(self):
+        """Propagate updated wire sizes from the Wire Sizing table to downstream surfaces.
+
+        Surfaces updated:
+          - last_combiner_assignments: wire_gauge per connection (in-place)
+          - device_configurator: actual_cable_size for non-manually-set connections
+          - SitePreviewWindow: canvas redrawn so the device info panel reflects new gauges
+        """
+        if self.allocation_locked:
+            return
+        if not getattr(self, 'last_combiner_assignments', None):
+            return
+
+        # Update wire_gauge in last_combiner_assignments based on current wire_sizing
+        for cb in self.last_combiner_assignments:
+            for conn in cb.get('connections', []):
+                conn['wire_gauge'] = self.get_wire_size_for('whip', conn['num_strings'])
+
+        # Push to Device Configurator (QE-mode only, skips manual overrides)
+        if hasattr(self, 'main_app') and hasattr(self.main_app, 'device_configurator'):
+            dc = self.main_app.device_configurator
+            if dc.data_source == 'quick_estimate' and dc.combiner_configs:
+                dc.update_cable_sizes_from_qe(self.last_combiner_assignments)
+
+        # Refresh Site Preview canvas if it is currently open
+        from .site_preview import SitePreviewWindow
+        for child in self.winfo_children():
+            if isinstance(child, SitePreviewWindow):
+                try:
+                    child.refresh_wire_gauges()
+                except Exception:
+                    pass
 
     def _refresh_wire_sizing_for_segments(self):
         """Refresh wire sizing when segments/harness configs change.
@@ -5961,10 +5996,10 @@ class QuickEstimate(ttk.Frame):
                 inv_sum = self.last_totals['inverter_summary']
                 
                 info_ws.merge_cells(f'A{info_row}:E{info_row}')
-                info_ws.cell(row=info_row, column=1, value="Inverter Allocation Summary").font = title_font
+                info_ws.cell(row=info_row, column=1, value="Device Allocation Summary").font = title_font
                 info_row += 1
-                
-                alloc_headers = ['Inverter', 'Strings', 'Trackers', 'Pattern']
+
+                alloc_headers = ['Device', 'Strings', 'Trackers', 'Pattern']
                 for col, header in enumerate(alloc_headers, 1):
                     cell = info_ws.cell(row=info_row, column=col, value=header)
                     cell.font = header_font
@@ -5977,7 +6012,8 @@ class QuickEstimate(ttk.Frame):
                 if allocation_result:
                     for inv_idx, inv in enumerate(allocation_result['inverters']):
                         pattern_str = '-'.join(str(s) for s in inv['pattern'])
-                        inv_label = self.device_names.get(inv_idx, f"Inverter {inv_idx + 1}")
+                        prefix = 'INV-' if self.topology_var.get() == 'Distributed String' else 'CB-'
+                        inv_label = self.device_names.get(inv_idx, f"{prefix}{inv_idx + 1:02d}")
                         
                         inv_row = [
                             inv_label,
