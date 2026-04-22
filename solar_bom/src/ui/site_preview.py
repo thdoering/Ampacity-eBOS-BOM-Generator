@@ -1809,7 +1809,7 @@ class SitePreviewWindow(tk.Toplevel):
     
     def _draw_motor_alignment_lines(self):
         """Draw a driveline across each group at its motor Y position,
-        following the driveline angle if set."""
+        following the driveline angle if set. Applies group azimuth rotation."""
         for group_data in self.group_layout:
             motor_y = group_data.get('motor_y_ft', 0)
             if motor_y <= 0:
@@ -1825,6 +1825,16 @@ class SitePreviewWindow(tk.Toplevel):
             # Angle offset based on horizontal span from group origin
             right_y = left_y + (right_x - group_data['x']) * driveline_tan
             left_y = left_y + (-overhang) * driveline_tan
+            
+            # Apply group azimuth rotation around the group's rotation center
+            rotation_deg = group_data.get('rotation_deg', 0.0)
+            if rotation_deg != 0:
+                vis_min = group_data.get('visual_min_y', 0)
+                vis_max = group_data.get('visual_max_y', group_data['length_ft'])
+                rcx = group_data['x'] + group_data['width_ft'] / 2
+                rcy = group_data['y'] + (vis_min + vis_max) / 2
+                left_x, left_y = self._rotate_point(rcx, rcy, left_x, left_y, rotation_deg)
+                right_x, right_y = self._rotate_point(rcx, rcy, right_x, right_y, rotation_deg)
             
             x1, y1 = self.world_to_canvas(left_x, left_y)
             x2, y2 = self.world_to_canvas(right_x, right_y)
@@ -1934,11 +1944,17 @@ class SitePreviewWindow(tk.Toplevel):
 
         Validates contiguity on source and target before executing. Returns (ok, error_msg).
         """
-        device_data = self._device_data
-        if not device_data or target_dev_idx >= len(device_data):
+        if not self._ensure_device_data():
             return False, "No device data available."
+        device_data = self._device_data
 
-        target_dev = device_data[target_dev_idx]
+        # device_positions never contains the Unallocated entry, so target_dev_idx
+        # is an index into the real-device subset of device_data. Map it through.
+        real_dev_indices = [i for i, d in enumerate(device_data) if not d.get('is_unallocated')]
+        if target_dev_idx >= len(real_dev_indices):
+            return False, "No device data available."
+        actual_target_idx = real_dev_indices[target_dev_idx]
+        target_dev = device_data[actual_target_idx]
 
         # Build lookup: (tidx, phys_pos) -> source device index
         string_to_dev = {}
@@ -1956,9 +1972,17 @@ class SitePreviewWindow(tk.Toplevel):
         if not by_source:
             return False, "Selected strings not found in any device."
 
-        # Validate contiguity for each source→target pair
+        # Validate contiguity for each source→target pair. Positions that sit in
+        # the Unallocated device don't count as gaps — they're just not assigned
+        # yet, so a temporary "gap" there is acceptable during reallocation.
+        unalloc_positions = {}  # tracker_idx -> set of unallocated phys_pos
+        for dev in device_data:
+            if dev.get('is_unallocated'):
+                for t, p in dev['strings']:
+                    unalloc_positions.setdefault(t, set()).add(p)
+
         for src_idx, src_strings in by_source.items():
-            if src_idx == target_dev_idx:
+            if src_idx == actual_target_idx:
                 continue
             src_dev = device_data[src_idx]
             if src_dev.get('is_unallocated') or target_dev.get('is_unallocated'):
@@ -1969,22 +1993,28 @@ class SitePreviewWindow(tk.Toplevel):
                 by_tracker.setdefault(tidx, set()).add(phys_pos)
 
             for tidx, moving in by_tracker.items():
+                unalloc_t = unalloc_positions.get(tidx, set())
+
                 src_all = {p for t, p in src_dev['strings'] if t == tidx}
                 remaining = src_all - moving
                 if len(remaining) > 1 and max(remaining) - min(remaining) + 1 != len(remaining):
-                    return False, (f"Cannot move: would leave a gap in T{tidx+1:02d} "
-                                   f"on {src_dev['name']}")
+                    missing = set(range(min(remaining), max(remaining) + 1)) - remaining
+                    if not missing.issubset(unalloc_t):
+                        return False, (f"Cannot move: would leave a gap in T{tidx+1:02d} "
+                                       f"on {src_dev['name']}")
 
                 tgt_all = {p for t, p in target_dev['strings'] if t == tidx}
                 combined = tgt_all | moving
                 if len(combined) > 1 and max(combined) - min(combined) + 1 != len(combined):
-                    return False, (f"Cannot move: would create a gap in T{tidx+1:02d} "
-                                   f"on {target_dev['name']}")
+                    missing = set(range(min(combined), max(combined) + 1)) - combined
+                    if not missing.issubset(unalloc_t):
+                        return False, (f"Cannot move: would create a gap in T{tidx+1:02d} "
+                                       f"on {target_dev['name']}")
 
         # Execute moves
         any_moved = False
         for src_idx, src_strings in by_source.items():
-            if src_idx == target_dev_idx:
+            if src_idx == actual_target_idx:
                 continue
             src_dev = device_data[src_idx]
             src_dev['strings'] = [(t, p) for t, p in src_dev['strings'] if (t, p) not in src_strings]
@@ -2244,48 +2274,49 @@ class SitePreviewWindow(tk.Toplevel):
 
     def _check_overlaps(self):
         """Check for overlapping groups and return list of overlapping pair indices."""
+
+        def _poly(g):
+            gx = g['x']
+            gy = g['y']
+            w = g['width_ft']
+            dt = g.get('driveline_tan', 0.0)
+            vis_min_base = g.get('visual_min_y_base', g.get('visual_min_y', 0))
+            vis_max_base = g.get('visual_max_y_base', g.get('visual_max_y', g['length_ft']))
+            rd = g.get('rotation_deg', 0.0)
+            vis_min = g.get('visual_min_y', vis_min_base)
+            vis_max = g.get('visual_max_y', vis_max_base)
+            rcx = gx + w / 2
+            rcy = gy + (vis_min + vis_max) / 2
+            # Parallelogram corners: left side uses base Y bounds; right side shifts by w*dt
+            corners = [
+                (gx,     gy + vis_min_base),
+                (gx,     gy + vis_max_base),
+                (gx + w, gy + vis_max_base + w * dt),
+                (gx + w, gy + vis_min_base + w * dt),
+            ]
+            if rd:
+                corners = [self._rotate_point(rcx, rcy, px, py, rd) for px, py in corners]
+            return corners
+
+        def _sat(a, b):
+            for poly in (a, b):
+                n = len(poly)
+                for k in range(n):
+                    x1, y1 = poly[k]
+                    x2, y2 = poly[(k + 1) % n]
+                    nx, ny = -(y2 - y1), (x2 - x1)
+                    pa = [nx * px + ny * py for px, py in a]
+                    pb = [nx * px + ny * py for px, py in b]
+                    if max(pa) < min(pb) or max(pb) < min(pa):
+                        return False
+            return True
+
+        polys = [_poly(g) for g in self.group_layout]
         overlaps = []
-        
-        for i in range(len(self.group_layout)):
-            for j in range(i + 1, len(self.group_layout)):
-                gi = self.group_layout[i]
-                gj = self.group_layout[j]
-                
-                i_x1 = gi['x']
-                i_x2 = gi['x'] + gi['width_ft']
-                j_x1 = gj['x']
-                j_x2 = gj['x'] + gj['width_ft']
-                
-                # Check X overlap first
-                if i_x1 >= j_x2 or i_x2 <= j_x1:
-                    continue
-                
-                # Driveline angle: Y bounds shift linearly with X
-                i_tan = gi.get('driveline_tan', 0.0)
-                j_tan = gj.get('driveline_tan', 0.0)
-                i_vis_min = gi.get('visual_min_y_base', gi.get('visual_min_y', 0))
-                i_vis_max = gi.get('visual_max_y_base', gi.get('visual_max_y', gi['length_ft']))
-                j_vis_min = gj.get('visual_min_y_base', gj.get('visual_min_y', 0))
-                j_vis_max = gj.get('visual_max_y_base', gj.get('visual_max_y', gj['length_ft']))
-                
-                # Check Y overlap at both ends of the X overlap region
-                x_overlap_left = max(i_x1, j_x1)
-                x_overlap_right = min(i_x2, j_x2)
-                
-                has_overlap = False
-                for x_check in [x_overlap_left, x_overlap_right]:
-                    i_y1 = gi['y'] + i_vis_min + (x_check - i_x1) * i_tan
-                    i_y2 = gi['y'] + i_vis_max + (x_check - i_x1) * i_tan
-                    j_y1 = gj['y'] + j_vis_min + (x_check - j_x1) * j_tan
-                    j_y2 = gj['y'] + j_vis_max + (x_check - j_x1) * j_tan
-                    
-                    if i_y1 < j_y2 and i_y2 > j_y1:
-                        has_overlap = True
-                        break
-                
-                if has_overlap:
+        for i in range(len(polys)):
+            for j in range(i + 1, len(polys)):
+                if _sat(polys[i], polys[j]):
                     overlaps.append((i, j))
-        
         return overlaps
     
     def _draw_overlap_warnings(self):
@@ -2307,22 +2338,37 @@ class SitePreviewWindow(tk.Toplevel):
             g = self.group_layout[idx]
             vis_min = g.get('visual_min_y', 0)
             vis_max = g.get('visual_max_y', g['length_ft'])
+            rotation_deg = g.get('rotation_deg', 0.0)
+            rcx = g['x'] + g['width_ft'] / 2
+            rcy = g['y'] + (vis_min + vis_max) / 2
             
-            hx1, hy1 = self.world_to_canvas(g['x'] - pad, g['y'] + vis_min - pad)
-            hx2, hy2 = self.world_to_canvas(
-                g['x'] + g['width_ft'] + pad,
-                g['y'] + vis_max + pad
-            )
+            # Four corners of the padded outline in world coords, then rotate
+            corners_world = [
+                (g['x'] - pad,                 g['y'] + vis_min - pad),
+                (g['x'] + g['width_ft'] + pad, g['y'] + vis_min - pad),
+                (g['x'] + g['width_ft'] + pad, g['y'] + vis_max + pad),
+                (g['x'] - pad,                 g['y'] + vis_max + pad),
+            ]
+            poly_canvas = []
+            for wx, wy in corners_world:
+                if rotation_deg != 0:
+                    wx, wy = self._rotate_point(rcx, rcy, wx, wy, rotation_deg)
+                cx, cy = self.world_to_canvas(wx, wy)
+                poly_canvas.extend([cx, cy])
             
-            self.canvas.create_rectangle(
-                hx1, hy1, hx2, hy2,
+            self.canvas.create_polygon(
+                *poly_canvas,
                 fill='', outline='#FF0000', width=3, dash=(8, 4),
                 tags='overlap_warning'
             )
             
-            # Warning label
-            label_x = (hx1 + hx2) / 2
-            label_y = hy1 - 8
+            # Warning label — anchor to the top-center of the rotated outline
+            label_wx = g['x'] + g['width_ft'] / 2
+            label_wy = g['y'] + vis_min - pad
+            if rotation_deg != 0:
+                label_wx, label_wy = self._rotate_point(rcx, rcy, label_wx, label_wy, rotation_deg)
+            label_x, label_y = self.world_to_canvas(label_wx, label_wy)
+            label_y -= 8
             font_size = max(7, min(10, int(9 * self.scale)))
             self.canvas.create_text(
                 label_x, label_y,
@@ -3597,64 +3643,67 @@ class SitePreviewWindow(tk.Toplevel):
             
             parent_qe.last_combiner_assignments = new_assignments
 
+    def _ensure_device_data(self):
+        """Build and cache device data if not already present.
+
+        Returns True if data is available (either pre-existing or freshly built),
+        False if there is no allocation data to work from.
+        """
+        if self._device_data is not None:
+            return bool(self._device_data)
+
+        raw_data, metadata = self._normalize_to_device_strings()
+        if not raw_data:
+            return False
+
+        device_data = raw_data
+
+        for dev_idx, custom_name in self.device_names.items():
+            if dev_idx < len(device_data):
+                device_data[dev_idx]['name'] = custom_name
+
+        all_tracker_spt = {}
+        _g_idx = 0
+        for _grp in self.groups:
+            for _seg in _grp.get('segments', []):
+                _ref = _seg.get('template_ref')
+                _raw = 1
+                if _ref and _ref in self.enabled_templates:
+                    _raw = self.enabled_templates[_ref].get('strings_per_tracker', 1)
+                _spt = int(_raw) + (1 if _raw != int(_raw) else 0)
+                for _ in range(_seg.get('quantity', 0)):
+                    all_tracker_spt[_g_idx] = _spt
+                    _g_idx += 1
+        metadata['tracker_spt'].update(
+            {k: v for k, v in all_tracker_spt.items() if k not in metadata['tracker_spt']}
+        )
+
+        covered_trackers = {tidx for dev in device_data for tidx, _ in dev['strings']}
+        unallocated_strings = []
+        for tidx, spt in sorted(all_tracker_spt.items()):
+            if tidx not in covered_trackers:
+                for phys_pos in range(spt):
+                    unallocated_strings.append((tidx, phys_pos))
+
+        if unallocated_strings:
+            device_data.insert(0, {
+                'name': 'Unallocated',
+                'strings': unallocated_strings,
+                'is_unallocated': True,
+            })
+
+        self._device_data = device_data
+        self._device_metadata = metadata
+        return True
+
     def _show_edit_devices_dialog(self):
         """Show dialog to reassign string-level connections between devices."""
-        if self._device_data is not None:
-            # Reuse in-memory state from prior dialog session or canvas edits.
-            device_data = self._device_data
-            metadata = self._device_metadata
-            if not device_data:
-                messagebox.showinfo("No Data", "Run Calculate Estimate first.", parent=self)
-                return
-        else:
-            # Fresh build from allocation data.
-            raw_data, metadata = self._normalize_to_device_strings()
-            if not raw_data:
-                messagebox.showinfo("No Data", "Run Calculate Estimate first.", parent=self)
-                return
+        if not self._ensure_device_data():
+            messagebox.showinfo("No Data", "Run Calculate Estimate first.", parent=self)
+            return
 
-            device_data = raw_data
-
-            # Apply custom device names from canvas renaming (indices match allocated devices only)
-            for dev_idx, custom_name in self.device_names.items():
-                if dev_idx < len(device_data):
-                    device_data[dev_idx]['name'] = custom_name
-
-            # Compute SPT for every tracker (including unallocated ones added after lock)
-            all_tracker_spt = {}
-            _g_idx = 0
-            for _grp in self.groups:
-                for _seg in _grp.get('segments', []):
-                    _ref = _seg.get('template_ref')
-                    _raw = 1
-                    if _ref and _ref in self.enabled_templates:
-                        _raw = self.enabled_templates[_ref].get('strings_per_tracker', 1)
-                    _spt = int(_raw) + (1 if _raw != int(_raw) else 0)
-                    for _ in range(_seg.get('quantity', 0)):
-                        all_tracker_spt[_g_idx] = _spt
-                        _g_idx += 1
-            metadata['tracker_spt'].update(
-                {k: v for k, v in all_tracker_spt.items() if k not in metadata['tracker_spt']}
-            )
-
-            # Identify tracker indices not covered by any device
-            covered_trackers = {tidx for dev in device_data for tidx, _ in dev['strings']}
-            unallocated_strings = []
-            for tidx, spt in sorted(all_tracker_spt.items()):
-                if tidx not in covered_trackers:
-                    for phys_pos in range(spt):
-                        unallocated_strings.append((tidx, phys_pos))
-
-            if unallocated_strings:
-                device_data.insert(0, {
-                    'name': 'Unallocated',
-                    'strings': unallocated_strings,
-                    'is_unallocated': True,
-                })
-
-            # Store on instance so the canvas and future dialog opens share this state.
-            self._device_data = device_data
-            self._device_metadata = metadata
+        device_data = self._device_data
+        metadata = self._device_metadata
 
         original = copy.deepcopy(device_data)
         original_locked = self.allocation_locked
@@ -3698,37 +3747,49 @@ class SitePreviewWindow(tk.Toplevel):
 
         def _validate_move(source_dev_idx, positions_to_move, target_dev_idx):
             """Check that moving strings preserves contiguity on both sides.
-            
+            Gaps covered entirely by the Unallocated device are tolerated.
+
             Returns (ok, error_message).
             """
+            # Build a map of positions currently held by the Unallocated device
+            unalloc_positions = {}
+            for dev in device_data:
+                if dev.get('is_unallocated'):
+                    for t, p in dev['strings']:
+                        unalloc_positions.setdefault(t, set()).add(p)
+
             # Group positions being moved by tracker
             moving_by_tracker = {}
             for pos_idx in positions_to_move:
                 if pos_idx < len(device_data[source_dev_idx]['strings']):
                     tidx, phys = device_data[source_dev_idx]['strings'][pos_idx]
                     moving_by_tracker.setdefault(tidx, set()).add(phys)
-            
+
             for tidx, moving_positions in moving_by_tracker.items():
+                unalloc_t = unalloc_positions.get(tidx, set())
+
                 # Current positions this tracker has on source device
                 source_positions = {p for t, p in device_data[source_dev_idx]['strings'] if t == tidx}
                 remaining = source_positions - moving_positions
-                
+
                 # Check source contiguity after removal
                 if len(remaining) > 1:
-                    if max(remaining) - min(remaining) + 1 != len(remaining):
+                    missing = set(range(min(remaining), max(remaining) + 1)) - remaining
+                    if not missing.issubset(unalloc_t):
                         return False, (f"Cannot move: would leave a gap in T{tidx+1:02d} "
                                        f"on {device_data[source_dev_idx]['name']}")
-                
+
                 # Current positions this tracker has on target device
                 target_positions = {p for t, p in device_data[target_dev_idx]['strings'] if t == tidx}
                 combined = target_positions | moving_positions
-                
+
                 # Check target contiguity after addition
                 if len(combined) > 1:
-                    if max(combined) - min(combined) + 1 != len(combined):
+                    missing = set(range(min(combined), max(combined) + 1)) - combined
+                    if not missing.issubset(unalloc_t):
                         return False, (f"Cannot move: would create a gap in T{tidx+1:02d} "
                                        f"on {device_data[target_dev_idx]['name']}")
-            
+
             return True, ""
 
         # --- Tree ---
