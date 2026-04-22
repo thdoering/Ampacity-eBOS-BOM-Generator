@@ -29,6 +29,7 @@ class QuickEstimate(ttk.Frame):
         
         self.groups = []
         self.pads = []  # Collection points (inverter pads)
+        self.measurements = []  # Saved measurement polylines [[wx,wy],...] per measurement
         self.device_names = {}  # {device_idx: "custom_name"} for CB/SI renaming
         self.device_feeder_sizes = {}  # {device_idx: "cable_size"} per-device feeder/homerun size
         self.device_feeder_parallel_counts = {}  # {device_idx: int} per-device parallel sets per pole
@@ -259,8 +260,13 @@ class QuickEstimate(ttk.Frame):
         return compatible
     
     def refresh_templates(self):
-        """Reload enabled templates from disk. Call when templates may have changed."""
+        """Reload enabled templates from disk and rebuild segment dropdowns."""
         self.enabled_templates = self.load_enabled_templates()
+        if self.selected_group_idx is not None:
+            try:
+                self._rebuild_group_details(self.selected_group_idx)
+            except Exception:
+                pass
 
     def _derive_module_from_templates(self):
         """Derive the active module and modules_per_string from linked templates.
@@ -2058,6 +2064,7 @@ class QuickEstimate(ttk.Frame):
         if hasattr(self, 'use_routed_var'):
                     self.use_routed_var.set(estimate_data.get('use_routed_distances', False))
         self.pads = copy.deepcopy(estimate_data.get('pads', []))
+        self.measurements = copy.deepcopy(estimate_data.get('measurements', []))
         
         # Load device names (convert str keys back to int)
         saved_names = estimate_data.get('device_names', {})
@@ -2139,8 +2146,9 @@ class QuickEstimate(ttk.Frame):
         estimate_data['groups'] = copy.deepcopy(self.groups)
         estimate_data['subarrays'] = {}
         
-        # Save pads
+        # Save pads and measurements
         estimate_data['pads'] = copy.deepcopy(self.pads)
+        estimate_data['measurements'] = copy.deepcopy(self.measurements)
         
         # Save device names (convert int keys to str for JSON)
         estimate_data['device_names'] = {str(k): v for k, v in self.device_names.items()}
@@ -2685,9 +2693,10 @@ class QuickEstimate(ttk.Frame):
             initial_inspect=initial_inspect, pads=self.pads,
             device_names=self.device_names,
             device_feeder_sizes=self.device_feeder_sizes,
-            device_feeder_parallel_counts=self.device_feeder_parallel_counts
+            device_feeder_parallel_counts=self.device_feeder_parallel_counts,
+            measurements=self.measurements
         )
-        
+
         # When window closes, save state back
         def _on_preview_close():
             self._last_inspect_mode = preview.inspect_mode
@@ -2695,6 +2704,7 @@ class QuickEstimate(ttk.Frame):
             self.device_names = dict(preview.device_names)  # Save renamed devices back
             self.device_feeder_sizes = dict(preview.device_feeder_sizes)  # Save feeder sizes back
             self.device_feeder_parallel_counts = dict(preview.device_feeder_parallel_counts)  # Save parallel counts back
+            self.measurements = list(preview.measurements)  # Save measurements back
             
             # If CB assignments were edited, refresh the estimate results
             if hasattr(self, 'last_combiner_assignments') and self.last_combiner_assignments:
@@ -5727,9 +5737,19 @@ class QuickEstimate(ttk.Frame):
                 return
         
         try:
+            import re as _re
             from openpyxl import Workbook
             from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
             from openpyxl.utils import get_column_letter
+
+            def _group_range_label(names):
+                """Return 'Group 3' for one name, 'Groups 1-4' when trailing numbers exist."""
+                if len(names) == 1:
+                    return names[0]
+                nums = [_re.search(r'\d+$', n) for n in names]
+                if all(nums):
+                    return f"Groups {nums[0].group()}-{nums[-1].group()}"
+                return ', '.join(names)
             
             wb = Workbook()
             info_ws = wb.active
@@ -5785,8 +5805,13 @@ class QuickEstimate(ttk.Frame):
                 info_items.append(("Module:", f"{self.selected_module.manufacturer} {self.selected_module.model} ({self.selected_module.wattage}W)"))
                 info_items.append(("Module Isc:", f"{module_isc} A"))
                 info_items.append(("Module Width:", f"{module_width_mm} mm"))
+            # Consolidate groups that share the same row spacing into a single info row
+            _spacing_map = {}
             for grp in self.groups:
-                info_items.append((f"Row Spacing ({grp.get('name', 'Group')}):", f"{grp.get('row_spacing_ft', 20.0):.3f} ft"))
+                _s = round(grp.get('row_spacing_ft', 20.0), 3)
+                _spacing_map.setdefault(_s, []).append(grp.get('name', 'Group'))
+            for _s, _names in _spacing_map.items():
+                info_items.append((f"Row Spacing ({_group_range_label(_names)}):", f"{_s:.3f} ft"))
             info_items.append(("LV Collection Method:", self.lv_collection_var.get() if hasattr(self, 'lv_collection_var') else 'Wire Harness'))
             
             if self.selected_inverter:
@@ -5798,10 +5823,40 @@ class QuickEstimate(ttk.Frame):
                     inv_sum = self.last_totals['inverter_summary']
                     info_items.append(("DC:AC Ratio (actual):", f"{inv_sum.get('actual_dc_ac', 0):.2f}"))
                     info_items.append(("Total Inverters:", str(inv_sum.get('total_inverters', ''))))
-                    info_items.append(("Total Strings:", f"{inv_sum.get('total_strings', 0):,}"))
+
                     lt = self.last_totals
-                    if lt.get('total_modules') is not None:
-                        info_items.append(("Total Modules:", f"{lt['total_modules']:,}"))
+
+                    # Build per-module-type totals from groups/segments
+                    _mod_type = {}
+                    for _grp in self.groups:
+                        for _seg in _grp.get('segments', []):
+                            _ref = _seg.get('template_ref')
+                            _qty = _seg.get('quantity', 0)
+                            _spt = _seg.get('strings_per_tracker', 1)
+                            if _ref and _ref in self.enabled_templates and _qty > 0:
+                                _td = self.enabled_templates[_ref]
+                                _mps = _td.get('modules_per_string', 28)
+                                _mod = _td.get('module_spec', {})
+                                _lbl = f"{_mod.get('manufacturer', '?')}-{_mod.get('wattage', '?')}W"
+                                if _lbl not in _mod_type:
+                                    _mod_type[_lbl] = {'strings': 0, 'modules': 0}
+                                _ss = _qty * int(_spt)
+                                _mod_type[_lbl]['strings'] += _ss
+                                _mod_type[_lbl]['modules'] += _ss * _mps
+
+                    if len(_mod_type) > 1:
+                        for _lbl, _d in _mod_type.items():
+                            info_items.append((f"Strings — {_lbl}:", f"{_d['strings']:,}"))
+                        info_items.append(("Total Strings:", f"{inv_sum.get('total_strings', 0):,}"))
+                        if lt.get('total_modules') is not None:
+                            for _lbl, _d in _mod_type.items():
+                                info_items.append((f"Modules — {_lbl}:", f"{_d['modules']:,}"))
+                            info_items.append(("Total Modules:", f"{lt['total_modules']:,}"))
+                    else:
+                        info_items.append(("Total Strings:", f"{inv_sum.get('total_strings', 0):,}"))
+                        if lt.get('total_modules') is not None:
+                            info_items.append(("Total Modules:", f"{lt['total_modules']:,}"))
+
                     if lt.get('total_dc_kw') is not None:
                         info_items.append(("DC Capacity:", f"{lt['total_dc_kw']:,.2f} kW"))
                     if lt.get('total_ac_kw') is not None:
@@ -6185,10 +6240,6 @@ class QuickEstimate(ttk.Frame):
             est_data = self.current_project.quick_estimates.get(self.estimate_id, {})
             estimate_name = clean_fn(est_data.get('name', 'Estimate'))
 
-        table_corner = self._ask_table_corner()
-        if table_corner is None:
-            return
-
         suggested_name = f"{client}_{project_name}_Site PDF_{estimate_name}.pdf"
 
         filepath = filedialog.asksaveasfilename(
@@ -6200,7 +6251,7 @@ class QuickEstimate(ttk.Frame):
         if not filepath:
             return
 
-        success = self._generate_site_pdf(filepath, include_wiring=True, table_corner=table_corner)
+        success = self._generate_site_pdf(filepath, include_wiring=True)
         if success:
             try:
                 os.startfile(filepath)
@@ -6210,7 +6261,7 @@ class QuickEstimate(ttk.Frame):
         else:
             messagebox.showerror("Error", "Failed to generate PDF.")
 
-    def _generate_site_pdf(self, filepath, include_wiring=True, table_corner='top-right'):
+    def _generate_site_pdf(self, filepath, include_wiring=True):
         """Generate the string allocation site PDF using current estimate data.
         
         Returns True on success, False on error.
@@ -6311,6 +6362,53 @@ class QuickEstimate(ttk.Frame):
                         tracker_counts[short] = tracker_counts.get(short, 0) + qty
             project_info['tracker_summary'] = list(tracker_counts.items())
 
+            # --- Per-module-type string/module totals ---
+            mod_type_data = {}
+            for group in self.groups:
+                for seg in group.get('segments', []):
+                    ref = seg.get('template_ref')
+                    qty = seg.get('quantity', 0)
+                    spt = seg.get('strings_per_tracker', 1)
+                    if ref and ref in self.enabled_templates and qty > 0:
+                        tdata = self.enabled_templates[ref]
+                        mps = tdata.get('modules_per_string', 28)
+                        mod = tdata.get('module_spec', {})
+                        lbl = f"{mod.get('manufacturer', '?')}-{mod.get('wattage', '?')}W"
+                        if lbl not in mod_type_data:
+                            mod_type_data[lbl] = {'strings': 0, 'modules': 0}
+                        seg_str = qty * int(spt)
+                        mod_type_data[lbl]['strings'] += seg_str
+                        mod_type_data[lbl]['modules'] += seg_str * mps
+            if len(mod_type_data) > 1:
+                project_info['module_type_totals'] = [
+                    (lbl, d['strings'], d['modules'])
+                    for lbl, d in mod_type_data.items()
+                ]
+
+            # --- Row spacing (consolidated by unique spacing value) ---
+            import re as _re2
+            def _rl(names):
+                if len(names) == 1:
+                    return names[0]
+                nums = [_re2.search(r'\d+$', n) for n in names]
+                if all(nums):
+                    return f"Groups {nums[0].group()}-{nums[-1].group()}"
+                return ', '.join(names)
+
+            _rs_map = {}
+            for grp in self.groups:
+                _sp = round(grp.get('row_spacing_ft', 20.0), 2)
+                _rs_map.setdefault(_sp, []).append(grp.get('name', 'Group'))
+            if len(_rs_map) == 1:
+                project_info['row_spacing_rows'] = [
+                    ('Row Spacing', f"{list(_rs_map.keys())[0]:.2f} ft")
+                ]
+            else:
+                project_info['row_spacing_rows'] = [
+                    (f"Row Spacing ({_rl(names)})", f"{sp:.2f} ft")
+                    for sp, names in _rs_map.items()
+                ]
+
             # --- Build wiring specs for unique tracker templates ---
             wiring_specs = self._gather_wiring_specs() if include_wiring else None
 
@@ -6326,42 +6424,11 @@ class QuickEstimate(ttk.Frame):
                 show_routes=True,
                 align_on_motor=True,
                 wiring_specs=wiring_specs,
-                table_corner=table_corner,
             )
             return result
 
         finally:
             temp_preview.destroy()
-
-    def _ask_table_corner(self):
-        """Ask the user where to place the system summary table on the PDF.
-        Returns 'top-right', 'bottom-right', or None if cancelled."""
-        import tkinter as tk
-        result = [None]
-
-        dialog = tk.Toplevel(self)
-        dialog.title("Summary Table Position")
-        dialog.resizable(False, False)
-        dialog.grab_set()
-
-        tk.Label(dialog, text="Where should the System Summary table be placed?",
-                 padx=20, pady=12).pack()
-
-        btn_frame = tk.Frame(dialog)
-        btn_frame.pack(pady=(0, 15))
-
-        def choose(val):
-            result[0] = val
-            dialog.destroy()
-
-        tk.Button(btn_frame, text="Top Right", width=12,
-                  command=lambda: choose('top-right')).pack(side='left', padx=10)
-        tk.Button(btn_frame, text="Bottom Right", width=12,
-                  command=lambda: choose('bottom-right')).pack(side='left', padx=10)
-
-        dialog.bind('<Escape>', lambda e: dialog.destroy())
-        self.wait_window(dialog)
-        return result[0]
 
     def _gather_wiring_specs(self):
         """Gather unique tracker wiring specifications for DC cabling diagrams.
@@ -6507,10 +6574,6 @@ class QuickEstimate(ttk.Frame):
             est_data = self.current_project.quick_estimates.get(self.estimate_id, {})
             estimate_name = clean_fn(est_data.get('name', 'Estimate'))
 
-        table_corner = self._ask_table_corner()
-        if table_corner is None:
-            return
-
         suggested_name = f"{client}_{project_name}_String Allocation_{estimate_name}.pdf"
 
         filepath = filedialog.asksaveasfilename(
@@ -6522,7 +6585,7 @@ class QuickEstimate(ttk.Frame):
         if not filepath:
             return
 
-        success = self._generate_site_pdf(filepath, include_wiring=False, table_corner=table_corner)
+        success = self._generate_site_pdf(filepath, include_wiring=False)
         if success:
             import os
             try:

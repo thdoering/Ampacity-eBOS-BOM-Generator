@@ -984,24 +984,29 @@ class BOMGenerator:
                     excel_summary.at[idx, 'Part Number'] = comp_type
             excel_summary = excel_summary.drop(columns=['Component Type'], errors='ignore')
             
+            # How many extra rows multi-module projects add to the info section
+            _mtt = (project_info or {}).get('module_type_totals', [])
+            n_extra = len(_mtt) if len(_mtt) > 1 else 0
+
             # Write summary data
-            excel_summary.to_excel(writer, sheet_name='BOM Summary', index=False, startrow=15)  # Start after project info
-            
+            excel_summary.to_excel(writer, sheet_name='BOM Summary', index=False,
+                                   startrow=15 + n_extra)  # Start after project info
+
             # Add Excel formulas for Extended Price and Total
             if 'Extended Price' in excel_summary.columns:
                 summary_sheet = writer.sheets['BOM Summary']
-                
+
                 # Find column letters for Quantity, Unit Price, and Extended Price
                 qty_col_idx = list(excel_summary.columns).index('Quantity') + 1
                 unit_price_col_idx = list(excel_summary.columns).index('Unit Price') + 1
                 ext_price_col_idx = list(excel_summary.columns).index('Extended Price') + 1
-                
+
                 qty_col_letter = get_column_letter(qty_col_idx)
                 unit_price_col_letter = get_column_letter(unit_price_col_idx)
                 ext_price_col_letter = get_column_letter(ext_price_col_idx)
-                
-                # Data starts at row 17 (startrow=15 + 1 header row + 1 for 1-based)
-                first_data_row = 17
+
+                # Data starts at row 17 + n_extra (startrow=15+n_extra, +1 header, +1 for 1-based)
+                first_data_row = 17 + n_extra
                 last_data_row = first_data_row + len(excel_summary) - 1
                 
                 # Add formulas for Extended Price: =Quantity * Unit Price
@@ -1177,68 +1182,81 @@ class BOMGenerator:
             project_info_cell.alignment = Alignment(horizontal='center')
             
             if project_info:
-                # First set of info in columns A and B
-                main_info = ['Project Name', 'Customer', 'Location', 'System Size (kW DC)', 
-                            'Number of Modules', 'Module Manufacturer', 'Module Model', 
-                            'Inverter Manufacturer', 'Inverter Model', 'DC Collection',
-                            'BOM Revision']
-                
-                # Additional info for columns C and D
-                additional_info = {
-                    'String Size': project_info.get('String Size', 'Unknown'),
-                    'Number of Strings': project_info.get('Number of Strings', 0),
-                    'Module Wiring': project_info.get('Module Wiring', 'Unknown'),
-                    'Module Dimensions': project_info.get('Module Dimensions', 'Unknown'),
-                    'Number of Combiner Boxes': project_info.get('Number of Combiner Boxes', 0),
-                    'Polarity Orientation': project_info.get('Polarity Orientation', 'Unknown'),
-                    'Copper Rate': project_info.get('Copper Rate', 'Unknown')
-                }
-                
-                # Write main info with units
-                row = 2
-                for key in main_info:
+                mtt = project_info.get('module_type_totals', [])
+                multi_module = len(mtt) > 1
+
+                # --- Columns A-B: main project info ---
+                # Build rows explicitly so we can inject per-module-type module counts inline
+                main_rows = []
+                for key in ['Project Name', 'Customer', 'Location', 'System Size (kW DC)']:
                     if key in project_info:
-                        value = project_info[key]
-                        
-                        # Add units to specific fields
-                        if key == 'System Size (kW DC)' and isinstance(value, (int, float)):
-                            value = f"{round(value, 2)} kW"
-                        elif key == 'Number of Modules' and isinstance(value, int):
-                            value = f"{value} modules"
-                        
-                        summary_sheet.cell(row=row, column=1, value=key).font = Font(bold=True)
-                        summary_sheet.cell(row=row, column=2, value=value)
-                        row += 1
-                
-                # Write additional info in columns C and D
+                        val = project_info[key]
+                        if key == 'System Size (kW DC)' and isinstance(val, (int, float)):
+                            val = f"{round(val, 2)} kW"
+                        main_rows.append((key, val))
+
+                if multi_module:
+                    for lbl, _, mods in mtt:
+                        main_rows.append((f"Modules — {lbl}", f"{mods:,} modules"))
+                    main_rows.append(('Total Modules', f"{sum(m for _, _, m in mtt):,} modules"))
+                else:
+                    val = project_info.get('Number of Modules', 0)
+                    main_rows.append(('Number of Modules',
+                                      f"{val} modules" if isinstance(val, int) else str(val)))
+
+                for key in ['Module Manufacturer', 'Module Model', 'Inverter Manufacturer',
+                            'Inverter Model', 'DC Collection', 'BOM Revision']:
+                    if key in project_info:
+                        main_rows.append((key, project_info[key]))
+
                 row = 2
-                for key, value in additional_info.items():
-                    # Add units to specific fields
-                    if key == 'String Size' and value != 'Unknown':
-                        value = f"{value} modules per string"
-                    elif key == 'Number of Strings' and isinstance(value, int):
-                        value = f"{value} strings"
-                    elif key == 'Number of Combiner Boxes' and isinstance(value, int):
-                        if value == 1:
-                            value = f"{value} combiner box"
-                        else:
-                            value = f"{value} combiner boxes"
-                    
+                for key, value in main_rows:
+                    summary_sheet.cell(row=row, column=1, value=key).font = Font(bold=True)
+                    summary_sheet.cell(row=row, column=2, value=value)
+                    row += 1
+
+                # --- Columns C-D: additional info ---
+                # Build rows with per-module-type string counts inline
+                add_rows = []
+                str_size = project_info.get('String Size', 'Unknown')
+                add_rows.append(('String Size',
+                                  f"{str_size} modules per string" if str_size != 'Unknown' else 'Unknown'))
+
+                if multi_module:
+                    for lbl, strs, _ in mtt:
+                        add_rows.append((f"Strings — {lbl}", f"{strs} strings"))
+                    add_rows.append(('Total Strings', f"{sum(s for _, s, _ in mtt)} strings"))
+                else:
+                    total_str = project_info.get('Number of Strings', 0)
+                    add_rows.append(('Number of Strings',
+                                     f"{total_str} strings" if isinstance(total_str, int) else str(total_str)))
+
+                cb_count = project_info.get('Number of Combiner Boxes', 0)
+                cb_label = f"{cb_count} combiner box" if cb_count == 1 else f"{cb_count} combiner boxes"
+                add_rows += [
+                    ('Module Wiring',         project_info.get('Module Wiring', 'Unknown')),
+                    ('Module Dimensions',      project_info.get('Module Dimensions', 'Unknown')),
+                    ('Number of Combiner Boxes', cb_label),
+                    ('Polarity Orientation',   project_info.get('Polarity Orientation', 'Unknown')),
+                    ('Copper Rate',            project_info.get('Copper Rate', 'Unknown')),
+                ]
+
+                row = 2
+                for key, value in add_rows:
                     summary_sheet.cell(row=row, column=3, value=key).font = Font(bold=True)
                     summary_sheet.cell(row=row, column=4, value=value)
                     row += 1
 
-            # Add disclaimer note
-            row = 12
-            summary_sheet.merge_cells(f'A{row}:F{row+1}')  # Merge cells A12:F13
-            disclaimer_cell = summary_sheet.cell(row=row, column=1, 
+            # Add disclaimer note (shifted down when multi-module adds extra rows)
+            disc_row = 12 + n_extra
+            summary_sheet.merge_cells(f'A{disc_row}:F{disc_row + 1}')
+            disclaimer_cell = summary_sheet.cell(row=disc_row, column=1,
                 value="Preliminary cable sizes - to be reviewed by Electrical Engineer of Record before ordering")
-            disclaimer_cell.font = Font(bold=True, color="FF0000", size=11)  # Red bold text
+            disclaimer_cell.font = Font(bold=True, color="FF0000", size=11)
             disclaimer_cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-            
-            # Add border around merged cells
-            for row_num in range(12, 14):  # Rows 12 and 13
-                for col_num in range(1, 7):  # Columns A through F
+
+            for row_num in range(disc_row, disc_row + 2):
+                for col_num in range(1, 7):
                     cell = summary_sheet.cell(row=row_num, column=col_num)
                     cell.border = Border(
                         left=Side(style='thin'),
@@ -1246,14 +1264,14 @@ class BOMGenerator:
                         top=Side(style='thin'),
                         bottom=Side(style='thin')
                     )
-            
+
             # Add section header for BOM
-            row = 14
-            summary_sheet.merge_cells(f'A{row}:E{row}')
-            summary_sheet.cell(row=row, column=1, value="Bill of Materials").font = Font(bold=True, size=14)
-            
+            bom_hdr_row = 14 + n_extra
+            summary_sheet.merge_cells(f'A{bom_hdr_row}:E{bom_hdr_row}')
+            summary_sheet.cell(row=bom_hdr_row, column=1, value="Bill of Materials").font = Font(bold=True, size=14)
+
             # Format sheets
-            self._format_excel_sheet(workbook['BOM Summary'], excel_summary, start_row=16)
+            self._format_excel_sheet(workbook['BOM Summary'], excel_summary, start_row=16 + n_extra)
             self._format_excel_sheet(workbook['Block Details'], excel_detailed)
 
             # Format block allocation sheet

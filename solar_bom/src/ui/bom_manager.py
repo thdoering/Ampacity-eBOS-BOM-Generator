@@ -518,51 +518,56 @@ class BOMManager(ttk.Frame):
                 inverter_manufacturer = set()
                 inverter_model = set()
                 dc_collection_types = set()
-                
+                module_type_data = {}  # label -> {'strings': int, 'modules': int}
+
                 for block_id, block in selected_blocks.items():
                     # Count modules
                     if block.tracker_template and block.tracker_template.module_spec:
                         module_spec = block.tracker_template.module_spec
                         # Count modules correctly by iterating through actual strings
                         block_modules = 0
+                        block_strings = 0
                         for pos in block.tracker_positions:
+                            block_strings += len(pos.strings)
                             for string in pos.strings:
                                 block_modules += string.num_modules
-                        
+
                         total_modules += block_modules
-                        
+
+                        # Accumulate per-module-type totals
+                        mod_label = f"{module_spec.manufacturer}-{module_spec.wattage}W"
+                        if mod_label not in module_type_data:
+                            module_type_data[mod_label] = {'strings': 0, 'modules': 0}
+                        module_type_data[mod_label]['strings'] += block_strings
+                        module_type_data[mod_label]['modules'] += block_modules
+
                         # Add module info
                         module_manufacturer.add(module_spec.manufacturer)
                         module_model.add(module_spec.model)
-                        
+
                         # Calculate system size
                         system_size += (block_modules * module_spec.wattage) / 1000
-                    
+
                     # Add inverter info
                     if block.inverter:
                         inverter_manufacturer.add(block.inverter.manufacturer)
                         inverter_model.add(block.inverter.model)
-                    
+
                     # Add DC collection type
                     if block.wiring_config:
                         dc_collection_types.add(block.wiring_config.wiring_type.value)
-                
+
                 # Create the project info dictionary
                 # Collect additional info
-                total_strings = 0
+                total_strings = sum(d['strings'] for d in module_type_data.values())
                 string_sizes = set()
                 module_dimensions = set()
-                
+
                 for block_id, block in selected_blocks.items():
-                    # Count total strings
-                    if block.tracker_positions:
-                        for pos in block.tracker_positions:
-                            total_strings += len(pos.strings)
-                    
                     # Get string size from tracker template
                     if block.tracker_template:
                         string_sizes.add(block.tracker_template.modules_per_string)
-                    
+
                     # Get module dimensions
                     if block.tracker_template and block.tracker_template.module_spec:
                         module_spec = block.tracker_template.module_spec
@@ -609,6 +614,11 @@ class BOMManager(ttk.Frame):
                     'Copper Rate': copper_rate,
                     'BOM Revision': self.revision_var.get() or '0'
                 }
+                if len(module_type_data) > 1:
+                    project_info['module_type_totals'] = [
+                        (label, d['strings'], d['modules'])
+                        for label, d in module_type_data.items()
+                    ]
         except Exception as e:
             print(f"Error getting project info: {str(e)}")
         

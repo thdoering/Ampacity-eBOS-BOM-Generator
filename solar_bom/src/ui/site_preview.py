@@ -9,7 +9,7 @@ class SitePreviewWindow(tk.Toplevel):
     
     def __init__(self, parent, inv_summary, topology, colors, groups, enabled_templates, row_spacing_ft,
                  num_devices=0, device_label='CB', initial_inspect=False, pads=None, device_names=None,
-                 device_feeder_sizes=None, device_feeder_parallel_counts=None):
+                 device_feeder_sizes=None, device_feeder_parallel_counts=None, measurements=None):
         super().__init__(parent)
         self.title("Site Preview — Inverter Allocation")
         self.geometry("1100x750")
@@ -76,6 +76,12 @@ class SitePreviewWindow(tk.Toplevel):
         self._drag_string_payload = set()     # snapshot of _highlighted_strings at drag start
         self._drag_string_start_xy = (0, 0)  # canvas coords where drag began
         self._drag_hover_device_idx = None    # device currently under cursor during drag
+
+        # Measurement tool state
+        self.measurements = list(measurements) if measurements else []
+        self.current_measure_pts = []   # world-coord points for the in-progress measurement
+        self.measure_mode = False
+        self.measure_mouse_pos = None   # canvas coords of cursor (for rubber-band)
 
         self.setup_ui()
         self.build_layout_data()
@@ -198,82 +204,96 @@ class SitePreviewWindow(tk.Toplevel):
     
     def setup_ui(self):
         """Create the preview window UI"""
-        # Top bar with controls
+        # --- Row 1: navigation and view controls ---
         top_bar = ttk.Frame(self, padding="5")
         top_bar.pack(fill='x')
-        
+
         ttk.Button(top_bar, text="Fit to Window", command=self.fit_and_redraw).pack(side='left', padx=2)
         ttk.Button(top_bar, text="Zoom In", command=lambda: self.zoom(1.3)).pack(side='left', padx=2)
         ttk.Button(top_bar, text="Zoom Out", command=lambda: self.zoom(0.7)).pack(side='left', padx=2)
         ttk.Button(top_bar, text="Reset Positions", command=self._reset_positions).pack(side='left', padx=2)
         ttk.Button(top_bar, text="Refresh Allocation", command=self._refresh_allocation).pack(side='left', padx=2)
-        
+
         self.lock_btn = ttk.Button(top_bar, text="Lock Allocation", command=self._toggle_allocation_lock)
         self.lock_btn.pack(side='left', padx=2)
         self._update_lock_button()
-        
+
         ttk.Separator(top_bar, orient='vertical').pack(side='left', fill='y', padx=8, pady=2)
-        
+
         self.align_motor_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             top_bar, text="Align on Motor",
             variable=self.align_motor_var,
             command=self._on_alignment_toggle
         ).pack(side='left', padx=4)
-        
+
         ttk.Separator(top_bar, orient='vertical').pack(side='left', fill='y', padx=8, pady=2)
-        
+
         ttk.Label(top_bar, text="Mode:").pack(side='left', padx=(0, 4))
-        
+
         self.inspect_mode_var = tk.BooleanVar(value=self.inspect_mode)
-        
+
         toggle_frame = ttk.Frame(top_bar)
         toggle_frame.pack(side='left', padx=4)
-        
+
         self.toggle_canvas = tk.Canvas(toggle_frame, width=52, height=24,
                                         highlightthickness=0, bg=top_bar.winfo_toplevel().cget('bg'))
         self.toggle_canvas.pack(side='left')
         self.toggle_canvas.bind('<Button-1>', self._on_toggle_click)
-        
+
         self.toggle_label = ttk.Label(toggle_frame, text="Layout", foreground='#333333')
         self.toggle_label.pack(side='left', padx=(4, 0))
-        
+
         self._draw_toggle()
 
         # Sync label to initial state
         if self.inspect_mode:
             self.toggle_label.config(text="Inspect", foreground='#4CAF50')
-        
-        ttk.Separator(top_bar, orient='vertical').pack(side='left', fill='y', padx=8, pady=2)
-        
-        self.add_pad_btn = ttk.Button(top_bar, text="+ Add Pad", command=self._add_pad)
-        self.add_pad_btn.pack(side='left', padx=4)
-        
-        self.assign_btn = ttk.Button(top_bar, text="Assign Devices", command=self._show_assignment_dialog)
-        self.assign_btn.pack(side='left', padx=4)
-        
-        self.edit_devices_btn = ttk.Button(top_bar, text="Edit Devices", command=self._show_edit_devices_dialog)
-        self.edit_devices_btn.pack(side='left', padx=4)
 
-        self.show_routes_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
-            top_bar, text="Show Routes",
-            variable=self.show_routes_var,
-            command=self.draw
-        ).pack(side='left', padx=4)
-        
         self.zoom_label = ttk.Label(top_bar, text="100%")
         self.zoom_label.pack(side='left', padx=10)
-        
-        # Summary info
+
+        # Summary info (right-aligned in row 1)
         num_inv = self.inv_summary.get('total_inverters', 0)
         total_str = self.inv_summary.get('total_strings', 0)
         actual_ratio = self.inv_summary.get('actual_dc_ac', 0)
         split = self.inv_summary.get('total_split_trackers', 0)
-        
+
         summary_text = self._format_summary(num_inv, total_str, actual_ratio, split)
         self.summary_label = ttk.Label(top_bar, text=summary_text, foreground='#333333')
         self.summary_label.pack(side='right', padx=10)
+
+        # --- Row 2: layout editing and measurement tools ---
+        top_bar2 = ttk.Frame(self, padding=(5, 0, 5, 4))
+        top_bar2.pack(fill='x')
+
+        self.add_pad_btn = ttk.Button(top_bar2, text="+ Add Pad", command=self._add_pad)
+        self.add_pad_btn.pack(side='left', padx=2)
+
+        self.assign_btn = ttk.Button(top_bar2, text="Assign Devices", command=self._show_assignment_dialog)
+        self.assign_btn.pack(side='left', padx=2)
+
+        self.edit_devices_btn = ttk.Button(top_bar2, text="Edit Devices", command=self._show_edit_devices_dialog)
+        self.edit_devices_btn.pack(side='left', padx=2)
+
+        self.show_routes_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            top_bar2, text="Show Routes",
+            variable=self.show_routes_var,
+            command=self.draw
+        ).pack(side='left', padx=4)
+
+        ttk.Separator(top_bar2, orient='vertical').pack(side='left', fill='y', padx=8, pady=2)
+
+        self.measure_btn = ttk.Button(top_bar2, text="Measure", command=self._toggle_measure_mode)
+        self.measure_btn.pack(side='left', padx=2)
+
+        self.show_measurements_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(top_bar2, text="Show Dims",
+                        variable=self.show_measurements_var,
+                        command=self.draw).pack(side='left', padx=4)
+
+        ttk.Button(top_bar2, text="Clear Dims", command=self._measure_clear).pack(side='left', padx=2)
         
         # Canvas
         canvas_frame = ttk.Frame(self)
@@ -297,6 +317,8 @@ class SitePreviewWindow(tk.Toplevel):
         self.canvas.bind('<ButtonRelease-2>', self.on_pan_release)
         self.canvas.bind('<Button-3>', self._on_pad_right_click)
         self.canvas.bind('<Configure>', lambda e: self.draw())
+        self.canvas.bind('<Motion>', self._on_measure_motion)
+        self.bind('<Escape>', lambda e: self._measure_cancel())
         
         # Bottom legend (rebuildable)
         self.legend_frame = ttk.Frame(self, padding="5")
@@ -1060,7 +1082,14 @@ class SitePreviewWindow(tk.Toplevel):
         self.drag_start_y = event.y
         self._drag_moved = False
         self._dragging_pad = False
-        
+
+        # Measurement mode — each click plants a vertex
+        if self.measure_mode:
+            wx, wy = self.canvas_to_world(event.x, event.y)
+            self.current_measure_pts.append([wx, wy])
+            self.draw()
+            return
+
         # Pad placement mode — click to place
         if self.placing_pad:
             wx, wy = self.canvas_to_world(event.x, event.y)
@@ -1204,6 +1233,9 @@ class SitePreviewWindow(tk.Toplevel):
     
     def on_motion(self, event):
         """Handle mouse drag — move group, move pad, or pan canvas."""
+        if self.measure_mode:
+            return
+
         # Panel drag
         if getattr(self, '_dragging_panel', False) and self._panel_drag_start:
             dx = event.x - self._panel_drag_start[0]
@@ -1737,7 +1769,10 @@ class SitePreviewWindow(tk.Toplevel):
 
         # Scale bar
         self._draw_scale_bar()
-        
+
+        # Measurement annotations
+        self._draw_measurements()
+
         # Compass
         self.canvas.update_idletasks()
         cw = self.canvas.winfo_width()
@@ -2646,6 +2681,138 @@ class SitePreviewWindow(tk.Toplevel):
             (x1 + x2) / 2, y1 - 10,
             text=f"{bar_ft} ft", font=('Helvetica', 9), fill='#333333'
         )
+
+    # ---------------------------------------------------------------------------
+    # Measurement tool
+    # ---------------------------------------------------------------------------
+
+    def _toggle_measure_mode(self):
+        """Activate or deactivate the measurement drawing tool."""
+        self.measure_mode = not self.measure_mode
+        if self.measure_mode:
+            self.measure_btn.config(text="Stop Measuring")
+            self.canvas.config(cursor='crosshair')
+            self.current_measure_pts = []
+            self.measure_mouse_pos = None
+        else:
+            self._measure_finish()
+            self.measure_btn.config(text="Measure")
+            self.canvas.config(cursor='')
+
+    def _on_measure_motion(self, event):
+        """Redraw the rubber-band line from the last placed vertex to the cursor."""
+        if not self.measure_mode or not self.current_measure_pts:
+            self.canvas.delete('measure_rubber')
+            return
+        self.measure_mouse_pos = (event.x, event.y)
+        self.canvas.delete('measure_rubber')
+
+        wx_last, wy_last = self.current_measure_pts[-1]
+        cx_last, cy_last = self.world_to_canvas(wx_last, wy_last)
+        wmx, wmy = self.canvas_to_world(event.x, event.y)
+        seg_dist = math.hypot(wmx - wx_last, wmy - wy_last)
+
+        self.canvas.create_line(
+            cx_last, cy_last, event.x, event.y,
+            fill='#E65100', width=2, dash=(4, 4), tags='measure_rubber'
+        )
+
+        prior_total = sum(
+            math.hypot(self.current_measure_pts[i + 1][0] - self.current_measure_pts[i][0],
+                       self.current_measure_pts[i + 1][1] - self.current_measure_pts[i][1])
+            for i in range(len(self.current_measure_pts) - 1)
+        )
+        label = f"{seg_dist:.1f} ft"
+        if prior_total > 0:
+            label = f"{seg_dist:.1f} ft  (total: {prior_total + seg_dist:.1f} ft)"
+
+        lx, ly = event.x + 12, event.y - 14
+        tid = self.canvas.create_text(
+            lx, ly, text=label, anchor='w',
+            font=('Helvetica', 8, 'bold'), fill='#E65100',
+            tags='measure_rubber'
+        )
+        bbox = self.canvas.bbox(tid)
+        if bbox:
+            self.canvas.create_rectangle(
+                bbox[0] - 2, bbox[1] - 2, bbox[2] + 2, bbox[3] + 2,
+                fill='white', outline='', width=0, tags='measure_rubber'
+            )
+            self.canvas.tag_raise(tid)
+
+    def _measure_finish(self):
+        """Save the current in-progress measurement (≥2 points) and clear the working set."""
+        if len(self.current_measure_pts) >= 2:
+            self.measurements.append(list(self.current_measure_pts))
+        self.current_measure_pts = []
+        self.measure_mouse_pos = None
+        self.canvas.delete('measure_rubber')
+        self.draw()
+
+    def _measure_cancel(self):
+        """Discard the current in-progress measurement without saving (Escape)."""
+        if not self.current_measure_pts:
+            return
+        self.current_measure_pts = []
+        self.measure_mouse_pos = None
+        self.canvas.delete('measure_rubber')
+        self.draw()
+
+    def _measure_clear(self):
+        """Remove all saved measurements."""
+        self.measurements.clear()
+        self.current_measure_pts = []
+        self.measure_mouse_pos = None
+        self.canvas.delete('measure_rubber')
+        self.draw()
+
+    def _draw_measurements(self):
+        """Draw all saved measurements and the current in-progress segments."""
+        if not self.show_measurements_var.get():
+            return
+
+        MEAS_COLOR = '#E65100'
+        FONT = ('Helvetica', 8, 'bold')
+
+        def _draw_polyline(pts, in_progress=False):
+            if len(pts) < 2:
+                return
+            total_dist = 0.0
+            cpx = [self.world_to_canvas(wx, wy) for wx, wy in pts]
+            for i in range(len(pts) - 1):
+                cx1, cy1 = cpx[i]
+                cx2, cy2 = cpx[i + 1]
+                self.canvas.create_line(
+                    cx1, cy1, cx2, cy2,
+                    fill=MEAS_COLOR, width=2,
+                    dash=(4, 4) if in_progress else (),
+                    tags='measurement'
+                )
+                dist = math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1])
+                total_dist += dist
+                mx, my = (cx1 + cx2) / 2, (cy1 + cy2) / 2
+                self._draw_text_with_bg(
+                    mx, my - 10, f"{dist:.1f} ft",
+                    font=FONT, fill=MEAS_COLOR, bg='white'
+                )
+            for cx, cy in cpx:
+                self.canvas.create_oval(
+                    cx - 3, cy - 3, cx + 3, cy + 3,
+                    fill=MEAS_COLOR, outline='#8B2500', tags='measurement'
+                )
+            if len(pts) > 2 and not in_progress:
+                cx_last, cy_last = cpx[-1]
+                self._draw_text_with_bg(
+                    cx_last + 6, cy_last - 16,
+                    f"Total: {total_dist:.1f} ft",
+                    font=FONT, fill='#8B2500', bg='#FFF9C4', anchor='w'
+                )
+
+        for meas in self.measurements:
+            _draw_polyline(meas)
+
+        if self.current_measure_pts:
+            _draw_polyline(self.current_measure_pts, in_progress=True)
 
     def _add_pad(self):
         """Enter pad placement mode — next click on canvas places a new pad."""
@@ -4187,6 +4354,9 @@ class SitePreviewWindow(tk.Toplevel):
 
     def _on_pad_right_click(self, event):
         """Show context menu for pads."""
+        if self.measure_mode:
+            self._measure_finish()
+            return
         hit = self.hit_test_pad(event.x, event.y)
         if hit is None:
             return

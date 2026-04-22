@@ -108,54 +108,55 @@ def _create_site_page(group_layout, device_positions, pads, colors,
                        topology, device_label, project_info,
                        show_routes, align_on_motor, table_corner='top-right'):
     """Create the Page 1 figure (site preview)."""
+
+    # Pre-compute bounds and table placement before creating axes so we can
+    # shrink the drawing width when no clear corner is available.
+    world_bounds_raw = _compute_world_bounds(group_layout, device_positions, pads)
+    table_w, table_h = _compute_table_dims(project_info)
+    chosen_corner = table_corner
+    effective_drawing_w = DRAWING_WIDTH
+    xlim_final = (0, 100)
+    ylim_final = (100, 0)
+
+    if world_bounds_raw:
+        xmin_r, xmax_r, ymin_r, ymax_r = world_bounds_raw
+        xmin, xmax, ymin, ymax = _adjust_bounds_to_aspect(
+            xmin_r, xmax_r, ymin_r, ymax_r, DRAWING_WIDTH, DRAWING_HEIGHT
+        )
+        xlim_final = (xmin, xmax)
+        ylim_final = (ymax, ymin)
+
+        best_corner, needs_shrink = _find_best_table_corner(
+            group_layout, xlim_final, ylim_final,
+            table_w, table_h, DRAWING_WIDTH, DRAWING_HEIGHT
+        )
+        chosen_corner = best_corner
+
+        if needs_shrink:
+            # Fall back: shrink drawing to make room for the table on the right.
+            gap = 0.15
+            effective_drawing_w = max(
+                (SIDEBAR_LEFT - table_w) - DRAWING_LEFT - gap,
+                DRAWING_WIDTH * 0.5
+            )
+            xmin, xmax, ymin, ymax = _adjust_bounds_to_aspect(
+                xmin_r, xmax_r, ymin_r, ymax_r, effective_drawing_w, DRAWING_HEIGHT
+            )
+            xlim_final = (xmin, xmax)
+            ylim_final = (ymax, ymin)
+            chosen_corner = 'top-right'
+
     fig = plt.figure(figsize=(PAGE_WIDTH, PAGE_HEIGHT))
 
-    # Main drawing axes (world-coordinate space)
     ax = fig.add_axes([
         DRAWING_LEFT / PAGE_WIDTH,
         DRAWING_BOTTOM / PAGE_HEIGHT,
-        DRAWING_WIDTH / PAGE_WIDTH,
+        effective_drawing_w / PAGE_WIDTH,
         DRAWING_HEIGHT / PAGE_HEIGHT
     ])
 
-    # Compute world bounds from layout data
-    world_bounds = _compute_world_bounds(group_layout, device_positions, pads)
-    if world_bounds is None:
-        # Empty layout — still produce a PDF with titleblock
-        ax.set_xlim(0, 100)
-        ax.set_ylim(100, 0)
-    else:
-        xmin, xmax, ymin, ymax = world_bounds
-        # Add padding (5% on each side)
-        dx = (xmax - xmin) or 100
-        dy = (ymax - ymin) or 100
-        pad_x = dx * 0.05
-        pad_y = dy * 0.05
-        xmin -= pad_x
-        xmax += pad_x
-        ymin -= pad_y
-        ymax += pad_y
-
-        # Fit to drawing area aspect ratio
-        aspect_drawing = DRAWING_WIDTH / DRAWING_HEIGHT
-        aspect_world = dx / dy if dy > 0 else 1.0
-
-        if aspect_world > aspect_drawing:
-            # World is wider — expand Y to match
-            needed_dy = dx / aspect_drawing
-            extra = (needed_dy - dy) / 2
-            ymin -= extra
-            ymax += extra
-        else:
-            # World is taller — expand X to match
-            needed_dx = dy * aspect_drawing
-            extra = (needed_dx - dx) / 2
-            xmin -= extra
-            xmax += extra
-
-        ax.set_xlim(xmin, xmax)
-        ax.set_ylim(ymax, ymin)  # Invert Y so north is up
-
+    ax.set_xlim(*xlim_final)
+    ax.set_ylim(*ylim_final)
     ax.set_aspect('equal', adjustable='box')
     ax.axis('off')
 
@@ -177,7 +178,7 @@ def _create_site_page(group_layout, device_positions, pads, colors,
     _draw_sidebar(fig, project_info)
 
     # --- Draw system summary table ---
-    _draw_summary_table(fig, project_info, corner=table_corner)
+    _draw_summary_table(fig, project_info, corner=chosen_corner)
 
     # --- Draw page border ---
     _draw_page_border(fig)
@@ -585,26 +586,206 @@ def _draw_motor_alignment_lines(ax, group_layout):
         ax.plot([x_start, x_end], [y_start, y_end],
                 color='#FF8800', linewidth=0.4, linestyle='--', alpha=0.5)
 
+
+# ---------------------------------------------------------------------------
+# Table placement helpers
+# ---------------------------------------------------------------------------
+
+def _compute_table_dims(project_info):
+    """Return (width_in, height_in) for the summary table without rendering."""
+    HEADER_H = 0.22
+    ROW_H    = 0.19
+    TABLE_W  = 4.0
+
+    tracker_summary    = project_info.get('tracker_summary', [])
+    module_type_totals = project_info.get('module_type_totals', [])
+    row_spacing_rows   = project_info.get('row_spacing_rows', [])
+
+    n = len(module_type_totals)
+    n_module_rows      = (n + 1) if n > 1 else 1
+    n_string_rows      = (n + 1) if n > 1 else 1
+    n_module_name_rows = n        if n > 1 else 1
+
+    FIXED_ROWS = 4 + n_module_rows + n_string_rows + len(row_spacing_rows) + 3 + n_module_name_rows
+    TOTAL_ROWS = FIXED_ROWS + (1 + len(tracker_summary) if tracker_summary else 0)
+    return TABLE_W, HEADER_H + TOTAL_ROWS * ROW_H
+
+
+def _compute_tracker_bboxes(group_layout):
+    """Return axis-aligned bounding boxes (xmin,xmax,ymin,ymax) per tracker in data feet."""
+    bboxes = []
+    for group in group_layout:
+        gx    = group['x']
+        gy    = group['y']
+        pitch = group.get('row_spacing_ft', 20)
+        max_w = _get_max_tracker_width([group])
+        rcx, rcy, rd = _group_rotation_info(group)
+
+        for t_idx, tracker in enumerate(group['trackers']):
+            t_width  = tracker.get('width_ft', max_w)
+            t_length = tracker.get('length_ft', 100)
+            tx       = gx + t_idx * pitch
+            tx_off   = (max_w - t_width) / 2 if max_w > t_width else 0
+            ang_dy   = t_idx * pitch * math.tan(math.radians(group.get('driveline_angle', 0)))
+
+            gmy = group.get('motor_y_ft', None)
+            if tracker.get('has_motor', False) and gmy is not None:
+                ty = gy + (gmy - tracker['motor_y_ft']) + ang_dy
+            else:
+                mgl = group.get('length_ft', tracker.get('length_ft', 100))
+                ty  = gy + (mgl - t_length) / 2 + ang_dy
+
+            corners = [
+                (tx + tx_off,            ty),
+                (tx + tx_off + t_width,  ty),
+                (tx + tx_off + t_width,  ty + t_length),
+                (tx + tx_off,            ty + t_length),
+            ]
+            if rd:
+                corners = [_rotate_pt(rcx, rcy, cx2, cy2, rd) for cx2, cy2 in corners]
+
+            xs = [c[0] for c in corners]
+            ys = [c[1] for c in corners]
+            bboxes.append((min(xs), max(xs), min(ys), max(ys)))
+
+    return bboxes
+
+
+def _adjust_bounds_to_aspect(xmin, xmax, ymin, ymax, drawing_w, drawing_h):
+    """Add 5% padding then expand to match the drawing aspect ratio (matches original logic)."""
+    dx = (xmax - xmin) or 100
+    dy = (ymax - ymin) or 100
+    xmin -= dx * 0.05;  xmax += dx * 0.05
+    ymin -= dy * 0.05;  ymax += dy * 0.05
+    # dx/dy kept as pre-padding values to match original aspect calc
+    aspect = drawing_w / drawing_h if drawing_h > 0 else 1.0
+    aw = dx / dy if dy > 0 else 1.0
+    if aw > aspect:
+        extra = (dx / aspect - dy) / 2
+        ymin -= extra;  ymax += extra
+    else:
+        extra = (dy * aspect - dx) / 2
+        xmin -= extra;  xmax += extra
+    return xmin, xmax, ymin, ymax
+
+
+def _find_best_table_corner(group_layout, xlim, ylim, table_w, table_h,
+                              drawing_w, drawing_h):
+    """
+    Try the four drawing corners in preference order and return the one with
+    the least tracker overlap.  Returns (corner_name, needs_shrink).
+    needs_shrink=True only when every corner has non-zero tracker overlap.
+    """
+    xmin_d, xmax_d = xlim
+    ymax_d, ymin_d = ylim   # ylim[0]=ymax, ylim[1]=ymin (Y axis is inverted)
+    x_range = xmax_d - xmin_d
+    y_range = ymax_d - ymin_d  # always positive
+
+    if x_range <= 0 or y_range <= 0 or not group_layout:
+        return 'top-right', False
+
+    # Page-inch bounding boxes for each candidate corner (px1,py1,px2,py2)
+    # px1/py1 = bottom-left corner in page space; px2/py2 = top-right
+    corner_page = {
+        'top-right':    (SIDEBAR_LEFT - table_w,  PAGE_HEIGHT - PAGE_MARGIN - table_h,
+                         SIDEBAR_LEFT,             PAGE_HEIGHT - PAGE_MARGIN),
+        'bottom-right': (SIDEBAR_LEFT - table_w,  PAGE_MARGIN,
+                         SIDEBAR_LEFT,             PAGE_MARGIN + table_h),
+        'top-left':     (DRAWING_LEFT,             PAGE_HEIGHT - PAGE_MARGIN - table_h,
+                         DRAWING_LEFT + table_w,   PAGE_HEIGHT - PAGE_MARGIN),
+        'bottom-left':  (DRAWING_LEFT,             PAGE_MARGIN,
+                         DRAWING_LEFT + table_w,   PAGE_MARGIN + table_h),
+    }
+
+    tracker_bboxes = _compute_tracker_bboxes(group_layout)
+
+    def page_to_data(px, py):
+        dx_ = xmin_d + (px - DRAWING_LEFT) / drawing_w * x_range
+        dy_ = ymax_d - (py - DRAWING_BOTTOM) / drawing_h * y_range
+        return dx_, dy_
+
+    def overlap_for(corner):
+        px1, py1, px2, py2 = corner_page[corner]
+        # Clamp to the drawing area
+        px1 = max(px1, DRAWING_LEFT);            py1 = max(py1, DRAWING_BOTTOM)
+        px2 = min(px2, DRAWING_LEFT + drawing_w); py2 = min(py2, DRAWING_BOTTOM + drawing_h)
+        if px1 >= px2 or py1 >= py2:
+            return 0.0
+        # Convert page corners to data coords (note: higher page-y → lower data-y because Y is inverted)
+        d_x1, d_ymax_t = page_to_data(px1, py1)  # page bottom-left → data upper bound
+        d_x2, d_ymin_t = page_to_data(px2, py2)  # page top-right   → data lower bound
+        total = 0.0
+        for tx1, tx2, ty1, ty2 in tracker_bboxes:
+            ix1 = max(d_x1, tx1);    ix2 = min(d_x2, tx2)
+            iy1 = max(d_ymin_t, ty1); iy2 = min(d_ymax_t, ty2)
+            if ix2 > ix1 and iy2 > iy1:
+                total += (ix2 - ix1) * (iy2 - iy1)
+        return total
+
+    order = ['top-right', 'bottom-right', 'top-left', 'bottom-left']
+    overlaps = {c: overlap_for(c) for c in order}
+    best = min(order, key=lambda c: overlaps[c])
+    return best, overlaps[best] > 0.0
+
+
 def _draw_summary_table(fig, project_info, corner='top-right'):
-    """Draw a system summary table in the drawing area just left of the titleblock.
-    corner: 'top-right' or 'bottom-right'
+    """Draw a system summary table in the drawing area.
+    corner: 'top-right', 'bottom-right', 'top-left', or 'bottom-left'
     """
     tracker_summary = project_info.get('tracker_summary', [])
+    module_type_totals = project_info.get('module_type_totals', [])
 
     HEADER_H   = 0.22
     ROW_H      = 0.19
-    TABLE_W    = 3.0
-    FIXED_ROWS = 10
+    TABLE_W    = 4.0
+
+    # Build fixed_rows dynamically so multi-module projects get per-type breakdowns
+    if len(module_type_totals) > 1:
+        module_rows = [(f"Modules — {lbl}", f"{mods:,}") for lbl, _, mods in module_type_totals]
+        module_rows.append(('Total Modules', f"{sum(m for _, _, m in module_type_totals):,}"))
+        string_rows = [(f"Strings — {lbl}", str(strs)) for lbl, strs, _ in module_type_totals]
+        string_rows.append(('Total Strings', str(sum(s for _, s, _ in module_type_totals))))
+    else:
+        module_rows = [('Total Modules', project_info.get('total_modules', '--'))]
+        string_rows = [('Total Strings', project_info.get('total_strings', '--'))]
+
+    if len(module_type_totals) > 1:
+        module_name_rows = [(f"Module {i + 1}", lbl) for i, (lbl, _, _) in enumerate(module_type_totals)]
+    else:
+        module_name_rows = [('Module', project_info.get('module_name', '--'))]
+
+    row_spacing_rows = project_info.get('row_spacing_rows', [])
+
+    fixed_rows = [
+        ('Topology',     project_info.get('topology', '--')),
+        ('DC Capacity',  f"{project_info.get('dc_capacity_kw', '--')} kW"),
+        ('AC Capacity',  f"{project_info.get('ac_capacity_kw', '--')} kW"),
+        ('DC:AC Ratio',  project_info.get('dc_ac_ratio', '--')),
+        *module_rows,
+        *string_rows,
+        *row_spacing_rows,
+        ('Devices',      project_info.get('total_devices', '--')),
+        ('Inverter Qty', project_info.get('inverter_qty', '--')),
+        ('Inverter',     project_info.get('inverter_info', '--')),
+        *module_name_rows,
+    ]
+
+    FIXED_ROWS = len(fixed_rows)
     TOTAL_ROWS = FIXED_ROWS + (1 + len(tracker_summary) if tracker_summary else 0)
 
-    TABLE_H        = HEADER_H + TOTAL_ROWS * ROW_H
-    TABLE_RIGHT_IN = SIDEBAR_LEFT
-    TABLE_LEFT_IN  = TABLE_RIGHT_IN - TABLE_W
+    TABLE_H = HEADER_H + TOTAL_ROWS * ROW_H
 
-    if corner == 'bottom-right':
+    if corner in ('top-left', 'bottom-left'):
+        TABLE_LEFT_IN  = DRAWING_LEFT
+        TABLE_RIGHT_IN = DRAWING_LEFT + TABLE_W
+    else:
+        TABLE_RIGHT_IN = SIDEBAR_LEFT
+        TABLE_LEFT_IN  = TABLE_RIGHT_IN - TABLE_W
+
+    if corner in ('bottom-right', 'bottom-left'):
         TABLE_BOT_IN = PAGE_MARGIN
         TABLE_TOP_IN = TABLE_BOT_IN + TABLE_H
-    else:  # top-right
+    else:
         TABLE_TOP_IN = PAGE_HEIGHT - PAGE_MARGIN
         TABLE_BOT_IN = TABLE_TOP_IN - TABLE_H
 
@@ -634,19 +815,6 @@ def _draw_summary_table(fig, project_info, corner='top-right'):
             fontsize=6, fontweight='bold', color='white',
             ha='center', va='center', fontfamily='sans-serif')
 
-    fixed_rows = [
-        ('Topology',      project_info.get('topology', '--')),
-        ('DC Capacity',   f"{project_info.get('dc_capacity_kw', '--')} kW"),
-        ('AC Capacity',   f"{project_info.get('ac_capacity_kw', '--')} kW"),
-        ('DC:AC Ratio',   project_info.get('dc_ac_ratio', '--')),
-        ('Total Modules', project_info.get('total_modules', '--')),
-        ('Total Strings', project_info.get('total_strings', '--')),
-        ('Devices',       project_info.get('total_devices', '--')),
-        ('Inverter Qty',  project_info.get('inverter_qty', '--')),
-        ('Inverter',      project_info.get('inverter_info', '--')),
-        ('Module',        project_info.get('module_name', '--')),
-    ]
-
     # Dynamic column split — measure longest label, add padding
     all_labels = [r[0] for r in fixed_rows]
     if tracker_summary:
@@ -662,9 +830,9 @@ def _draw_summary_table(fig, project_info, corner='top-right'):
         w_data = inv.transform((bbox.width, 0))[0] - inv.transform((0, 0))[0]
         max_label_w = max(max_label_w, w_data)
     _tmp_txt.remove()
-    COL1 = max_label_w + TABLE_W * 0.08  # pad ~8% of table width
-    COL1 = max(COL1, TABLE_W * 0.25)     # floor: don't go narrower than 25%
-    COL1 = min(COL1, TABLE_W * 0.45)     # ceiling: don't exceed 45%
+    COL1 = max_label_w + TABLE_W * 0.08        # pad ~8% of table width
+    COL1 = max(COL1, TABLE_W * 0.25)           # floor: label column at least 25%
+    COL1 = min(COL1, TABLE_W * 0.70)           # ceiling: value column gets at least 30%
     
     current_y = H - HEADER_H
 

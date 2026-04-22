@@ -16,7 +16,7 @@ class DeviceConfigurator(ttk.Frame):
         self.current_project = None
         self.combiner_configs: Dict[str, CombinerBoxConfig] = {}
         self.edited_cells: Set[str] = set()  # Track manually edited cells
-        self.data_source = 'blocks'  # 'blocks' or 'quick_estimate'
+        self.data_source = 'quick_estimate'  # 'blocks' or 'quick_estimate'
         
         self.setup_ui()
         
@@ -159,7 +159,7 @@ class DeviceConfigurator(ttk.Frame):
         ttk.Separator(button_frame, orient='vertical').pack(side=tk.LEFT, padx=10, fill=tk.Y)
         ttk.Label(button_frame, text="Data Source:").pack(side=tk.LEFT, padx=(5, 2))
         
-        self.data_source_var = tk.StringVar(value='blocks')
+        self.data_source_var = tk.StringVar(value='quick_estimate')
         ttk.Radiobutton(
             button_frame, text="Block/Wiring Config",
             variable=self.data_source_var, value='blocks',
@@ -291,12 +291,9 @@ class DeviceConfigurator(ttk.Frame):
         nec_factor = getattr(project, 'nec_safety_factor', 1.56)
         self.nec_factor_var.set(f"{nec_factor:.2f}")
         
-        # Restore data source setting
-        saved_source = getattr(project, 'device_config_source', 'blocks')
-        self.data_source = saved_source
-        if hasattr(self, 'data_source_var'):
-            self.data_source_var.set(saved_source)
-        
+        # Use saved source only to decide how to load data; radio always defaults to quick_estimate
+        saved_source = getattr(project, 'device_config_source', 'quick_estimate')
+
         if saved_source == 'quick_estimate' and hasattr(project, 'device_configs') and project.device_configs:
             # Load saved QE-sourced configs directly (QE hasn't calculated yet at load time)
             self._load_qe_configs_from_saved(project.device_configs)
@@ -320,7 +317,7 @@ class DeviceConfigurator(ttk.Frame):
         self.refresh_display()
         
         # Update status
-        source_label = "Quick Estimate" if saved_source == 'quick_estimate' else "Block/Wiring Config"
+        source_label = "Quick Estimate" if self.data_source == 'quick_estimate' else "Block/Wiring Config"
         combiner_count = len(self.combiner_configs)
         self.status_var.set(f"Loaded {combiner_count} combiner box(es) from {source_label}")
 

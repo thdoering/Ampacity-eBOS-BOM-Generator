@@ -25,9 +25,13 @@ class InverterManager(ttk.Frame):
         list_frame = ttk.LabelFrame(main_container, text="Inverter Library", padding="5")
         list_frame.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
         
-        self.inverter_listbox = tk.Listbox(list_frame, width=40, height=15)
-        self.inverter_listbox.grid(row=0, column=0, padx=5, pady=5)
-        self.inverter_listbox.bind('<<ListboxSelect>>', self.on_inverter_select)
+        self.inverter_tree = ttk.Treeview(list_frame, height=15, show='tree')
+        self.inverter_tree.column('#0', width=280)
+        self.inverter_tree.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.N, tk.S, tk.E, tk.W))
+        scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.inverter_tree.yview)
+        scrollbar.grid(row=0, column=1, pady=5, sticky=(tk.N, tk.S))
+        self.inverter_tree.configure(yscrollcommand=scrollbar.set)
+        self.inverter_tree.bind('<<TreeviewSelect>>', self.on_inverter_select)
         
         button_frame = ttk.Frame(list_frame)
         button_frame.grid(row=1, column=0, padx=5, pady=5)
@@ -303,10 +307,19 @@ class InverterManager(ttk.Frame):
             json.dump(data, f, indent=2)
             
     def update_inverter_list(self):
-        """Update the inverter listbox"""
-        self.inverter_listbox.delete(0, tk.END)
-        for inverter in self.inverters.values():
-            self.inverter_listbox.insert(tk.END, f"{inverter.manufacturer} {inverter.model}")
+        """Update the inverter treeview grouped by manufacturer"""
+        for item in self.inverter_tree.get_children():
+            self.inverter_tree.delete(item)
+
+        manufacturers: Dict[str, list] = {}
+        for inv_key, inverter in self.inverters.items():
+            manufacturers.setdefault(inverter.manufacturer, []).append((inv_key, inverter))
+
+        for manufacturer in sorted(manufacturers):
+            parent = self.inverter_tree.insert('', 'end', text=manufacturer, open=False)
+            for inv_key, inverter in sorted(manufacturers[manufacturer], key=lambda x: x[1].model):
+                label = f"{inverter.model} ({inverter.rated_power_kw} kW)"
+                self.inverter_tree.insert(parent, 'end', text=label, values=(inv_key,))
             
     def import_ond(self):
         """Import inverter from OND file"""
@@ -314,16 +327,33 @@ class InverterManager(ttk.Frame):
         messagebox.showinfo("Not Implemented", "OND file import not yet implemented")
         
     def delete_inverter(self):
-        """Delete selected inverter"""
-        selection = self.inverter_listbox.curselection()
+        """Delete selected inverter or all inverters under a manufacturer node"""
+        selection = self.inverter_tree.selection()
         if not selection:
             return
-        
-        name = self.inverter_listbox.get(selection[0])
-        if messagebox.askyesno("Confirm", f"Delete inverter '{name}'?"):
-            del self.inverters[name]
-            self.save_inverters()
-            self.update_inverter_list()
+
+        item = selection[0]
+        values = self.inverter_tree.item(item, 'values')
+
+        if values:
+            # Leaf node — single inverter
+            inv_key = values[0]
+            if messagebox.askyesno("Confirm", f"Delete inverter '{inv_key}'?"):
+                del self.inverters[inv_key]
+                self.save_inverters()
+                self.update_inverter_list()
+        else:
+            # Manufacturer node — delete all children
+            manufacturer = self.inverter_tree.item(item, 'text')
+            children = self.inverter_tree.get_children(item)
+            if not children:
+                return
+            if messagebox.askyesno("Confirm", f"Delete all inverters for '{manufacturer}'?"):
+                for child in children:
+                    child_key = self.inverter_tree.item(child, 'values')[0]
+                    del self.inverters[child_key]
+                self.save_inverters()
+                self.update_inverter_list()
 
     def clear_form(self):
         """Clear the editor form for entering a new inverter"""
@@ -343,17 +373,23 @@ class InverterManager(ttk.Frame):
         self.max_ac_current_var.set('')
         self._update_total_inputs()
         
-        # Deselect from listbox
-        self.inverter_listbox.selection_clear(0, tk.END)
+        for item in self.inverter_tree.selection():
+            self.inverter_tree.selection_remove(item)
             
     def on_inverter_select(self, event=None):
         """Handle inverter selection"""
-        selection = self.inverter_listbox.curselection()
+        selection = self.inverter_tree.selection()
         if not selection:
             return
-            
-        name = self.inverter_listbox.get(selection[0])
-        inverter = self.inverters[name]
+
+        values = self.inverter_tree.item(selection[0], 'values')
+        if not values:
+            return  # manufacturer node, not a leaf
+
+        inv_key = values[0]
+        inverter = self.inverters.get(inv_key)
+        if not inverter:
+            return
         
         # Update UI with selected inverter
         self.manufacturer_var.set(inverter.manufacturer)
