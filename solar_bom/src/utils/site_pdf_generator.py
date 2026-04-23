@@ -1546,6 +1546,60 @@ def _draw_single_wiring_diagram(ax, spec, letter):
             _device_x = total_w / 2
 
     # --- Routing: positive (red) and negative (blue) ---
+    # In no-harness mode (all 1-string "harnesses"), stagger the merge
+    # level per harness so parallel horizontal runs to the device don't
+    # overlap. Outermost (furthest from device) drops deepest.
+    _no_harness = all(hs == 1 for hs in harness_sizes)
+    _stagger_step = y_range * 0.02 if (_no_harness and len(harness_sizes) > 1) else 0.0
+    print(f"[DEBUG gather] harness_sizes={harness_sizes} _no_harness={_no_harness} "
+          f"_stagger_step={_stagger_step} y_range={y_range}")
+
+    def _hr_offset_for(h_idx):
+        if _stagger_step <= 0:
+            result = 0.0
+        else:
+            n_h = len(harness_sizes)
+            if device_position == 'north':
+                # Outermost = last h_idx (far south of tracker)
+                result = h_idx * _stagger_step
+            else:
+                # 'south' or 'middle' — outermost = first h_idx (north of tracker).
+                # Assumes default polarity (Negative Always South / positive at north
+                # of each string). The per-side ranking we had before gave rank 0
+                # to any motor-gap side that held just one harness, which is
+                # exactly the no-harness [1, 1] case we need to fix.
+                result = (n_h - 1 - h_idx) * _stagger_step
+        print(f"[DEBUG helper] h_idx={h_idx} device_position={device_position} "
+              f"motor_after={motor_after} result={result}")
+        return result
+
+    # X-stagger for middle-device L-shapes: spread vertical drops so pos/neg of
+    # the same harness (and multiple harnesses on the same side of the motor)
+    # don't land at the same X. Only applies when device_position == 'middle';
+    # south/north cases are a single horizontal run with no vertical overlap.
+    _x_stagger_step = y_range * 0.015 if device_position == 'middle' else 0.0
+    _pol_x_shift = y_range * 0.006  # small extra so pos/neg of one harness separate
+
+    # Precompute each harness's rank within its side of the motor gap
+    # (rank 0 = innermost / closest to motor, increasing outward).
+    _harness_ranks = [0] * len(harness_sizes)
+    if _x_stagger_step > 0:
+        _cum = 0
+        _north_idx, _south_idx = [], []
+        for _hi, _hs in enumerate(harness_sizes):
+            (_north_idx if _cum < motor_after else _south_idx).append(_hi)
+            _cum += _hs
+        for _ri, _hi in enumerate(_north_idx):
+            _harness_ranks[_hi] = len(_north_idx) - 1 - _ri
+        for _ri, _hi in enumerate(_south_idx):
+            _harness_ranks[_hi] = _ri
+
+    def _x_stagger_for(h_idx, polarity):
+        if _x_stagger_step <= 0:
+            return 0.0
+        pol = 0.0 if polarity == 'positive' else _pol_x_shift
+        return _harness_ranks[h_idx] * _x_stagger_step + pol
+
     harness_string_offset = 0
     for h_idx, h_size in enumerate(harness_sizes):
         h_strings = list(range(harness_string_offset, harness_string_offset + h_size))
@@ -1581,7 +1635,8 @@ def _draw_single_wiring_diagram(ax, spec, letter):
                                '#CC0000', h_size, h_gauge, string_gauge,
                                'positive', label_y=Y(F_MERGE) - y_range * 0.08,
                                y_range=y_range, device_x=_device_x,
-                               hr_offset=0, device_position=device_position)
+                               hr_offset=_hr_offset_for(h_idx), device_position=device_position,
+                               x_stagger=_x_stagger_for(h_idx, 'positive'))
 
         if device_position == 'south':
             neg_merge_x = max(neg_xs)
@@ -1597,7 +1652,8 @@ def _draw_single_wiring_diagram(ax, spec, letter):
                                '#0000CC', h_size, h_gauge, string_gauge,
                                'negative', label_y=Y(F_MERGE) - y_range * 0.08,
                                y_range=y_range, device_x=_device_x,
-                               hr_offset=0, device_position=device_position)
+                               hr_offset=_hr_offset_for(h_idx), device_position=device_position,
+                               x_stagger=_x_stagger_for(h_idx, 'negative'))
 
         harness_string_offset += h_size
 
@@ -1634,8 +1690,16 @@ def _draw_single_wiring_diagram(ax, spec, letter):
 def _draw_harness_routing(ax, string_xs, merge_x, y_top, y_merge,
                            color, harness_size, harness_gauge, string_gauge,
                            polarity_label, label_y, y_range=100, device_x=None,
-                           hr_offset=0, hr_base_y=None, device_position='south'):
+                           hr_offset=0, hr_base_y=None, device_position='south',
+                           x_stagger=0.0):
     """Draw the collection routing for one polarity of one harness group."""
+    print(f"[DEBUG routing] polarity={polarity_label} n={len(string_xs)} "
+          f"harness_size={harness_size} hr_offset={hr_offset}")
+    # hr_offset (data units, positive = push down) shifts the merge level
+    # and bottom label. Used to stagger parallel home-run drops so their
+    # horizontal runs to the device don't draw on top of each other.
+    y_merge = y_merge - hr_offset
+    label_y = label_y - hr_offset
     n = len(string_xs)
     stub_len = (y_top - y_merge) * 0.3
 
@@ -1684,9 +1748,11 @@ def _draw_harness_routing(ax, string_xs, merge_x, y_top, y_merge,
     label_x = merge_x
     extender_end_y = label_y
     if device_position == 'middle' and device_x is not None and abs(device_x - merge_x) > 0.5:
-        # L-shape: short horizontal nub then vertical drop
+        # L-shape: short horizontal nub then vertical drop.
+        # x_stagger extends the nub so each (harness, polarity) lands at its
+        # own X — prevents overlapping vertical drops at device_x ± 0.3.
         sign = 1 if device_x > merge_x else -1
-        nub_end_x = device_x - sign * 0.3
+        nub_end_x = device_x - sign * (0.3 + x_stagger)
         vert_end_y = y_merge - y_range * 0.22
         ax.plot([merge_x, nub_end_x], [y_merge, y_merge], color=color, linewidth=0.5)
         ax.plot([nub_end_x, nub_end_x], [y_merge, vert_end_y], color=color, linewidth=0.5)
