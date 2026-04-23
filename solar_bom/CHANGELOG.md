@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.0] - 2026-04-23
+
+### Added
+- **2P Tracker Support**: Completed full 2-portrait tracker configuration support
+- **Parallel DC Feeders**: Added support for parallel DC feeder configurations
+- **Azimuth Rotation**: Added azimuth rotation input to tracker groups in Quick Estimate
+- **Canvas String Selection & Drag-to-Device**: Strings can now be selected and dragged to devices directly on the site preview canvas
+- **Polyline Measuring Tool**: New measuring tool in site preview with rubber-band preview, per-segment and cumulative distance labels, and persistent save/load
+- **Fuses in Quick Estimate BOM**: Quick Estimate BOM now includes inline harness fuse line items
+
+### Changed
+- **PDF System Summary Table**: Auto-detects the least-obstructed corner for placement; falls back to shrinking the drawing area if all corners are occupied
+- **PDF Export Dialog Removed**: Placement dialog no longer appears before every PDF export
+- **Inverter Library Tree View**: Flat listbox replaced with grouped ttk.Treeview organized by manufacturer → model (collapsed by default)
+- **Site Preview Toolbar**: Split into two rows for better visibility on smaller screens
+- **Manual Allocation Preservation**: Manual string assignments survive structural changes; new trackers default to unallocated
+- **Tracker Segment Info Cleanup**: Cleaned up tracker segment display in Quick Estimate
+
+### Fixed
+- **Canvas String Move No-Op**: Fixed silent failure in `_canvas_move_strings` caused by the Unallocated device shifting real device indices
+- **SAT Overlap Detection**: Replaced `_check_overlaps` with SAT-based polygon overlap detection — correctly handles driveline-sheared and azimuth-rotated groups
+- **Edit Devices Validation**: `_validate_move` now tolerates contiguity gaps filled by the Unallocated device
+- **Device Data Caching**: Extracted `_ensure_device_data()` for lazy build/cache — canvas string moves no longer require opening the Edit Devices dialog first
+- **Combiner Box Placement**: Fixed bug where combiner boxes were placed far from the tracker edge when a group contained multiple-sized trackers and device position was North or South
+- **Split Tracker 1-String Harness**: Fixed bug preventing configuration of 1-string harnesses on split trackers
+- **Inverter Import/Export**: Fixed inverter data not round-tripping correctly through project import/export
+- **Module Width Validation**: Module width is now prohibited from exceeding module length
+- **Wire Sync, Inverter Naming, Tracker Split**: Various QoL refinements across device configurator, tracker creator, and Quick Estimate
+
 ## [3.2.0] - 2026-04-10
 
 ### Changed
