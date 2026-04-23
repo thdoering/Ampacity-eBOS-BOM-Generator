@@ -1314,6 +1314,13 @@ def _draw_single_wiring_diagram(ax, spec, letter):
     motor_after = spec.get('motor_position_after_string', spt // 2)
     if has_motor:
         motor_after = max(0, min(motor_after, spt))
+    motor_placement_type = spec.get('motor_placement_type', 'between_strings')
+    motor_string_index_1b = spec.get('motor_string_index', 1)
+    motor_split_north = spec.get('motor_split_north', mps // 2)
+    motor_split_south = spec.get('motor_split_south', mps - mps // 2)
+    internal_motor_string = -1  # 0-based index of the split string, -1 if none
+    if motor_placement_type == 'middle_of_string' and has_motor:
+        internal_motor_string = motor_string_index_1b - 1
     polarity = spec.get('polarity_convention', 'positive_north')
     device_position = spec.get('device_position', 'south')  # 'north', 'south', or 'middle'
     wire_gauges = spec.get('wire_gauges', {})
@@ -1342,14 +1349,25 @@ def _draw_single_wiring_diagram(ax, spec, letter):
 
     # --- Compute X positions for each string ---
     string_w = mps * _MOD_W + (mps - 1) * _MOD_GAP
+
+    def string_full_width(s_idx):
+        if internal_motor_string >= 0 and s_idx == internal_motor_string:
+            n_h = motor_split_north
+            s_h = motor_split_south
+            n_half_w = n_h * _MOD_W + max(0, n_h - 1) * _MOD_GAP
+            s_half_w = s_h * _MOD_W + max(0, s_h - 1) * _MOD_GAP
+            return n_half_w + _MOD_GAP + _MOTOR_GAP + s_half_w
+        return string_w
+
     string_x_starts = []
     x_cursor = 0.0
-    if has_motor and motor_after == 0:
+    if has_motor and motor_placement_type == 'between_strings' and motor_after == 0:
         x_cursor += _MOTOR_GAP
     for s_idx in range(spt):
         string_x_starts.append(x_cursor)
-        x_cursor += string_w
-        if has_motor and motor_after > 0 and s_idx == motor_after - 1:
+        x_cursor += string_full_width(s_idx)
+        if (motor_placement_type == 'between_strings' and has_motor
+                and motor_after > 0 and s_idx == motor_after - 1):
             x_cursor += _MOTOR_GAP
         elif s_idx < spt - 1:
             x_cursor += _STRING_GAP
@@ -1390,7 +1408,6 @@ def _draw_single_wiring_diagram(ax, spec, letter):
     F_MOD_TOP = 0.73
     F_MOD_BOT = 0.62
     F_POLARITY = 0.58
-    F_ROUTE_TOP = 0.54
     F_MERGE = 0.40
     F_LABEL_BOT = 0.05
 
@@ -1418,22 +1435,44 @@ def _draw_single_wiring_diagram(ax, spec, letter):
     # --- Draw modules ---
     for s_idx in range(spt):
         sx = string_x_starts[s_idx]
-        for m in range(mps):
-            mx = sx + m * (_MOD_W + _MOD_GAP)
-            rect = Rectangle((mx, mod_bot_y), _MOD_W, mod_h,
-                              facecolor='#D6EAF8', edgecolor='#2C5282', linewidth=0.3)
-            ax.add_patch(rect)
+        if internal_motor_string >= 0 and s_idx == internal_motor_string:
+            n_h = motor_split_north
+            s_h = motor_split_south
+            n_half_w = n_h * _MOD_W + max(0, n_h - 1) * _MOD_GAP
+            for m in range(n_h):
+                mx = sx + m * (_MOD_W + _MOD_GAP)
+                rect = Rectangle((mx, mod_bot_y), _MOD_W, mod_h,
+                                  facecolor='#D6EAF8', edgecolor='#2C5282', linewidth=0.3)
+                ax.add_patch(rect)
+            s_start_x = sx + n_half_w + _MOD_GAP + _MOTOR_GAP
+            for m in range(s_h):
+                mx = s_start_x + m * (_MOD_W + _MOD_GAP)
+                rect = Rectangle((mx, mod_bot_y), _MOD_W, mod_h,
+                                  facecolor='#D6EAF8', edgecolor='#2C5282', linewidth=0.3)
+                ax.add_patch(rect)
+        else:
+            for m in range(mps):
+                mx = sx + m * (_MOD_W + _MOD_GAP)
+                rect = Rectangle((mx, mod_bot_y), _MOD_W, mod_h,
+                                  facecolor='#D6EAF8', edgecolor='#2C5282', linewidth=0.3)
+                ax.add_patch(rect)
 
     # --- Motor gap indicator ---
     if has_motor:
-        if motor_after == 0:
+        if motor_placement_type == 'middle_of_string' and internal_motor_string >= 0:
+            sx_split = string_x_starts[internal_motor_string]
+            n_h = motor_split_north
+            n_half_w = n_h * _MOD_W + max(0, n_h - 1) * _MOD_GAP
+            mg_left = sx_split + n_half_w
+            mg_right = sx_split + n_half_w + _MOD_GAP + _MOTOR_GAP
+        elif motor_after == 0:
             mg_left = 0
             mg_right = _MOTOR_GAP
         elif motor_after >= spt:
-            mg_left = string_x_starts[spt - 1] + string_w
+            mg_left = string_x_starts[spt - 1] + string_full_width(spt - 1)
             mg_right = total_w
         else:
-            mg_left = string_x_starts[motor_after - 1] + string_w + _STRING_GAP * 0.15
+            mg_left = string_x_starts[motor_after - 1] + string_full_width(motor_after - 1) + _STRING_GAP * 0.15
             mg_right = string_x_starts[motor_after] - _STRING_GAP * 0.15
         mw = mg_right - mg_left
         if mw > 0.2:
@@ -1446,7 +1485,7 @@ def _draw_single_wiring_diagram(ax, spec, letter):
     for s_idx in range(spt):
         sx = string_x_starts[s_idx]
         left_x = sx - 0.3
-        right_x = sx + string_w + 0.3
+        right_x = sx + string_full_width(s_idx) + 0.3
         y_pol = mod_center_y
 
         if polarity_at[s_idx]:
@@ -1464,7 +1503,7 @@ def _draw_single_wiring_diagram(ax, spec, letter):
     # --- String labels ---
     for s_idx in range(spt):
         sx = string_x_starts[s_idx]
-        cx = sx + string_w / 2
+        cx = sx + string_full_width(s_idx) / 2
         ax.text(cx, Y(F_STRING_LABEL), f'{mps}-MODULE STRING',
                 fontsize=2.8, color='black', ha='center', va='bottom',
                 fontfamily='sans-serif')
@@ -1475,7 +1514,7 @@ def _draw_single_wiring_diagram(ax, spec, letter):
         h_start_str = harness_string_offset
         h_end_str = harness_string_offset + h_size - 1
         x_left = string_x_starts[h_start_str]
-        x_right = string_x_starts[h_end_str] + string_w
+        x_right = string_x_starts[h_end_str] + string_full_width(h_end_str)
         cx = (x_left + x_right) / 2
 
         bracket_y = Y(F_HARNESS_BRACKET)
@@ -1496,8 +1535,13 @@ def _draw_single_wiring_diagram(ax, spec, letter):
         _device_x = -2.0
     else:
         # Middle — motor gap center
-        if has_motor and 0 < motor_after < spt:
-            _device_x = (string_x_starts[motor_after - 1] + string_w + string_x_starts[motor_after]) / 2
+        if motor_placement_type == 'middle_of_string' and internal_motor_string >= 0:
+            sx_split = string_x_starts[internal_motor_string]
+            n_h = motor_split_north
+            n_half_w = n_h * _MOD_W + max(0, n_h - 1) * _MOD_GAP
+            _device_x = sx_split + n_half_w + (_MOD_GAP + _MOTOR_GAP) / 2
+        elif has_motor and 0 < motor_after < spt:
+            _device_x = (string_x_starts[motor_after - 1] + string_full_width(motor_after - 1) + string_x_starts[motor_after]) / 2
         else:
             _device_x = total_w / 2
 
@@ -1513,7 +1557,7 @@ def _draw_single_wiring_diagram(ax, spec, letter):
         for s_idx in h_strings:
             sx = string_x_starts[s_idx]
             left_x = sx + _MOD_W * 0.5
-            right_x = sx + string_w - _MOD_W * 0.5
+            right_x = sx + string_full_width(s_idx) - _MOD_W * 0.5
             if polarity_at[s_idx]:
                 pos_xs.append(left_x)
                 neg_xs.append(right_x)
@@ -1549,7 +1593,7 @@ def _draw_single_wiring_diagram(ax, spec, letter):
             else:
                 neg_merge_x = min(neg_xs)
         _draw_harness_routing(ax, neg_xs, neg_merge_x,
-                               Y(F_ROUTE_TOP), Y(F_MERGE),
+                               mod_bot_y, mod_bot_y - y_range * 0.15,
                                '#0000CC', h_size, h_gauge, string_gauge,
                                'negative', label_y=Y(F_MERGE) - y_range * 0.08,
                                y_range=y_range, device_x=_device_x,
@@ -1631,28 +1675,31 @@ def _draw_harness_routing(ax, string_xs, merge_x, y_top, y_merge,
     if n > 1:
         ax.plot(merge_x, y_merge, 'o', color=color, markersize=2.5,
                 markeredgecolor='black', markeredgewidth=0.3)
-        ax.text(merge_x + 1.5, y_merge, 'Y-CONNECTOR (TYP)',
-                fontsize=2.5, color='#555555', ha='left', va='center',
+        ax.text(merge_x + 1.5, y_merge - y_range * 0.008, 'Y-CONNECTOR (TYP)',
+                fontsize=2.5, color='#555555', ha='left', va='top',
                 fontfamily='sans-serif')
 
-    # Extender route from Y-connector — horizontal toward device
+    # Extender route from Y-connector
     hr_drop = y_range * 0.06
+    label_x = merge_x
+    extender_end_y = label_y
     if device_position == 'middle' and device_x is not None and abs(device_x - merge_x) > 0.5:
-        # Horizontal run toward motor gap center
-        inset = 0.8 if merge_x < device_x else -0.8
-        end_x = device_x - inset
-        ax.plot([merge_x, end_x], [y_merge, y_merge],
-                color=color, linewidth=0.5)
+        # L-shape: short horizontal nub then vertical drop
+        sign = 1 if device_x > merge_x else -1
+        nub_end_x = device_x - sign * 0.3
+        vert_end_y = y_merge - y_range * 0.22
+        ax.plot([merge_x, nub_end_x], [y_merge, y_merge], color=color, linewidth=0.5)
+        ax.plot([nub_end_x, nub_end_x], [y_merge, vert_end_y], color=color, linewidth=0.5)
+        label_x = nub_end_x
+        extender_end_y = vert_end_y
     elif device_x is not None and abs(device_x - merge_x) > 0.5:
         # Horizontal run toward device (north = left, south = right)
         inset = 0.8 if merge_x < device_x else -0.8
         end_x = device_x - inset
-        ax.plot([merge_x, end_x], [y_merge, y_merge],
-                color=color, linewidth=0.5)
+        ax.plot([merge_x, end_x], [y_merge, y_merge], color=color, linewidth=0.5)
     else:
         # Fallback: vertical drop
-        ax.plot([merge_x, merge_x], [y_merge, y_merge - hr_drop],
-                color=color, linewidth=0.5)
+        ax.plot([merge_x, merge_x], [y_merge, y_merge - hr_drop], color=color, linewidth=0.5)
 
     # Bottom label — source circuit for 1-string, harness home run for multi-string
     if n == 1:
@@ -1660,6 +1707,6 @@ def _draw_harness_routing(ax, string_xs, merge_x, y_top, y_merge,
     else:
         bot_label = (f'{harness_size}-STRING HARNESS EXTENDER\n'
                      f'#{harness_gauge} CU PV WIRE (TYP)')
-    ax.text(merge_x, label_y, bot_label,
+    ax.text(label_x, extender_end_y, bot_label,
             fontsize=3, color=color, ha='center', va='top',
             fontfamily='sans-serif', fontweight='bold', linespacing=1.4)

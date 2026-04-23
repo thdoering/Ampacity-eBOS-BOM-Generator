@@ -4025,8 +4025,8 @@ class QuickEstimate(ttk.Frame):
         export_btn = ttk.Button(button_row, text="Export to Excel", command=self.export_to_excel)
         export_btn.pack(side='left')
         
-        # packet_btn = ttk.Button(button_row, text="Export Packet", command=self.export_packet)
-        # packet_btn.pack(side='left', padx=(10, 0))
+        packet_btn = ttk.Button(button_row, text="Export Packet", command=self.export_packet)
+        packet_btn.pack(side='left', padx=(10, 0))
         
         pdf_btn = ttk.Button(button_row, text="Export PDF", command=self.export_pdf_only)
         pdf_btn.pack(side='left', padx=(5, 0))
@@ -6475,11 +6475,9 @@ class QuickEstimate(ttk.Frame):
         seen_refs = set()
         specs = []
         
-        polarity = 'positive_north'
+        polarity = 'Negative Always South'  # default matches the QE combobox default
         if hasattr(self, 'polarity_convention_var'):
-            pol_val = self.polarity_convention_var.get()
-            if 'south' in pol_val.lower() or 'negative' in pol_val.lower():
-                polarity = 'positive_south'
+            polarity = self.polarity_convention_var.get()
         
         for group in self.groups:
             for seg in group.get('segments', []):
@@ -6510,22 +6508,27 @@ class QuickEstimate(ttk.Frame):
                 orientation = tdata.get('module_orientation', 'Portrait')
                 has_motor = tdata.get('has_motor', True)
                 
-                # Motor position — which string the motor comes AFTER (1-indexed)
-                motor_after = max(1, spt // 2)  # sensible default
+                # Motor position data
+                motor_placement_type = 'between_strings'
+                motor_position_after = max(1, spt // 2)  # sensible default for between_strings
+                motor_string_idx = 1
+                m_split_north = mps // 2
+                m_split_south = mps - mps // 2
                 if has_motor:
-                    motor_placement = tdata.get('motor_placement_type', 'between_strings')
-                    if motor_placement == 'between_strings':
+                    motor_placement_type = tdata.get('motor_placement_type', 'between_strings')
+                    if motor_placement_type == 'between_strings':
                         pos_after = tdata.get('motor_position_after_string', None)
                         str_idx = tdata.get('motor_string_index', None)
                         if pos_after is not None and int(pos_after) >= 0:
-                            motor_after = int(pos_after)
+                            motor_position_after = int(pos_after)
                         elif str_idx is not None and int(str_idx) >= 0:
-                            motor_after = int(str_idx)
-                    elif motor_placement == 'middle_of_string':
+                            motor_position_after = int(str_idx)
+                    elif motor_placement_type == 'middle_of_string':
                         str_idx = tdata.get('motor_string_index', None)
                         if str_idx is not None and int(str_idx) > 0:
-                            # Motor is in the middle of this string — treat as "after" that string
-                            motor_after = int(str_idx)
+                            motor_string_idx = int(str_idx)
+                        m_split_north = tdata.get('motor_split_north', mps // 2)
+                        m_split_south = tdata.get('motor_split_south', mps - mps // 2)
                 
                 # Harness config
                 harness_config = self._get_effective_harness_config(seg)
@@ -6560,7 +6563,11 @@ class QuickEstimate(ttk.Frame):
                     'module_orientation': orientation,
                     'harness_sizes': harness_sizes,
                     'has_motor': has_motor,
-                    'motor_position_after_string': motor_after,
+                    'motor_placement_type': motor_placement_type,
+                    'motor_position_after_string': motor_position_after,
+                    'motor_string_index': motor_string_idx,
+                    'motor_split_north': m_split_north,
+                    'motor_split_south': m_split_south,
                     'polarity_convention': polarity,
                     'device_position': device_pos,
                     'wire_gauges': {
