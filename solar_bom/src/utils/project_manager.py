@@ -126,7 +126,10 @@ class ProjectManager:
             new_project.metadata.name = new_name
             new_project.metadata.created_date = datetime.now()
             new_project.metadata.modified_date = datetime.now()
-            
+
+            # Prevent Project.save() from deleting the original file
+            new_project._source_filepath = None
+
             # Save the new project
             return self.save_project(new_project)
             

@@ -53,7 +53,10 @@ class QuickEstimate(ttk.Frame):
         self.allocation_locked = False
         self.locked_allocation_result = None
         self.manually_edited = False  # True once Edit Devices autosaves a change
-        
+
+        # Track the open Site Preview window (None when closed)
+        self._site_preview_window = None
+
         self.setup_ui()
         
         # Load most recent estimate or show empty state
@@ -1033,6 +1036,8 @@ class QuickEstimate(ttk.Frame):
         self._ws_lv_combos = {}    # {(string_count, cable_type): tk.StringVar}
         self._ws_feeder_var = tk.StringVar(value=self.wire_sizing.get('dc_feeder', ''))
         self._ws_homerun_var = tk.StringVar(value=self.wire_sizing.get('ac_homerun', ''))
+        self._ws_dc_feeder_blanket_var = tk.BooleanVar(value=self.wire_sizing.get('dc_feeder_blanket_enabled', False))
+        self._ws_ac_homerun_blanket_var = tk.BooleanVar(value=self.wire_sizing.get('ac_homerun_blanket_enabled', False))
         
         # Available LV cable sizes (copper AWG only — pre-made assemblies)
         self._ws_lv_sizes = CABLE_SIZE_ORDER  # ['10 AWG' through '4/0 AWG']
@@ -1099,47 +1104,73 @@ class QuickEstimate(ttk.Frame):
         if topology in ('Centralized String', 'Central Inverter'):
             feeder_row = ttk.Frame(self._ws_rows_frame)
             feeder_row.pack(fill='x', pady=1)
-            
+
             ttk.Label(feeder_row, text="DC Fdr", width=7, foreground='gray').pack(side='left')
             material = self.wire_sizing.get('feeder_material', 'aluminum')
             feeder_sizes = get_available_sizes(material)
             current_feeder = self.wire_sizing.get('dc_feeder', '')
             self._ws_feeder_var.set(current_feeder)
+            dc_blanket_on = self.wire_sizing.get('dc_feeder_blanket_enabled', False)
+            self._ws_dc_feeder_blanket_var.set(dc_blanket_on)
             feeder_combo = ttk.Combobox(
                 feeder_row, textvariable=self._ws_feeder_var,
-                values=feeder_sizes, state='disabled', width=10
+                values=feeder_sizes, state='readonly' if dc_blanket_on else 'disabled', width=10
             )
             feeder_combo.pack(side='left', padx=2)
             self.disable_combobox_scroll(feeder_combo)
-            
-            # Hint: per-device sizes in Assign Devices
-            ttk.Label(feeder_row, text="← per device", foreground='gray',
-                      font=('TkDefaultFont', 7)).pack(side='left', padx=(2, 0))
+
+            if dc_blanket_on:
+                self._ws_feeder_var.trace_add('write', lambda *a: self._on_feeder_size_changed('dc_feeder'))
+                ttk.Label(feeder_row, text="(applies to all)", foreground='gray',
+                          font=('TkDefaultFont', 7)).pack(side='left', padx=(2, 0))
+            else:
+                ttk.Label(feeder_row, text="← per device", foreground='gray',
+                          font=('TkDefaultFont', 7)).pack(side='left', padx=(2, 0))
+            ttk.Checkbutton(feeder_row, text="Apply to all",
+                            variable=self._ws_dc_feeder_blanket_var,
+                            command=lambda: self._on_feeder_blanket_toggled('dc_feeder')
+                            ).pack(side='left', padx=(6, 0))
         
         # AC Homerun row (all topologies)
         homerun_row = ttk.Frame(self._ws_rows_frame)
         homerun_row.pack(fill='x', pady=1)
-        
+
         is_distributed = (topology == 'Distributed String')
         label_color = 'gray' if is_distributed else 'black'
-        combo_state = 'disabled' if is_distributed else 'readonly'
-        
+
         ttk.Label(homerun_row, text="AC HR", width=7, foreground=label_color).pack(side='left')
         material = self.wire_sizing.get('feeder_material', 'aluminum')
         homerun_sizes = get_available_sizes(material)
         current_homerun = self.wire_sizing.get('ac_homerun', '')
         self._ws_homerun_var.set(current_homerun)
-        homerun_combo = ttk.Combobox(
-            homerun_row, textvariable=self._ws_homerun_var,
-            values=homerun_sizes, state=combo_state, width=10
-        )
-        homerun_combo.pack(side='left', padx=2)
-        self.disable_combobox_scroll(homerun_combo)
-        
+
         if is_distributed:
-            ttk.Label(homerun_row, text="← per device", foreground='gray',
-                      font=('TkDefaultFont', 7)).pack(side='left', padx=(2, 0))
+            ac_blanket_on = self.wire_sizing.get('ac_homerun_blanket_enabled', False)
+            self._ws_ac_homerun_blanket_var.set(ac_blanket_on)
+            homerun_combo = ttk.Combobox(
+                homerun_row, textvariable=self._ws_homerun_var,
+                values=homerun_sizes, state='readonly' if ac_blanket_on else 'disabled', width=10
+            )
+            homerun_combo.pack(side='left', padx=2)
+            self.disable_combobox_scroll(homerun_combo)
+            if ac_blanket_on:
+                self._ws_homerun_var.trace_add('write', lambda *a: self._on_feeder_size_changed('ac_homerun'))
+                ttk.Label(homerun_row, text="(applies to all)", foreground='gray',
+                          font=('TkDefaultFont', 7)).pack(side='left', padx=(2, 0))
+            else:
+                ttk.Label(homerun_row, text="← per device", foreground='gray',
+                          font=('TkDefaultFont', 7)).pack(side='left', padx=(2, 0))
+            ttk.Checkbutton(homerun_row, text="Apply to all",
+                            variable=self._ws_ac_homerun_blanket_var,
+                            command=lambda: self._on_feeder_blanket_toggled('ac_homerun')
+                            ).pack(side='left', padx=(6, 0))
         else:
+            homerun_combo = ttk.Combobox(
+                homerun_row, textvariable=self._ws_homerun_var,
+                values=homerun_sizes, state='readonly', width=10
+            )
+            homerun_combo.pack(side='left', padx=2)
+            self.disable_combobox_scroll(homerun_combo)
             self._ws_homerun_var.trace_add('write', lambda *a: self._on_feeder_size_changed('ac_homerun'))
     
     def _reset_wire_sizing_to_recommended(self):
@@ -1235,14 +1266,41 @@ class QuickEstimate(ttk.Frame):
         """Handle user changing DC feeder or AC homerun size."""
         if feeder_type == 'dc_feeder':
             self.wire_sizing['dc_feeder'] = self._ws_feeder_var.get()
+            if self.wire_sizing.get('dc_feeder_blanket_enabled', False):
+                self.device_feeder_sizes.clear()
         elif feeder_type == 'ac_homerun':
             self.wire_sizing['ac_homerun'] = self._ws_homerun_var.get()
+            if self.wire_sizing.get('ac_homerun_blanket_enabled', False):
+                self.device_feeder_sizes.clear()
 
         overrides = self.wire_sizing.setdefault('user_overrides', {})
         overrides[feeder_type] = True
 
         self._mark_dirty()
         self._propagate_wire_sizing_to_devices()
+
+    def _on_feeder_blanket_toggled(self, feeder_type):
+        """Handle 'Apply to all' toggle for DC feeder or AC homerun."""
+        if feeder_type == 'dc_feeder':
+            blanket_on = self._ws_dc_feeder_blanket_var.get()
+            self.wire_sizing['dc_feeder_blanket_enabled'] = blanket_on
+        else:  # ac_homerun
+            blanket_on = self._ws_ac_homerun_blanket_var.get()
+            self.wire_sizing['ac_homerun_blanket_enabled'] = blanket_on
+
+        if blanket_on:
+            self.device_feeder_sizes.clear()
+
+        if self._site_preview_window is not None:
+            try:
+                if self._site_preview_window.winfo_exists():
+                    self._site_preview_window.draw()
+            except Exception:
+                pass
+
+        self._mark_dirty()
+        self._schedule_autosave()
+        self.refresh_wire_sizing_table()
 
     def _propagate_wire_sizing_to_devices(self):
         """Propagate updated wire sizes from the Wire Sizing table to downstream surfaces.
@@ -2692,19 +2750,31 @@ class QuickEstimate(ttk.Frame):
 
     def show_site_preview(self):
         """Open the site preview in a pop-out window"""
+        # Raise existing window instead of stacking another one
+        if self._site_preview_window is not None:
+            try:
+                if self._site_preview_window.winfo_exists():
+                    self._site_preview_window.deiconify()
+                    self._site_preview_window.lift()
+                    self._site_preview_window.focus_force()
+                    return
+            except Exception:
+                pass
+            self._site_preview_window = None
+
         inv_summary = getattr(self, 'last_totals', {}).get('inverter_summary', {})
-        
+
         if not inv_summary or not inv_summary.get('allocation_result'):
             messagebox.showinfo("No Data", "Run Calculate Estimate first to generate preview data.")
             return
-        
+
         topology = self.topology_var.get()
         row_spacing_ft = self.groups[0].get('row_spacing_ft', 20.0) if self.groups else 20.0
-        
+
         # Compute device info for preview
         totals = getattr(self, 'last_totals', {})
         total_combiners = sum(totals.get('combiners_by_breaker', {}).values())
-        
+
         lv_method = self.lv_collection_var.get() if hasattr(self, 'lv_collection_var') else 'Wire Harness'
         if topology == 'Distributed String':
             num_devices = totals.get('string_inverters', 0)
@@ -2717,10 +2787,10 @@ class QuickEstimate(ttk.Frame):
         else:
             num_devices = total_combiners
             device_label = 'LBD' if lv_method == 'Trunk Bus' else 'CB'
-        
+
         # Restore inspect mode from previous session
         initial_inspect = getattr(self, '_last_inspect_mode', False)
-        
+
         preview = SitePreviewWindow(
             self, inv_summary, topology, self.INVERTER_COLORS,
             self.groups, self.enabled_templates, row_spacing_ft,
@@ -2731,6 +2801,7 @@ class QuickEstimate(ttk.Frame):
             device_feeder_parallel_counts=self.device_feeder_parallel_counts,
             measurements=self.measurements
         )
+        self._site_preview_window = preview
 
         # When window closes, save state back
         def _on_preview_close():
@@ -2740,12 +2811,13 @@ class QuickEstimate(ttk.Frame):
             self.device_feeder_sizes = dict(preview.device_feeder_sizes)  # Save feeder sizes back
             self.device_feeder_parallel_counts = dict(preview.device_feeder_parallel_counts)  # Save parallel counts back
             self.measurements = list(preview.measurements)  # Save measurements back
-            
+
             # If CB assignments were edited, refresh the estimate results
             if hasattr(self, 'last_combiner_assignments') and self.last_combiner_assignments:
                 self._refresh_combiner_results_from_assignments()
-            
+
             self._schedule_autosave()
+            self._site_preview_window = None
             preview.destroy()
         preview.protocol("WM_DELETE_WINDOW", _on_preview_close)
 

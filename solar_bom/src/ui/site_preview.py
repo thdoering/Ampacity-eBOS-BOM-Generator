@@ -2989,11 +2989,11 @@ class SitePreviewWindow(tk.Toplevel):
         self.assigning_devices = True
         self.draw()
         
-        # Size based on device count
+        # Size based on device count; floor at 280 so button row is never clipped
         num_devices = len(self.device_positions)
-        dialog_height = min(600, 120 + num_devices * 28)
+        dialog_height = max(280, min(600, 120 + num_devices * 28))
         dialog.geometry(f"760x{dialog_height}")
-        dialog.minsize(660, 200)
+        dialog.minsize(660, 280)
         
 
         # Instructions
@@ -3022,10 +3022,12 @@ class SitePreviewWindow(tk.Toplevel):
         if self.topology == 'Distributed String':
             feeder_col_label = "AC HR Size"
             default_feeder = getattr(parent_qe, 'wire_sizing', {}).get('ac_homerun', '')
+            blanket_on = getattr(parent_qe, 'wire_sizing', {}).get('ac_homerun_blanket_enabled', False)
         else:
             feeder_col_label = "DC Fdr Size"
             default_feeder = getattr(parent_qe, 'wire_sizing', {}).get('dc_feeder', '')
-        
+            blanket_on = getattr(parent_qe, 'wire_sizing', {}).get('dc_feeder_blanket_enabled', False)
+
         if not default_feeder and feeder_sizes_list:
             default_feeder = feeder_sizes_list[0]
         
@@ -3117,7 +3119,7 @@ class SitePreviewWindow(tk.Toplevel):
             event.widget.config(cursor='sb_v_double_arrow')
         
         def _feeder_handle_motion(event):
-            if not _feeder_fill['active']:
+            if blanket_on or not _feeder_fill['active']:
                 return
             my = event.y_root
             src = _feeder_fill['source_idx']
@@ -3157,19 +3159,19 @@ class SitePreviewWindow(tk.Toplevel):
             grp_name = self.groups[grp_idx]['name'] if grp_idx < len(self.groups) else '?'
             ttk.Label(row, text=grp_name, width=12).pack(side='left', padx=5)
             
-            # Feeder size dropdown
-            current_feeder = self.device_feeder_sizes.get(dev_idx, default_feeder)
+            # Feeder size dropdown — when blanket is on, show blanket value read-only
+            current_feeder = default_feeder if blanket_on else self.device_feeder_sizes.get(dev_idx, default_feeder)
             feeder_var = tk.StringVar(value=current_feeder)
             feeder_combo = ttk.Combobox(row, textvariable=feeder_var, values=feeder_sizes_list,
-                                        state='readonly', width=12)
+                                        state='disabled' if blanket_on else 'readonly', width=12)
             feeder_combo.pack(side='left', padx=5)
             feeder_combo.bind("<MouseWheel>", lambda e: "break")
             feeder_combo.bind("<Button-4>", lambda e: "break")
             feeder_combo.bind("<Button-5>", lambda e: "break")
             feeder_vars.append(feeder_var)
             feeder_combos.append(feeder_combo)
-            
-            # Feeder fill handle — green
+
+            # Feeder fill handle — green (rendered but motion is gated when blanket is on)
             f_handle = tk.Frame(row, width=10, height=18, bg='#4A9D4A', cursor='sb_v_double_arrow')
             f_handle.pack(side='left', padx=(2, 5))
             f_handle.pack_propagate(False)
@@ -3239,9 +3241,10 @@ class SitePreviewWindow(tk.Toplevel):
                         pad['assigned_devices'].append(dev_idx)
                         break
             
-            # Save per-device feeder sizes
-            for dev_idx, fvar in enumerate(feeder_vars):
-                self.device_feeder_sizes[dev_idx] = fvar.get()
+            # Save per-device feeder sizes (skipped when blanket is on — values were read-only)
+            if not blanket_on:
+                for dev_idx, fvar in enumerate(feeder_vars):
+                    self.device_feeder_sizes[dev_idx] = fvar.get()
             
             # Save per-device parallel counts
             for dev_idx, pvar in enumerate(parallel_vars):

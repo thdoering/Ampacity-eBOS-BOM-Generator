@@ -3,7 +3,13 @@
     "allow": [
       "Bash(python -c ' *)",
       "Bash(awk -F: '{print $1, $2}')",
-      "Bash(awk '$1 < 2700 {prev=$0} $1 >= 2700 && !done {print prev; done=1}')"
+      "Bash(awk '$1 < 2700 {prev=$0} $1 >= 2700 && !done {print prev; done=1}')",
+      "Bash(python -m venv .venv)",
+      "Bash(.venv/Scripts/pip install *)",
+      "Bash(.venv/Scripts/python calculator.py)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(.venv/Scripts/python -c ' *)",
+      "Bash(.venv/Scripts/python -c \"import ast, sys; ast.parse\\(open\\('main.py'\\).read\\(\\)\\); print\\('main.py syntax OK'\\)\")"
     ]
   }
 }
