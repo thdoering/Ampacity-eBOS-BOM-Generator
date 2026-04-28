@@ -58,6 +58,9 @@ class QuickEstimate(ttk.Frame):
         # Track the open Site Preview window (None when closed)
         self._site_preview_window = None
 
+        # Guard to suppress re-entrant harness trace during on_template_change
+        self._suppress_harness_trace = False
+
         self.setup_ui()
         
         # Load most recent estimate or show empty state
@@ -1372,13 +1375,15 @@ class QuickEstimate(ttk.Frame):
         
         active_counts = self._collect_active_string_counts()
         by_sc = self.wire_sizing.get('by_string_count', {})
-        
+
         # Add recommendations for any new string counts
+        _table_changed = False
         for sc in active_counts:
             if sc not in by_sc and str(sc) not in by_sc:
                 sizes = recommend_lv_cable_sizes(sc, module_isc, nec_factor=1.56, temp_rating=temp)
                 by_sc[sc] = sizes
-        
+                _table_changed = True
+
         # Remove string counts no longer in use, clearing any overrides for them
         keys_to_remove = []
         for sc_key in list(by_sc.keys()):
@@ -1386,13 +1391,16 @@ class QuickEstimate(ttk.Frame):
             if sc_int not in active_counts:
                 keys_to_remove.append((sc_key, sc_int))
 
+        if keys_to_remove:
+            _table_changed = True
         for key, sc_int in keys_to_remove:
             del by_sc[key]
             for ct in ('harness', 'extender', 'whip'):
                 overrides.pop(f"{sc_int}_{ct}", None)
-        
+
         self.wire_sizing['by_string_count'] = by_sc
-        self.refresh_wire_sizing_table()
+        if _table_changed:
+            self.refresh_wire_sizing_table()
     
     def _on_topology_changed_wire_sizing(self):
         """Handle topology change — show/hide DC feeder row, recalc if needed."""
@@ -4675,41 +4683,40 @@ class QuickEstimate(ttk.Frame):
             selected_display = template_var.get()
             selected_key = template_display_map.get(selected_display)
             segment['template_ref'] = selected_key
-            
+
             if selected_key and selected_key in self.enabled_templates:
                 # Derive strings_per_tracker from template
                 tdata = self.enabled_templates[selected_key]
                 new_spt = tdata.get('strings_per_tracker', 3)
                 segment['strings_per_tracker'] = new_spt
-                
-                # Update harness options for new string count
+
+                # Update harness options for new string count; suppress the
+                # on_harness_change trace so wire sizing only runs once below.
                 new_options = self.get_harness_options(new_spt)
                 harness_combo['values'] = new_options
-                
-                # Auto-derive default from template motor position
-                derived = self._get_default_harness_config_from_template(selected_key)
-                if derived and derived in new_options:
-                    harness_var.set(derived)
-                    segment['harness_config'] = derived
-                elif harness_var.get() not in new_options:
-                    harness_var.set(new_options[0])
-                    segment['harness_config'] = new_options[0]
-            
+
+                self._suppress_harness_trace = True
+                try:
+                    derived = self._get_default_harness_config_from_template(selected_key)
+                    if derived and derived in new_options:
+                        harness_var.set(derived)
+                        segment['harness_config'] = derived
+                    elif harness_var.get() not in new_options:
+                        harness_var.set(new_options[0])
+                        segment['harness_config'] = new_options[0]
+                finally:
+                    self._suppress_harness_trace = False
+
             self._update_group_string_count(group)
             self._auto_unlock_allocation()
             self._mark_stale()
             self._schedule_autosave()
-            
+
             # Update derived module from templates
             self._derive_module_from_templates()
-            
-            # Refresh wire sizing for new template/harness configs
+
+            # Refresh wire sizing once (trace suppressed above)
             self._refresh_wire_sizing_for_segments()
-            
-            # Rebuild details panel to refresh summary card
-            for widget in self.details_container.winfo_children():
-                widget.destroy()
-            self.show_group_details(group_idx)
         template_combo.bind('<<ComboboxSelected>>', on_template_change)
         
         def on_qty_change(*args):
@@ -4743,6 +4750,8 @@ class QuickEstimate(ttk.Frame):
         qty_var.trace_add('write', on_qty_change)
         
         def on_harness_change(*args):
+            if self._suppress_harness_trace:
+                return
             segment['harness_config'] = harness_var.get()
             self._refresh_wire_sizing_for_segments()
             self._mark_stale()
@@ -4771,7 +4780,18 @@ class QuickEstimate(ttk.Frame):
             'harness_config': default_harness,
             'template_ref': default_ref
         })
-        self._rebuild_group_details(group_idx)
+        new_seg_idx = len(group['segments']) - 1
+        self._add_segment_ui(group, group_idx, new_seg_idx, group['segments'][-1])
+        # The previous last row's down button must now be enabled
+        if new_seg_idx > 0:
+            rows = self.segment_rows_container.winfo_children()
+            if len(rows) >= 2:
+                prev_children = rows[-2].winfo_children()
+                if len(prev_children) > 4:
+                    prev_children[4].config(state='normal')  # down_btn is index 4
+        self._update_group_string_count(group)
+        self._refresh_wire_sizing_for_segments()
+        self._mark_dirty()
     
     def _move_segment(self, group: dict, group_idx: int, seg_idx: int, direction: int):
         """Move a segment up (-1) or down (+1) within the group"""
