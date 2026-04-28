@@ -6683,8 +6683,13 @@ class QuickEstimate(ttk.Frame):
                 bom_info_items.append(("Module:", f"{self.selected_module.manufacturer} {self.selected_module.model} ({self.selected_module.wattage}W)"))
                 bom_info_items.append(("Module Isc:", f"{module_isc} A"))
                 bom_info_items.append(("Module Width:", f"{module_width_mm} mm"))
+            # Consolidate groups that share the same row spacing into a single info row
+            _bom_spacing_map = {}
             for grp in self.groups:
-                bom_info_items.append((f"Row Spacing ({grp.get('name', 'Group')}):", f"{grp.get('row_spacing_ft', 20.0):.3f} ft"))
+                _s = round(grp.get('row_spacing_ft', 20.0), 3)
+                _bom_spacing_map.setdefault(_s, []).append(grp.get('name', 'Group'))
+            for _s, _names in _bom_spacing_map.items():
+                bom_info_items.append((f"Row Spacing ({_group_range_label(_names)}):", f"{_s:.3f} ft"))
             
             if self.selected_inverter:
                 inv = self.selected_inverter
