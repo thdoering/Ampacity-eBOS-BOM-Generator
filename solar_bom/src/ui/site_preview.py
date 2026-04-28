@@ -43,10 +43,12 @@ class SitePreviewWindow(tk.Toplevel):
         self.drag_start_x = 0
         self.drag_start_y = 0
         self._drag_moved = False
-        self._drag_group_start_x = 0
-        self._drag_group_start_y = 0
-        self.selected_group_idx = None
+        self._drag_group_starts = {}    # {idx: (start_x, start_y)} for all selected groups
+        self._drag_leader_idx = None    # group idx that initiated the current drag
+        self.selected_group_indices = set()  # set of selected group indices (layout mode)
         self.align_on_motor = True
+        self._layout_box_selecting = False   # True during rubber-band box select (layout mode)
+        self._layout_box_select_start = (0, 0)
         
         # Read lock state from parent (QuickEstimate)
         self.allocation_locked = getattr(self.master, 'allocation_locked', False)
@@ -393,8 +395,8 @@ class SitePreviewWindow(tk.Toplevel):
         Each group has an (x, y) position in world-space representing its top-left corner.
         """
         self.group_layout = []
-        self.selected_group_idx = None
-        
+        self.selected_group_indices = set()
+
         allocation_result = self.inv_summary.get('allocation_result')
         if not allocation_result:
             self.world_width = 0
@@ -550,11 +552,17 @@ class SitePreviewWindow(tk.Toplevel):
             visual_min_y_base = 0.0
             visual_max_y_base = 0.0
             
-            if group_trackers and ref_motor is not None:
+            tracker_alignment = group_data.get('tracker_alignment', 'motor')
+            if group_trackers:
                 for t_i, t in enumerate(group_trackers):
-                    t_motor = t.get('motor_y_ft', 0)
                     t_length_val = t.get('length_ft', group_length)
-                    y_offset = ref_motor - t_motor  # Motor alignment shift (no angle)
+                    if tracker_alignment == 'top':
+                        y_offset = 0.0
+                    elif tracker_alignment == 'bottom':
+                        y_offset = group_length - t_length_val
+                    else:  # 'motor'
+                        t_motor = t.get('motor_y_ft', 0)
+                        y_offset = (ref_motor or 0) - t_motor
                     angle_y = t_i * grp_pitch * driveline_tan
                     # Base bounds (no angle) — for parallelogram overlap checking
                     visual_min_y_base = min(visual_min_y_base, y_offset)
@@ -581,6 +589,7 @@ class SitePreviewWindow(tk.Toplevel):
                 'row_spacing_ft': grp_pitch,
                 'azimuth': azimuth_deg,
                 'rotation_deg': azimuth_deg - 180,
+                'tracker_alignment': tracker_alignment,
             })
 
         # Flat list for backward compat
@@ -1188,23 +1197,40 @@ class SitePreviewWindow(tk.Toplevel):
             pad = self.pads[hit_pad]
             self._drag_pad_start_x = pad['x']
             self._drag_pad_start_y = pad['y']
-            self.selected_group_idx = None
+            self.selected_group_indices = set()
             self.dragging_group = False
             self.draw()
             return
-        
+
         self.selected_pad_idx = None
-        
+
         hit = self.hit_test_group(event.x, event.y)
+        ctrl = event.state & 0x4
         if hit is not None:
-            self.selected_group_idx = hit
-            self.dragging_group = True
-            g = self.group_layout[hit]
-            self._drag_group_start_x = g['x']
-            self._drag_group_start_y = g['y']
+            if ctrl:
+                # Ctrl+click: toggle membership, no drag
+                if hit in self.selected_group_indices:
+                    self.selected_group_indices.discard(hit)
+                else:
+                    self.selected_group_indices.add(hit)
+                self.dragging_group = False
+            else:
+                if hit not in self.selected_group_indices:
+                    # Plain click on unselected group — replace selection
+                    self.selected_group_indices = {hit}
+                # Start drag carrying all currently selected groups
+                self._drag_leader_idx = hit
+                self._drag_group_starts = {
+                    idx: (self.group_layout[idx]['x'], self.group_layout[idx]['y'])
+                    for idx in self.selected_group_indices
+                }
+                self.dragging_group = True
             self.draw()
         else:
-            self.selected_group_idx = None
+            # Empty space — clear selection and start rubber-band box select
+            self.selected_group_indices = set()
+            self._layout_box_selecting = True
+            self._layout_box_select_start = (event.x, event.y)
             self.dragging_group = False
             self.draw()
 
@@ -1256,6 +1282,17 @@ class SitePreviewWindow(tk.Toplevel):
                 max(sx, event.x), max(sy, event.y),
                 outline='#4A90D9', width=1, dash=(4, 3),
                 tags='selection_box'
+            )
+            return
+
+        if getattr(self, '_layout_box_selecting', False):
+            self.canvas.delete('layout_selection_box')
+            sx, sy = self._layout_box_select_start
+            self.canvas.create_rectangle(
+                min(sx, event.x), min(sy, event.y),
+                max(sx, event.x), max(sy, event.y),
+                outline='#4A90D9', width=1, dash=(4, 3),
+                tags='layout_selection_box'
             )
             return
 
@@ -1323,26 +1360,34 @@ class SitePreviewWindow(tk.Toplevel):
             self.pads[self.selected_pad_idx]['x'] = self._drag_pad_start_x + dx_world
             self.pads[self.selected_pad_idx]['y'] = self._drag_pad_start_y + dy_world
             self.draw()
-        elif getattr(self, 'dragging_group', False) and self.selected_group_idx is not None:
+        elif getattr(self, 'dragging_group', False) and self.selected_group_indices:
             dx_world = dx_px / self.scale if self.scale != 0 else 0
             dy_world = dy_px / self.scale if self.scale != 0 else 0
-            
-            new_x = self._drag_group_start_x + dx_world
-            new_y = self._drag_group_start_y + dy_world
-            
+
+            leader_idx = self._drag_leader_idx
+            if leader_idx is None or leader_idx not in self._drag_group_starts:
+                leader_idx = next(iter(self.selected_group_indices))
+            leader_sx, leader_sy = self._drag_group_starts.get(leader_idx, (0, 0))
+
+            raw_x = leader_sx + dx_world
+            raw_y = leader_sy + dy_world
+
             shift_held = event.state & 0x1
             if shift_held:
                 # Shift held — constrain to N/S movement only (lock X)
-                new_x = self._drag_group_start_x
+                snapped_dx = 0
+                snapped_dy = raw_y - leader_sy
             else:
-                # Normal drag — apply snapping
-                new_x, new_y = self._snap_group_position(
-                    self.selected_group_idx, new_x, new_y
-                )
-            
-            self.group_layout[self.selected_group_idx]['x'] = new_x
-            self.group_layout[self.selected_group_idx]['y'] = new_y
-            
+                # Normal drag — snap leader, apply resulting delta to all followers
+                new_x, new_y = self._snap_group_position(leader_idx, raw_x, raw_y)
+                snapped_dx = new_x - leader_sx
+                snapped_dy = new_y - leader_sy
+
+            for idx in self.selected_group_indices:
+                sx, sy = self._drag_group_starts.get(idx, (self.group_layout[idx]['x'], self.group_layout[idx]['y']))
+                self.group_layout[idx]['x'] = sx + snapped_dx
+                self.group_layout[idx]['y'] = sy + snapped_dy
+
             self.draw()
     
     def on_release(self, event):
@@ -1350,6 +1395,29 @@ class SitePreviewWindow(tk.Toplevel):
         if getattr(self, '_dragging_panel', False):
             self._dragging_panel = False
             self._panel_drag_start = None
+            return
+
+        if getattr(self, '_layout_box_selecting', False):
+            self._layout_box_selecting = False
+            self.canvas.delete('layout_selection_box')
+            sx, sy = self._layout_box_select_start
+            if abs(event.x - sx) > 5 or abs(event.y - sy) > 5:
+                # Real drag — hit-test group bounding boxes against the rubber-band rect
+                bx1, bx2 = min(sx, event.x), max(sx, event.x)
+                by1, by2 = min(sy, event.y), max(sy, event.y)
+                wx1, wy1 = self.canvas_to_world(bx1, by1)
+                wx2, wy2 = self.canvas_to_world(bx2, by2)
+                wxmin, wxmax = min(wx1, wx2), max(wx1, wx2)
+                wymin, wymax = min(wy1, wy2), max(wy1, wy2)
+                for i, g in enumerate(self.group_layout):
+                    vis_min = g.get('visual_min_y', 0)
+                    vis_max = g.get('visual_max_y', g['length_ft'])
+                    gx1, gy1 = g['x'], g['y'] + vis_min
+                    gx2, gy2 = g['x'] + g['width_ft'], g['y'] + vis_max
+                    if gx2 >= wxmin and gx1 <= wxmax and gy2 >= wymin and gy1 <= wymax:
+                        self.selected_group_indices.add(i)
+            # else: plain click in empty space — selection already cleared in on_press
+            self.draw()
             return
 
         if getattr(self, '_box_selecting', False):
@@ -1506,7 +1574,7 @@ class SitePreviewWindow(tk.Toplevel):
             pitch = group_data.get('row_spacing_ft', getattr(self, 'tracker_pitch_ft', 20))
             gx = group_data['x']
             gy = group_data['y']
-            is_selected = (group_idx == self.selected_group_idx)
+            is_selected = (group_idx in self.selected_group_indices)
             rotation_deg = group_data.get('rotation_deg', 0.0)
             vis_min = group_data.get('visual_min_y', 0)
             vis_max = group_data.get('visual_max_y', group_data['length_ft'])
@@ -1568,14 +1636,17 @@ class SitePreviewWindow(tk.Toplevel):
                 angle_y_offset = t_idx * pitch * group_data.get('driveline_tan', 0.0)
                 
                 # Align tracker vertically within group
-                if getattr(self, 'align_on_motor', False) and tracker.get('has_motor', False) and group_data.get('motor_y_ft', None) is not None:
+                _talign = group_data.get('tracker_alignment', 'motor')
+                if _talign == 'top':
+                    ty = gy + angle_y_offset
+                elif _talign == 'bottom':
+                    ty = gy + (group_data['length_ft'] - t_length) + angle_y_offset
+                elif tracker.get('has_motor', False) and group_data.get('motor_y_ft', None) is not None:
                     # Motor alignment: offset so this tracker's motor Y matches group's reference motor Y
-                    reference_motor_y = group_data['motor_y_ft']
-                    ty = gy + (reference_motor_y - tracker['motor_y_ft']) + angle_y_offset
+                    ty = gy + (group_data['motor_y_ft'] - tracker['motor_y_ft']) + angle_y_offset
                 else:
                     # Center alignment fallback
-                    max_group_length = group_data['length_ft']
-                    ty_offset = (max_group_length - t_length) / 2
+                    ty_offset = (group_data['length_ft'] - t_length) / 2
                     ty = gy + ty_offset + angle_y_offset              
                 # Per-string height — adjust for partial strings
                 partial_mods = tracker.get('partial_module_count', 0)
@@ -1854,7 +1925,7 @@ class SitePreviewWindow(tk.Toplevel):
         self.selected_device_idx = None
         self.selected_pad_inspect_idx = None
         if self.inspect_mode:
-            self.selected_group_idx = None
+            self.selected_group_indices = set()
         self.draw()
 
     def _draw_toggle(self):
@@ -3010,7 +3081,13 @@ class SitePreviewWindow(tk.Toplevel):
         for pad_idx, pad in enumerate(self.pads):
             for dev_idx in pad.get('assigned_devices', []):
                 device_to_pad[dev_idx] = pad_idx
-        
+
+        # Snapshot for "Undo All Changes"
+        import copy as _copy
+        _snap_assigned = [list(pad.get('assigned_devices', [])) for pad in self.pads]
+        _snap_feeder_sizes = dict(self.device_feeder_sizes)
+        _snap_parallel_counts = dict(self.device_feeder_parallel_counts)
+
         # Determine feeder column based on topology
         from src.utils.cable_sizing import get_available_sizes
         parent_qe = self.master
@@ -3107,6 +3184,7 @@ class SitePreviewWindow(tk.Toplevel):
             _pad_fill['active'] = False
             _pad_fill['source_idx'] = None
             _pad_fill['value'] = None
+            _commit()
         
         # Drag-fill handle state — feeder column (green)
         _feeder_fill = {'active': False, 'source_idx': None, 'value': None}
@@ -3142,6 +3220,7 @@ class SitePreviewWindow(tk.Toplevel):
             _feeder_fill['active'] = False
             _feeder_fill['source_idx'] = None
             _feeder_fill['value'] = None
+            _commit()
 
         for dev_idx, dev in enumerate(self.device_positions):
             row = ttk.Frame(scroll_frame)
@@ -3168,6 +3247,7 @@ class SitePreviewWindow(tk.Toplevel):
             feeder_combo.bind("<MouseWheel>", lambda e: "break")
             feeder_combo.bind("<Button-4>", lambda e: "break")
             feeder_combo.bind("<Button-5>", lambda e: "break")
+            feeder_combo.bind("<<ComboboxSelected>>", lambda e: _commit())
             feeder_vars.append(feeder_var)
             feeder_combos.append(feeder_combo)
 
@@ -3189,6 +3269,10 @@ class SitePreviewWindow(tk.Toplevel):
             parallel_spin.bind("<MouseWheel>", lambda e: "break")
             parallel_spin.bind("<Button-4>", lambda e: "break")
             parallel_spin.bind("<Button-5>", lambda e: "break")
+            parallel_spin.bind("<<Increment>>", lambda e: _commit())
+            parallel_spin.bind("<<Decrement>>", lambda e: _commit())
+            parallel_spin.bind("<FocusOut>", lambda e: _commit())
+            parallel_spin.bind("<KeyRelease>", lambda e: _commit())
             parallel_vars.append(parallel_var)
             parallel_spinboxes.append(parallel_spin)
             
@@ -3203,6 +3287,7 @@ class SitePreviewWindow(tk.Toplevel):
             combo.bind("<MouseWheel>", lambda e: "break")
             combo.bind("<Button-4>", lambda e: "break")
             combo.bind("<Button-5>", lambda e: "break")
+            combo.bind("<<ComboboxSelected>>", lambda e: _commit())
             pad_vars.append(var)
             pad_combos.append(combo)
             
@@ -3219,33 +3304,20 @@ class SitePreviewWindow(tk.Toplevel):
         btn_frame = ttk.Frame(dialog)
         btn_frame.pack(fill='x', padx=10, pady=10)
         
-        def _assign_all_to(pad_label):
-            for var in pad_vars:
-                var.set(pad_label)
-        
-        if len(self.pads) > 1:
-            ttk.Label(btn_frame, text="Quick assign all:").pack(side='left', padx=(0, 5))
-            for label in pad_labels:
-                ttk.Button(btn_frame, text=label,
-                           command=lambda l=label: _assign_all_to(l)).pack(side='left', padx=2)
-        
-        def _apply():
+        def _commit():
             # Rebuild pad assignments from dropdown values
             for pad in self.pads:
                 pad['assigned_devices'] = []
-            
             for dev_idx, var in enumerate(pad_vars):
                 selected_label = var.get()
                 for pad_idx, pad in enumerate(self.pads):
                     if pad.get('label', f'Pad {pad_idx+1}') == selected_label:
                         pad['assigned_devices'].append(dev_idx)
                         break
-            
             # Save per-device feeder sizes (skipped when blanket is on — values were read-only)
             if not blanket_on:
                 for dev_idx, fvar in enumerate(feeder_vars):
                     self.device_feeder_sizes[dev_idx] = fvar.get()
-            
             # Save per-device parallel counts
             for dev_idx, pvar in enumerate(parallel_vars):
                 try:
@@ -3257,20 +3329,38 @@ class SitePreviewWindow(tk.Toplevel):
                 except (ValueError, TypeError):
                     pval = 1
                 self.device_feeder_parallel_counts[dev_idx] = pval
-            
+            self.draw()
+
+        def _undo_all():
+            # Restore snapshot in-place
+            for pad_idx, pad in enumerate(self.pads):
+                pad['assigned_devices'] = list(_snap_assigned[pad_idx])
+            self.device_feeder_sizes.clear()
+            self.device_feeder_sizes.update(_snap_feeder_sizes)
+            self.device_feeder_parallel_counts.clear()
+            self.device_feeder_parallel_counts.update(_snap_parallel_counts)
+            # Rebuild device→pad lookup from restored state
+            snap_dev_to_pad = {}
+            for pad_idx, assigned in enumerate(_snap_assigned):
+                for dev_idx in assigned:
+                    snap_dev_to_pad[dev_idx] = pad_idx
+            # Refresh all dropdowns and spinboxes
+            for dev_idx in range(len(self.device_positions)):
+                pad_idx = snap_dev_to_pad.get(dev_idx, 0)
+                if pad_idx < len(pad_labels):
+                    pad_vars[dev_idx].set(pad_labels[pad_idx])
+                feeder_vars[dev_idx].set(_snap_feeder_sizes.get(dev_idx, default_feeder))
+                parallel_vars[dev_idx].set(str(_snap_parallel_counts.get(dev_idx, 1)))
+            self.draw()
+
+        def _on_close():
             self.assigning_devices = False
             self.draw()
             dialog.destroy()
-        
-        def _cancel():
-            self.assigning_devices = False
-            self.draw()
-            dialog.destroy()
-        
-        dialog.protocol("WM_DELETE_WINDOW", _cancel)
-        
-        ttk.Button(btn_frame, text="Apply", command=_apply).pack(side='right', padx=(5, 0))
-        ttk.Button(btn_frame, text="Cancel", command=_cancel).pack(side='right')
+
+        dialog.protocol("WM_DELETE_WINDOW", _on_close)
+
+        ttk.Button(btn_frame, text="Undo All Changes", command=_undo_all).pack(side='right')
         
         # Center on parent
         dialog.update_idletasks()
@@ -4329,6 +4419,101 @@ class SitePreviewWindow(tk.Toplevel):
                 ren_dlg.grab_set()
                 ren_dlg.focus_set()
 
+        def auto_number():
+            import re as _re
+            from statistics import median as _median
+
+            # Build spatial list for non-unallocated devices only
+            real_devs = [(i, d) for i, d in enumerate(device_data) if not d.get('is_unallocated')]
+            if not real_devs:
+                return
+
+            # Map device_data index → device_positions index (real devs in order)
+            # device_positions is in the same order as real_devs (unallocated excluded)
+            pos_list = getattr(self, 'device_positions', [])
+            entries = []
+            for pos_order, (data_idx, _) in enumerate(real_devs):
+                if pos_order < len(pos_list):
+                    dev_pos = pos_list[pos_order]
+                    entries.append((data_idx, dev_pos['x'], dev_pos['y'], dev_pos['height_ft']))
+
+            if not entries:
+                return
+
+            # Row tolerance = half the device height
+            tol = _median(e[3] for e in entries) / 2
+
+            # Sort into rows: group by Y within tol, then sort each row by X
+            entries.sort(key=lambda e: (e[2], e[1]))
+            rows = []
+            for entry in entries:
+                if rows and abs(entry[2] - rows[-1][0][2]) <= tol:
+                    rows[-1].append(entry)
+                else:
+                    rows.append([entry])
+            for row in rows:
+                row.sort(key=lambda e: e[1])
+            sorted_data_indices = [e[0] for row in rows for e in row]
+
+            # Guess most common existing prefix (strip trailing digits, take mode)
+            default_prefix = 'INV-' if self.topology == 'Distributed String' else 'CB-'
+            prefix_counts = {}
+            for _, d in real_devs:
+                p = _re.sub(r'\d+$', '', d['name'])
+                if p:
+                    prefix_counts[p] = prefix_counts.get(p, 0) + 1
+            if prefix_counts:
+                default_prefix = max(prefix_counts, key=prefix_counts.get)
+
+            # Open naming dialog
+            num_dlg = tk.Toplevel(dialog)
+            num_dlg.title("Auto-Number Devices")
+            num_dlg.transient(dialog)
+            num_dlg.resizable(False, False)
+
+            frm = ttk.Frame(num_dlg, padding=12)
+            frm.pack(fill='both', expand=True)
+
+            ttk.Label(frm, text=f"Number {len(sorted_data_indices)} devices top-left → bottom-right:").grid(
+                row=0, column=0, columnspan=2, sticky='w', pady=(0, 8))
+
+            ttk.Label(frm, text="Prefix:").grid(row=1, column=0, sticky='w', padx=(0, 8), pady=4)
+            prefix_var = tk.StringVar(value=default_prefix)
+            ttk.Entry(frm, textvariable=prefix_var, width=12).grid(row=1, column=1, sticky='w')
+
+            ttk.Label(frm, text="Start #:").grid(row=2, column=0, sticky='w', padx=(0, 8), pady=4)
+            start_var = tk.IntVar(value=1)
+            ttk.Spinbox(frm, from_=1, to=999, textvariable=start_var, width=6).grid(row=2, column=1, sticky='w')
+
+            btn_frame = ttk.Frame(frm)
+            btn_frame.grid(row=3, column=0, columnspan=2, pady=(10, 0))
+
+            def _do_autonumber():
+                try:
+                    start = int(start_var.get())
+                except (ValueError, tk.TclError):
+                    return
+                prefix = prefix_var.get()
+                for n, data_idx in enumerate(sorted_data_indices):
+                    device_data[data_idx]['name'] = f'{prefix}{start + n:02d}'
+                _sort_device_data()
+                num_dlg.destroy()
+                refresh_tree()
+                _update_live_preview()
+
+            ttk.Button(btn_frame, text="Apply", command=_do_autonumber).pack(side='left', padx=4)
+            ttk.Button(btn_frame, text="Cancel", command=num_dlg.destroy).pack(side='left', padx=4)
+
+            num_dlg.bind('<Return>', lambda e: _do_autonumber())
+            num_dlg.bind('<Escape>', lambda e: num_dlg.destroy())
+
+            num_dlg.update_idletasks()
+            x = dialog.winfo_rootx() + (dialog.winfo_width() - num_dlg.winfo_width()) // 2
+            y = dialog.winfo_rooty() + (dialog.winfo_height() - num_dlg.winfo_height()) // 2
+            num_dlg.geometry(f'+{x}+{y}')
+            num_dlg.grab_set()
+            num_dlg.focus_set()
+
         ttk.Label(action_frame, text="Drag strings to move  |",
                   foreground='gray', font=('Helvetica', 9)).pack(side='left', padx=(0, 8))
         ttk.Button(action_frame, text="Add Device(s)", command=add_device).pack(side='left', padx=2)
@@ -4406,6 +4591,7 @@ class SitePreviewWindow(tk.Toplevel):
                    command=lambda: [tree.item(c, open=False) for c in tree.get_children()]).pack(side='left', padx=2)
         ttk.Button(bottom_frame, text="Expand All",
                    command=lambda: [tree.item(c, open=True) for c in tree.get_children()]).pack(side='left', padx=2)
+        ttk.Button(bottom_frame, text="Auto-Number", command=auto_number).pack(side='left', padx=2)
 
         # Initial tree
         refresh_tree()

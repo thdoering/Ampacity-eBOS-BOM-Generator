@@ -86,7 +86,11 @@ class ModuleManager(ttk.Frame):
         
         ttk.Label(elec_frame, text="Wattage:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
         self.wattage_var = tk.StringVar()
-        ttk.Entry(elec_frame, textvariable=self.wattage_var).grid(row=0, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        self._validate_wattage = self.register(lambda val: val == "" or val == "." or
+            val.replace('.', '', 1).isdigit())
+        ttk.Spinbox(elec_frame, from_=100, to=1000, increment=5, textvariable=self.wattage_var,
+            validate='all', validatecommand=(self._validate_wattage, '%P')
+            ).grid(row=0, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         
         ttk.Label(elec_frame, text="Vmp:").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
         self.vmp_var = tk.StringVar()
@@ -308,7 +312,17 @@ class ModuleManager(ttk.Frame):
         module = self.create_module_spec()
         if not module:
             return
-            
+
+        pmp_calc = module.vmp * module.imp
+        delta = abs(pmp_calc - module.wattage) / module.wattage
+        if delta > 0.03:
+            msg = (
+                f"Vmp × Imp = {pmp_calc:.1f} W, but entered wattage is {module.wattage:.1f} W "
+                f"({delta * 100:.1f}% difference).\n\nSave anyway?"
+            )
+            if not messagebox.askyesno("Wattage Mismatch", msg):
+                return
+
         name = f"{module.manufacturer} {module.model}"
         if name in self.modules:
             if not messagebox.askyesno("Confirm", f"Module '{name}' already exists. Overwrite?"):

@@ -14396,6 +14396,68 @@
         "isc": 14.03,
         "max_system_voltage": 1500
       }
+    },
+    "NXT-50-590W-50/M/0-1P": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 25,
+      "strings_per_tracker": 2.0,
+      "module_spacing_m": 0.01,
+      "has_motor": true,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 2,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 2,
+      "motor_split_north": 14,
+      "motor_split_south": 11,
+      "modules_high": 1,
+      "source_point_config": null,
+      "partial_string_side": "north",
+      "module_spec": {
+        "manufacturer": "VSUN Solar",
+        "model": "VSUN590N-144BMH-DG",
+        "type": "Bifacial",
+        "length_mm": 2278.0,
+        "width_mm": 1134.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 590.0,
+        "vmp": 43.11,
+        "imp": 13.69,
+        "voc": 51.79,
+        "isc": 14.49,
+        "max_system_voltage": 1500
+      }
+    },
+    "NXT-75-590W-50/M/25-1P": {
+      "module_orientation": "Portrait",
+      "modules_per_string": 25,
+      "strings_per_tracker": 3.0,
+      "module_spacing_m": 0.01,
+      "has_motor": true,
+      "motor_gap_m": 1.0,
+      "motor_position_after_string": 2,
+      "motor_placement_type": "between_strings",
+      "motor_string_index": 2,
+      "motor_split_north": 14,
+      "motor_split_south": 11,
+      "modules_high": 1,
+      "source_point_config": null,
+      "partial_string_side": "north",
+      "module_spec": {
+        "manufacturer": "VSUN Solar",
+        "model": "VSUN590N-144BMH-DG",
+        "type": "Bifacial",
+        "length_mm": 2278.0,
+        "width_mm": 1134.0,
+        "depth_mm": 40,
+        "weight_kg": 25,
+        "wattage": 590.0,
+        "vmp": 43.11,
+        "imp": 13.69,
+        "voc": 51.79,
+        "isc": 14.49,
+        "max_system_voltage": 1500
+      }
     }
   },
   "JINKO SOLAR": {

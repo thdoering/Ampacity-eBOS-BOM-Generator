@@ -423,6 +423,7 @@ class QuickEstimate(ttk.Frame):
             'device_position': 'middle',
             'driveline_angle': 0.0,
             'azimuth': 180,
+            'tracker_alignment': 'motor',
             'row_spacing_ft': default_row_spacing,
             'strings_per_inv': default_spi,
             'segments': [
@@ -4350,16 +4351,31 @@ class QuickEstimate(ttk.Frame):
             self._schedule_autosave()
         azimuth_var.trace_add('write', on_azimuth_change)
 
+        # Tracker Alignment
+        ttk.Label(form_frame, text="Tracker Alignment:").grid(row=4, column=0, sticky='w', pady=5)
+        alignment_var = tk.StringVar(value=group.get('tracker_alignment', 'motor'))
+        alignment_combo = ttk.Combobox(form_frame, textvariable=alignment_var,
+                                       values=['top', 'motor', 'bottom'],
+                                       state='readonly', width=10)
+        alignment_combo.grid(row=4, column=1, sticky='w', pady=5, padx=(10, 0))
+        self.disable_combobox_scroll(alignment_combo)
+
+        def on_alignment_change(*args):
+            group['tracker_alignment'] = alignment_var.get()
+            self._mark_stale()
+            self._schedule_autosave()
+        alignment_combo.bind('<<ComboboxSelected>>', on_alignment_change)
+
         # Row Spacing + GCR (bidirectional)
-        ttk.Label(form_frame, text="Row Spacing (ft):").grid(row=4, column=0, sticky='w', pady=5)
+        ttk.Label(form_frame, text="Row Spacing (ft):").grid(row=5, column=0, sticky='w', pady=5)
         row_spacing_var = tk.StringVar(value=f"{group.get('row_spacing_ft', 20.0):.3f}")
         row_spacing_entry = ttk.Entry(form_frame, textvariable=row_spacing_var, width=10)
-        row_spacing_entry.grid(row=4, column=1, sticky='w', pady=5, padx=(10, 0))
+        row_spacing_entry.grid(row=5, column=1, sticky='w', pady=5, padx=(10, 0))
 
-        ttk.Label(form_frame, text="GCR:").grid(row=4, column=2, sticky='w', pady=5, padx=(15, 0))
+        ttk.Label(form_frame, text="GCR:").grid(row=5, column=2, sticky='w', pady=5, padx=(15, 0))
         gcr_var = tk.StringVar(value="--")
         gcr_entry = ttk.Entry(form_frame, textvariable=gcr_var, width=8)
-        gcr_entry.grid(row=4, column=3, sticky='w', pady=5, padx=(5, 0))
+        gcr_entry.grid(row=5, column=3, sticky='w', pady=5, padx=(5, 0))
 
         def _update_gcr_from_row_spacing(*args):
             try:
@@ -4407,9 +4423,9 @@ class QuickEstimate(ttk.Frame):
         _update_gcr_from_row_spacing()
 
         # Strings per Device override
-        ttk.Label(form_frame, text="Strings/Device:").grid(row=5, column=0, sticky='w', pady=5)
+        ttk.Label(form_frame, text="Strings/Device:").grid(row=6, column=0, sticky='w', pady=5)
         spi_frame = ttk.Frame(form_frame)
-        spi_frame.grid(row=5, column=1, columnspan=3, sticky='w', pady=5, padx=(10, 0))
+        spi_frame.grid(row=6, column=1, columnspan=3, sticky='w', pady=5, padx=(10, 0))
 
         spi_override_var = tk.StringVar(
             value=str(group['strings_per_inv']) if group.get('strings_per_inv') is not None else ''
@@ -5672,6 +5688,309 @@ class QuickEstimate(ttk.Frame):
 
         self._redraw_results_tree()
 
+    def _write_block_details_sheet(self, wb):
+        """Write a Block Details sheet with per-device part breakdowns."""
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+        import os as _os
+
+        title_font = Font(bold=True, size=14)
+        header_font = Font(bold=True, size=11, color="FFFFFF")
+        header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+        section_font = Font(bold=True, size=11)
+        section_fill = PatternFill(start_color="D9E2F3", end_color="D9E2F3", fill_type="solid")
+        thin_border = Border(
+            left=Side(style='thin'), right=Side(style='thin'),
+            top=Side(style='thin'), bottom=Side(style='thin')
+        )
+        center_align = Alignment(horizontal='center', vertical='center')
+        left_align = Alignment(horizontal='left', vertical='center')
+
+        ws = wb.create_sheet("Block Details")
+        row = 1
+        ws.merge_cells(f'A{row}:E{row}')
+        ws.cell(row=row, column=1, value="Block Details — Per-Device Part Breakdown").font = title_font
+        row += 2
+
+        topology = self.topology_var.get() if hasattr(self, 'topology_var') else ''
+        totals = getattr(self, 'last_totals', {}) or {}
+        devices = list(getattr(self, 'last_combiner_assignments', []))
+
+        if topology == 'Distributed String':
+            inv_summary = totals.get('inverter_summary', {})
+            allocation_result = inv_summary.get('allocation_result')
+            if allocation_result:
+                devices = []
+                module_isc = self.selected_module.isc if self.selected_module else 0
+                nec_factor = getattr(self.current_project, 'nec_safety_factor', 1.56) if self.current_project else 1.56
+                tracker_segment_map = []
+                for group in self.groups:
+                    for seg in group['segments']:
+                        harness_sizes = self._get_harness_sizes(seg)
+                        for _ in range(seg['quantity']):
+                            tracker_segment_map.append({
+                                'spt': seg['strings_per_tracker'],
+                                'harness_sizes': list(harness_sizes),
+                                'wire_gauge': self._get_wire_gauge_for_segment(seg, 'whip'),
+                            })
+                for inv_idx, inv in enumerate(allocation_result['inverters']):
+                    inv_name = self.device_names.get(inv_idx, f"INV-{inv_idx + 1:02d}")
+                    connections = self._build_connections_from_harness_map(
+                        inv.get('harness_map', []), tracker_segment_map, module_isc, nec_factor
+                    )
+                    devices.append({
+                        'combiner_name': inv_name,
+                        'device_idx': inv_idx,
+                        'breaker_size': None,
+                        'module_isc': module_isc,
+                        'nec_factor': nec_factor,
+                        'connections': connections,
+                        '_is_distributed': True,
+                    })
+
+        if not devices:
+            ws.cell(row=row, column=1, value="No device data available.").font = section_font
+            return
+
+        default_feeder_size = (
+            self.wire_sizing.get('ac_homerun', '4/0 AWG')
+            if topology == 'Distributed String'
+            else self.wire_sizing.get('dc_feeder', '4/0 AWG')
+        )
+        dc_feeder_avg_ft = self._get_float_var(self.dc_feeder_distance_var, 500.0) if hasattr(self, 'dc_feeder_distance_var') else 500.0
+        ac_homerun_avg_ft = self._get_float_var(self.ac_homerun_distance_var, 500.0) if hasattr(self, 'ac_homerun_distance_var') else 500.0
+
+        # Site-level extender totals for proportional per-device allocation
+        ext_pos_totals = totals.get('extenders_pos_by_length', {})
+        ext_neg_totals = totals.get('extenders_neg_by_length', {})
+        site_total_strings = sum(
+            sum(conn['num_strings'] for conn in d['connections']) for d in devices
+        ) or 1
+
+        # Average whip length per gauge from aggregate totals (used for PN lookup)
+        whip_avg_by_gauge = {}
+        for (length, gauge), count in totals.get('whips_by_length', {}).items():
+            if gauge not in whip_avg_by_gauge:
+                whip_avg_by_gauge[gauge] = {'total_ft': 0.0, 'count': 0}
+            whip_avg_by_gauge[gauge]['total_ft'] += length * count
+            whip_avg_by_gauge[gauge]['count'] += count
+        for gauge in list(whip_avg_by_gauge):
+            d = whip_avg_by_gauge[gauge]
+            whip_avg_by_gauge[gauge] = d['total_ft'] / d['count'] if d['count'] > 0 else 10.0
+
+        # Load part libraries for description and PN lookups
+        _cur = _os.path.dirname(_os.path.abspath(__file__))
+        _root = _os.path.dirname(_os.path.dirname(_cur))
+
+        def _load_lib(filename):
+            try:
+                with open(_os.path.join(_root, 'data', filename), 'r') as _f:
+                    return json.load(_f)
+            except Exception:
+                return {}
+
+        harness_library = _load_lib('harness_library.json')
+        extender_library = _load_lib('extender_library.json')
+        whip_library = _load_lib('whip_library.json')
+        fuse_library = _load_lib('fuse_library.json')
+
+        def _lib_desc(lib, pn):
+            return lib.get(pn, {}).get('description', '')
+
+        has_inline_fuses = bool(totals.get('inline_fuses_by_rating'))
+
+        def _fuse_pn(rating):
+            for pn, spec in fuse_library.items():
+                if spec.get('fuse_rating_amps') == rating:
+                    return pn
+            candidates = [(spec.get('fuse_rating_amps', 0), pn)
+                          for pn, spec in fuse_library.items()
+                          if spec.get('fuse_rating_amps', 0) >= rating]
+            return min(candidates)[1] if candidates else 'N/A'
+
+        col_headers = ['Component Type', 'Part Number', 'Description', 'Quantity', 'Unit']
+
+        _split_details_bds = getattr(self, '_split_tracker_details', {})
+        _tracker_seg_map_bds = getattr(self, '_tracker_to_segment', [])
+
+        # Accumulates {(comp_type, part_num, desc, unit): total_qty} across all devices
+        _summary = {}
+
+        for dev in devices:
+            dev_name = dev['combiner_name']
+            connections = dev['connections']
+            dev_idx = dev['device_idx']
+            is_distributed = dev.get('_is_distributed', False)
+
+            feeder_size = self.device_feeder_sizes.get(dev_idx, default_feeder_size)
+            try:
+                parallel = int(self.device_feeder_parallel_counts.get(dev_idx, 1))
+                if parallel < 1:
+                    parallel = 1
+            except (ValueError, TypeError):
+                parallel = 1
+
+            total_strings = sum(conn['num_strings'] for conn in connections)
+            parallel_txt = f", {parallel}× parallel" if parallel > 1 else ""
+            summary = f"{total_strings} strings allocated, {feeder_size} feeder{parallel_txt}"
+
+            ws.merge_cells(f'A{row}:E{row}')
+            hdr = ws.cell(row=row, column=1, value=f"{dev_name}  —  {summary}")
+            hdr.font = section_font
+            for c in range(1, 6):
+                ws.cell(row=row, column=c).fill = section_fill
+            row += 1
+
+            for col, h in enumerate(col_headers, 1):
+                cell = ws.cell(row=row, column=col, value=h)
+                cell.font = header_font
+                cell.fill = header_fill
+                cell.alignment = center_align
+                cell.border = thin_border
+            row += 1
+
+            def _wr(comp_type, part_num, desc, qty, unit, _row_ref=None):
+                nonlocal row
+                for c, v in enumerate([comp_type, part_num, desc, qty, unit], 1):
+                    cell = ws.cell(row=row, column=c, value=v)
+                    cell.border = thin_border
+                    cell.alignment = left_align if c == 1 else center_align
+                row += 1
+                key = (comp_type, part_num or '', desc or '', unit or '')
+                _summary[key] = _summary.get(key, 0) + (qty or 0)
+
+            # Combiner box (non-distributed only)
+            if not is_distributed and dev.get('breaker_size') and connections:
+                n_inputs = len(connections)
+                max_h = max(conn['num_strings'] for conn in connections)
+                fuse_cat = self.get_fuse_holder_category(max_h * dev['module_isc'] * dev['nec_factor'])
+                cb = self.find_combiner_box(n_inputs, dev['breaker_size'], fuse_cat)
+                if cb:
+                    _wr('Combiner Box', cb.get('part_number', ''), cb.get('description', ''), 1, 'ea')
+
+            # Extenders — proportional share of site totals based on string count
+            dev_fraction = total_strings / site_total_strings
+            ext_gauges = sorted(
+                set(g for (_, g) in ext_pos_totals) | set(g for (_, g) in ext_neg_totals)
+            )
+            for gauge in ext_gauges:
+                sc = self._gauge_to_string_count('extender', gauge)
+                pos_items = {length: qty for (length, g), qty in ext_pos_totals.items() if g == gauge}
+                neg_items = {length: qty for (length, g), qty in ext_neg_totals.items() if g == gauge}
+                for length in sorted(set(pos_items) | set(neg_items)):
+                    pos_qty = round((pos_items.get(length, 0)) * dev_fraction)
+                    neg_qty = round((neg_items.get(length, 0)) * dev_fraction)
+                    if pos_qty > 0:
+                        pn, _, _ = self.lookup_part_and_price('extender', polarity='positive', length_ft=length, qty=pos_qty, num_strings=sc)
+                        _wr(f"Extender {length}ft (Pos)", pn, _lib_desc(extender_library, pn), pos_qty, 'ea')
+                    if neg_qty > 0:
+                        pn, _, _ = self.lookup_part_and_price('extender', polarity='negative', length_ft=length, qty=neg_qty, num_strings=sc)
+                        _wr(f"Extender {length}ft (Neg)", pn, _lib_desc(extender_library, pn), neg_qty, 'ea')
+
+            # Harnesses — counted from actual tracker assignments (exact, handles split trackers)
+            _dev_harness_count = {}
+            _seen_nonsplit = set()
+            for conn in connections:
+                tidx_h = conn.get('tracker_idx', -1)
+                if tidx_h < 0 or tidx_h in _split_details_bds:
+                    continue
+                if tidx_h in _seen_nonsplit:
+                    continue
+                _seen_nonsplit.add(tidx_h)
+                if tidx_h < len(_tracker_seg_map_bds):
+                    _seg_h = _tracker_seg_map_bds[tidx_h]['seg']
+                    for sz in self._get_harness_sizes(_seg_h):
+                        _dev_harness_count[sz] = _dev_harness_count.get(sz, 0) + 1
+                else:
+                    sz = conn['num_strings']
+                    _dev_harness_count[sz] = _dev_harness_count.get(sz, 0) + 1
+            for tidx_h, split_info in _split_details_bds.items():
+                if not any(conn.get('tracker_idx') == tidx_h for conn in connections):
+                    continue
+                for portion in split_info.get('portions', []):
+                    if portion['inv_idx'] == dev_idx:
+                        for sz in portion.get('harnesses', []):
+                            _dev_harness_count[sz] = _dev_harness_count.get(sz, 0) + 1
+                        break
+            for sz in sorted(_dev_harness_count.keys(), reverse=True):
+                dev_qty = _dev_harness_count[sz]
+                if dev_qty > 0:
+                    pos_pn, _, _ = self.lookup_part_and_price('harness', num_strings=sz, polarity='positive', qty=dev_qty)
+                    neg_pn, _, _ = self.lookup_part_and_price('harness', num_strings=sz, polarity='negative', qty=dev_qty)
+                    _wr(f"{sz}-String Harness (Pos)", pos_pn, _lib_desc(harness_library, pos_pn), dev_qty, 'ea')
+                    _wr(f"{sz}-String Harness (Neg)", neg_pn, _lib_desc(harness_library, neg_pn), dev_qty, 'ea')
+
+            # Inline fuses — one per string, derived from exact per-device harness counts
+            if has_inline_fuses:
+                dev_fuse_qty = sum(sz * cnt for sz, cnt in _dev_harness_count.items() if sz > 1)
+                if dev_fuse_qty > 0:
+                    fuse_rating = self._calc_inline_fuse_rating(self.selected_module)
+                    pn = _fuse_pn(fuse_rating)
+                    _wr(f"{fuse_rating}A Inline DC String Fuse (Pos)", pn, _lib_desc(fuse_library, pn), dev_fuse_qty, 'ea')
+
+            # Whip cables by gauge
+            whip_by_gauge = {}
+            for conn in connections:
+                g = conn.get('wire_gauge', '')
+                whip_by_gauge[g] = whip_by_gauge.get(g, 0) + 1
+            for gauge, count in sorted(whip_by_gauge.items()):
+                avg_len = whip_avg_by_gauge.get(gauge, 0.0)
+                sc = self._gauge_to_string_count('whip', gauge)
+                pos_pn, _, _ = self.lookup_part_and_price('whip', polarity='positive', length_ft=avg_len, qty=count, num_strings=sc)
+                neg_pn, _, _ = self.lookup_part_and_price('whip', polarity='negative', length_ft=avg_len, qty=count, num_strings=sc)
+                _wr('Whip Cable (Pos)', pos_pn, _lib_desc(whip_library, pos_pn), count, 'ea')
+                _wr('Whip Cable (Neg)', neg_pn, _lib_desc(whip_library, neg_pn), count, 'ea')
+
+            # DC feeder / AC homerun
+            if topology == 'Distributed String':
+                total_ft = round(ac_homerun_avg_ft * parallel)
+                _wr('AC Homerun', '', f"{feeder_size}, {ac_homerun_avg_ft:.0f}ft × {parallel}× parallel", total_ft, 'ft')
+            else:
+                total_ft = round(dc_feeder_avg_ft * parallel)
+                _wr('DC Feeder (Pos)', '', f"{feeder_size}, {dc_feeder_avg_ft:.0f}ft × {parallel}× parallel", total_ft, 'ft')
+                _wr('DC Feeder (Neg)', '', f"{feeder_size}, {dc_feeder_avg_ft:.0f}ft × {parallel}× parallel", total_ft, 'ft')
+                if topology == 'Centralized String':
+                    ac_size = self.get_wire_size_for('ac_homerun') if hasattr(self, 'get_wire_size_for') else ''
+                    ac_ft = round(ac_homerun_avg_ft)
+                    _wr('AC Homerun', '', f"{ac_size}, {ac_ft}ft", ac_ft, 'ft')
+
+            row += 1  # blank row between devices
+
+        # Summary table — all devices combined
+        if _summary:
+            row += 1
+            ws.merge_cells(f'A{row}:E{row}')
+            summary_title = ws.cell(row=row, column=1, value="Summary — All Devices Combined")
+            summary_title.font = title_font
+            for c in range(1, 6):
+                ws.cell(row=row, column=c).fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+            row += 1
+
+            summary_headers = ['Component Type', 'Part Number', 'Description', 'Total Qty', 'Unit']
+            for col, h in enumerate(summary_headers, 1):
+                cell = ws.cell(row=row, column=col, value=h)
+                cell.font = header_font
+                cell.fill = header_fill
+                cell.alignment = center_align
+                cell.border = thin_border
+            row += 1
+
+            for (comp_type, part_num, desc, unit), total_qty in sorted(_summary.items()):
+                for c, v in enumerate([comp_type, part_num, desc, total_qty, unit], 1):
+                    cell = ws.cell(row=row, column=c, value=v)
+                    cell.border = thin_border
+                    cell.alignment = left_align if c == 1 else center_align
+                row += 1
+
+        # Auto-fit columns
+        for col_idx in range(1, 6):
+            max_len = max(len(col_headers[col_idx - 1]), 10)
+            col_letter = get_column_letter(col_idx)
+            for cell in ws[col_letter]:
+                if cell.value:
+                    max_len = max(max_len, len(str(cell.value)))
+            ws.column_dimensions[col_letter].width = min(max_len + 3, 55)
+
     def _write_combiner_sheet(self, wb):
         """Write a Combiner Boxes sheet to the workbook from Device Configurator data."""
         from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -6280,6 +6599,9 @@ class QuickEstimate(ttk.Frame):
                 total_cell.border = thin_border
                 total_cell.alignment = center_align
                 row += 1
+
+            # ========== BLOCK DETAILS SHEET ==========
+            self._write_block_details_sheet(wb)
 
             # ========== COMBINER BOXES SHEET ==========
             self._write_combiner_sheet(wb)

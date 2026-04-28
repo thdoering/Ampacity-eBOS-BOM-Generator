@@ -231,13 +231,18 @@ def _compute_world_bounds(group_layout, device_positions, pads):
 
             angle_y_offset = t_idx * pitch * math.tan(math.radians(group.get('driveline_angle', 0)))
 
-            # Motor alignment (must match _draw_groups logic)
-            group_motor_y = group.get('motor_y_ft', None)
-            if tracker.get('has_motor', False) and group_motor_y is not None:
-                ty = gy + (group_motor_y - tracker['motor_y_ft']) + angle_y_offset
+            # Tracker alignment (must match _draw_groups logic)
+            _talign = group.get('tracker_alignment', 'motor')
+            _tlen = tracker.get('length_ft', 100)
+            _mgl = group.get('length_ft', _tlen)
+            if _talign == 'top':
+                ty = gy + angle_y_offset
+            elif _talign == 'bottom':
+                ty = gy + (_mgl - _tlen) + angle_y_offset
+            elif tracker.get('has_motor', False) and group.get('motor_y_ft', None) is not None:
+                ty = gy + (group['motor_y_ft'] - tracker['motor_y_ft']) + angle_y_offset
             else:
-                max_group_length = group.get('length_ft', tracker.get('length_ft', 100))
-                ty = gy + (max_group_length - tracker.get('length_ft', 100)) / 2 + angle_y_offset
+                ty = gy + (_mgl - _tlen) / 2 + angle_y_offset
 
             rcx, rcy, rd = _group_rotation_info(group)
             corners = [
@@ -309,14 +314,17 @@ def _draw_groups(ax, group_layout, max_width):
             angle = group_data.get('driveline_angle', 0)
             angle_y_offset = t_idx * pitch * math.tan(math.radians(angle))
 
-            # Motor alignment: match site_preview.py draw() logic
-            group_motor_y = group_data.get('motor_y_ft', None)
-            if tracker.get('has_motor', False) and group_motor_y is not None:
-                ty = gy + (group_motor_y - tracker['motor_y_ft']) + angle_y_offset
+            # Tracker alignment: match site_preview.py draw() logic
+            _talign = group_data.get('tracker_alignment', 'motor')
+            _mgl = group_data.get('length_ft', t_length)
+            if _talign == 'top':
+                ty = gy + angle_y_offset
+            elif _talign == 'bottom':
+                ty = gy + (_mgl - t_length) + angle_y_offset
+            elif tracker.get('has_motor', False) and group_data.get('motor_y_ft', None) is not None:
+                ty = gy + (group_data['motor_y_ft'] - tracker['motor_y_ft']) + angle_y_offset
             else:
-                # Center fallback
-                max_group_length = group_data.get('length_ft', t_length)
-                ty = gy + (max_group_length - t_length) / 2 + angle_y_offset
+                ty = gy + (_mgl - t_length) / 2 + angle_y_offset
 
             # --- String heights (handle half-string trackers) ---
             half_string_side = tracker.get('half_string_side', None)
@@ -628,12 +636,16 @@ def _compute_tracker_bboxes(group_layout):
             tx_off   = (max_w - t_width) / 2 if max_w > t_width else 0
             ang_dy   = t_idx * pitch * math.tan(math.radians(group.get('driveline_angle', 0)))
 
-            gmy = group.get('motor_y_ft', None)
-            if tracker.get('has_motor', False) and gmy is not None:
-                ty = gy + (gmy - tracker['motor_y_ft']) + ang_dy
+            _talign = group.get('tracker_alignment', 'motor')
+            mgl = group.get('length_ft', t_length)
+            if _talign == 'top':
+                ty = gy + ang_dy
+            elif _talign == 'bottom':
+                ty = gy + (mgl - t_length) + ang_dy
+            elif tracker.get('has_motor', False) and group.get('motor_y_ft', None) is not None:
+                ty = gy + (group['motor_y_ft'] - tracker['motor_y_ft']) + ang_dy
             else:
-                mgl = group.get('length_ft', tracker.get('length_ft', 100))
-                ty  = gy + (mgl - t_length) / 2 + ang_dy
+                ty = gy + (mgl - t_length) / 2 + ang_dy
 
             corners = [
                 (tx + tx_off,            ty),
