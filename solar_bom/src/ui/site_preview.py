@@ -4560,9 +4560,31 @@ class SitePreviewWindow(tk.Toplevel):
                 except (ValueError, tk.TclError):
                     return
                 prefix = prefix_var.get()
+
+                # Snapshot device-object → pad mapping before any reordering
+                real_devs_before = [d for d in device_data if not d.get('is_unallocated')]
+                obj_to_pad = {}
+                for pad_idx, pad in enumerate(getattr(self, 'pads', [])):
+                    for pos_idx in pad.get('assigned_devices', []):
+                        if pos_idx < len(real_devs_before):
+                            obj_to_pad[id(real_devs_before[pos_idx])] = pad_idx
+
                 for n, data_idx in enumerate(sorted_data_indices):
                     device_data[data_idx]['name'] = f'{prefix}{start + n:02d}'
                 _sort_device_data()
+
+                # Rebuild pad assignments using object identity after sort
+                if obj_to_pad and hasattr(self, 'pads'):
+                    new_real_devs = [d for d in device_data if not d.get('is_unallocated')]
+                    for pad in self.pads:
+                        pad['assigned_devices'] = []
+                    for new_pos_idx, d in enumerate(new_real_devs):
+                        pad_idx = obj_to_pad.get(id(d))
+                        if pad_idx is not None and pad_idx < len(self.pads):
+                            self.pads[pad_idx]['assigned_devices'].append(new_pos_idx)
+                    for pad in self.pads:
+                        pad['assigned_devices'].sort()
+
                 num_dlg.destroy()
                 refresh_tree()
                 _update_live_preview()
