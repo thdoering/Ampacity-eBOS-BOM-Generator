@@ -58,7 +58,7 @@ class TrackerTemplateCreator(ttk.Frame):
         template_frame.grid(row=0, column=0, padx=2, pady=5, sticky=(tk.W, tk.E, tk.N))
         
         # Create Treeview for hierarchical template display with checkbox column
-        self.template_tree = ttk.Treeview(template_frame, columns=('enabled',), height=15)
+        self.template_tree = ttk.Treeview(template_frame, columns=('enabled',), height=15, selectmode='extended')
         self.template_tree.grid(row=0, column=0, padx=2, pady=2, sticky=(tk.W, tk.E, tk.N, tk.S))
 
         # Configure tree columns
@@ -950,21 +950,12 @@ class TrackerTemplateCreator(ttk.Frame):
             }
             
             self.save_templates()
-            self.update_template_list()
 
-            # Auto-enable newly created template with full key including manufacturer
+            # Auto-enable before rebuilding tree so _is_template_enabled returns True
             if self.current_project:
                 self._add_enabled_template(full_template_key)
 
-            # Update the UI to show the template as enabled
-            for manufacturer_item in self.template_tree.get_children():
-                for template_item in self.template_tree.get_children(manufacturer_item):
-                    if template_item in self.tree_item_to_template:
-                        if self.tree_item_to_template[template_item] == full_template_key:
-                            values = list(self.template_tree.item(template_item, 'values'))
-                            values[0] = '☑'
-                            self.template_tree.item(template_item, values=values, tags=('checked',))
-                            break
+            self.update_template_list()
 
             # Expand the parent nodes to show the new template
             for manufacturer_item in self.template_tree.get_children():
@@ -1078,112 +1069,67 @@ class TrackerTemplateCreator(ttk.Frame):
         self._source_point_config = copy.deepcopy(template_data.get("source_point_config", None))
         self.update_preview()
         
+    def _collect_leaf_template_keys(self, item):
+        """Return all leaf template keys under a tree item (inclusive)."""
+        keys = []
+        if item in self.tree_item_to_template:
+            keys.append(self.tree_item_to_template[item])
+        else:
+            for child in self.template_tree.get_children(item):
+                keys.extend(self._collect_leaf_template_keys(child))
+        return keys
+
     def delete_template(self):
-        """Delete selected template"""
+        """Delete all selected templates (supports multi-select)."""
         selection = self.template_tree.selection()
         if not selection:
             messagebox.showwarning("Warning", "Please select a template to delete")
             return
-            
-        item = selection[0]
-        
-        # Check if this is a template or a parent node
-        values = self.template_tree.item(item, 'values')
-        if not values or values[0] == '':
-            # This is a parent node - determine which level
-            parent = self.template_tree.parent(item)
-            grandparent = self.template_tree.parent(parent) if parent else None
-            
-            if not parent:
-                # This is a manufacturer node
-                manufacturer = self.template_tree.item(item, 'text')
-                templates_to_delete = [key for key, template_data in self.templates.items() 
-                                    if template_data.get('module_spec', {}).get('manufacturer') == manufacturer]
-                
-                if not templates_to_delete:
-                    return
-                    
-                if messagebox.askyesno("Confirm", 
-                                    f"Delete all {len(templates_to_delete)} templates from {manufacturer}?"):
-                    for template_key in templates_to_delete:
-                        del self.templates[template_key]
-                    self.save_templates()
-                    self.update_template_list()
-                    
-                    # Call the deletion callback if provided
-                    if self.on_template_deleted:
-                        for template_key in templates_to_delete:
-                            self.on_template_deleted(template_key)
-                            
-            elif not grandparent:
-                # This is a model node
-                manufacturer = self.template_tree.item(parent, 'text')
-                model = self.template_tree.item(item, 'text')
-                templates_to_delete = [key for key, template_data in self.templates.items() 
-                                    if template_data.get('module_spec', {}).get('manufacturer') == manufacturer
-                                    and template_data.get('module_spec', {}).get('model') == model]
-                
-                if not templates_to_delete:
-                    return
-                    
-                if messagebox.askyesno("Confirm", 
-                                    f"Delete all {len(templates_to_delete)} templates for {manufacturer} {model}?"):
-                    for template_key in templates_to_delete:
-                        del self.templates[template_key]
-                    self.save_templates()
-                    self.update_template_list()
-                    
-                    # Call the deletion callback if provided
-                    if self.on_template_deleted:
-                        for template_key in templates_to_delete:
-                            self.on_template_deleted(template_key)
-                            
-            else:
-                # This is a string size node
-                manufacturer = self.template_tree.item(grandparent, 'text')
-                model = self.template_tree.item(parent, 'text')
-                string_text = self.template_tree.item(item, 'text')
-                # Extract number from "X modules per string"
-                string_size = int(string_text.split()[0])
-                
-                templates_to_delete = [key for key, template_data in self.templates.items() 
-                                    if template_data.get('module_spec', {}).get('manufacturer') == manufacturer
-                                    and template_data.get('module_spec', {}).get('model') == model
-                                    and template_data.get('modules_per_string') == string_size]
-                
-                if not templates_to_delete:
-                    return
-                    
-                if messagebox.askyesno("Confirm", 
-                                    f"Delete all {len(templates_to_delete)} templates for {manufacturer} {model} with {string_size} modules per string?"):
-                    for template_key in templates_to_delete:
-                        del self.templates[template_key]
-                    self.save_templates()
-                    self.update_template_list()
-                    
-                    # Call the deletion callback if provided
-                    if self.on_template_deleted:
-                        for template_key in templates_to_delete:
-                            self.on_template_deleted(template_key)
-            return
-            
-        # This is a template node - existing code continues
-        # Get template key from mapping
-        if item not in self.tree_item_to_template:
-            messagebox.showwarning("Warning", "Template mapping not found")
-            return
-            
-        template_key = self.tree_item_to_template[item]
-        template_text = self.template_tree.item(item, 'text')
 
-        if messagebox.askyesno("Confirm", f"Delete template '{template_text}'?"):
-            del self.templates[template_key]
-            self.save_templates()
-            self.update_template_list()
-            
-            # Call the deletion callback if provided
-            if self.on_template_deleted:
-                self.on_template_deleted(template_key)
+        # Collect all leaf template keys implied by the selection, deduplicated
+        seen = set()
+        templates_to_delete = []
+        for item in selection:
+            for key in self._collect_leaf_template_keys(item):
+                if key not in seen:
+                    seen.add(key)
+                    templates_to_delete.append(key)
+
+        if not templates_to_delete:
+            messagebox.showwarning("Warning", "Please select a template to delete")
+            return
+
+        # Block deletion if any selected template is currently in use
+        blocked = []
+        for key in templates_to_delete:
+            used_in_blocks, _ = self._is_template_used_in_blocks(key)
+            used_in_estimates, _ = self._is_template_used_in_estimates(key)
+            if used_in_blocks or used_in_estimates:
+                display = key.split(' - ', 1)[-1] if ' - ' in key else key
+                blocked.append(display)
+
+        if blocked:
+            messagebox.showwarning(
+                "Cannot Delete",
+                "The following templates are in use and cannot be deleted:\n\n"
+                + "\n".join(f"  • {t}" for t in blocked)
+            )
+            return
+
+        count = len(templates_to_delete)
+        label = "template" if count == 1 else "templates"
+        if not messagebox.askyesno("Confirm", f"Delete {count} {label}?"):
+            return
+
+        for key in templates_to_delete:
+            del self.templates[key]
+
+        self.save_templates()
+        self.update_template_list()
+
+        if self.on_template_deleted:
+            for key in templates_to_delete:
+                self.on_template_deleted(key)
 
     def _build_module_position_map(self, template, scale, x_start, module_width, module_height):
         """Build a mapping of (row, col) -> (canvas_x, canvas_y, width, height) for all module positions.

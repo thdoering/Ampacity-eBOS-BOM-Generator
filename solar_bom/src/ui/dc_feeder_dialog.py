@@ -36,6 +36,7 @@ class DCFeederDialog(tk.Toplevel):
         self.cable_vars = {}      # block_id -> tk.StringVar
         self.parallel_vars = {}   # block_id -> tk.StringVar (parallel sets per pole)
 
+        self._original_cable = {}
         for block_id in self.sorted_ids:
             block = blocks[block_id]
             dist = getattr(block, 'dc_feeder_distance_ft', 0.0)
@@ -44,6 +45,7 @@ class DCFeederDialog(tk.Toplevel):
             self.distance_vars[block_id] = tk.StringVar(value=str(dist))
             self.cable_vars[block_id] = tk.StringVar(value=size)
             self.parallel_vars[block_id] = tk.StringVar(value=str(parallel))
+            self._original_cable[block_id] = size
 
         self._build_ui()
         self._center_on_parent(parent)
@@ -349,7 +351,10 @@ class DCFeederDialog(tk.Toplevel):
                 block.dc_feeder_distance_ft = float(self.distance_vars[block_id].get())
             except ValueError:
                 block.dc_feeder_distance_ft = 0.0
-            block.dc_feeder_cable_size = self.cable_vars[block_id].get()
+            new_size = self.cable_vars[block_id].get()
+            block.dc_feeder_cable_size = new_size
+            if new_size != self._original_cable.get(block_id):
+                block.dc_feeder_size_manually_set = True
             try:
                 pval = int(self.parallel_vars[block_id].get())
                 if pval < 1:

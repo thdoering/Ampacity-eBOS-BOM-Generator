@@ -1,15 +1,15 @@
 {
   "24A0030": {
     "part_number": "24A0030",
-    "description": "1500VDC 1FT 5A INLINE FUSE WITH 10AWG RED CABLE WITH M-F MC4",
+    "description": "1500VDC 1ft 5A Inline Fuse with 10AWG Red Cable with M-F MC4",
     "fuse_rating_amps": 5,
     "wire_gauge": "10 AWG",
     "cable_length_ft": 1.5,
     "connector_type": "MC4"
   },
   "2470030": {
-    "part_number": "2470030", 
-    "description": "1500VDC 1FT 15A INLINE FUSE WITH 10AWG RED CABLE WITH M-F MC4",
+    "part_number": "2470030",
+    "description": "1500VDC 1ft 15A Inline Fuse with 10AWG Red Cable with M-F MC4",
     "fuse_rating_amps": 15,
     "wire_gauge": "10 AWG",
     "cable_length_ft": 1.5,
@@ -17,7 +17,7 @@
   },
   "2480030": {
     "part_number": "2480030",
-    "description": "1500VDC 1FT 20A INLINE FUSE WITH 10AWG RED CABLE WITH M-F MC4", 
+    "description": "1500VDC 1ft 20A Inline Fuse with 10AWG Red Cable with M-F MC4",
     "fuse_rating_amps": 20,
     "wire_gauge": "10 AWG",
     "cable_length_ft": 1.5,
@@ -25,23 +25,23 @@
   },
   "2490030": {
     "part_number": "2490030",
-    "description": "1500VDC 1FT 25A INLINE FUSE WITH 10AWG RED CABLE WITH M-F MC4",
+    "description": "1500VDC 1ft 25A Inline Fuse with 10AWG Red Cable with M-F MC4",
     "fuse_rating_amps": 25,
-    "wire_gauge": "10 AWG", 
+    "wire_gauge": "10 AWG",
     "cable_length_ft": 1.5,
     "connector_type": "MC4"
   },
   "24B0030": {
     "part_number": "24B0030",
-    "description": "1500VDC 1FT 30A INLINE FUSE WITH 10AWG RED CABLE WITH M-F MC4",
+    "description": "1500VDC 1ft 30A Inline Fuse with 10AWG Red Cable with M-F MC4",
     "fuse_rating_amps": 30,
     "wire_gauge": "10 AWG",
     "cable_length_ft": 1.5,
     "connector_type": "MC4"
   },
   "24C0030": {
-    "part_number": "24C0030", 
-    "description": "1500VDC 1FT 32A INLINE FUSE WITH 10AWG RED CABLE WITH M-F MC4",
+    "part_number": "24C0030",
+    "description": "1500VDC 1ft 32A Inline Fuse with 10AWG Red Cable with M-F MC4",
     "fuse_rating_amps": 32,
     "wire_gauge": "10 AWG",
     "cable_length_ft": 1.5,
@@ -49,7 +49,7 @@
   },
   "24D0030": {
     "part_number": "24D0030",
-    "description": "1500VDC 1FT 35A INLINE FUSE WITH 10AWG RED CABLE WITH M-F MC4",
+    "description": "1500VDC 1ft 35A Inline Fuse with 10AWG Red Cable with M-F MC4",
     "fuse_rating_amps": 35,
     "wire_gauge": "10 AWG",
     "cable_length_ft": 1.5,
@@ -57,7 +57,7 @@
   },
   "24E0030": {
     "part_number": "24E0030",
-    "description": "1500VDC 1FT 40A INLINE FUSE WITH 8AWG RED CABLE WITH M-F MC4",
+    "description": "1500VDC 1ft 40A Inline Fuse with 8AWG Red Cable with M-F MC4",
     "fuse_rating_amps": 40,
     "wire_gauge": "8 AWG",
     "cable_length_ft": 1.5,
@@ -65,7 +65,7 @@
   },
   "24F0030": {
     "part_number": "24F0030",
-    "description": "1500VDC 1FT 45A INLINE FUSE WITH 8AWG RED CABLE WITH M-F MC4",
+    "description": "1500VDC 1ft 45A Inline Fuse with 8AWG Red Cable with M-F MC4",
     "fuse_rating_amps": 45,
     "wire_gauge": "8 AWG",
     "cable_length_ft": 1.5,

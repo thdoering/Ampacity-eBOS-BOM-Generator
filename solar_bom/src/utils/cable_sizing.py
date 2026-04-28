@@ -157,6 +157,37 @@ def recommend_dc_feeder_size(breaker_rating: float, material: str = "aluminum",
     return recommend_cable_size(breaker_rating, material, temp_rating)
 
 
+def recommend_block_dc_feeder_size(block, device_configurator=None) -> str:
+    """Recommend DC feeder cable size for a block.
+
+    Uses the combiner output breaker rating from device_configurator if available
+    (takes the largest breaker across all combiner configs for this block), then
+    falls back to the sum of inverter MPPT channel max_input_current × 1.25 (NEC
+    continuous load factor).  Always sizes for aluminum at 75 °C.
+    """
+    breaker = None
+
+    if device_configurator is not None:
+        combiner_configs = getattr(device_configurator, 'combiner_configs', {})
+        block_id = getattr(block, 'block_id', None)
+        for cfg in combiner_configs.values():
+            if getattr(cfg, 'block_id', None) == block_id:
+                size = cfg.get_display_breaker_size()
+                breaker = max(breaker, size) if breaker is not None else size
+
+    if breaker is None:
+        inv = getattr(block, 'inverter', None)
+        if inv is not None:
+            channels = getattr(inv, 'mppt_channels', [])
+            total_dc = sum(getattr(ch, 'max_input_current', 0.0) for ch in channels)
+            breaker = total_dc * 1.25
+
+    if not breaker:
+        return '4/0 AWG'
+
+    return recommend_dc_feeder_size(float(breaker), material='aluminum', temp_rating='75C')
+
+
 def recommend_ac_homerun_size(max_ac_current: float, material: str = "aluminum",
                                temp_rating: str = "75C") -> str:
     """

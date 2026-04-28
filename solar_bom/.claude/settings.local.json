@@ -11,7 +11,9 @@
       "Bash(.venv/Scripts/python -c ' *)",
       "Bash(.venv/Scripts/python -c \"import ast, sys; ast.parse\\(open\\('main.py'\\).read\\(\\)\\); print\\('main.py syntax OK'\\)\")",
       "Bash(python3 -c ' *)",
-      "Bash(awk -F: '$2 > 3900 && $2 < 4200')"
+      "Bash(awk -F: '$2 > 3900 && $2 < 4200')",
+      "Bash(python -c \"from src.models.device import StringInverterConfig, CombinerBoxConfig, HarnessConnection; print\\('device.py OK'\\)\")",
+      "Bash(python -c \"from src.models.project import Project; print\\('project.py OK'\\)\")"
     ]
   }
 }

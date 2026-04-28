@@ -300,10 +300,13 @@ class BlockConfigurator(ttk.Frame):
         # DC Feeder Cable Size
         ttk.Label(dc_feeder_frame, text="Cable Size:").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
         self.dc_feeder_cable_size_var = tk.StringVar(value="4/0 AWG")
-        dc_feeder_cable_combo = ttk.Combobox(dc_feeder_frame, textvariable=self.dc_feeder_cable_size_var, 
+        dc_feeder_cable_combo = ttk.Combobox(dc_feeder_frame, textvariable=self.dc_feeder_cable_size_var,
                                               state='readonly', width=12)
         dc_feeder_cable_combo['values'] = self.DC_FEEDER_SIZES
-        dc_feeder_cable_combo.grid(row=1, column=1, columnspan=2, padx=5, pady=2, sticky=(tk.W, tk.E))
+        dc_feeder_cable_combo.grid(row=1, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
+        ttk.Button(dc_feeder_frame, text="Auto",
+                   command=self._reset_feeder_size_to_recommended).grid(
+                   row=1, column=2, padx=(0, 5), pady=2, sticky=tk.W)
 
         # DC Feeder Parallel Count
         ttk.Label(dc_feeder_frame, text="Parallel Sets:").grid(row=2, column=0, padx=5, pady=2, sticky=tk.W)
@@ -317,7 +320,7 @@ class BlockConfigurator(ttk.Frame):
 
         # Add traces to save DC feeder settings when changed
         self.dc_feeder_distance_var.trace('w', lambda *args: self.save_dc_feeder_settings())
-        self.dc_feeder_cable_size_var.trace('w', lambda *args: self.save_dc_feeder_settings())
+        self.dc_feeder_cable_size_var.trace('w', lambda *args: self._on_feeder_cable_size_changed())
         self.dc_feeder_parallel_count_var.trace('w', lambda *args: self.save_dc_feeder_settings())
 
         # Bulk edit button
@@ -753,6 +756,40 @@ class BlockConfigurator(ttk.Frame):
         # Notify that blocks have changed
         self._notify_blocks_changed()
 
+    def _on_feeder_cable_size_changed(self):
+        """Called when the cable size combo changes — marks the block as manually set."""
+        if self.updating_ui or not self.current_block or self.current_block not in self.blocks:
+            return
+        self.blocks[self.current_block].dc_feeder_size_manually_set = True
+        self.save_dc_feeder_settings()
+
+    def auto_apply_dc_feeder_size(self, block):
+        """Set dc_feeder_cable_size from auto-recommendation unless manually overridden."""
+        if getattr(block, 'dc_feeder_size_manually_set', False):
+            return
+        from ..utils.cable_sizing import recommend_block_dc_feeder_size
+        device_conf = getattr(self, 'device_configurator', None)
+        recommended = recommend_block_dc_feeder_size(block, device_conf)
+        block.dc_feeder_cable_size = recommended
+        if self.current_block == block.block_id:
+            self.updating_ui = True
+            self.dc_feeder_cable_size_var.set(recommended)
+            self.updating_ui = False
+
+    def reapply_auto_feeder_sizes(self):
+        """Re-run auto feeder size recommendation for all non-manually-set blocks."""
+        for block in self.blocks.values():
+            self.auto_apply_dc_feeder_size(block)
+
+    def _reset_feeder_size_to_recommended(self):
+        """Clear the manual override and reapply the auto-recommended feeder size."""
+        if not self.current_block or self.current_block not in self.blocks:
+            return
+        block = self.blocks[self.current_block]
+        block.dc_feeder_size_manually_set = False
+        self.auto_apply_dc_feeder_size(block)
+        self._notify_blocks_changed()
+
     def set_project(self, project):
         """Set the current project and update UI accordingly"""
         self.current_project = project
@@ -800,6 +837,7 @@ class BlockConfigurator(ttk.Frame):
         self.inverters[f"{inverter.manufacturer} {inverter.model}"] = inverter
         if self.current_block:
             self.blocks[self.current_block].inverter = inverter
+            self.auto_apply_dc_feeder_size(self.blocks[self.current_block])
         dialog.destroy()
         
     def create_new_block(self):
@@ -913,6 +951,9 @@ class BlockConfigurator(ttk.Frame):
             
             # Add to blocks dictionary
             self.blocks[block_id] = block
+
+            # Auto-recommend feeder size for the new block (new blocks always start un-set)
+            self.auto_apply_dc_feeder_size(block)
 
             # Track creation order
             if not hasattr(self, 'block_creation_order'):

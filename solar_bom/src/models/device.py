@@ -2,6 +2,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 from enum import Enum
 
+
+
 @dataclass
 class HarnessConnection:
     """Represents a single harness connection to a combiner box"""
@@ -110,4 +112,46 @@ class CombinerBoxConfig:
     def get_display_breaker_size(self) -> int:
         """Get breaker size to display (user override or calculated)"""
         return self.user_breaker_size if self.user_breaker_size else self.calculated_breaker_size
-    
+
+
+@dataclass
+class StringInverterConfig:
+    """Configuration for a string inverter in the device tab."""
+    inverter_id: str        # e.g., "SI-01"
+    block_id: str
+    inverter_spec: object   # InverterSpec (avoid circular import)
+    connections: List[HarnessConnection]
+    mppt_assignments: Dict[str, int] = field(default_factory=dict)  # harness_id -> channel_idx
+
+    def __post_init__(self):
+        pass  # connections carry their own harness_current
+
+    def calculate_total_dc_current(self) -> float:
+        """Sum of harness currents across all connections."""
+        return sum(conn.harness_current for conn in self.connections)
+
+    def get_mppt_max_current(self, channel_idx: int) -> float:
+        """
+        Return the MPPT max input current for a given channel index.
+        Independent config → per-channel max_input_current.
+        Shared config → sum of all channels' max_input_current.
+        """
+        try:
+            from .inverter import MPPTConfig
+            channels = getattr(self.inverter_spec, 'mppt_channels', [])
+            if not channels:
+                return 0.0
+            config = getattr(self.inverter_spec, 'mppt_config', MPPTConfig.INDEPENDENT)
+            if config == MPPTConfig.SHARED:
+                return sum(getattr(ch, 'max_input_current', 0.0) for ch in channels)
+            # Independent: return the specific channel
+            if 0 <= channel_idx < len(channels):
+                return getattr(channels[channel_idx], 'max_input_current', 0.0)
+            return 0.0
+        except Exception:
+            return 0.0
+
+    def get_max_ac_output_current(self) -> float:
+        """Return inverter max AC output current."""
+        return float(getattr(self.inverter_spec, 'max_ac_current', 0.0))
+

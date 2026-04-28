@@ -666,6 +666,52 @@ class SitePreviewWindow(tk.Toplevel):
                 device_width_ft, device_height_ft, offset_ft
             )
     
+    def _apply_middle_x_bias(self, device_x, device_y, center_local, local_indices,
+                              strings_per_tracker_map, pitch, group_x, group_num_trackers):
+        """Shift device_x into the row-spacing gap for 'middle' placement.
+
+        Biases east if more strings are east of center_local, west if more are west.
+        Tie-breaks toward the nearest pad (defaults east when no pads exist).
+        Falls back to the opposite direction if the bias would leave the group bounding rect.
+        """
+        # If center_local is already at a gap position (half-integer like 0.5, 1.5 ...),
+        # the device_x is already centered in the row gap — no bias needed.
+        if abs(center_local % 1 - 0.5) < 0.01:
+            return device_x
+
+        half_pitch = pitch / 2.0
+        east_strings = sum(
+            strings_per_tracker_map.get(i, 1) for i in local_indices if i > center_local
+        )
+        west_strings = sum(
+            strings_per_tracker_map.get(i, 1) for i in local_indices if i < center_local
+        )
+
+        if east_strings > west_strings:
+            bias = half_pitch
+        elif west_strings > east_strings:
+            bias = -half_pitch
+        else:
+            bias = half_pitch  # default east
+            if self.pads:
+                nearest_pad = min(
+                    self.pads,
+                    key=lambda p: (device_x - (p['x'] + p.get('width_ft', 10.0) / 2)) ** 2
+                                  + (device_y - (p['y'] + p.get('height_ft', 8.0) / 2)) ** 2
+                )
+                pad_cx = nearest_pad['x'] + nearest_pad.get('width_ft', 10.0) / 2
+                bias = half_pitch if pad_cx >= device_x else -half_pitch
+
+        x_min = group_x
+        x_max = group_x + max(group_num_trackers - 1, 0) * pitch + self.max_tracker_width_ft
+
+        new_x = device_x + bias
+        if new_x < x_min or new_x > x_max:
+            # Bias pushed outside group bounds — try opposite side
+            new_x = max(x_min, min(x_max, device_x - bias))
+
+        return new_x
+
     def _compute_devices_from_allocation(self, inverters, device_width_ft, device_height_ft, offset_ft):
         """Place one device per inverter, positioned at the center of that inverter's trackers."""
         max_width = self.max_tracker_width_ft
@@ -769,7 +815,16 @@ class SitePreviewWindow(tk.Toplevel):
             else:  # 'middle'
                 motor_y = group_data.get('motor_y_ft', group_data['length_ft'] / 2)
                 device_y = gy + motor_y - device_height_ft / 2 + angle_y_offset
-            
+                if local_indices:
+                    spt_map = {
+                        li: group_data['trackers'][li].get('strings_per_tracker', 1)
+                        for li in local_indices if li < len(group_data.get('trackers', []))
+                    }
+                    device_x = self._apply_middle_x_bias(
+                        device_x, device_y, center_local, local_indices, spt_map,
+                        pitch, gx, len(group_data.get('trackers', []))
+                    )
+
             # Build assigned_strings from this inverter's harness_map
             assigned_strings = {}
             
@@ -879,7 +934,18 @@ class SitePreviewWindow(tk.Toplevel):
                 center_tracker = tracker_start + sub_size / 2.0 - 0.5
                 device_x = gx + center_tracker * pitch + (max_width - device_width_ft) / 2
                 device_y = base_device_y + center_tracker * pitch * driveline_tan
-                
+
+                if device_position == 'middle':
+                    sub_local_indices = list(range(tracker_start, tracker_start + sub_size))
+                    spt_map = {
+                        li: group_trackers[li].get('strings_per_tracker', 1)
+                        for li in sub_local_indices if li < len(group_trackers)
+                    }
+                    device_x = self._apply_middle_x_bias(
+                        device_x, device_y, center_tracker, sub_local_indices, spt_map,
+                        pitch, gx, num_trackers_in_group
+                    )
+
                 # All strings in tracker range belong to this CB
                 assigned_strings = {}
                 for local_idx in range(tracker_start, tracker_start + sub_size):

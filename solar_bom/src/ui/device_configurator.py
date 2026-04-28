@@ -4,7 +4,7 @@ from typing import Dict, List, Optional, Set
 import json
 import re
 from ..models.block import BlockConfig, DeviceType, WiringType
-from ..models.device import HarnessConnection, CombinerBoxConfig
+from ..models.device import HarnessConnection, CombinerBoxConfig, StringInverterConfig
 from ..utils.calculations import STANDARD_FUSE_SIZES
 
 class DeviceConfigurator(ttk.Frame):
@@ -15,6 +15,7 @@ class DeviceConfigurator(ttk.Frame):
         self.project_manager = project_manager
         self.current_project = None
         self.combiner_configs: Dict[str, CombinerBoxConfig] = {}
+        self.string_inverter_configs: Dict[str, StringInverterConfig] = {}
         self.edited_cells: Set[str] = set()  # Track manually edited cells
         self.data_source = 'quick_estimate'  # 'blocks' or 'quick_estimate'
         
@@ -80,18 +81,19 @@ class DeviceConfigurator(ttk.Frame):
         hsb = ttk.Scrollbar(tree_frame, orient="horizontal")
         
         # Create treeview
-        columns = ('Tracker', 'Harness', '# Strings', 'Module Isc', 'NEC Factor', 
-                  'Harness Current', 'Fuse Size', 'Cable Size', 'Total Current', 'Breaker Size')
-        
+        columns = ('Tracker', 'Harness', '# Strings', 'Module Isc', 'NEC Factor',
+                  'Harness Current', 'Fuse Size', 'Cable Size', 'Total Current',
+                  'Breaker Size', 'MPPT Max Current', 'Max AC Output')
+
         self.tree = ttk.Treeview(tree_frame, columns=columns, show='tree headings',
                                 yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-        
+
         # Configure scrollbars
         vsb.config(command=self.tree.yview)
         hsb.config(command=self.tree.xview)
-        
+
         # Configure column headings
-        self.tree.heading('#0', text='Combiner', anchor='center')
+        self.tree.heading('#0', text='Device', anchor='center')
         self.tree.heading('Tracker', text='Tracker', anchor='center')
         self.tree.heading('Harness', text='Harness', anchor='center')
         self.tree.heading('# Strings', text='# Strings', anchor='center')
@@ -102,7 +104,9 @@ class DeviceConfigurator(ttk.Frame):
         self.tree.heading('Cable Size', text='Cable Size', anchor='center')
         self.tree.heading('Total Current', text='Total Current', anchor='center')
         self.tree.heading('Breaker Size', text='Breaker Size', anchor='center')
-        
+        self.tree.heading('MPPT Max Current', text='MPPT Max (A)', anchor='center')
+        self.tree.heading('Max AC Output', text='Max AC Out (A)', anchor='center')
+
         # Configure column widths
         self.tree.column('#0', width=100, stretch=False)
         self.tree.column('Tracker', width=70, stretch=False)
@@ -115,17 +119,21 @@ class DeviceConfigurator(ttk.Frame):
         self.tree.column('Cable Size', width=90, stretch=False)
         self.tree.column('Total Current', width=100, stretch=False)
         self.tree.column('Breaker Size', width=100, stretch=False)
-        
+        self.tree.column('MPPT Max Current', width=110, stretch=False)
+        self.tree.column('Max AC Output', width=110, stretch=False)
+
         # Configure column alignments - center everything
-        self.tree.column('#0', anchor='center')  # Combiner column
+        self.tree.column('#0', anchor='center')  # Device column
         for col in columns:
             self.tree.column(col, anchor='center')
         
         # Configure tags for styling
         self.tree.tag_configure('mismatch', foreground='red')
+        self.tree.tag_configure('mismatch_si', foreground='red')
         self.tree.tag_configure('edited', background='#ffffcc')  # Light yellow for edited cells
         self.tree.tag_configure('warning', foreground='orange')
         self.tree.tag_configure('combiner_header', font=('TkDefaultFont', 10, 'bold'))
+        self.tree.tag_configure('section_sep', font=('TkDefaultFont', 9, 'italic'), foreground='gray')
         
         # Pack treeview and scrollbars
         self.tree.grid(row=0, column=0, sticky='nsew')
@@ -229,17 +237,13 @@ class DeviceConfigurator(ttk.Frame):
             # Update existing combiner configs instead of regenerating
             for combiner_id, config in self.combiner_configs.items():
                 for conn in config.connections:
-                    # Update NEC factor
                     conn.nec_factor = new_factor
-                    # Recalculate derived values
                     conn.harness_current = conn.num_strings * conn.module_isc * new_factor
                     conn.calculated_fuse_size = conn._calculate_fuse_size()
                     conn.calculated_cable_size = conn._calculate_cable_size()
-                
-                # Recalculate combiner totals
+
                 config.calculate_totals()
-                
-                # Reapply fuse uniformity rule
+
                 if config.connections:
                     max_fuse = max(c.calculated_fuse_size for c in config.connections)
                     for conn in config.connections:
@@ -247,6 +251,13 @@ class DeviceConfigurator(ttk.Frame):
                         if conn.user_fuse_size and conn.user_fuse_size < max_fuse:
                             conn.user_fuse_size = None
                             conn.fuse_manually_set = False
+
+            # Update string inverter configs
+            for si_cfg in self.string_inverter_configs.values():
+                for conn in si_cfg.connections:
+                    conn.nec_factor = new_factor
+                    conn.harness_current = conn.num_strings * conn.module_isc * new_factor
+                    conn.calculated_cable_size = conn._calculate_cable_size()
             
             # Refresh display
             self.refresh_display()
@@ -280,6 +291,7 @@ class DeviceConfigurator(ttk.Frame):
         """Load a project and generate device configurations"""
         self.current_project = project
         self.combiner_configs.clear()
+        self.string_inverter_configs.clear()
         self.edited_cells.clear()
         
         if not project:
@@ -511,31 +523,33 @@ class DeviceConfigurator(ttk.Frame):
         self.refresh_display()
 
     def load_from_quick_estimate(self):
-        """Load combiner box configurations from Quick Estimate data."""
+        """Load combiner box / string inverter configurations from Quick Estimate data."""
         # Get the QE widget via main_app
         qe_widget = None
         if hasattr(self, 'main_app') and hasattr(self.main_app, 'quick_estimate_widget'):
             qe_widget = self.main_app.quick_estimate_widget
-        
+
         if not qe_widget:
             messagebox.showwarning(
                 "Not Available",
                 "Quick Estimate is not available. Please run a Quick Estimate first."
             )
             return
-        
+
         assignments = getattr(qe_widget, 'last_combiner_assignments', [])
-        if not assignments:
+        si_assignments = getattr(qe_widget, 'last_si_assignments', [])
+
+        if not assignments and not si_assignments:
             messagebox.showinfo(
                 "No Data",
-                "No combiner assignments found.\n\n"
-                "Please run Calculate Estimate in the Quick Estimate tab first\n"
-                "(using Centralized String or Central Inverter topology)."
+                "No device assignments found.\n\n"
+                "Please run Calculate Estimate in the Quick Estimate tab first."
             )
             return
-        
+
         # Clear existing
         self.combiner_configs.clear()
+        self.string_inverter_configs.clear()
         self.edited_cells.clear()
         
         # NEC factor — use project setting if available
@@ -584,23 +598,71 @@ class DeviceConfigurator(ttk.Frame):
             
             self.combiner_configs[combiner_id] = combiner_config
         
+        # Also load string inverters if topology is Distributed String
+        self._load_si_from_quick_estimate(qe_widget)
+
         # Refresh display
         self.refresh_display()
         self.update_warnings()
-        
+
         # Save to project
         self.save_configuration_to_project()
-        
+
         # Update status and ensure toggle reflects source
         self.data_source = 'quick_estimate'
         if hasattr(self, 'data_source_var'):
             self.data_source_var.set('quick_estimate')
-        
-        total_connections = sum(len(c.connections) for c in self.combiner_configs.values())
-        self.status_var.set(
-            f"Loaded {len(self.combiner_configs)} combiner box(es) "
-            f"with {total_connections} connections from Quick Estimate"
-        )
+
+        total_cb_conns = sum(len(c.connections) for c in self.combiner_configs.values())
+        total_si_conns = sum(len(s.connections) for s in self.string_inverter_configs.values())
+        if self.string_inverter_configs:
+            self.status_var.set(
+                f"Loaded {len(self.string_inverter_configs)} string inverter(s) "
+                f"with {total_si_conns} connections from Quick Estimate"
+            )
+        else:
+            self.status_var.set(
+                f"Loaded {len(self.combiner_configs)} combiner box(es) "
+                f"with {total_cb_conns} connections from Quick Estimate"
+            )
+
+    def _load_si_from_quick_estimate(self, qe_widget):
+        """Populate string_inverter_configs from QE last_si_assignments (Distributed String)."""
+        self.string_inverter_configs.clear()
+
+        si_assignments = getattr(qe_widget, 'last_si_assignments', [])
+        if not si_assignments:
+            return
+
+        nec_factor = 1.56
+        if self.current_project:
+            nec_factor = getattr(self.current_project, 'nec_safety_factor', 1.56)
+
+        for si_data in si_assignments:
+            si_name = si_data['inverter_name']
+            # inverter_spec is stripped on save; fall back to QE's currently selected inverter
+            inverter_spec = si_data.get('inverter_spec') or getattr(qe_widget, 'selected_inverter', None)
+
+            connections = []
+            for conn_data in si_data.get('connections', []):
+                connection = HarnessConnection(
+                    block_id='QE',
+                    tracker_id=conn_data['tracker_label'],
+                    harness_id=conn_data['harness_label'],
+                    num_strings=conn_data['num_strings'],
+                    module_isc=conn_data['module_isc'],
+                    nec_factor=conn_data['nec_factor'],
+                    actual_cable_size=qe_widget.get_wire_size_for('whip', conn_data['num_strings']),
+                )
+                connections.append(connection)
+
+            si_cfg = StringInverterConfig(
+                inverter_id=si_name,
+                block_id='QE',
+                inverter_spec=inverter_spec,
+                connections=connections,
+            )
+            self.string_inverter_configs[si_name] = si_cfg
 
     def generate_combiner_configs(self):
         """Generate combiner box configurations from project blocks"""
@@ -754,58 +816,103 @@ class DeviceConfigurator(ttk.Frame):
         """Refresh the treeview display"""
         # Clear existing items
         self.tree.delete(*self.tree.get_children())
-        
-        # Add combiner boxes
-        for combiner_id in sorted(self.combiner_configs.keys(), key=lambda x: [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', x)]):
-            config = self.combiner_configs[combiner_id]
-            
-            # Add combiner box as parent item
-            combiner_item = self.tree.insert('', 'end', text=combiner_id, 
+
+        _nat_key = lambda x: [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', x)]
+
+        # --- Combiner Box section ---
+        if self.combiner_configs:
+            for combiner_id in sorted(self.combiner_configs.keys(), key=_nat_key):
+                config = self.combiner_configs[combiner_id]
+
+                combiner_item = self.tree.insert('', 'end', text=combiner_id,
+                                                 tags=('combiner_header',))
+
+                for conn in config.connections:
+                    tags = []
+
+                    cell_id_fuse = f"{combiner_id}_{conn.tracker_id}_{conn.harness_id}_fuse"
+                    if cell_id_fuse in self.edited_cells:
+                        tags.append('edited')
+
+                    if conn.get_display_fuse_size() > 90:
+                        tags.append('warning')
+
+                    # 12 columns: Tracker, Harness, #Str, Isc, NEC, Harness I,
+                    #             Fuse, Cable, Total I, Breaker, MPPT Max, Max AC
+                    values = (
+                        conn.tracker_id,
+                        conn.harness_id,
+                        conn.num_strings,
+                        f"{conn.module_isc:.2f}",
+                        f"{conn.nec_factor}",
+                        f"{conn.harness_current:.2f}",
+                        f"{conn.get_display_fuse_size()}",
+                        conn.actual_cable_size,
+                        "",  # total current on first row only
+                        "",  # breaker on first row only
+                        "",  # MPPT Max — CB rows leave blank
+                        "",  # Max AC — CB rows leave blank
+                    )
+
+                    self.tree.insert(combiner_item, 'end', values=values, tags=tuple(tags))
+
+                children = self.tree.get_children(combiner_item)
+                if children:
+                    first_child = children[0]
+                    vals = list(self.tree.item(first_child, 'values'))
+                    vals[8] = f"{config.total_input_current:.2f}"
+                    vals[9] = f"{config.get_display_breaker_size()}"
+                    self.tree.item(first_child, values=vals)
+
+        # --- String Inverter section ---
+        if self.string_inverter_configs:
+            # Separator row if there were also combiners
+            if self.combiner_configs:
+                self.tree.insert('', 'end', text='── String Inverters ──',
+                                 values=('',)*12, tags=('section_sep',))
+
+            for si_id in sorted(self.string_inverter_configs.keys(), key=_nat_key):
+                si_cfg = self.string_inverter_configs[si_id]
+                mppt_max = si_cfg.get_mppt_max_current(0)   # channel 0 or shared total
+                ac_out   = si_cfg.get_max_ac_output_current()
+
+                si_item = self.tree.insert('', 'end', text=si_id,
                                            tags=('combiner_header',))
-            
-            # Add connections as child items
-            for conn in config.connections:
-                tags = []
-                
-                # Check for edited cells (fuse only — cable size is not editable)
-                cell_id_fuse = f"{combiner_id}_{conn.tracker_id}_{conn.harness_id}_fuse"
-                if cell_id_fuse in self.edited_cells:
-                    tags.append('edited')
-                
-                # Check for warnings (fuse > 90A)
-                if conn.get_display_fuse_size() > 90:
-                    tags.append('warning')
-                
-                # Format values
-                values = (
-                    conn.tracker_id,
-                    conn.harness_id,
-                    conn.num_strings,
-                    f"{conn.module_isc:.2f}",
-                    f"{conn.nec_factor}",
-                    f"{conn.harness_current:.2f}",
-                    f"{conn.get_display_fuse_size()}",
-                    conn.actual_cable_size,
-                    "",  # Total current only on first row
-                    ""   # Breaker size only on first row
-                )
-                
-                self.tree.insert(combiner_item, 'end', values=values, tags=tuple(tags))
-            
-            # Update first row with total current and breaker size
-            children = self.tree.get_children(combiner_item)
-            if children:
-                first_child = children[0]
-                values = list(self.tree.item(first_child, 'values'))
-                values[8] = f"{config.total_input_current:.2f}"
-                values[9] = f"{config.get_display_breaker_size()}"
-                self.tree.item(first_child, values=values)
-        
-        # Expand all combiner boxes
+
+                for conn in si_cfg.connections:
+                    tags = []
+                    if mppt_max > 0 and conn.harness_current > mppt_max:
+                        tags.append('mismatch_si')
+
+                    values = (
+                        conn.tracker_id,
+                        conn.harness_id,
+                        conn.num_strings,
+                        f"{conn.module_isc:.2f}",
+                        f"{conn.nec_factor}",
+                        f"{conn.harness_current:.2f}",
+                        "",   # no fuse for SI
+                        conn.actual_cable_size,
+                        "",   # total current on first row
+                        "",   # no breaker for SI
+                        "",   # MPPT Max on first row
+                        "",   # Max AC on first row
+                    )
+                    self.tree.insert(si_item, 'end', values=values, tags=tuple(tags))
+
+                children = self.tree.get_children(si_item)
+                if children:
+                    first_child = children[0]
+                    vals = list(self.tree.item(first_child, 'values'))
+                    vals[8] = f"{si_cfg.calculate_total_dc_current():.2f}"
+                    vals[10] = f"{mppt_max:.2f}" if mppt_max else ""
+                    vals[11] = f"{ac_out:.2f}" if ac_out else ""
+                    self.tree.item(first_child, values=vals)
+
+        # Expand all
         for item in self.tree.get_children():
             self.tree.item(item, open=True)
-        
-        # Update warnings
+
         self.update_warnings()
     
     def on_click(self, event):
@@ -1024,13 +1131,43 @@ class DeviceConfigurator(ttk.Frame):
                 'whip_length_ft': getattr(config, 'whip_length_ft', 3)
             }
         
+        # Save string inverter configs
+        si_configs = {}
+        for si_id, si_cfg in self.string_inverter_configs.items():
+            connections = []
+            for conn in si_cfg.connections:
+                connections.append({
+                    'block_id': conn.block_id,
+                    'tracker_id': conn.tracker_id,
+                    'harness_id': conn.harness_id,
+                    'num_strings': conn.num_strings,
+                    'module_isc': conn.module_isc,
+                    'nec_factor': conn.nec_factor,
+                    'actual_cable_size': conn.actual_cable_size,
+                    'calculated_cable_size': conn.calculated_cable_size,
+                    'user_cable_size': conn.user_cable_size,
+                    'cable_manually_set': conn.cable_manually_set,
+                })
+            si_configs[si_id] = {
+                'inverter_id': si_cfg.inverter_id,
+                'block_id': si_cfg.block_id,
+                'connections': connections,
+            }
+
         # Save to project (include data source setting)
         self.current_project.device_configs = device_configs
+        self.current_project.si_device_configs = si_configs
         self.current_project.device_config_source = self.data_source
         
         # Trigger autosave if available
         if hasattr(self, 'main_app') and hasattr(self.main_app, 'autosave_project'):
             self.main_app.autosave_project()
+
+        # Notify block configurator so feeder sizes auto-update when breakers change
+        if hasattr(self, 'main_app') and hasattr(self.main_app, 'block_configurator'):
+            bc = self.main_app.block_configurator
+            if hasattr(bc, 'reapply_auto_feeder_sizes'):
+                bc.reapply_auto_feeder_sizes()
 
     def reset_selected(self):
         """Reset selected items to calculated values"""

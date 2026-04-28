@@ -34,6 +34,7 @@ class QuickEstimate(ttk.Frame):
         self.device_feeder_sizes = {}  # {device_idx: "cable_size"} per-device feeder/homerun size
         self.device_feeder_parallel_counts = {}  # {device_idx: int} per-device parallel sets per pole
         self.last_combiner_assignments = []  # Structured CB data for Device Configurator
+        self.last_si_assignments = []        # Structured SI data for Device Configurator
         self._harness_combos = []  # Track harness combo widgets for LV collection disabling
         self.selected_group_idx = None
         self._updating_listbox = False
@@ -725,7 +726,18 @@ class QuickEstimate(ttk.Frame):
                 device_x = (min(inv_tracker_xs) + max(inv_tracker_xs)) / 2.0
             else:
                 device_x = 0
-            
+
+            # For 'middle' placement: snap device_x to the nearest row gap.
+            # The midpoint formula lands in the gap for even tracker counts but on a tracker
+            # left-edge for odd counts (1, 3, 5...) — in the odd case bias half a pitch east.
+            if device_position == 'middle' and inv_tracker_xs:
+                grp_pitch = group_source.get('row_spacing_ft', 20.0)
+                if grp_pitch > 0:
+                    center_offset = (max(inv_tracker_xs) - min(inv_tracker_xs)) / 2.0
+                    frac = (center_offset / grp_pitch) % 1
+                    if frac < 0.01:  # integer multiple = on a tracker, not in a gap
+                        device_x += grp_pitch / 2
+
             # Compute device Y from average of its trackers' Y positions + device_position offset
             inv_tracker_ys = []
             for entry in harness_map:
@@ -874,7 +886,16 @@ class QuickEstimate(ttk.Frame):
                       if e['tracker_idx'] < len(tracker_world_x) and tracker_grp[e['tracker_idx']] == primary_grp]
             
             dev_x = (min(inv_xs) + max(inv_xs)) / 2.0 if inv_xs else 0
-            
+
+            # For 'middle' placement: snap dev_x to the nearest row gap (same logic as whip calc).
+            if device_position == 'middle' and inv_xs:
+                grp_pitch = group_source.get('row_spacing_ft', row_spacing_ft)
+                if grp_pitch > 0:
+                    center_offset = (max(inv_xs) - min(inv_xs)) / 2.0
+                    frac = (center_offset / grp_pitch) % 1
+                    if frac < 0.01:
+                        dev_x += grp_pitch / 2
+
             # Approximate device Y from group position
             saved_y = group_source.get('position_y', 0)
             group_y = saved_y if saved_y is not None else 0
@@ -1358,21 +1379,17 @@ class QuickEstimate(ttk.Frame):
                 sizes = recommend_lv_cable_sizes(sc, module_isc, nec_factor=1.56, temp_rating=temp)
                 by_sc[sc] = sizes
         
-        # Remove string counts no longer in use (but only if not user-overridden)
+        # Remove string counts no longer in use, clearing any overrides for them
         keys_to_remove = []
         for sc_key in list(by_sc.keys()):
             sc_int = int(sc_key) if isinstance(sc_key, str) else sc_key
             if sc_int not in active_counts:
-                # Check if any overrides exist for this string count
-                has_override = any(
-                    overrides.get(f"{sc_int}_{ct}") 
-                    for ct in ('harness', 'extender', 'whip')
-                )
-                if not has_override:
-                    keys_to_remove.append(sc_key)
-        
-        for key in keys_to_remove:
+                keys_to_remove.append((sc_key, sc_int))
+
+        for key, sc_int in keys_to_remove:
             del by_sc[key]
+            for ct in ('harness', 'extender', 'whip'):
+                overrides.pop(f"{sc_int}_{ct}", None)
         
         self.wire_sizing['by_string_count'] = by_sc
         self.refresh_wire_sizing_table()
@@ -1664,6 +1681,24 @@ class QuickEstimate(ttk.Frame):
         except Exception as e:
             print(f"lookup_part_and_price error ({item_type}): {e}")
             return 'N/A', '', ''
+
+    def _lookup_description(self, part_number):
+        """Return the library description for part_number, or 'N/A' if not found."""
+        if not part_number or part_number in ('N/A', ''):
+            return 'N/A'
+        import os as _os, json as _json
+        cur = _os.path.dirname(_os.path.abspath(__file__))
+        root = _os.path.dirname(_os.path.dirname(cur))
+        for lib in ('harness_library.json', 'whip_library.json', 'extender_library.json',
+                    'fuse_library.json', 'combiner_box_library.json', 'combiner_box_fuse_library.json'):
+            try:
+                with open(_os.path.join(root, 'data', lib)) as _f:
+                    data = _json.load(_f)
+                if part_number in data:
+                    return data[part_number].get('description', 'N/A')
+            except Exception:
+                pass
+        return 'N/A'
 
     def _on_results_tree_click(self, event):
         """Handle click on results tree - toggle checkbox if include column clicked"""
@@ -2181,6 +2216,11 @@ class QuickEstimate(ttk.Frame):
         if saved_cb_assignments:
             self.last_combiner_assignments = copy.deepcopy(saved_cb_assignments)
 
+        # Restore SI assignments
+        saved_si_assignments = estimate_data.get('si_assignments', None)
+        if saved_si_assignments:
+            self.last_si_assignments = copy.deepcopy(saved_si_assignments)
+
         # Derive module from templates
         self._derive_module_from_templates()
 
@@ -2265,7 +2305,16 @@ class QuickEstimate(ttk.Frame):
             estimate_data['combiner_assignments'] = copy.deepcopy(self.last_combiner_assignments)
         else:
             estimate_data['combiner_assignments'] = None
-        
+
+        # Save SI assignments (inverter_spec is not serialisable — strip it before saving)
+        if self.last_si_assignments:
+            si_serialisable = []
+            for entry in self.last_si_assignments:
+                si_serialisable.append({k: v for k, v in entry.items() if k != 'inverter_spec'})
+            estimate_data['si_assignments'] = si_serialisable
+        else:
+            estimate_data['si_assignments'] = None
+
         # Notify callback
         if self.on_save:
             self.on_save()
@@ -2586,10 +2635,10 @@ class QuickEstimate(ttk.Frame):
         self.device_names.clear()
         self.device_feeder_sizes.clear()
         self.last_combiner_assignments = []
+        self.last_si_assignments = []
         self.allocation_locked = False
         self.locked_allocation_result = None
         self.manually_edited = False
-        self.last_combiner_assignments = []
         if hasattr(self, 'group_listbox'):
             self._refresh_group_listbox()
         
@@ -2967,8 +3016,10 @@ class QuickEstimate(ttk.Frame):
         For Distributed String: no CBs — returns empty list.
         """
         self.last_combiner_assignments = []
-        
+        self.last_si_assignments = []
+
         if topology == 'Distributed String':
+            self._build_si_assignments(totals)
             return
         
         inv_summary = totals.get('inverter_summary', {})
@@ -3057,13 +3108,59 @@ class QuickEstimate(ttk.Frame):
                     'connections': connections,
                 })
 
+    def _build_si_assignments(self, totals):
+        """Build self.last_si_assignments for Distributed String topology.
+
+        Mirrors _build_combiner_assignments but produces one entry per string
+        inverter rather than per combiner box. Each entry carries the same
+        tracker/harness connection list format used by the Device Configurator.
+        """
+        self.last_si_assignments = []
+
+        inv_summary = totals.get('inverter_summary', {})
+        allocation_result = inv_summary.get('allocation_result')
+        if not allocation_result:
+            return
+
+        module_isc = self.selected_module.isc if self.selected_module else 0
+
+        nec_factor = 1.56
+        if self.current_project:
+            nec_factor = getattr(self.current_project, 'nec_safety_factor', 1.56)
+
+        # Build flat tracker list for harness config / wire gauge lookup
+        tracker_segment_map = []
+        for group in self.groups:
+            for seg in group['segments']:
+                harness_sizes = self._get_harness_sizes(seg)
+                for _ in range(seg['quantity']):
+                    tracker_segment_map.append({
+                        'spt': seg['strings_per_tracker'],
+                        'harness_sizes': list(harness_sizes),
+                        'wire_gauge': self._get_wire_gauge_for_segment(seg, 'whip'),
+                    })
+
+        for inv_idx, inv in enumerate(allocation_result.get('inverters', [])):
+            inv_name = self.device_names.get(inv_idx, f"SI-{inv_idx + 1:02d}")
+            connections = self._build_connections_from_harness_map(
+                inv['harness_map'], tracker_segment_map, module_isc, nec_factor
+            )
+            self.last_si_assignments.append({
+                'inverter_name': inv_name,
+                'device_idx': inv_idx,
+                'module_isc': module_isc,
+                'nec_factor': nec_factor,
+                'inverter_spec': self.selected_inverter,
+                'connections': connections,
+            })
+
     def _read_combiner_bom_from_device_config(self):
         """Read combiner BOM data from Device Configurator (single source of truth).
-        
+
         Populates self.last_totals['combiners_by_breaker'] and ['combiner_details']
         from the Device Configurator's combiner_configs, which reflect the user's
         NEC multiplier, breaker overrides, and fuse sizes.
-        
+
         Also syncs breaker sizes back into self.last_combiner_assignments.
         
         Returns True if Device Configurator had data, False if fallback is needed.
@@ -3247,10 +3344,10 @@ class QuickEstimate(ttk.Frame):
         self.checked_items.clear()
         
         def insert_section(label):
-            self.results_tree.insert('', 'end', values=('', f'--- {label} ---', '', '', '', '', ''), tags=('section',))
+            self.results_tree.insert('', 'end', values=('', f'--- {label} ---', '', '', '', '', '', ''), tags=('section',))
 
-        def insert_row(item, part_number, qty, unit, unit_cost='', ext_cost=''):
-            iid = self.results_tree.insert('', 'end', values=('☑', item, part_number, qty, unit, unit_cost, ext_cost), tags=('checked',))
+        def insert_row(item, part_number, qty, unit, unit_cost='', ext_cost='', description=''):
+            iid = self.results_tree.insert('', 'end', values=('☑', item, part_number, description, qty, unit, unit_cost, ext_cost), tags=('checked',))
             self.checked_items.add(iid)
         
         # Combiner Boxes
@@ -3268,7 +3365,8 @@ class QuickEstimate(ttk.Frame):
                 if detail['part_number'] != 'NO MATCH':
                     insert_row(
                         f"  └ Site Total: ({detail['max_inputs']}-input, {detail['fuse_holder_rating']})",
-                        detail['part_number'], detail['quantity'], 'ea'
+                        detail['part_number'], detail['quantity'], 'ea',
+                        description=self._lookup_description(detail['part_number'])
                     )
                 else:
                     insert_row(
@@ -3293,12 +3391,14 @@ class QuickEstimate(ttk.Frame):
                 qty = totals['harnesses_by_size'][size]
                 pos_pn, pos_unit, pos_ext = self.lookup_part_and_price('harness', num_strings=size, polarity='positive', qty=qty)
                 neg_pn, neg_unit, neg_ext = self.lookup_part_and_price('harness', num_strings=size, polarity='negative', qty=qty)
+                pos_desc = self._lookup_description(pos_pn)
+                neg_desc = self._lookup_description(neg_pn)
                 if size == 1:
-                    iid = self.results_tree.insert('', 'end', values=('☐', f"{size}-String Harness (Pos)", pos_pn, qty, 'ea', pos_unit, pos_ext), tags=('unchecked',))
-                    iid2 = self.results_tree.insert('', 'end', values=('☐', f"{size}-String Harness (Neg)", neg_pn, qty, 'ea', neg_unit, neg_ext), tags=('unchecked',))
+                    iid = self.results_tree.insert('', 'end', values=('☐', f"{size}-String Harness (Pos, CU)", pos_pn, pos_desc, qty, 'ea', pos_unit, pos_ext), tags=('unchecked',))
+                    iid2 = self.results_tree.insert('', 'end', values=('☐', f"{size}-String Harness (Neg, CU)", neg_pn, neg_desc, qty, 'ea', neg_unit, neg_ext), tags=('unchecked',))
                 else:
-                    insert_row(f"{size}-String Harness (Pos)", pos_pn, qty, 'ea', pos_unit, pos_ext)
-                    insert_row(f"{size}-String Harness (Neg)", neg_pn, qty, 'ea', neg_unit, neg_ext)
+                    insert_row(f"{size}-String Harness (Pos, CU)", pos_pn, qty, 'ea', pos_unit, pos_ext, description=pos_desc)
+                    insert_row(f"{size}-String Harness (Neg, CU)", neg_pn, qty, 'ea', neg_unit, neg_ext, description=neg_desc)
         
         # Inline DC string fuses (Wire Harness only)
         if totals.get('inline_fuses_by_rating'):
@@ -3335,13 +3435,14 @@ class QuickEstimate(ttk.Frame):
                 except Exception:
                     unit_cost_str = ''
                     ext_cost_str = ''
+                fuse_desc = self._lookup_description(pn)
                 item_name = f"{rating}A Inline DC String Fuse (Pos)"
                 if is_first_solar:
                     self.results_tree.insert('', 'end',
-                        values=('☐', item_name, pn, qty, 'ea', unit_cost_str, ext_cost_str),
+                        values=('☐', item_name, pn, fuse_desc, qty, 'ea', unit_cost_str, ext_cost_str),
                         tags=('unchecked',))
                 else:
-                    insert_row(item_name, pn, qty, 'ea', unit_cost_str, ext_cost_str)
+                    insert_row(item_name, pn, qty, 'ea', unit_cost_str, ext_cost_str, description=fuse_desc)
 
         # Trunk Bus items
         if totals.get('trunk_cable_by_size'):
@@ -3370,20 +3471,20 @@ class QuickEstimate(ttk.Frame):
             # Positive
             pos_items = {length: qty for (length, g), qty in totals['extenders_pos_by_length'].items() if g == gauge}
             if pos_items:
-                insert_section(f'EXTENDERS — POSITIVE ({gauge})')
+                insert_section(f'EXTENDERS — POSITIVE ({gauge}, CU)')
                 for length in sorted(pos_items.keys()):
                     qty = pos_items[length]
                     e_pn, e_unit, e_ext = self.lookup_part_and_price('extender', polarity='positive', length_ft=length, qty=qty, num_strings=self._gauge_to_string_count('extender', gauge))
-                    insert_row(f"Extender {length}ft (Pos)", e_pn, qty, 'ea', e_unit, e_ext)
+                    insert_row(f"Extender {length}ft (Pos)", e_pn, qty, 'ea', e_unit, e_ext, description=self._lookup_description(e_pn))
 
             # Negative
             neg_items = {length: qty for (length, g), qty in totals['extenders_neg_by_length'].items() if g == gauge}
             if neg_items:
-                insert_section(f'EXTENDERS — NEGATIVE ({gauge})')
+                insert_section(f'EXTENDERS — NEGATIVE ({gauge}, CU)')
                 for length in sorted(neg_items.keys()):
                     qty = neg_items[length]
                     e_pn, e_unit, e_ext = self.lookup_part_and_price('extender', polarity='negative', length_ft=length, qty=qty, num_strings=self._gauge_to_string_count('extender', gauge))
-                    insert_row(f"Extender {length}ft (Neg)", e_pn, qty, 'ea', e_unit, e_ext)
+                    insert_row(f"Extender {length}ft (Neg)", e_pn, qty, 'ea', e_unit, e_ext, description=self._lookup_description(e_pn))
 
         # Whips — split by wire gauge, then by polarity
         whip_gauges = sorted(set(g for (_, g) in totals.get('whips_by_length', {}).keys()))
@@ -3398,18 +3499,18 @@ class QuickEstimate(ttk.Frame):
                     continue
 
                 # Positive whips (half of each length bucket)
-                insert_section(f'WHIPS — POSITIVE ({device_label}) ({gauge})')
+                insert_section(f'WHIPS — POSITIVE ({device_label}) ({gauge}, CU)')
                 for length in sorted(gauge_items.keys()):
                     qty = gauge_items[length] // 2
                     w_pn, w_unit, w_ext = self.lookup_part_and_price('whip', polarity='positive', length_ft=length, qty=qty, num_strings=self._gauge_to_string_count('whip', gauge))
-                    insert_row(f"Whip {length}ft (Pos)", w_pn, qty, 'ea', w_unit, w_ext)
+                    insert_row(f"Whip {length}ft (Pos)", w_pn, qty, 'ea', w_unit, w_ext, description=self._lookup_description(w_pn))
 
                 # Negative whips
-                insert_section(f'WHIPS — NEGATIVE ({device_label}) ({gauge})')
+                insert_section(f'WHIPS — NEGATIVE ({device_label}) ({gauge}, CU)')
                 for length in sorted(gauge_items.keys()):
                     qty = gauge_items[length] // 2
                     w_pn, w_unit, w_ext = self.lookup_part_and_price('whip', polarity='negative', length_ft=length, qty=qty, num_strings=self._gauge_to_string_count('whip', gauge))
-                    insert_row(f"Whip {length}ft (Neg)", w_pn, qty, 'ea', w_unit, w_ext)
+                    insert_row(f"Whip {length}ft (Neg)", w_pn, qty, 'ea', w_unit, w_ext, description=self._lookup_description(w_pn))
         
         # DC Feeders / AC Homeruns — per-device sizes grouped
         display = totals.get('_display', {})
@@ -3417,13 +3518,14 @@ class QuickEstimate(ttk.Frame):
         topo = display.get('topology', 'Distributed String')
         label_suffix = " (routed)" if use_routed else ""
         feeders_by_size = totals.get('feeders_by_size', {})
-        
+        feeder_mat = 'AL' if self.wire_sizing.get('feeder_material', 'aluminum') == 'aluminum' else 'CU'
+
         def _unpack_feeder_key(k):
             """Accept either tuple (size, parallel) or legacy string size; return (size, parallel)."""
             if isinstance(k, tuple):
                 return k[0], int(k[1]) if len(k) > 1 else 1
             return k, 1
-        
+
         if topo == 'Distributed String':
             # Primary cable is AC homerun (per-device sizes)
             if feeders_by_size:
@@ -3437,7 +3539,7 @@ class QuickEstimate(ttk.Frame):
                     avg_ft = dist_ft / count if count > 0 else 0
                     parallel_suffix = f" ×{parallel} parallel" if parallel > 1 else ""
                     insert_row(
-                        f"AC Homerun {wire_size} — avg {avg_ft:.0f}ft{label_suffix} × {count} runs{parallel_suffix}",
+                        f"AC Homerun {wire_size}, {feeder_mat} — avg {avg_ft:.0f}ft{label_suffix} × {count} runs{parallel_suffix}",
                         '', f"{total_ft:.0f}", 'ft'
                     )
         else:
@@ -3452,22 +3554,22 @@ class QuickEstimate(ttk.Frame):
                     avg_ft = dist_ft / count if count > 0 else 0
                     parallel_suffix = f" ×{parallel} parallel" if parallel > 1 else ""
                     insert_row(
-                        f"DC Feeder {wire_size} — avg {avg_ft:.0f}ft{label_suffix} × {count} runs{parallel_suffix} (pos)",
+                        f"DC Feeder {wire_size}, {feeder_mat} — avg {avg_ft:.0f}ft{label_suffix} × {count} runs{parallel_suffix} (pos)",
                         '', f"{total_ft:.0f}", 'ft'
                     )
                     insert_row(
-                        f"DC Feeder {wire_size} — avg {avg_ft:.0f}ft{label_suffix} × {count} runs{parallel_suffix} (neg)",
+                        f"DC Feeder {wire_size}, {feeder_mat} — avg {avg_ft:.0f}ft{label_suffix} × {count} runs{parallel_suffix} (neg)",
                         '', f"{total_ft:.0f}", 'ft'
                     )
-            
+
             # Secondary AC homeruns (blanket size, not per-device)
             if totals.get('ac_homerun_count', 0) > 0:
                 ac_wire_size = self.get_wire_size_for('ac_homerun')
                 ac_count = totals['ac_homerun_count']
                 ac_total = totals['ac_homerun_total_ft']
                 ac_avg = ac_total / ac_count if ac_count > 0 else 0
-                insert_section(f'AC HOMERUNS ({ac_wire_size})')
-                insert_row(f"AC Homerun {ac_wire_size} — avg {ac_avg:.0f}ft × {ac_count} runs", '', f"{ac_total:.0f}", 'ft')
+                insert_section(f'AC HOMERUNS ({ac_wire_size}, {feeder_mat})')
+                insert_row(f"AC Homerun {ac_wire_size}, {feeder_mat} — avg {ac_avg:.0f}ft × {ac_count} runs", '', f"{ac_total:.0f}", 'ft')
     
     def _build_connections_from_harness_map(self, harness_map, tracker_segment_map, module_isc, nec_factor):
         """Convert an allocation harness_map into Device Configurator connection dicts."""
@@ -4115,11 +4217,12 @@ class QuickEstimate(ttk.Frame):
         results_frame.pack(fill='both', expand=True)
         
         # Results treeview
-        columns = ('include', 'item', 'part_number', 'quantity', 'unit', 'unit_cost', 'ext_cost')
+        columns = ('include', 'item', 'part_number', 'description', 'quantity', 'unit', 'unit_cost', 'ext_cost')
         self.results_tree = ttk.Treeview(results_frame, columns=columns, show='headings', height=8)
         self.results_tree.heading('include', text='')
         self.results_tree.heading('item', text='Item')
         self.results_tree.heading('part_number', text='Part Number')
+        self.results_tree.heading('description', text='Description')
         self.results_tree.heading('quantity', text='Quantity')
         self.results_tree.heading('unit', text='Unit')
         self.results_tree.heading('unit_cost', text='Unit Cost')
@@ -4127,6 +4230,7 @@ class QuickEstimate(ttk.Frame):
         self.results_tree.column('include', width=30, anchor='center')
         self.results_tree.column('item', width=230, anchor='w')
         self.results_tree.column('part_number', width=160, anchor='w')
+        self.results_tree.column('description', width=200, anchor='w')
         self.results_tree.column('quantity', width=80, anchor='center')
         self.results_tree.column('unit', width=50, anchor='center')
         self.results_tree.column('unit_cost', width=80, anchor='e')
@@ -5675,8 +5779,9 @@ class QuickEstimate(ttk.Frame):
             # Update last_totals since we modified totals
             self.last_totals = totals
 
-        # Push fresh combiner assignments to Device Configurator if in QE mode
-        if self.last_combiner_assignments and not self.allocation_locked:
+        # Push fresh combiner/SI assignments to Device Configurator if in QE mode
+        _has_assignments = self.last_combiner_assignments or self.last_si_assignments
+        if _has_assignments and not self.allocation_locked:
             main_app = getattr(self, 'main_app', None)
             if main_app and hasattr(main_app, 'device_configurator'):
                 dc = main_app.device_configurator
@@ -6096,6 +6201,99 @@ class QuickEstimate(ttk.Frame):
                     max_length = max(max_length, len(str(cell.value)))
             ws.column_dimensions[col_letter].width = min(max_length + 3, 30)
 
+    def _write_string_inverter_sheet(self, wb):
+        """Write a String Inverters sheet for Distributed String topology."""
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+
+        main_app = getattr(self, 'main_app', None)
+        if not main_app or not hasattr(main_app, 'device_configurator'):
+            return
+        dc = main_app.device_configurator
+        if not hasattr(dc, 'string_inverter_configs') or not dc.string_inverter_configs:
+            return
+
+        ws = wb.create_sheet("String Inverters")
+
+        title_font = Font(bold=True, size=14)
+        header_font = Font(bold=True, size=11, color="FFFFFF")
+        header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+        warn_fill = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type="solid")
+        thin_border = Border(
+            left=Side(style='thin'), right=Side(style='thin'),
+            top=Side(style='thin'), bottom=Side(style='thin')
+        )
+        center_align = Alignment(horizontal='center', vertical='center')
+
+        row = 1
+        ws.merge_cells(f'A{row}:I{row}')
+        ws.cell(row=row, column=1, value="String Inverter Configuration Details").font = title_font
+        row += 2
+
+        nec_factor = float(dc.nec_factor_var.get()) if hasattr(dc, 'nec_factor_var') else 1.56
+        ws.cell(row=row, column=1, value="NEC Safety Factor:").font = Font(bold=True)
+        ws.cell(row=row, column=2, value=nec_factor)
+        row += 2
+
+        headers = ['Inverter', 'Tracker', 'Harness', 'Strings', 'Isc (A)',
+                   'Harness Current (A)', 'Cable Size',
+                   'Total DC Current (A)', 'MPPT Max (A)', 'Max AC Out (A)']
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=row, column=col, value=header)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = center_align
+            cell.border = thin_border
+        row += 1
+
+        import re as _re
+        _nat_key = lambda x: [int(c) if c.isdigit() else c.lower() for c in _re.split(r'(\d+)', x)]
+
+        for si_id in sorted(dc.string_inverter_configs.keys(), key=_nat_key):
+            si_cfg = dc.string_inverter_configs[si_id]
+            mppt_max = si_cfg.get_mppt_max_current(0)
+            ac_out = si_cfg.get_max_ac_output_current()
+            total_dc = si_cfg.calculate_total_dc_current()
+
+            for i, conn in enumerate(si_cfg.connections):
+                over = mppt_max > 0 and conn.harness_current > mppt_max
+
+                def _cell(r, c, v):
+                    cl = ws.cell(row=r, column=c, value=v)
+                    cl.border = thin_border
+                    cl.alignment = center_align
+                    if over:
+                        cl.fill = warn_fill
+                    return cl
+
+                _cell(row, 1, si_id)
+                _cell(row, 2, conn.tracker_id)
+                _cell(row, 3, conn.harness_id)
+                _cell(row, 4, conn.num_strings)
+                _cell(row, 5, round(conn.module_isc, 2))
+                _cell(row, 6, round(conn.harness_current, 2))
+                _cell(row, 7, conn.actual_cable_size)
+
+                if i == 0:
+                    _cell(row, 8, round(total_dc, 2))
+                    _cell(row, 9, round(mppt_max, 2) if mppt_max else '')
+                    _cell(row, 10, round(ac_out, 2) if ac_out else '')
+                else:
+                    _cell(row, 8, '')
+                    _cell(row, 9, '')
+                    _cell(row, 10, '')
+
+                row += 1
+            row += 1  # blank row between inverters
+
+        for col_idx in range(1, len(headers) + 1):
+            max_length = len(headers[col_idx - 1])
+            col_letter = get_column_letter(col_idx)
+            for cell in ws[col_letter]:
+                if cell.value:
+                    max_length = max(max_length, len(str(cell.value)))
+            ws.column_dimensions[col_letter].width = min(max_length + 3, 30)
+
     def export_to_excel(self, target_filepath=None, silent=False):
         """Export the quick estimate BOM to Excel
         
@@ -6429,7 +6627,7 @@ class QuickEstimate(ttk.Frame):
             
             # ========== PROJECT INFO HEADER (BOM sheet) ==========
             row = 1
-            ws.merge_cells(f'A{row}:F{row}')
+            ws.merge_cells(f'A{row}:G{row}')
             ws.cell(row=row, column=1, value="Quick Estimate — Project Info").font = title_font
             row += 2
             
@@ -6504,12 +6702,12 @@ class QuickEstimate(ttk.Frame):
             row += 1
             
             # ========== BOM RESULTS SECTION (BOM sheet) ==========
-            ws.merge_cells(f'A{row}:F{row}')
+            ws.merge_cells(f'A{row}:G{row}')
             ws.cell(row=row, column=1, value="Estimated Bill of Materials").font = title_font
             row += 1
             
             # BOM headers
-            bom_headers = ['Item', 'Part Number', 'Quantity', 'Unit', 'Unit Cost', 'Ext. Cost']
+            bom_headers = ['Item', 'Part Number', 'Description', 'Quantity', 'Unit', 'Unit Cost', 'Ext. Cost']
             for col, header in enumerate(bom_headers, 1):
                 cell = ws.cell(row=row, column=col, value=header)
                 cell.font = header_font
@@ -6522,15 +6720,16 @@ class QuickEstimate(ttk.Frame):
             bom_first_data_row = None
             for item_id in self.results_tree.get_children():
                 values = self.results_tree.item(item_id, 'values')
-                if len(values) < 7:
+                if len(values) < 8:
                     continue
 
                 include = values[0]   # ☑ or ☐ or ''
                 item_name = values[1]
                 part_number = values[2]
-                qty = values[3]
-                unit = values[4]
-                unit_cost = values[5]
+                description = values[3]
+                qty = values[4]
+                unit = values[5]
+                unit_cost = values[6]
 
                 is_section = str(item_name).startswith('---')
                 is_warning = '⚠' in str(item_name)
@@ -6541,6 +6740,7 @@ class QuickEstimate(ttk.Frame):
 
                 cell_item = ws.cell(row=row, column=1, value=str(item_name).replace('---', '').strip() if is_section else item_name)
                 cell_pn = ws.cell(row=row, column=2, value=part_number if not is_section else '')
+                cell_desc = ws.cell(row=row, column=3, value='' if is_section else (description or ''))
                 # Convert qty to number for Excel
                 qty_val = ''
                 if qty:
@@ -6548,8 +6748,8 @@ class QuickEstimate(ttk.Frame):
                         qty_val = int(qty) if '.' not in str(qty) else float(qty)
                     except (ValueError, TypeError):
                         qty_val = qty
-                cell_qty = ws.cell(row=row, column=3, value=qty_val)
-                cell_unit = ws.cell(row=row, column=4, value=unit if unit else '')
+                cell_qty = ws.cell(row=row, column=4, value=qty_val)
+                cell_unit = ws.cell(row=row, column=5, value=unit if unit else '')
                 # Convert unit_cost to number for Excel
                 unit_cost_val = ''
                 if unit_cost:
@@ -6558,42 +6758,43 @@ class QuickEstimate(ttk.Frame):
                         unit_cost_val = float(cleaned) if cleaned else ''
                     except (ValueError, TypeError):
                         unit_cost_val = unit_cost
-                cell_unit_cost = ws.cell(row=row, column=5, value=unit_cost_val)
+                cell_unit_cost = ws.cell(row=row, column=6, value=unit_cost_val)
                 if isinstance(unit_cost_val, float):
                     cell_unit_cost.number_format = '"$"#,##0.00'
 
                 # Ext. Cost: formula for all non-section rows
                 if not is_section:
-                    cell_ext_cost = ws.cell(row=row, column=6, value=f'=IF(E{row}="","",C{row}*E{row})')
+                    cell_ext_cost = ws.cell(row=row, column=7, value=f'=IF(F{row}="","",D{row}*F{row})')
                     cell_ext_cost.number_format = '"$"#,##0.00'
                     if bom_first_data_row is None:
                         bom_first_data_row = row
                 else:
-                    cell_ext_cost = ws.cell(row=row, column=6, value='')
+                    cell_ext_cost = ws.cell(row=row, column=7, value='')
 
                 if is_section:
-                    for c in [cell_item, cell_pn, cell_qty, cell_unit, cell_unit_cost, cell_ext_cost]:
+                    for c in [cell_item, cell_pn, cell_desc, cell_qty, cell_unit, cell_unit_cost, cell_ext_cost]:
                         c.font = section_font
                         c.fill = section_fill
                 elif is_warning:
-                    for c in [cell_item, cell_pn, cell_qty, cell_unit, cell_unit_cost, cell_ext_cost]:
+                    for c in [cell_item, cell_pn, cell_desc, cell_qty, cell_unit, cell_unit_cost, cell_ext_cost]:
                         c.fill = warning_fill
 
-                for c in [cell_item, cell_pn, cell_qty, cell_unit, cell_unit_cost, cell_ext_cost]:
+                for c in [cell_item, cell_pn, cell_desc, cell_qty, cell_unit, cell_unit_cost, cell_ext_cost]:
                     c.border = thin_border
                     c.alignment = center_align
                 cell_item.alignment = wrap_align
+                cell_desc.alignment = Alignment(horizontal='left', wrap_text=False)
 
                 row += 1
 
             # Total Cost row
             if bom_first_data_row:
                 row += 1
-                total_label = ws.cell(row=row, column=5, value='Total Cost:')
+                total_label = ws.cell(row=row, column=6, value='Total Cost:')
                 total_label.font = Font(bold=True)
                 total_label.alignment = Alignment(horizontal='right')
                 total_label.border = thin_border
-                total_cell = ws.cell(row=row, column=6, value=f'=SUM(F{bom_first_data_row}:F{row - 2})')
+                total_cell = ws.cell(row=row, column=7, value=f'=SUM(G{bom_first_data_row}:G{row - 2})')
                 total_cell.font = Font(bold=True)
                 total_cell.number_format = '"$"#,##0.00'
                 total_cell.border = thin_border
@@ -6603,8 +6804,12 @@ class QuickEstimate(ttk.Frame):
             # ========== BLOCK DETAILS SHEET ==========
             self._write_block_details_sheet(wb)
 
-            # ========== COMBINER BOXES SHEET ==========
-            self._write_combiner_sheet(wb)
+            # ========== COMBINER BOXES / STRING INVERTERS SHEET ==========
+            topology = self.topology_var.get() if hasattr(self, 'topology_var') else ''
+            if topology == 'Distributed String':
+                self._write_string_inverter_sheet(wb)
+            else:
+                self._write_combiner_sheet(wb)
             
             # ========== AUTO-FIT COLUMNS (BOM sheet) ==========
             for col_idx in range(1, 9):
@@ -6613,7 +6818,8 @@ class QuickEstimate(ttk.Frame):
                 for cell in ws[col_letter]:
                     if cell.value:
                         max_length = max(max_length, len(str(cell.value)))
-                ws.column_dimensions[col_letter].width = min(max_length + 4, 55)
+                cap = 120 if col_idx == 3 else 55  # description column gets extra room
+                ws.column_dimensions[col_letter].width = min(max_length + 4, cap)
             
             # Save
             wb.save(filepath)

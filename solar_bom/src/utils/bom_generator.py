@@ -215,14 +215,14 @@ class BOMGenerator:
                     parallel_desc_suffix = f' ({dc_feeder_parallel} parallel)' if dc_feeder_parallel > 1 else ''
                     
                     block_quantities[f'Positive DC Feeder ({dc_feeder_cable_size}){parallel_suffix}'] = {
-                        'description': f'DC Positive Feeder Cable {dc_feeder_cable_size}{parallel_desc_suffix}',
+                        'description': f'DC Positive Feeder Cable {dc_feeder_cable_size}, AL{parallel_desc_suffix}',
                         'quantity': feeder_length_with_waste,
                         'unit': 'feet',
                         'category': 'eBOS'
                     }
                     
                     block_quantities[f'Negative DC Feeder ({dc_feeder_cable_size}){parallel_suffix}'] = {
-                        'description': f'DC Negative Feeder Cable {dc_feeder_cable_size}{parallel_desc_suffix}',
+                        'description': f'DC Negative Feeder Cable {dc_feeder_cable_size}, AL{parallel_desc_suffix}',
                         'quantity': feeder_length_with_waste,
                         'unit': 'feet',
                         'category': 'eBOS'
@@ -239,7 +239,7 @@ class BOMGenerator:
                     string_length_feet = round(cable_lengths['string_cable_positive'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
                     
                     block_quantities[f'Positive String Cable ({string_cable_size})'] = {
-                        'description': f'DC Positive String Cable {string_cable_size}',
+                        'description': f'DC Positive String Cable {string_cable_size}, CU',
                         'quantity': string_length_feet,
                         'unit': 'feet',
                         'category': 'eBOS'
@@ -249,7 +249,7 @@ class BOMGenerator:
                     string_length_feet = round(cable_lengths['string_cable_negative'] * 3.28084 * self.CABLE_WASTE_FACTOR, 1)
                     
                     block_quantities[f'Negative String Cable ({string_cable_size})'] = {
-                        'description': f'DC Negative String Cable {string_cable_size}',
+                        'description': f'DC Negative String Cable {string_cable_size}, CU',
                         'quantity': string_length_feet,
                         'unit': 'feet',
                         'category': 'eBOS'
@@ -1938,29 +1938,21 @@ class BOMGenerator:
         
     def get_whip_description_format(self, wire_gauge):
         """Get whip description format from library"""
-        # Find any whip with matching wire gauge to get description format
+        import re
         for spec in self.whip_library.values():
             if spec.get('wire_gauge') == wire_gauge:
-                # Extract format without the length
                 desc = spec.get('description', '')
-                # Replace the length part with placeholder
-                import re
-                return re.sub(r'LENGTH \(FT\): \d+', 'LENGTH (FT): {length}', desc)
-        # Default format if not found
-        return f"1500 VDC {wire_gauge} WHIP WITH MC4 CONNECTOR AND BLUNT CUT END, LENGTH (FT): {{length}}"
+                return re.sub(r'Length \(ft\): \d+', 'Length (ft): {length}', desc)
+        return f"{wire_gauge} Whip with MC4 Connector and Blunt Cut End, Length (ft): {{length}}"
 
     def get_extender_description_format(self, wire_gauge):
         """Get extender description format from library"""
-        # Find any extender with matching wire gauge to get description format
+        import re
         for spec in self.extender_library.values():
             if spec.get('wire_gauge') == wire_gauge:
-                # Extract format without the length
                 desc = spec.get('description', '')
-                # Replace the length part with placeholder
-                import re
-                return re.sub(r'LENGTH \(FT\): \d+', 'LENGTH (FT): {length}', desc)
-        # Default format if not found
-        return f"1500 VDC {wire_gauge} EXTENDER WITH MC4 CONNECTORS, LENGTH (FT): {{length}}"
+                return re.sub(r'Length \(ft\): \d+', 'Length (ft): {length}', desc)
+        return f"{wire_gauge} Extender with MC4 Connectors, Length (ft): {{length}}"
     
     def get_harness_description(self, num_strings, polarity, string_spacing_ft, trunk_cable_size, string_cable_size, fuse_rating_amps=None):
         """Get harness description from library based on matching part number"""      
@@ -2221,12 +2213,12 @@ class BOMGenerator:
             # Generate proper description based on cable type
             if "Whip Cable" in cable_type_name:
                 base_desc = self.get_whip_description_format(cable_size)
-                description = base_desc.format(length=int(length))
+                description = base_desc.format(length=int(length)) + ", CU"
             elif "Extender Cable" in cable_type_name:
                 base_desc = self.get_extender_description_format(cable_size)
-                description = base_desc.format(length=int(length))
+                description = base_desc.format(length=int(length)) + ", CU"
             else:
-                description = f"{int(length)}ft {cable_type_name} Segment ({cable_size})"
+                description = f"{int(length)}ft {cable_type_name} Segment ({cable_size}, CU)"
 
             block_quantities[segment_key] = {
                 'description': description,
@@ -2270,11 +2262,11 @@ class BOMGenerator:
 
             # Generate proper description for totals
             if "Whip Cable" in prefix:
-                description = self.get_whip_description_format(cable_size).format(length="TOTAL")
+                description = self.get_whip_description_format(cable_size).format(length="TOTAL") + ", CU"
             elif "Extender Cable" in prefix:
-                description = self.get_extender_description_format(cable_size).format(length="TOTAL")
+                description = self.get_extender_description_format(cable_size).format(length="TOTAL") + ", CU"
             else:
-                description = f'DC {prefix} {cable_size}'
+                description = f'DC {prefix} {cable_size}, CU'
 
             block_quantities[total_key] = {
                 'description': description,
