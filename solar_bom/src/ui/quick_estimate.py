@@ -3886,6 +3886,12 @@ class QuickEstimate(ttk.Frame):
         """Auto-calculate strings per inverter from DC:AC ratio and show Isc warning if needed"""
         if self._updating_spi:
             return
+        # For Central Inverter, this field is strings/CB — managed by the user and
+        # by calculate_estimate. Don't touch it here, including the early-return
+        # resets below that would clobber the user's input.
+        if self.topology_var.get() == 'Central Inverter':
+            self.isc_warning_label.config(text="")
+            return
         if not self.selected_inverter or not self.selected_module:
             self.strings_per_inverter_var.set('--')
             self.isc_warning_label.config(text="")
