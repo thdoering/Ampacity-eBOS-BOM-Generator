@@ -95,6 +95,15 @@ class BlockConfigurator(ttk.Frame):
             self.string_current_label.config(text="-- A")
             self.nec_current_label.config(text="-- A")
 
+    def _toggle_section(self, content_frame, toggle_btn, title):
+        """Show or hide a collapsible section and update the toggle button label."""
+        if content_frame.winfo_ismapped():
+            content_frame.grid_remove()
+            toggle_btn.config(text=f"▶ {title}")
+        else:
+            content_frame.grid(row=1, column=0, sticky=(tk.W, tk.E))
+            toggle_btn.config(text=f"▼ {title}")
+
     def validate_float_input(self, var, default_value):
         """Validate float input, returning default value if invalid"""
         try:
@@ -216,7 +225,7 @@ class BlockConfigurator(ttk.Frame):
 
         # Device Type Selection
         ttk.Label(device_frame, text="Device Type:").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
-        self.device_type_var = tk.StringVar(value=DeviceType.STRING_INVERTER.value)
+        self.device_type_var = tk.StringVar(value=DeviceType.COMBINER_BOX.value)
         device_type_combo = ttk.Combobox(device_frame, textvariable=self.device_type_var, state='readonly')
         device_type_combo['values'] = [t.value for t in DeviceType]
         device_type_combo.grid(row=1, column=1, columnspan=2, padx=5, pady=2, sticky=(tk.W, tk.E))
@@ -241,9 +250,21 @@ class BlockConfigurator(ttk.Frame):
             self.update_device_spacing_display(),
             self.draw_block()
         ))
-        # Underground Routing Configuration - goes after the inverter button row
-        underground_frame = ttk.LabelFrame(device_frame, text="Whip Routing")
-        underground_frame.grid(row=7, column=0, columnspan=3, padx=5, pady=5, sticky=(tk.W, tk.E))
+        # Underground Routing Configuration - collapsible, default collapsed
+        underground_outer = ttk.Frame(device_frame)
+        underground_outer.grid(row=7, column=0, columnspan=3, padx=5, pady=(5, 0), sticky=(tk.W, tk.E))
+        underground_outer.columnconfigure(0, weight=1)
+
+        self._underground_toggle_btn = ttk.Button(
+            underground_outer, text="▶ Whip Routing",
+            command=lambda: self._toggle_section(
+                underground_frame, self._underground_toggle_btn, "Whip Routing"
+            )
+        )
+        self._underground_toggle_btn.grid(row=0, column=0, sticky=tk.W)
+
+        underground_frame = ttk.Frame(underground_outer, relief='groove', borderwidth=1)
+        # Not gridded initially — starts collapsed
 
         # Toggle for above/below ground
         self.underground_routing_var = tk.BooleanVar(value=False)
@@ -286,9 +307,21 @@ class BlockConfigurator(ttk.Frame):
                 command=self.apply_underground_routing_to_all).grid(
                 row=3, column=0, columnspan=5, padx=5, pady=5)
         
-        # DC Feeder Configuration
-        dc_feeder_frame = ttk.LabelFrame(device_frame, text="DC Feeder (Combiner to Inverter)")
-        dc_feeder_frame.grid(row=8, column=0, columnspan=3, padx=5, pady=5, sticky=(tk.W, tk.E))
+        # DC Feeder Configuration - collapsible, default open
+        dc_feeder_outer = ttk.Frame(device_frame)
+        dc_feeder_outer.grid(row=8, column=0, columnspan=3, padx=5, pady=(5, 0), sticky=(tk.W, tk.E))
+        dc_feeder_outer.columnconfigure(0, weight=1)
+
+        self._dc_feeder_toggle_btn = ttk.Button(
+            dc_feeder_outer, text="▼ DC Feeder (Combiner to Inverter)",
+            command=lambda: self._toggle_section(
+                dc_feeder_frame, self._dc_feeder_toggle_btn, "DC Feeder (Combiner to Inverter)"
+            )
+        )
+        self._dc_feeder_toggle_btn.grid(row=0, column=0, sticky=tk.W)
+
+        dc_feeder_frame = ttk.Frame(dc_feeder_outer, relief='groove', borderwidth=1)
+        dc_feeder_frame.grid(row=1, column=0, sticky=(tk.W, tk.E))  # starts expanded
 
         # DC Feeder Distance
         ttk.Label(dc_feeder_frame, text="Distance:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
