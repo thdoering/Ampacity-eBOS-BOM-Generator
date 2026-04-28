@@ -1113,7 +1113,8 @@ class SitePreviewWindow(tk.Toplevel):
         self.scale *= factor
         
         self.zoom_label.config(text=f"{self.scale * 100:.0f}%")
-        self.draw()
+        self.canvas.scale('all', center_x, center_y, factor, factor)
+        self._schedule_redraw()
     
     def on_mousewheel(self, event):
         """Handle mouse wheel zoom"""
@@ -1560,11 +1561,12 @@ class SitePreviewWindow(tk.Toplevel):
             self.pan_y += dy_px
             self.drag_start_x = event.x
             self.drag_start_y = event.y
-            self.draw()
+            self.canvas.move('all', dx_px, dy_px)
 
     def on_pan_release(self, event):
         """Handle middle mouse release — stop panning."""
         self.dragging_canvas = False
+        self.draw()
     
     def _snap_group_position(self, group_idx, raw_x, raw_y):
         """Apply snapping to a group's proposed position.
@@ -1621,6 +1623,20 @@ class SitePreviewWindow(tk.Toplevel):
         """Redraw the canvas so the device info panel reflects updated wire gauges."""
         self.draw()
 
+    def _schedule_redraw(self, delay_ms=40):
+        """Coalesce rapid redraw requests into a single deferred draw."""
+        existing = getattr(self, '_redraw_after_id', None)
+        if existing is not None:
+            try:
+                self.after_cancel(existing)
+            except Exception:
+                pass
+        self._redraw_after_id = self.after(delay_ms, self._do_scheduled_redraw)
+
+    def _do_scheduled_redraw(self):
+        self._redraw_after_id = None
+        self.draw()
+
     def draw(self):
         """Draw the site layout with to-scale trackers at their group positions.
         
@@ -1633,9 +1649,19 @@ class SitePreviewWindow(tk.Toplevel):
 
         if not self.group_layout:
             return
-        
+
+        # Viewport bounds in world space for per-group culling
+        canvas_w = self.canvas.winfo_width()
+        canvas_h = self.canvas.winfo_height()
+        view_x_min, view_y_min = self.canvas_to_world(0, 0)
+        view_x_max, view_y_max = self.canvas_to_world(canvas_w, canvas_h)
+        if view_x_min > view_x_max:
+            view_x_min, view_x_max = view_x_max, view_x_min
+        if view_y_min > view_y_max:
+            view_y_min, view_y_max = view_y_max, view_y_min
+
         max_width = getattr(self, 'max_tracker_width_ft', 6)
-        
+
         for group_idx, group_data in enumerate(self.group_layout):
             pitch = group_data.get('row_spacing_ft', getattr(self, 'tracker_pitch_ft', 20))
             gx = group_data['x']
@@ -1664,6 +1690,26 @@ class SitePreviewWindow(tk.Toplevel):
                     pts.extend([cx2, cy2])
                 return pts
 
+            # Viewport culling — skip groups entirely outside the visible canvas
+            margin = max(self.max_tracker_width_ft, 10.0) * 2.0
+            g_x_min = gx
+            g_x_max = gx + group_data['width_ft']
+            g_y_min = gy + vis_min
+            g_y_max = gy + vis_max
+            if rotation_deg != 0:
+                half_w = (g_x_max - g_x_min) / 2
+                half_h = (g_y_max - g_y_min) / 2
+                diag = (half_w ** 2 + half_h ** 2) ** 0.5
+                cx_g = (g_x_min + g_x_max) / 2
+                cy_g = (g_y_min + g_y_max) / 2
+                g_x_min, g_x_max = cx_g - diag, cx_g + diag
+                g_y_min, g_y_max = cy_g - diag, cy_g + diag
+            if (g_x_max + margin < view_x_min or
+                    g_x_min - margin > view_x_max or
+                    g_y_max + margin < view_y_min or
+                    g_y_min - margin > view_y_max):
+                continue
+
             # Draw selection highlight behind group (using visual bounds)
             if is_selected:
                 pad = max_width * 0.3
@@ -1684,7 +1730,8 @@ class SitePreviewWindow(tk.Toplevel):
             self._draw_text_with_bg(
                 label_x, label_y,
                 text=group_data['name'], font=('Helvetica', font_size),
-                fill='#4A90D9' if is_selected else '#333333', anchor='e'
+                fill='#4A90D9' if is_selected else '#333333', anchor='e',
+                bg_required=False
             )
             
             for t_idx, tracker in enumerate(group_data['trackers']):
@@ -1782,69 +1829,102 @@ class SitePreviewWindow(tk.Toplevel):
                 
                 # Draw each string (including unowned partial bands)
                 draw_count = len(string_heights)
+                _hl = getattr(self, '_highlighted_strings', set())
+
+                # First pass: compute render attributes per string slot
+                _str_attrs = []  # (color, outline_color, outline_width, is_unowned_partial)
                 for s_idx in range(draw_count):
-                    # Determine if this is an unowned partial band
                     is_unowned_partial = (partial_mods > 0 and spt <= full_str_count and
                                          ((partial_side == 'north' and s_idx == 0) or
                                           (partial_side == 'south' and s_idx == draw_count - 1)))
-                    
                     if is_unowned_partial:
-                        color = '#D4C878'  # Muted gold for unowned partial
+                        color = '#D4C878'
                     else:
-                        # Map drawing index back to allocation string index
-                        # Skip the partial band position to get the right color
                         if partial_mods > 0 and partial_side == 'north':
-                            color_idx = s_idx - 1  # Partial is at 0, so shift down
+                            color_idx = s_idx - 1
                             if spt > full_str_count and s_idx == 0:
-                                color_idx = 0  # Owned partial gets first color
+                                color_idx = 0
                         elif partial_mods > 0 and partial_side == 'south':
                             if spt > full_str_count and s_idx == draw_count - 1:
-                                color_idx = spt - 1  # Owned partial gets last color
+                                color_idx = spt - 1
                             else:
                                 color_idx = s_idx
                         else:
                             color_idx = s_idx
                         color = string_colors[color_idx] if 0 <= color_idx < len(string_colors) else '#D0D0D0'
-                    
+
                     if highlighting:
                         if s_idx in selected_strings:
                             outline_color = '#FF6600'
                             outline_width = 2
                         else:
-                            # Dim unselected strings
                             color = '#E0E0E0'
                             outline_color = '#CCCCCC'
                             outline_width = 1
                     elif self.assigning_devices:
-                        # Grey out all trackers while Assign Devices dialog is open
                         color = '#E0E0E0'
                         outline_color = '#CCCCCC'
                         outline_width = 1
                     else:
                         outline_color = '#555555'
                         outline_width = 1
-                    
-                    # Yellow highlight from Edit Devices dialog
-                    _hl = getattr(self, '_highlighted_strings', set())
+
                     if (not is_unowned_partial and _hl and
                             (global_tracker_idx, s_idx) in _hl):
                         color = '#FFFF00'
                         outline_color = '#DAA520'
                         outline_width = 2
-                    
-                    sy = ty + sum(string_heights[:s_idx])
-                    sh = string_heights[s_idx] if s_idx < len(string_heights) else string_heights[-1]
 
+                    _str_attrs.append((color, outline_color, outline_width, is_unowned_partial))
+
+                # Second pass: emit polygons.
+                # When individual strings are tall enough on screen to interact with,
+                # draw one polygon per string so the borders are visible. Below that
+                # threshold, coalesce consecutive same-key strings to reduce item count.
+                min_str_h_px = min(string_heights) * self.scale if string_heights else 0
+                if min_str_h_px >= 8:
+                    # Detail mode — individual string polygons
+                    sy = ty
+                    for s_idx in range(draw_count):
+                        color, outline_color, outline_width, _ = _str_attrs[s_idx]
+                        sh = string_heights[s_idx]
+                        poly = _rect_as_poly(tx + tx_offset, sy, tx + tx_offset + t_width, sy + sh)
+                        self.canvas.create_polygon(*poly, fill=color, outline=outline_color, width=outline_width)
+                        sy += sh
+                else:
+                    # Performance mode — one polygon per run of consecutive same-key strings
+                    sy_cursor = ty
+                    run_start = 0
+                    while run_start < draw_count:
+                        run_color, run_outline, run_width, _ = _str_attrs[run_start]
+                        run_key = (run_color, run_outline, run_width)
+                        run_end = run_start
+                        while (run_end + 1 < draw_count and
+                               _str_attrs[run_end + 1][:3] == run_key):
+                            run_end += 1
+                        run_sy = sy_cursor
+                        for i in range(run_start, run_end + 1):
+                            sy_cursor += string_heights[i]
+                        poly = _rect_as_poly(
+                            tx + tx_offset, run_sy,
+                            tx + tx_offset + t_width, sy_cursor
+                        )
+                        self.canvas.create_polygon(*poly, fill=run_color, outline=run_outline, width=run_width)
+                        run_start = run_end + 1
+
+                # Third pass: populate _string_rects per individual string (no polygon emission)
+                sy = ty
+                for s_idx in range(draw_count):
+                    sh = string_heights[s_idx] if s_idx < len(string_heights) else string_heights[-1]
                     poly = _rect_as_poly(tx + tx_offset, sy, tx + tx_offset + t_width, sy + sh)
-                    self.canvas.create_polygon(
-                        *poly, fill=color, outline=outline_color, width=outline_width
-                    )
+                    _, _, _, is_unowned_partial = _str_attrs[s_idx]
                     self._string_rects.append({
                         'tracker_idx': global_tracker_idx,
                         's_idx': s_idx,
                         'poly_canvas': poly,
                         'is_unowned_partial': is_unowned_partial,
                     })
+                    sy += sh
 
                 # Tracker outline
                 out_poly = _rect_as_poly(
@@ -1888,7 +1968,8 @@ class SitePreviewWindow(tk.Toplevel):
                     lbl_size = max(6, min(9, int(8 * self.scale)))
                     self._draw_text_with_bg(
                         label_cx, label_cy,
-                        text=f"T{global_tracker_idx+1}", font=('Helvetica', lbl_size), fill='#555555'
+                        text=f"T{global_tracker_idx+1}", font=('Helvetica', lbl_size), fill='#555555',
+                        bg_required=False
                     )
         
         # Draw devices (CB/SI)
@@ -1931,9 +2012,11 @@ class SitePreviewWindow(tk.Toplevel):
             text='N', font=('Helvetica', 9, 'bold'), fill='#333333'
         )
 
-    def _draw_text_with_bg(self, x, y, text, font, fill='#333333', anchor='center', bg='white', pad=2):
-        """Draw canvas text with a white background rectangle for readability."""
+    def _draw_text_with_bg(self, x, y, text, font, fill='#333333', anchor='center', bg='white', pad=2, bg_required=True):
+        """Draw canvas text, optionally with a white background rectangle for readability."""
         tid = self.canvas.create_text(x, y, text=text, font=font, fill=fill, anchor=anchor)
+        if not bg_required:
+            return tid
         bbox = self.canvas.bbox(tid)
         if bbox:
             self.canvas.create_rectangle(
@@ -3113,55 +3196,46 @@ class SitePreviewWindow(tk.Toplevel):
         if not self.pads:
             messagebox.showinfo("No Pads", "Add at least one pad first.", parent=self)
             return
-        
+
         if not hasattr(self, 'device_positions') or not self.device_positions:
             messagebox.showinfo("No Devices", "No devices to assign. Run Calculate Estimate first.", parent=self)
             return
-        
+
         dialog = tk.Toplevel(self)
         dialog.title("Assign Devices to Pads")
         dialog.transient(self)
         # No grab_set() — allow pan/zoom on canvas behind dialog
-        
-        self.assigning_devices = True
-        self.draw()
-        
-        # Size based on device count; floor at 280 so button row is never clipped
-        num_devices = len(self.device_positions)
-        dialog_height = max(280, min(600, 120 + num_devices * 28))
-        dialog.geometry(f"760x{dialog_height}")
-        dialog.minsize(660, 280)
-        
 
-        # Instructions
-        ttk.Label(dialog, text="Assign each device to a collection pad:",
-                  font=('Helvetica', 10)).pack(anchor='w', padx=10, pady=(10, 0))
-        ttk.Label(dialog, text="Tip: Drag the blue/green handles to fill multiple rows with the same value",
-                  font=('Helvetica', 8), foreground='gray').pack(anchor='w', padx=10, pady=(0, 5))
-        
-        # Build pad label list for dropdowns
+        self.assigning_devices = True
+        self.after_idle(self.draw)
+
+        num_devices = len(self.device_positions)
+        dialog_height = max(320, min(640, 160 + num_devices * 22))
+        dialog.geometry(f"720x{dialog_height}")
+        dialog.minsize(600, 300)
+
+        # Build pad label list
         pad_labels = [pad.get('label', f'Pad {i+1}') for i, pad in enumerate(self.pads)]
-        
-        # Build reverse lookup: device_idx -> pad_idx
+
+        # Reverse lookup: device_idx -> pad_idx (mutable, updated on each cell commit)
         device_to_pad = {}
         for pad_idx, pad in enumerate(self.pads):
             for dev_idx in pad.get('assigned_devices', []):
                 device_to_pad[dev_idx] = pad_idx
 
         # Snapshot for "Undo All Changes"
-        import copy as _copy
         _snap_assigned = [list(pad.get('assigned_devices', [])) for pad in self.pads]
         _snap_feeder_sizes = dict(self.device_feeder_sizes)
         _snap_parallel_counts = dict(self.device_feeder_parallel_counts)
 
-        # Determine feeder column based on topology
+        # Topology-driven feeder column label, default value, and blanket flag
         from src.utils.cable_sizing import get_available_sizes
         parent_qe = self.master
         material = 'aluminum'
         if hasattr(parent_qe, 'wire_sizing'):
             material = parent_qe.wire_sizing.get('feeder_material', 'aluminum')
         feeder_sizes_list = get_available_sizes(material)
-        
+
         if self.topology == 'Distributed String':
             feeder_col_label = "AC HR Size"
             default_feeder = getattr(parent_qe, 'wire_sizing', {}).get('ac_homerun', '')
@@ -3173,252 +3247,269 @@ class SitePreviewWindow(tk.Toplevel):
 
         if not default_feeder and feeder_sizes_list:
             default_feeder = feeder_sizes_list[0]
-        
-        # Scrollable frame
-        container = ttk.Frame(dialog)
-        container.pack(fill='both', expand=True, padx=10, pady=5)
-        
-        canvas = tk.Canvas(container, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(container, orient='vertical', command=canvas.yview)
-        scroll_frame = ttk.Frame(canvas)
-        
-        scroll_frame.bind('<Configure>', lambda e: canvas.configure(scrollregion=canvas.bbox('all')))
-        canvas.create_window((0, 0), window=scroll_frame, anchor='nw')
-        canvas.configure(yscrollcommand=scrollbar.set)
-        
-        canvas.pack(side='left', fill='both', expand=True)
-        scrollbar.pack(side='right', fill='y')
-        
-        def _on_mousewheel(event):
-            canvas.yview_scroll(int(-1 * (event.delta / 120)), 'units')
-        canvas.bind('<Enter>', lambda e: canvas.bind_all('<MouseWheel>', _on_mousewheel))
-        canvas.bind('<Leave>', lambda e: canvas.unbind_all('<MouseWheel>'))
-        
-        # Headers
-        header = ttk.Frame(scroll_frame)
-        header.pack(fill='x', pady=(0, 5))
-        ttk.Label(header, text="Device", font=('Helvetica', 9, 'bold'), width=12).pack(side='left', padx=5)
-        ttk.Label(header, text="Strings", font=('Helvetica', 9, 'bold'), width=8).pack(side='left', padx=5)
-        ttk.Label(header, text="Group", font=('Helvetica', 9, 'bold'), width=12).pack(side='left', padx=5)
-        ttk.Label(header, text=feeder_col_label, font=('Helvetica', 9, 'bold'), width=12).pack(side='left', padx=5)
-        ttk.Label(header, text="", width=1).pack(side='left', padx=2)
-        ttk.Label(header, text="Parallel", font=('Helvetica', 9, 'bold'), width=8).pack(side='left', padx=5)
-        ttk.Label(header, text="Pad", font=('Helvetica', 9, 'bold'), width=12).pack(side='left', padx=5)
-        ttk.Label(header, text="", width=1).pack(side='left', padx=2)
-        
-        ttk.Separator(scroll_frame, orient='horizontal').pack(fill='x', pady=2)
-        
-        # One row per device
-        pad_vars = []
-        pad_combos = []
-        feeder_vars = []
-        feeder_combos = []
-        parallel_vars = []
-        parallel_spinboxes = []
-        
-        # Drag-fill handle state — pad column (blue)
-        _pad_fill = {'active': False, 'source_idx': None, 'value': None}
-        _pad_fill_handles = []
-        
-        def _pad_handle_press(event, idx):
-            _pad_fill['active'] = True
-            _pad_fill['source_idx'] = idx
-            _pad_fill['value'] = pad_vars[idx].get()
-            event.widget.config(cursor='sb_v_double_arrow')
-        
-        def _pad_handle_motion(event):
-            if not _pad_fill['active']:
-                return
-            my = event.y_root
-            src = _pad_fill['source_idx']
-            for i, handle in enumerate(_pad_fill_handles):
-                try:
-                    hy = handle.winfo_rooty()
-                    hh = handle.winfo_height()
-                    row_center = hy + hh / 2
-                    src_center = _pad_fill_handles[src].winfo_rooty() + _pad_fill_handles[src].winfo_height() / 2
-                    in_range = min(my, src_center) <= row_center <= max(my, src_center)
-                    if in_range:
-                        pad_vars[i].set(_pad_fill['value'])
-                        pad_combos[i].focus_set()
-                except tk.TclError:
-                    pass
-        
-        def _pad_handle_release(event):
-            if _pad_fill['active']:
-                event.widget.config(cursor='')
-            _pad_fill['active'] = False
-            _pad_fill['source_idx'] = None
-            _pad_fill['value'] = None
-            _commit()
-        
-        # Drag-fill handle state — feeder column (green)
-        _feeder_fill = {'active': False, 'source_idx': None, 'value': None}
-        _feeder_fill_handles = []
-        
-        def _feeder_handle_press(event, idx):
-            _feeder_fill['active'] = True
-            _feeder_fill['source_idx'] = idx
-            _feeder_fill['value'] = feeder_vars[idx].get()
-            event.widget.config(cursor='sb_v_double_arrow')
-        
-        def _feeder_handle_motion(event):
-            if blanket_on or not _feeder_fill['active']:
-                return
-            my = event.y_root
-            src = _feeder_fill['source_idx']
-            for i, handle in enumerate(_feeder_fill_handles):
-                try:
-                    hy = handle.winfo_rooty()
-                    hh = handle.winfo_height()
-                    row_center = hy + hh / 2
-                    src_center = _feeder_fill_handles[src].winfo_rooty() + _feeder_fill_handles[src].winfo_height() / 2
-                    in_range = min(my, src_center) <= row_center <= max(my, src_center)
-                    if in_range:
-                        feeder_vars[i].set(_feeder_fill['value'])
-                        feeder_combos[i].focus_set()
-                except tk.TclError:
-                    pass
-        
-        def _feeder_handle_release(event):
-            if _feeder_fill['active']:
-                event.widget.config(cursor='')
-            _feeder_fill['active'] = False
-            _feeder_fill['source_idx'] = None
-            _feeder_fill['value'] = None
-            _commit()
 
-        for dev_idx, dev in enumerate(self.device_positions):
-            row = ttk.Frame(scroll_frame)
-            row.pack(fill='x', pady=1)
-            
-            # Device label
-            ttk.Label(row, text=dev['label'], width=12).pack(side='left', padx=5)
-            
-            # String count
+        # Instructions
+        ttk.Label(dialog, text="Assign each device to a collection pad:",
+                  font=('Helvetica', 10)).pack(anchor='w', padx=10, pady=(10, 0))
+        ttk.Label(dialog, text="Tip: Double-click a cell to edit.  Shift+click to select a range, then right-click any cell to set all selected rows to a chosen value.",
+                  font=('Helvetica', 8), foreground='gray').pack(anchor='w', padx=10, pady=(0, 5))
+
+        # Button row packed first at bottom so it never gets squeezed by the expanding Treeview
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(fill='x', padx=10, pady=10, side='bottom')
+
+        # Treeview
+        tree_frame = ttk.Frame(dialog)
+        tree_frame.pack(fill='both', expand=True, padx=10, pady=(0, 0))
+
+        _COL_NAMES = ('device', 'strings', 'group', 'feeder', 'parallel', 'pad')
+        tree = ttk.Treeview(tree_frame, columns=_COL_NAMES, show='headings',
+                            selectmode='extended', height=min(num_devices, 20))
+        tree.heading('device',   text='Device')
+        tree.heading('strings',  text='Strings')
+        tree.heading('group',    text='Group')
+        tree.heading('feeder',   text=feeder_col_label)
+        tree.heading('parallel', text='Parallel')
+        tree.heading('pad',      text='Pad')
+
+        tree.column('device',   width=100, anchor='w',      minwidth=70)
+        tree.column('strings',  width=60,  anchor='center', minwidth=40)
+        tree.column('group',    width=110, anchor='w',      minwidth=70)
+        tree.column('feeder',   width=110, anchor='center', minwidth=70)
+        tree.column('parallel', width=70,  anchor='center', minwidth=50)
+        tree.column('pad',      width=140, anchor='w',      minwidth=80)
+
+        vsb = ttk.Scrollbar(tree_frame, orient='vertical', command=tree.yview)
+        tree.configure(yscrollcommand=vsb.set)
+        tree.grid(row=0, column=0, sticky='nsew')
+        vsb.grid(row=0, column=1, sticky='ns')
+        tree_frame.columnconfigure(0, weight=1)
+        tree_frame.rowconfigure(0, weight=1)
+
+        def _row_values(dev_idx):
+            dev = self.device_positions[dev_idx]
             num_strings = sum(len(v) for v in dev.get('assigned_strings', {}).values())
-            ttk.Label(row, text=str(num_strings), width=8).pack(side='left', padx=5)
-            
-            # Group name
             grp_idx = dev.get('group_idx', 0)
             grp_name = self.groups[grp_idx]['name'] if grp_idx < len(self.groups) else '?'
-            ttk.Label(row, text=grp_name, width=12).pack(side='left', padx=5)
-            
-            # Feeder size dropdown — when blanket is on, show blanket value read-only
-            current_feeder = default_feeder if blanket_on else self.device_feeder_sizes.get(dev_idx, default_feeder)
-            feeder_var = tk.StringVar(value=current_feeder)
-            feeder_combo = ttk.Combobox(row, textvariable=feeder_var, values=feeder_sizes_list,
-                                        state='disabled' if blanket_on else 'readonly', width=12)
-            feeder_combo.pack(side='left', padx=5)
-            feeder_combo.bind("<MouseWheel>", lambda e: "break")
-            feeder_combo.bind("<Button-4>", lambda e: "break")
-            feeder_combo.bind("<Button-5>", lambda e: "break")
-            feeder_combo.bind("<<ComboboxSelected>>", lambda e: _commit())
-            feeder_vars.append(feeder_var)
-            feeder_combos.append(feeder_combo)
+            feeder_val = default_feeder if blanket_on else self.device_feeder_sizes.get(dev_idx, default_feeder)
+            parallel_val = self.device_feeder_parallel_counts.get(dev_idx, 1)
+            pad_idx = device_to_pad.get(dev_idx, 0)
+            if pad_idx >= len(pad_labels):
+                pad_idx = 0
+            return (dev['label'], str(num_strings), grp_name, feeder_val, str(parallel_val), pad_labels[pad_idx])
 
-            # Feeder fill handle — green (rendered but motion is gated when blanket is on)
-            f_handle = tk.Frame(row, width=10, height=18, bg='#4A9D4A', cursor='sb_v_double_arrow')
-            f_handle.pack(side='left', padx=(2, 5))
-            f_handle.pack_propagate(False)
-            f_handle.bind('<ButtonPress-1>', lambda e, i=dev_idx: _feeder_handle_press(e, i))
-            f_handle.bind('<B1-Motion>', _feeder_handle_motion)
-            f_handle.bind('<ButtonRelease-1>', _feeder_handle_release)
-            _feeder_fill_handles.append(f_handle)
-            
-            # Parallel sets spinbox (per-device parallel count for primary feeder)
-            current_parallel = self.device_feeder_parallel_counts.get(dev_idx, 1)
-            parallel_var = tk.StringVar(value=str(current_parallel))
-            parallel_spin = ttk.Spinbox(row, from_=1, to=10, increment=1,
-                                        textvariable=parallel_var, width=6)
-            parallel_spin.pack(side='left', padx=5)
-            parallel_spin.bind("<MouseWheel>", lambda e: "break")
-            parallel_spin.bind("<Button-4>", lambda e: "break")
-            parallel_spin.bind("<Button-5>", lambda e: "break")
-            parallel_spin.bind("<<Increment>>", lambda e: _commit())
-            parallel_spin.bind("<<Decrement>>", lambda e: _commit())
-            parallel_spin.bind("<FocusOut>", lambda e: _commit())
-            parallel_spin.bind("<KeyRelease>", lambda e: _commit())
-            parallel_vars.append(parallel_var)
-            parallel_spinboxes.append(parallel_spin)
-            
-            # Pad dropdown
-            current_pad = device_to_pad.get(dev_idx, 0)
-            if current_pad >= len(pad_labels):
-                current_pad = 0
-            var = tk.StringVar(value=pad_labels[current_pad])
-            combo = ttk.Combobox(row, textvariable=var, values=pad_labels,
-                                 state='readonly', width=12)
-            combo.pack(side='left', padx=5)
-            combo.bind("<MouseWheel>", lambda e: "break")
-            combo.bind("<Button-4>", lambda e: "break")
-            combo.bind("<Button-5>", lambda e: "break")
-            combo.bind("<<ComboboxSelected>>", lambda e: _commit())
-            pad_vars.append(var)
-            pad_combos.append(combo)
-            
-            # Pad fill handle — blue
-            handle = tk.Frame(row, width=10, height=18, bg='#4A90D9', cursor='sb_v_double_arrow')
-            handle.pack(side='left', padx=(2, 0))
-            handle.pack_propagate(False)
-            handle.bind('<ButtonPress-1>', lambda e, i=dev_idx: _pad_handle_press(e, i))
-            handle.bind('<B1-Motion>', _pad_handle_motion)
-            handle.bind('<ButtonRelease-1>', _pad_handle_release)
-            _pad_fill_handles.append(handle)
-        
-        # Buttons
-        btn_frame = ttk.Frame(dialog)
-        btn_frame.pack(fill='x', padx=10, pady=10)
-        
-        def _commit():
-            # Rebuild pad assignments from dropdown values
-            for pad in self.pads:
-                pad['assigned_devices'] = []
-            for dev_idx, var in enumerate(pad_vars):
-                selected_label = var.get()
-                for pad_idx, pad in enumerate(self.pads):
-                    if pad.get('label', f'Pad {pad_idx+1}') == selected_label:
-                        pad['assigned_devices'].append(dev_idx)
-                        break
-            # Save per-device feeder sizes (skipped when blanket is on — values were read-only)
-            if not blanket_on:
-                for dev_idx, fvar in enumerate(feeder_vars):
-                    self.device_feeder_sizes[dev_idx] = fvar.get()
-            # Save per-device parallel counts
-            for dev_idx, pvar in enumerate(parallel_vars):
+        for dev_idx in range(num_devices):
+            tree.insert('', 'end', iid=f"dev_{dev_idx}", values=_row_values(dev_idx))
+        if num_devices > 0:
+            tree.selection_set('dev_0')
+            tree.focus('dev_0')
+
+        # ---- Inline cell editor ----
+        _active_editor = [None]
+
+        def _destroy_editor():
+            if _active_editor[0] is not None:
                 try:
-                    pval = int(pvar.get())
-                    if pval < 1:
-                        pval = 1
-                    elif pval > 10:
-                        pval = 10
-                except (ValueError, TypeError):
-                    pval = 1
-                self.device_feeder_parallel_counts[dev_idx] = pval
-            self.draw()
+                    _active_editor[0].destroy()
+                except tk.TclError:
+                    pass
+                _active_editor[0] = None
 
+        def _on_double_click(event):
+            _destroy_editor()
+            if tree.identify_region(event.x, event.y) != 'cell':
+                return
+            col = tree.identify_column(event.x)
+            row_iid = tree.identify_row(event.y)
+            if not row_iid:
+                return
+            col_index = int(col.replace('#', '')) - 1
+            if col_index in (0, 1, 2):
+                return  # device / strings / group are read-only
+            dev_idx = int(row_iid.replace('dev_', ''))
+            bbox = tree.bbox(row_iid, col)
+            if not bbox:
+                return
+            bx, by, bw, bh = bbox
+
+            if col_index == 3:
+                if blanket_on:
+                    return
+                var = tk.StringVar(value=self.device_feeder_sizes.get(dev_idx, default_feeder))
+                editor = ttk.Combobox(tree, textvariable=var, values=feeder_sizes_list, state='readonly')
+                editor.place(x=bx, y=by, width=bw, height=bh)
+                editor.focus_set()
+                _active_editor[0] = editor
+
+                def _commit_feeder(e=None, _idx=dev_idx, _var=var, _ed=editor):
+                    if _active_editor[0] is not _ed:
+                        return
+                    val = _var.get()
+                    self.device_feeder_sizes[_idx] = val
+                    tree.set(f"dev_{_idx}", 'feeder', val)
+                    _destroy_editor()
+                    self._schedule_redraw()
+
+                editor.bind('<<ComboboxSelected>>', _commit_feeder)
+                editor.bind('<Return>',   _commit_feeder)
+                editor.bind('<Tab>',      _commit_feeder)
+                editor.bind('<FocusOut>', _commit_feeder)
+                editor.bind('<Escape>',   lambda e: _destroy_editor())
+
+            elif col_index == 4:
+                var = tk.StringVar(value=str(self.device_feeder_parallel_counts.get(dev_idx, 1)))
+                editor = ttk.Spinbox(tree, textvariable=var, from_=1, to=10, increment=1)
+                editor.place(x=bx, y=by, width=bw, height=bh)
+                editor.focus_set()
+                _active_editor[0] = editor
+
+                def _commit_parallel(e=None, _idx=dev_idx, _var=var, _ed=editor):
+                    if _active_editor[0] is not _ed:
+                        return
+                    try:
+                        pval = max(1, min(10, int(_var.get())))
+                    except (ValueError, TypeError):
+                        pval = 1
+                    self.device_feeder_parallel_counts[_idx] = pval
+                    tree.set(f"dev_{_idx}", 'parallel', str(pval))
+                    _destroy_editor()
+                    self._schedule_redraw()
+
+                editor.bind('<Return>',   _commit_parallel)
+                editor.bind('<Tab>',      _commit_parallel)
+                editor.bind('<FocusOut>', _commit_parallel)
+                editor.bind('<Escape>',   lambda e: _destroy_editor())
+
+            else:  # col_index == 5  (pad)
+                old_pad_idx = device_to_pad.get(dev_idx, 0)
+                if old_pad_idx >= len(pad_labels):
+                    old_pad_idx = 0
+                var = tk.StringVar(value=pad_labels[old_pad_idx])
+                editor = ttk.Combobox(tree, textvariable=var, values=pad_labels, state='readonly')
+                editor.place(x=bx, y=by, width=bw, height=bh)
+                editor.focus_set()
+                _active_editor[0] = editor
+
+                def _commit_pad(e=None, _idx=dev_idx, _var=var, _ed=editor, _old=old_pad_idx):
+                    if _active_editor[0] is not _ed:
+                        return
+                    new_label = _var.get()
+                    new_pad_idx = next((i for i, lbl in enumerate(pad_labels) if lbl == new_label), 0)
+                    # Incremental update — remove from old pad, add to new
+                    old_assigned = self.pads[_old].get('assigned_devices', [])
+                    if _idx in old_assigned:
+                        old_assigned.remove(_idx)
+                    if _idx not in self.pads[new_pad_idx].get('assigned_devices', []):
+                        self.pads[new_pad_idx].setdefault('assigned_devices', []).append(_idx)
+                    device_to_pad[_idx] = new_pad_idx
+                    tree.set(f"dev_{_idx}", 'pad', new_label)
+                    _destroy_editor()
+                    self._schedule_redraw()
+
+                editor.bind('<<ComboboxSelected>>', _commit_pad)
+                editor.bind('<Return>',   _commit_pad)
+                editor.bind('<Tab>',      _commit_pad)
+                editor.bind('<FocusOut>', _commit_pad)
+                editor.bind('<Escape>',   lambda e: _destroy_editor())
+
+        tree.bind('<Double-1>', _on_double_click)
+
+        # ---- Right-click context menu: set selection to a chosen value ----
+        # Workflow: click a row (or Shift+click for a range), right-click any cell
+        # in an editable column, pick the value to apply to all selected rows.
+        context_menu = tk.Menu(dialog, tearoff=0)
+        _ctx = {'col_index': None}
+
+        def _apply_to_selection(value):
+            col_index = _ctx['col_index']
+            if col_index is None:
+                return
+            col_name = _COL_NAMES[col_index]
+            for iid in tree.selection():
+                i = int(iid.replace('dev_', ''))
+                if col_index == 3:
+                    self.device_feeder_sizes[i] = value
+                    tree.set(iid, col_name, value)
+                elif col_index == 4:
+                    try:
+                        pval = max(1, min(10, int(value)))
+                    except (ValueError, TypeError):
+                        pval = 1
+                    self.device_feeder_parallel_counts[i] = pval
+                    tree.set(iid, col_name, str(pval))
+                elif col_index == 5:
+                    new_pad_idx = next((pi for pi, lbl in enumerate(pad_labels) if lbl == value), 0)
+                    old_pad_idx = device_to_pad.get(i, 0)
+                    old_assigned = self.pads[old_pad_idx].get('assigned_devices', [])
+                    if i in old_assigned:
+                        old_assigned.remove(i)
+                    if i not in self.pads[new_pad_idx].get('assigned_devices', []):
+                        self.pads[new_pad_idx].setdefault('assigned_devices', []).append(i)
+                    device_to_pad[i] = new_pad_idx
+                    tree.set(iid, col_name, value)
+            self._schedule_redraw()
+
+        def _on_right_click(event):
+            _destroy_editor()
+            if tree.identify_region(event.x, event.y) != 'cell':
+                return
+            col = tree.identify_column(event.x)
+            row_iid = tree.identify_row(event.y)
+            if not row_iid:
+                return
+            col_index = int(col.replace('#', '')) - 1
+            if col_index in (0, 1, 2):
+                return
+            if blanket_on and col_index == 3:
+                return
+            if row_iid not in tree.selection():
+                tree.selection_set(row_iid)
+            _ctx['col_index'] = col_index
+            n = len(tree.selection())
+
+            if col_index == 3:
+                choices = feeder_sizes_list
+            elif col_index == 4:
+                choices = [str(i) for i in range(1, 11)]
+            else:
+                choices = pad_labels
+
+            context_menu.delete(0, 'end')
+            context_menu.add_command(
+                label=f"Set {n} row{'s' if n != 1 else ''} to:",
+                state='disabled'
+            )
+            context_menu.add_separator()
+            for val in choices:
+                context_menu.add_command(
+                    label=val,
+                    command=lambda v=val: _apply_to_selection(v)
+                )
+            try:
+                context_menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                context_menu.grab_release()
+
+        tree.bind('<Button-3>', _on_right_click)
+
+        # ---- Undo All Changes ----
         def _undo_all():
-            # Restore snapshot in-place
+            _destroy_editor()
             for pad_idx, pad in enumerate(self.pads):
                 pad['assigned_devices'] = list(_snap_assigned[pad_idx])
             self.device_feeder_sizes.clear()
             self.device_feeder_sizes.update(_snap_feeder_sizes)
             self.device_feeder_parallel_counts.clear()
             self.device_feeder_parallel_counts.update(_snap_parallel_counts)
-            # Rebuild device→pad lookup from restored state
-            snap_dev_to_pad = {}
+            device_to_pad.clear()
             for pad_idx, assigned in enumerate(_snap_assigned):
                 for dev_idx in assigned:
-                    snap_dev_to_pad[dev_idx] = pad_idx
-            # Refresh all dropdowns and spinboxes
-            for dev_idx in range(len(self.device_positions)):
-                pad_idx = snap_dev_to_pad.get(dev_idx, 0)
-                if pad_idx < len(pad_labels):
-                    pad_vars[dev_idx].set(pad_labels[pad_idx])
-                feeder_vars[dev_idx].set(_snap_feeder_sizes.get(dev_idx, default_feeder))
-                parallel_vars[dev_idx].set(str(_snap_parallel_counts.get(dev_idx, 1)))
+                    device_to_pad[dev_idx] = pad_idx
+            for dev_idx in range(num_devices):
+                tree.item(f"dev_{dev_idx}", values=_row_values(dev_idx))
             self.draw()
 
+        # ---- Close handler ----
         def _on_close():
             self.assigning_devices = False
             self.draw()
@@ -3427,7 +3518,7 @@ class SitePreviewWindow(tk.Toplevel):
         dialog.protocol("WM_DELETE_WINDOW", _on_close)
 
         ttk.Button(btn_frame, text="Undo All Changes", command=_undo_all).pack(side='right')
-        
+
         # Center on parent
         dialog.update_idletasks()
         px = self.winfo_rootx()
