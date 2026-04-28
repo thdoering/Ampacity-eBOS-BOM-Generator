@@ -1,50 +1,66 @@
 ================================================================================
-Solar eBOS BOM Generator v3.3.0
+Solar eBOS BOM Generator v3.4.0
 ================================================================================
 
 INSTALLATION INSTRUCTIONS
 -------------------------
 
 1. Download the executable from SharePoint
-   - Click on "Solar eBOS BOM Generator v3.3.0.exe"
+   - Click on "Solar eBOS BOM Generator v3.4.0.exe"
    - When you see the warning "isn't commonly downloaded", click the three dots (...)
    - Click "Keep"
    - Confirm again if prompted
 
 2. Run the Application
    - Navigate to your Downloads folder
-   - Double-click "Solar eBOS BOM Generator v3.3.0.exe"
+   - Double-click "Solar eBOS BOM Generator v3.4.0.exe"
    - If Windows SmartScreen appears, click "More info" then "Run anyway"
 
 This is our internal tool - these warnings are normal for unsigned applications.
 
-WHAT'S NEW IN VERSION 3.3.0 (April 23, 2026)
+WHAT'S NEW IN VERSION 3.4.0 (April 28, 2026)
 ----------------------------------------------
 
 MAJOR NEW FEATURES:
-- Canvas Drag-to-Device: Select strings on the site preview canvas and drag them
-  to devices for fast manual string allocation
-- Measuring Tool: Polyline measuring tool with per-segment and cumulative
-  distances; measurements save and reload with the project
-- 2P Tracker Support: Full two-portrait tracker configuration now complete
-- Parallel DC Feeders: Support for parallel DC feeder configurations
-- Azimuth Rotation: Tracker groups now support azimuth rotation input
+- Block Details Sheet: New sheet in Quick Estimate Excel export with per-device
+  part breakdowns (extenders, harnesses, fuses, whips, DC feeders/AC homeruns)
+  and a summary table aggregating line items by part number
+- String Inverter Support: Configure Device tab and BOM export now include a
+  dedicated String Inverter sheet with MPPT Max Current and Max AC Output Current
+- Multi-Group Selection & Drag: Ctrl+click to toggle group selection, rubber-band
+  box select, and multi-group drag in Quick Estimate layout mode
+- Tracker Alignment: New top/motor/bottom alignment dropdown in Quick Estimate
+  group editor for mixed-length tracker groups
+- Assign Devices Live Preview: Assignment changes commit to canvas immediately;
+  single "Undo All Changes" button replaces Apply/Cancel
+- Auto-Number Devices: New button in Edit Devices for top-left → bottom-right
+  device numbering with configurable prefix and start number
 
 IMPROVEMENTS:
-- PDF summary table auto-selects least-obstructed corner; placement dialog
-  no longer appears before every export
-- Inverter library now shows as manufacturer/model tree (collapsed by default)
-- Site preview toolbar split into two rows for better visibility on smaller screens
-- Manual string allocations preserved when tracker structure changes; new
-  trackers default to unallocated
+- Auto-Calculate DC Feeder Size: Block configurator derives cable size from breaker
+  rating automatically, with manual-set tracking and "Reset to recommended"
+- AL/CU material indicators on all cable descriptions in both BOM exports
+- Description column added to Quick Estimate BOM (results tree and Excel export)
+- Collapsible sections in block configurator
+- Wattage Spinbox in Module Manager (100–1000 W, 5 W steps; warns on Vmp×Imp mismatch)
+- "Apply to All" toggle for DC Fdr and AC HR wire sizing in Quick Estimate
+- Auto-enable newly created/duplicated tracker templates
+- Multi-select delete for tracker templates with in-use guard
 
 BUG FIXES:
-- Fixed silent no-op when moving strings on canvas (Unallocated device index shift)
-- Fixed overlap detection for rotated/sheared tracker groups (now SAT-based)
-- Fixed combiner box placement off-edge for mixed-size tracker groups
-- Fixed 1-string harness config on split trackers
-- Fixed inverter import/export bug
-- Fixed module width > length validation
+- Fixed Copy Project bug where the original file was deleted instead of duplicated
+- Fixed duplicate Site Preview windows stacking on repeat clicks
+- Fixed Assign Devices dialog buttons clipped on small projects
+- Fixed performance regression with many groups/trackers in Quick Estimate
+- Fixed central inverter string and combiner box count bug
+- Fixed stale wire sizing rows not clearing when LV collection method changes
+
+PREVIOUS VERSION HIGHLIGHTS (v3.3.0):
+- Canvas Drag-to-Device string allocation
+- Polyline measuring tool with save/load
+- 2P Tracker and Parallel DC Feeder support
+- Azimuth rotation for tracker groups
+- SAT-based overlap detection for rotated/sheared groups
 
 PREVIOUS VERSION HIGHLIGHTS (v3.2.0):
 - Driveline angle range expanded to -45 to 45 degrees

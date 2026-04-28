@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.0] - 2026-04-28
+
+### Added
+- **Block Details Sheet**: New sheet in Quick Estimate Excel export (between BOM and Combiner Boxes) showing per-device part breakdowns — extenders, harnesses, inline fuses, whips, DC feeders/AC homeruns — with part numbers and library descriptions; summary table at the bottom aggregates all line items by part number for cross-checking against the Quick Estimate BOM
+- **String Inverter Support**: Configure Device tab and BOM export now include a dedicated String Inverter sheet showing MPPT Max Current and Max AC Output Current
+- **Multi-Group Selection & Drag**: Layout mode supports Ctrl+click to toggle group selection, rubber-band box select over empty space, and multi-group drag
+- **Tracker Alignment**: New alignment dropdown (top / motor / bottom) in Quick Estimate group editor controls how trackers of different lengths align within a group on the canvas and in PDF exports
+- **Assign Devices Live Preview**: Device assignment changes now commit to the canvas immediately; Apply/Cancel replaced with a single "Undo All Changes" button
+- **Auto-Number Devices**: New button in Edit Devices dialog numbers all devices top-left → bottom-right with a configurable prefix and start number
+- **Auto-Calculate DC Feeder Size**: Block configurator now auto-calculates DC feeder cable size from breaker rating, with manual-set tracking and "Reset to recommended"
+- **AL/CU Material Indicators**: All cable descriptions in both BOM exports now indicate aluminum or copper material
+- **Description Column in QE BOM**: Quick Estimate BOM results tree and Excel export now include a Description column sourced from library descriptions
+- **Collapsible Sections**: Block configurator sections are now collapsible
+
+### Changed
+- **Wattage Spinbox**: Module Manager wattage entry replaced with a Spinbox (100–1000 W, 5 W steps); warns if Vmp × Imp differs from entered wattage by more than 3%
+- **"Apply to All" Wire Sizing Toggle**: DC Fdr and AC HR rows in Quick Estimate have a blanket "Apply to all" toggle; disables per-device editing in Assign Devices when active
+- **Combiner Box Placement**: Middle-position combiner boxes now bias toward the side with more strings (or toward the connected pad on a tie)
+- **Auto-Enable Tracker Templates**: Newly created and duplicated tracker templates are automatically checked in the block configurator
+- **Multi-Select Delete for Tracker Templates**: Delete multiple templates at once with a single confirmation prompt and an in-use guard
+- **Quick Assign Buttons Removed**: Quick assign all buttons removed from Assign Devices dialog
+- **QE Excel BOM Row Spacing**: Duplicate row spacings consolidated to a single line
+
+### Fixed
+- **Copy Project Bug**: Fixed bug where the original project file was deleted instead of duplicated when using Copy Project
+- **Single Site Preview Instance**: Repeat clicks on "Open Site Preview" now raise the existing window instead of stacking a new one
+- **Assign Devices Dialog Clipping**: Minimum dialog height of 280 px prevents buttons from being cut off on small projects
+- **Quick Estimate Performance**: Fixed performance regression when many groups/trackers are present in Quick Estimate
+- **Central Inverter Strings/CB Bug**: Fixed string and combiner box count bug for central inverter topology in Quick Estimate
+- **Stale Wire Sizing Rows**: Wire sizing rows for inactive string counts are now dropped and stale overrides cleared when LV collection method changes
+
 ## [3.3.0] - 2026-04-23
 
 ### Added
