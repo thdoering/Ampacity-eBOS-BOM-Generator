@@ -13,7 +13,8 @@
       "Bash(python3 -c ' *)",
       "Bash(awk -F: '$2 > 3900 && $2 < 4200')",
       "Bash(python -c \"from src.models.device import StringInverterConfig, CombinerBoxConfig, HarnessConnection; print\\('device.py OK'\\)\")",
-      "Bash(python -c \"from src.models.project import Project; print\\('project.py OK'\\)\")"
+      "Bash(python -c \"from src.models.project import Project; print\\('project.py OK'\\)\")",
+      "Bash(python -m py_compile src/ui/site_preview.py)"
     ]
   }
 }

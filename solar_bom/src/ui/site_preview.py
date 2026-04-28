@@ -85,6 +85,8 @@ class SitePreviewWindow(tk.Toplevel):
         self.measure_mode = False
         self.measure_mouse_pos = None   # canvas coords of cursor (for rubber-band)
 
+        self._world_dirty = True  # True → rebuild world layer on next draw()
+
         self.setup_ui()
         self.build_layout_data()
         self._recolor_from_cb_assignments()
@@ -318,7 +320,7 @@ class SitePreviewWindow(tk.Toplevel):
         self.canvas.bind('<B2-Motion>', self.on_pan_motion)
         self.canvas.bind('<ButtonRelease-2>', self.on_pan_release)
         self.canvas.bind('<Button-3>', self._on_pad_right_click)
-        self.canvas.bind('<Configure>', lambda e: self.draw())
+        self.canvas.bind('<Configure>', lambda e: (self._invalidate_world_layer(), self.draw()))
         self.canvas.bind('<Motion>', self._on_measure_motion)
         self.bind('<Escape>', lambda e: self._measure_cancel())
         
@@ -1067,6 +1069,7 @@ class SitePreviewWindow(tk.Toplevel):
     def fit_and_redraw(self):
         """Fit to window and redraw"""
         self.fit_to_canvas()
+        self._invalidate_world_layer()
         self.draw()
     
     def _rotate_point(self, cx, cy, x, y, angle_deg):
@@ -1113,7 +1116,8 @@ class SitePreviewWindow(tk.Toplevel):
         self.scale *= factor
         
         self.zoom_label.config(text=f"{self.scale * 100:.0f}%")
-        self.canvas.scale('all', center_x, center_y, factor, factor)
+        self.canvas.scale('world', center_x, center_y, factor, factor)
+        self._invalidate_world_layer()
         self._schedule_redraw()
     
     def on_mousewheel(self, event):
@@ -1163,6 +1167,7 @@ class SitePreviewWindow(tk.Toplevel):
         if self.measure_mode:
             wx, wy = self.canvas_to_world(event.x, event.y)
             self.current_measure_pts.append([wx, wy])
+            self._invalidate_world_layer()
             self.draw()
             return
 
@@ -1191,6 +1196,7 @@ class SitePreviewWindow(tk.Toplevel):
                     self.selected_pad_inspect_idx = hit_pad
                 self.selected_device_idx = None
                 self.dragging_canvas = False
+                self._invalidate_world_layer()
                 self.draw()
                 self.dragging_group = False
                 return
@@ -1230,6 +1236,7 @@ class SitePreviewWindow(tk.Toplevel):
                 self._pending_string_drag = True
                 self._drag_string_start_xy = (event.x, event.y)
                 self._sync_tree_from_canvas()
+                self._invalidate_world_layer()
                 self.draw()
                 return
 
@@ -1242,6 +1249,7 @@ class SitePreviewWindow(tk.Toplevel):
                     self.selected_device_idx = hit_dev
                 self.selected_pad_inspect_idx = None
                 self.dragging_canvas = False
+                self._invalidate_world_layer()
                 self.draw()
             else:
                 # Empty space — always start a potential box select.
@@ -1252,6 +1260,7 @@ class SitePreviewWindow(tk.Toplevel):
                 self._box_selecting = True
                 self._box_select_start = (event.x, event.y)
                 self.dragging_canvas = False
+                self._invalidate_world_layer()
                 self.draw()
             self.dragging_group = False
             return
@@ -1266,6 +1275,7 @@ class SitePreviewWindow(tk.Toplevel):
             self._drag_pad_start_y = pad['y']
             self.selected_group_indices = set()
             self.dragging_group = False
+            self._invalidate_world_layer()
             self.draw()
             return
 
@@ -1292,6 +1302,7 @@ class SitePreviewWindow(tk.Toplevel):
                     for idx in self.selected_group_indices
                 }
                 self.dragging_group = True
+            self._invalidate_world_layer()
             self.draw()
         else:
             # Empty space — clear selection and start rubber-band box select
@@ -1299,6 +1310,7 @@ class SitePreviewWindow(tk.Toplevel):
             self._layout_box_selecting = True
             self._layout_box_select_start = (event.x, event.y)
             self.dragging_group = False
+            self._invalidate_world_layer()
             self.draw()
 
     def _on_device_double_click(self, event):
@@ -1322,6 +1334,7 @@ class SitePreviewWindow(tk.Toplevel):
             new_name = new_name.strip()
             self.device_names[dev_idx] = new_name
             dev['label'] = new_name
+            self._invalidate_world_layer()
             self.draw()
     
     def on_motion(self, event):
@@ -1339,6 +1352,7 @@ class SitePreviewWindow(tk.Toplevel):
             old = self._info_panel_offset.get(dev_idx, (0, -100))
             self._info_panel_offset[dev_idx] = (old[0] + dx, old[1] + dy)
             self._panel_drag_start = (event.x, event.y)
+            self._invalidate_world_layer()
             self.draw()
             return
         if getattr(self, '_box_selecting', False):
@@ -1426,6 +1440,7 @@ class SitePreviewWindow(tk.Toplevel):
             dy_world = dy_px / self.scale if self.scale != 0 else 0
             self.pads[self.selected_pad_idx]['x'] = self._drag_pad_start_x + dx_world
             self.pads[self.selected_pad_idx]['y'] = self._drag_pad_start_y + dy_world
+            self._invalidate_world_layer()
             self.draw()
         elif getattr(self, 'dragging_group', False) and self.selected_group_indices:
             dx_world = dx_px / self.scale if self.scale != 0 else 0
@@ -1455,6 +1470,7 @@ class SitePreviewWindow(tk.Toplevel):
                 self.group_layout[idx]['x'] = sx + snapped_dx
                 self.group_layout[idx]['y'] = sy + snapped_dy
 
+            self._invalidate_world_layer()
             self.draw()
     
     def on_release(self, event):
@@ -1484,6 +1500,7 @@ class SitePreviewWindow(tk.Toplevel):
                     if gx2 >= wxmin and gx1 <= wxmax and gy2 >= wymin and gy1 <= wymax:
                         self.selected_group_indices.add(i)
             # else: plain click in empty space — selection already cleared in on_press
+            self._invalidate_world_layer()
             self.draw()
             return
 
@@ -1501,6 +1518,7 @@ class SitePreviewWindow(tk.Toplevel):
                 for tidx, sidx in hits:
                     self._highlighted_strings.add((tidx, sidx))
                 self._sync_tree_from_canvas()
+            self._invalidate_world_layer()
             self.draw()
             return
 
@@ -1525,6 +1543,7 @@ class SitePreviewWindow(tk.Toplevel):
                     self._sync_tree_from_canvas()
                 elif err:
                     messagebox.showwarning("Invalid Move", err, parent=self)
+            self._invalidate_world_layer()
             self.draw()
             return
 
@@ -1561,11 +1580,12 @@ class SitePreviewWindow(tk.Toplevel):
             self.pan_y += dy_px
             self.drag_start_x = event.x
             self.drag_start_y = event.y
-            self.canvas.move('all', dx_px, dy_px)
+            self.canvas.move('world', dx_px, dy_px)
 
     def on_pan_release(self, event):
-        """Handle middle mouse release — stop panning."""
+        """Handle middle mouse release — stop panning, rebuild world at new position."""
         self.dragging_canvas = False
+        self._invalidate_world_layer()
         self.draw()
     
     def _snap_group_position(self, group_idx, raw_x, raw_y):
@@ -1621,6 +1641,7 @@ class SitePreviewWindow(tk.Toplevel):
     
     def refresh_wire_gauges(self):
         """Redraw the canvas so the device info panel reflects updated wire gauges."""
+        self._invalidate_world_layer()
         self.draw()
 
     def _schedule_redraw(self, delay_ms=40):
@@ -1644,11 +1665,30 @@ class SitePreviewWindow(tk.Toplevel):
         Y = N-S (tracker length, north at top)
         World units = feet.
         """
-        self.canvas.delete('all')
-        self._string_rects = []
-
         if not self.group_layout:
             return
+
+        if not self._world_dirty:
+            self.canvas.delete('screen_fixed')
+            self._draw_scale_bar()
+            self.canvas.update_idletasks()
+            cw = self.canvas.winfo_width()
+            compass_x = cw - 30
+            compass_y = 30
+            arrow_len = 18
+            self.canvas.create_line(
+                compass_x, compass_y + arrow_len,
+                compass_x, compass_y - arrow_len,
+                fill='#333333', width=2, arrow='last', tags='screen_fixed'
+            )
+            self.canvas.create_text(
+                compass_x, compass_y - arrow_len - 8,
+                text='N', font=('Helvetica', 9, 'bold'), fill='#333333', tags='screen_fixed'
+            )
+            return
+
+        self.canvas.delete('world')
+        self._string_rects = []
 
         # Viewport bounds in world space for per-group culling
         canvas_w = self.canvas.winfo_width()
@@ -1690,6 +1730,16 @@ class SitePreviewWindow(tk.Toplevel):
                     pts.extend([cx2, cy2])
                 return pts
 
+            def _rect_as_poly_world(x1, y1, x2, y2, _rcx=rot_cx, _rcy=rot_cy, _rd=rotation_deg):
+                """Return flat world-coord list for a rotated rectangle (rotation baked in)."""
+                corners = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
+                pts = []
+                for wx, wy in corners:
+                    if _rd != 0:
+                        wx, wy = self._rotate_point(_rcx, _rcy, wx, wy, _rd)
+                    pts.extend([wx, wy])
+                return pts
+
             # Viewport culling — skip groups entirely outside the visible canvas
             margin = max(self.max_tracker_width_ft, 10.0) * 2.0
             g_x_min = gx
@@ -1718,7 +1768,7 @@ class SitePreviewWindow(tk.Toplevel):
                     gx + group_data['width_ft'] + pad, gy + vis_max + pad
                 )
                 self.canvas.create_polygon(
-                    *h_poly, fill='', outline='#4A90D9', width=2
+                    *h_poly, fill='', outline='#4A90D9', width=2, tags='world'
                 )
             
             # Draw group label
@@ -1889,7 +1939,7 @@ class SitePreviewWindow(tk.Toplevel):
                         color, outline_color, outline_width, _ = _str_attrs[s_idx]
                         sh = string_heights[s_idx]
                         poly = _rect_as_poly(tx + tx_offset, sy, tx + tx_offset + t_width, sy + sh)
-                        self.canvas.create_polygon(*poly, fill=color, outline=outline_color, width=outline_width)
+                        self.canvas.create_polygon(*poly, fill=color, outline=outline_color, width=outline_width, tags='world')
                         sy += sh
                 else:
                     # Performance mode — one polygon per run of consecutive same-key strings
@@ -1909,7 +1959,7 @@ class SitePreviewWindow(tk.Toplevel):
                             tx + tx_offset, run_sy,
                             tx + tx_offset + t_width, sy_cursor
                         )
-                        self.canvas.create_polygon(*poly, fill=run_color, outline=run_outline, width=run_width)
+                        self.canvas.create_polygon(*poly, fill=run_color, outline=run_outline, width=run_width, tags='world')
                         run_start = run_end + 1
 
                 # Third pass: populate _string_rects per individual string (no polygon emission)
@@ -1917,11 +1967,13 @@ class SitePreviewWindow(tk.Toplevel):
                 for s_idx in range(draw_count):
                     sh = string_heights[s_idx] if s_idx < len(string_heights) else string_heights[-1]
                     poly = _rect_as_poly(tx + tx_offset, sy, tx + tx_offset + t_width, sy + sh)
+                    poly_w = _rect_as_poly_world(tx + tx_offset, sy, tx + tx_offset + t_width, sy + sh)
                     _, _, _, is_unowned_partial = _str_attrs[s_idx]
                     self._string_rects.append({
                         'tracker_idx': global_tracker_idx,
                         's_idx': s_idx,
                         'poly_canvas': poly,
+                        'poly_world': poly_w,
                         'is_unowned_partial': is_unowned_partial,
                     })
                     sy += sh
@@ -1932,7 +1984,7 @@ class SitePreviewWindow(tk.Toplevel):
                     tx + tx_offset + t_width + 0.5, ty + t_length + 0.5
                 )
                 self.canvas.create_polygon(
-                    *out_poly, fill='', outline='#222222', width=1
+                    *out_poly, fill='', outline='#222222', width=1, tags='world'
                 )
                 # Keep ox1/oy1 for pixel_width calculation (use first two corners)
                 ox1, oy1 = out_poly[0], out_poly[1]
@@ -1949,7 +2001,7 @@ class SitePreviewWindow(tk.Toplevel):
 
                     m_poly = _rect_as_poly(motor_x1, motor_world_y, motor_x2, motor_world_y + motor_gap)
                     self.canvas.create_polygon(
-                        *m_poly, fill='#666666', outline='#444444', width=1
+                        *m_poly, fill='#666666', outline='#444444', width=1, tags='world'
                     )
 
                     motor_cx = sum(m_poly[0::2]) / 4
@@ -1958,7 +2010,7 @@ class SitePreviewWindow(tk.Toplevel):
                     self.canvas.create_oval(
                         motor_cx - dot_r, motor_cy - dot_r,
                         motor_cx + dot_r, motor_cy + dot_r,
-                        fill='#FF8800', outline='#CC6600', width=1
+                        fill='#FF8800', outline='#CC6600', width=1, tags='world'
                     )
 
                 # Tracker label — use global tracker index to match info panel / assignments
@@ -1989,11 +2041,14 @@ class SitePreviewWindow(tk.Toplevel):
         # Overlap warnings
         self._draw_overlap_warnings()
 
-        # Scale bar
-        self._draw_scale_bar()
-
         # Measurement annotations
         self._draw_measurements()
+
+        self._world_dirty = False
+
+        # screen_fixed items always re-emitted at current canvas dimensions
+        self.canvas.delete('screen_fixed')
+        self._draw_scale_bar()
 
         # Compass
         self.canvas.update_idletasks()
@@ -2001,20 +2056,20 @@ class SitePreviewWindow(tk.Toplevel):
         compass_x = cw - 30
         compass_y = 30
         arrow_len = 18
-        
+
         self.canvas.create_line(
             compass_x, compass_y + arrow_len,
             compass_x, compass_y - arrow_len,
-            fill='#333333', width=2, arrow='last'
+            fill='#333333', width=2, arrow='last', tags='screen_fixed'
         )
         self.canvas.create_text(
             compass_x, compass_y - arrow_len - 8,
-            text='N', font=('Helvetica', 9, 'bold'), fill='#333333'
+            text='N', font=('Helvetica', 9, 'bold'), fill='#333333', tags='screen_fixed'
         )
 
-    def _draw_text_with_bg(self, x, y, text, font, fill='#333333', anchor='center', bg='white', pad=2, bg_required=True):
+    def _draw_text_with_bg(self, x, y, text, font, fill='#333333', anchor='center', bg='white', pad=2, bg_required=True, tags='world'):
         """Draw canvas text, optionally with a white background rectangle for readability."""
-        tid = self.canvas.create_text(x, y, text=text, font=font, fill=fill, anchor=anchor)
+        tid = self.canvas.create_text(x, y, text=text, font=font, fill=fill, anchor=anchor, tags=tags)
         if not bg_required:
             return tid
         bbox = self.canvas.bbox(tid)
@@ -2022,7 +2077,7 @@ class SitePreviewWindow(tk.Toplevel):
             self.canvas.create_rectangle(
                 bbox[0] - pad, bbox[1] - pad,
                 bbox[2] + pad, bbox[3] + pad,
-                fill=bg, outline='', width=0
+                fill=bg, outline='', width=0, tags=tags
             )
             self.canvas.tag_raise(tid)
         return tid
@@ -2061,12 +2116,13 @@ class SitePreviewWindow(tk.Toplevel):
             
             self.canvas.create_line(
                 x1, y1, x2, y2,
-                fill='#FF8800', width=2, dash=(6, 3)
+                fill='#FF8800', width=2, dash=(6, 3), tags='world'
             )
 
     def _on_alignment_toggle(self):
         """Handle motor alignment checkbox toggle."""
         self.align_on_motor = self.align_motor_var.get()
+        self._invalidate_world_layer()
         self.draw()
 
     def _on_inspect_toggle(self):
@@ -2075,6 +2131,7 @@ class SitePreviewWindow(tk.Toplevel):
         self.selected_pad_inspect_idx = None
         if self.inspect_mode:
             self.selected_group_indices = set()
+        self._invalidate_world_layer()
         self.draw()
 
     def _draw_toggle(self):
@@ -2304,27 +2361,31 @@ class SitePreviewWindow(tk.Toplevel):
 
         Iterates _string_rects in reverse (topmost drawn wins). Unowned partial
         bands are excluded — they have no device owner to move.
+        Tests against poly_world so results stay correct after pan/zoom.
         """
+        wx, wy = self.canvas_to_world(cx, cy)
         for rect in reversed(self._string_rects):
             if rect['is_unowned_partial']:
                 continue
-            if self._point_in_polygon(cx, cy, rect['poly_canvas']):
+            if self._point_in_polygon(wx, wy, rect['poly_world']):
                 return rect['tracker_idx'], rect['s_idx']
         return None
 
     def hit_test_strings_in_box(self, cx1, cy1, cx2, cy2):
         """Return list of (tracker_idx, s_idx) whose polygon overlaps the canvas box.
 
-        Uses the polygon's axis-aligned bounding box, so any contact with the
-        selection rectangle is enough to select the string.
+        Uses the polygon's axis-aligned bounding box in world space, so results
+        stay correct after pan/zoom without rebuilding _string_rects.
         """
-        x_lo, x_hi = min(cx1, cx2), max(cx1, cx2)
-        y_lo, y_hi = min(cy1, cy2), max(cy1, cy2)
+        wx1, wy1 = self.canvas_to_world(cx1, cy1)
+        wx2, wy2 = self.canvas_to_world(cx2, cy2)
+        x_lo, x_hi = min(wx1, wx2), max(wx1, wx2)
+        y_lo, y_hi = min(wy1, wy2), max(wy1, wy2)
         results = []
         for rect in self._string_rects:
             if rect['is_unowned_partial']:
                 continue
-            poly = rect['poly_canvas']
+            poly = rect['poly_world']
             n = len(poly) // 2
             px_vals = [poly[i * 2] for i in range(n)]
             py_vals = [poly[i * 2 + 1] for i in range(n)]
@@ -2416,6 +2477,7 @@ class SitePreviewWindow(tk.Toplevel):
                     text=self._format_summary(num_inv, total_str, actual_ratio, split,
                                               spatial_runs=spatial_runs, locked=True)
                 )
+                self._invalidate_world_layer()
                 self.draw()
                 return
             # Confirmed — fall through to full reallocation below
@@ -2448,7 +2510,8 @@ class SitePreviewWindow(tk.Toplevel):
                     text=self._format_summary(num_inv, total_str, actual_ratio, split,
                                               spatial_runs=spatial_runs, locked=self.allocation_locked)
                 )
-                
+
+                self._invalidate_world_layer()
                 self.draw()
 
     def _toggle_allocation_lock(self):
@@ -2486,6 +2549,10 @@ class SitePreviewWindow(tk.Toplevel):
             self.lock_btn.config(text="🔒 Unlock Allocation")
         else:
             self.lock_btn.config(text="🔓 Lock Allocation")
+
+    def _invalidate_world_layer(self):
+        """Mark the world layer as needing a full rebuild on the next draw()."""
+        self._world_dirty = True
 
     def _invalidate_device_data(self):
         """Clear the shared device-string state so it is rebuilt on next dialog open or canvas edit."""
@@ -2579,9 +2646,9 @@ class SitePreviewWindow(tk.Toplevel):
             self.canvas.create_polygon(
                 *poly_canvas,
                 fill='', outline='#FF0000', width=3, dash=(8, 4),
-                tags='overlap_warning'
+                tags=('world', 'overlap_warning')
             )
-            
+
             # Warning label — anchor to the top-center of the rotated outline
             label_wx = g['x'] + g['width_ft'] / 2
             label_wy = g['y'] + vis_min - pad
@@ -2593,7 +2660,7 @@ class SitePreviewWindow(tk.Toplevel):
             self.canvas.create_text(
                 label_x, label_y,
                 text=f"⚠ Overlap", font=('Helvetica', font_size, 'bold'),
-                fill='#FF0000', tags='overlap_warning'
+                fill='#FF0000', tags=('world', 'overlap_warning')
             )
 
     def _draw_devices(self):
@@ -2652,7 +2719,7 @@ class SitePreviewWindow(tk.Toplevel):
                 outline_width = 4
 
             self.canvas.create_polygon(
-                *poly_pts, fill=fill_color, outline=outline_color, width=outline_width
+                *poly_pts, fill=fill_color, outline=outline_color, width=outline_width, tags='world'
             )
 
             # Label — above the rotated device center-top
@@ -2872,21 +2939,21 @@ class SitePreviewWindow(tk.Toplevel):
         panel_bottom = py + panel_height
         self.canvas.create_line(
             ax, ay, panel_cx, panel_bottom,
-            fill='#4444AA', width=2, dash=(4, 3)
+            fill='#4444AA', width=2, dash=(4, 3), tags='world'
         )
         # Small circle at anchor
         r = 4
         self.canvas.create_oval(ax - r, ay - r, ax + r, ay + r,
-                                fill='#4444AA', outline='#6666CC', width=1)
+                                fill='#4444AA', outline='#6666CC', width=1, tags='world')
 
         # Panel background with shadow
         self.canvas.create_rectangle(
             px + 3, py + 3, px + panel_width + 3, py + panel_height + 3,
-            fill='#111111', outline='', width=0
+            fill='#111111', outline='', width=0, tags='world'
         )
         self.canvas.create_rectangle(
             px, py, px + panel_width, py + panel_height,
-            fill='#1E1E2E', outline='#4444AA', width=2
+            fill='#1E1E2E', outline='#4444AA', width=2, tags='world'
         )
 
         # Draw text lines
@@ -2894,17 +2961,17 @@ class SitePreviewWindow(tk.Toplevel):
             y_pos = py + pad + i * line_height
             if style == 'header':
                 self.canvas.create_text(px + pad, y_pos, text=text,
-                    font=('Consolas', font_size + 1, 'bold'), fill='#FFCC00', anchor='nw')
+                    font=('Consolas', font_size + 1, 'bold'), fill='#FFCC00', anchor='nw', tags='world')
             elif style == 'subheader':
                 self.canvas.create_text(px + pad, y_pos, text=text,
-                    font=('Consolas', font_size, 'bold'), fill='#8888BB', anchor='nw')
+                    font=('Consolas', font_size, 'bold'), fill='#8888BB', anchor='nw', tags='world')
             elif style == 'row':
                 color = '#FF9944' if '+' in text.split()[-1] and text.split()[-1] != '--' else '#DDDDDD'
                 self.canvas.create_text(px + pad, y_pos, text=text,
-                    font=('Consolas', font_size), fill=color, anchor='nw')
+                    font=('Consolas', font_size), fill=color, anchor='nw', tags='world')
             elif style == 'summary':
                 self.canvas.create_text(px + pad, y_pos, text=text,
-                    font=('Consolas', font_size, 'bold'), fill='#66BBFF', anchor='nw')
+                    font=('Consolas', font_size, 'bold'), fill='#66BBFF', anchor='nw', tags='world')
 
         # Drag handle indicator (top-right corner)
         hx = px + panel_width - 16
@@ -2914,7 +2981,7 @@ class SitePreviewWindow(tk.Toplevel):
                 self.canvas.create_rectangle(
                     hx + col * 5, hy + row * 4,
                     hx + col * 5 + 3, hy + row * 4 + 2,
-                    fill='#666688', outline='')
+                    fill='#666688', outline='', tags='world')
 
     def _draw_scale_bar(self):
         """Draw a scale bar in the bottom-left corner showing real-world distance."""
@@ -2943,13 +3010,13 @@ class SitePreviewWindow(tk.Toplevel):
         y1 = ch - 25
         x2 = x1 + bar_px
         
-        self.canvas.create_line(x1, y1, x2, y1, fill='#333333', width=2)
-        self.canvas.create_line(x1, y1 - 5, x1, y1 + 5, fill='#333333', width=2)
-        self.canvas.create_line(x2, y1 - 5, x2, y1 + 5, fill='#333333', width=2)
-        
+        self.canvas.create_line(x1, y1, x2, y1, fill='#333333', width=2, tags='screen_fixed')
+        self.canvas.create_line(x1, y1 - 5, x1, y1 + 5, fill='#333333', width=2, tags='screen_fixed')
+        self.canvas.create_line(x2, y1 - 5, x2, y1 + 5, fill='#333333', width=2, tags='screen_fixed')
+
         self.canvas.create_text(
             (x1 + x2) / 2, y1 - 10,
-            text=f"{bar_ft} ft", font=('Helvetica', 9), fill='#333333'
+            text=f"{bar_ft} ft", font=('Helvetica', 9), fill='#333333', tags='screen_fixed'
         )
 
     # ---------------------------------------------------------------------------
@@ -3017,6 +3084,7 @@ class SitePreviewWindow(tk.Toplevel):
         self.current_measure_pts = []
         self.measure_mouse_pos = None
         self.canvas.delete('measure_rubber')
+        self._invalidate_world_layer()
         self.draw()
 
     def _measure_cancel(self):
@@ -3026,6 +3094,7 @@ class SitePreviewWindow(tk.Toplevel):
         self.current_measure_pts = []
         self.measure_mouse_pos = None
         self.canvas.delete('measure_rubber')
+        self._invalidate_world_layer()
         self.draw()
 
     def _measure_clear(self):
@@ -3034,6 +3103,7 @@ class SitePreviewWindow(tk.Toplevel):
         self.current_measure_pts = []
         self.measure_mouse_pos = None
         self.canvas.delete('measure_rubber')
+        self._invalidate_world_layer()
         self.draw()
 
     def _draw_measurements(self):
@@ -3056,7 +3126,7 @@ class SitePreviewWindow(tk.Toplevel):
                     cx1, cy1, cx2, cy2,
                     fill=MEAS_COLOR, width=2,
                     dash=(4, 4) if in_progress else (),
-                    tags='measurement'
+                    tags=('world', 'measurement')
                 )
                 dist = math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1])
                 total_dist += dist
@@ -3068,7 +3138,7 @@ class SitePreviewWindow(tk.Toplevel):
             for cx, cy in cpx:
                 self.canvas.create_oval(
                     cx - 3, cy - 3, cx + 3, cy + 3,
-                    fill=MEAS_COLOR, outline='#8B2500', tags='measurement'
+                    fill=MEAS_COLOR, outline='#8B2500', tags=('world', 'measurement')
                 )
             if len(pts) > 2 and not in_progress:
                 cx_last, cy_last = cpx[-1]
@@ -3113,6 +3183,7 @@ class SitePreviewWindow(tk.Toplevel):
         self.placing_pad = False
         self.canvas.config(cursor='')
         self.add_pad_btn.config(state='normal')
+        self._invalidate_world_layer()
         self.draw()
     
     def _draw_pads(self):
@@ -3139,7 +3210,7 @@ class SitePreviewWindow(tk.Toplevel):
             
             self.canvas.create_rectangle(
                 x1, y1, x2, y2,
-                fill=base_color, outline='#222222', width=outline_width
+                fill=base_color, outline='#222222', width=outline_width, tags='world'
             )
             
             # Label
@@ -3348,6 +3419,7 @@ class SitePreviewWindow(tk.Toplevel):
                     self.device_feeder_sizes[_idx] = val
                     tree.set(f"dev_{_idx}", 'feeder', val)
                     _destroy_editor()
+                    self._invalidate_world_layer()
                     self._schedule_redraw()
 
                 editor.bind('<<ComboboxSelected>>', _commit_feeder)
@@ -3373,6 +3445,7 @@ class SitePreviewWindow(tk.Toplevel):
                     self.device_feeder_parallel_counts[_idx] = pval
                     tree.set(f"dev_{_idx}", 'parallel', str(pval))
                     _destroy_editor()
+                    self._invalidate_world_layer()
                     self._schedule_redraw()
 
                 editor.bind('<Return>',   _commit_parallel)
@@ -3404,6 +3477,7 @@ class SitePreviewWindow(tk.Toplevel):
                     device_to_pad[_idx] = new_pad_idx
                     tree.set(f"dev_{_idx}", 'pad', new_label)
                     _destroy_editor()
+                    self._invalidate_world_layer()
                     self._schedule_redraw()
 
                 editor.bind('<<ComboboxSelected>>', _commit_pad)
@@ -3447,6 +3521,7 @@ class SitePreviewWindow(tk.Toplevel):
                         self.pads[new_pad_idx].setdefault('assigned_devices', []).append(i)
                     device_to_pad[i] = new_pad_idx
                     tree.set(iid, col_name, value)
+            self._invalidate_world_layer()
             self._schedule_redraw()
 
         def _on_right_click(event):
@@ -3507,11 +3582,13 @@ class SitePreviewWindow(tk.Toplevel):
                     device_to_pad[dev_idx] = pad_idx
             for dev_idx in range(num_devices):
                 tree.item(f"dev_{dev_idx}", values=_row_values(dev_idx))
+            self._invalidate_world_layer()
             self.draw()
 
         # ---- Close handler ----
         def _on_close():
             self.assigning_devices = False
+            self._invalidate_world_layer()
             self.draw()
             dialog.destroy()
 
@@ -4166,6 +4243,7 @@ class SitePreviewWindow(tk.Toplevel):
                 tidx, phys_pos = string_tracker[str_iid]
                 self._highlighted_strings.add((tidx, phys_pos))
 
+            self._invalidate_world_layer()
             self.draw()
 
         tree.bind('<<TreeviewSelect>>', on_tree_select)
@@ -4728,6 +4806,7 @@ class SitePreviewWindow(tk.Toplevel):
             self.build_layout_data()
             self._recolor_from_cb_assignments()
             self._build_legend()
+            self._invalidate_world_layer()
             self.draw()
 
         # --- Undo All Changes ---
@@ -4754,6 +4833,7 @@ class SitePreviewWindow(tk.Toplevel):
             self.build_layout_data()
             self._recolor_from_cb_assignments()
             self._build_legend()
+            self._invalidate_world_layer()
             self.draw()
             refresh_tree()
 
@@ -4795,37 +4875,40 @@ class SitePreviewWindow(tk.Toplevel):
             return
         
         self.selected_pad_idx = hit
+        self._invalidate_world_layer()
         self.draw()
-        
+
         menu = tk.Menu(self, tearoff=0)
-        
+
         def _rename():
             from tkinter import simpledialog
             current = self.pads[hit].get('label', f'Pad {hit+1}')
-            new_name = simpledialog.askstring("Rename Pad", "New label:", 
+            new_name = simpledialog.askstring("Rename Pad", "New label:",
                                               initialvalue=current, parent=self)
             if new_name and new_name.strip():
                 self.pads[hit]['label'] = new_name.strip()
+                self._invalidate_world_layer()
                 self.draw()
-        
+
         def _delete():
             label = self.pads[hit].get('label', f'Pad {hit+1}')
             if not messagebox.askyesno("Delete Pad", f"Delete '{label}'?", parent=self):
                 return
-            
+
             # Reassign devices to first remaining pad if any
             orphaned = self.pads[hit].get('assigned_devices', [])
             del self.pads[hit]
-            
+
             if self.pads and orphaned:
                 self.pads[0]['assigned_devices'] = list(
                     set(self.pads[0].get('assigned_devices', []) + orphaned)
                 )
-            
+
             # Fix device indices in remaining pads (indices > hit shift down)
             # Not needed — pad indices don't change, only the list position
-            
+
             self.selected_pad_idx = None
+            self._invalidate_world_layer()
             self.draw()
         
         menu.add_command(label="Rename", command=_rename)
@@ -4904,13 +4987,13 @@ class SitePreviewWindow(tk.Toplevel):
             # Leg 1: along the row/driveline direction
             self.canvas.create_line(
                 cx1, cy1, cx_corner, cy_corner,
-                fill=color, width=line_width, dash=dash_pattern
+                fill=color, width=line_width, dash=dash_pattern, tags='world'
             )
 
             # Leg 2: from turn point to pad
             self.canvas.create_line(
                 cx_corner, cy_corner, cx2, cy2,
-                fill=color, width=line_width, dash=dash_pattern
+                fill=color, width=line_width, dash=dash_pattern, tags='world'
             )
 
             # Show distance label if this device is selected in inspect mode
