@@ -1,0 +1,152 @@
+{
+  "SMA": {
+    "SC 2660 UP": {
+      "manufacturer": "SMA",
+      "model": "SC 2660 UP",
+      "inverter_type": "Central",
+      "rated_power_kw": 2667.0,
+      "max_dc_power_kw": 5334.0,
+      "max_efficiency": 98.8,
+      "mppt_channels": [
+        {
+          "max_input_current": 3200.0,
+          "min_voltage": 880.0,
+          "max_voltage": 1325.0,
+          "max_power": 5334000.0,
+          "num_string_inputs": 24
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 1030.0,
+      "nominal_ac_voltage": 600.0,
+      "max_ac_current": 2566.0,
+      "power_factor": 1.0,
+      "dimensions_mm": [
+        2815,
+        2318,
+        1588
+      ],
+      "weight_kg": 3400.0,
+      "ip_rating": "IP54",
+      "max_short_circuit_current": 8400.0,
+      "temperature_range": [
+        -25.0,
+        60.0
+      ],
+      "altitude_limit_m": 3000.0,
+      "communication_protocol": "Modbus TCP"
+    },
+    "SC 2800 UP": {
+      "manufacturer": "SMA",
+      "model": "SC 2800 UP",
+      "inverter_type": "Central",
+      "rated_power_kw": 2800.0,
+      "max_dc_power_kw": 5600.0,
+      "max_efficiency": 98.8,
+      "mppt_channels": [
+        {
+          "max_input_current": 3200.0,
+          "min_voltage": 921.0,
+          "max_voltage": 1325.0,
+          "max_power": 5600000.0,
+          "num_string_inputs": 24
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 1071.0,
+      "nominal_ac_voltage": 630.0,
+      "max_ac_current": 2566.0,
+      "power_factor": 1.0,
+      "dimensions_mm": [
+        2815,
+        2318,
+        1588
+      ],
+      "weight_kg": 3400.0,
+      "ip_rating": "IP54",
+      "max_short_circuit_current": 8400.0,
+      "temperature_range": [
+        -25.0,
+        60.0
+      ],
+      "altitude_limit_m": 3000.0,
+      "communication_protocol": "Modbus TCP"
+    },
+    "SC 2930 UP": {
+      "manufacturer": "SMA",
+      "model": "SC 2930 UP",
+      "inverter_type": "Central",
+      "rated_power_kw": 2933.0,
+      "max_dc_power_kw": 5866.0,
+      "max_efficiency": 98.9,
+      "mppt_channels": [
+        {
+          "max_input_current": 3200.0,
+          "min_voltage": 962.0,
+          "max_voltage": 1325.0,
+          "max_power": 5866000.0,
+          "num_string_inputs": 24
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 1112.0,
+      "nominal_ac_voltage": 660.0,
+      "max_ac_current": 2566.0,
+      "power_factor": 1.0,
+      "dimensions_mm": [
+        2815,
+        2318,
+        1588
+      ],
+      "weight_kg": 3400.0,
+      "ip_rating": "IP54",
+      "max_short_circuit_current": 8400.0,
+      "temperature_range": [
+        -25.0,
+        60.0
+      ],
+      "altitude_limit_m": 2000.0,
+      "communication_protocol": "Modbus TCP"
+    },
+    "SC 3060 UP": {
+      "manufacturer": "SMA",
+      "model": "SC 3060 UP",
+      "inverter_type": "Central",
+      "rated_power_kw": 3067.0,
+      "max_dc_power_kw": 6134.0,
+      "max_efficiency": 98.9,
+      "mppt_channels": [
+        {
+          "max_input_current": 3200.0,
+          "min_voltage": 1003.0,
+          "max_voltage": 1325.0,
+          "max_power": 6134000.0,
+          "num_string_inputs": 24
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 1153.0,
+      "nominal_ac_voltage": 690.0,
+      "max_ac_current": 2566.0,
+      "power_factor": 1.0,
+      "dimensions_mm": [
+        2815,
+        2318,
+        1588
+      ],
+      "weight_kg": 3400.0,
+      "ip_rating": "IP54",
+      "max_short_circuit_current": 8400.0,
+      "temperature_range": [
+        -25.0,
+        60.0
+      ],
+      "altitude_limit_m": 2000.0,
+      "communication_protocol": "Modbus TCP"
+    }
+  }
+}

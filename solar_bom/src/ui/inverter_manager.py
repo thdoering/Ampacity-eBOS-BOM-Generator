@@ -2,8 +2,9 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import json
 from pathlib import Path
-from typing import Optional, Callable, Dict
+from typing import Optional, Callable, Dict, Set
 from ..models.inverter import InverterSpec, MPPTChannel, MPPTConfig, InverterType
+from ..utils.inverter_library import load_merged_inverter_specs, save_user_inverters
 
 class InverterManager(ttk.Frame):
     def __init__(self, parent, on_inverter_selected: Optional[Callable[[InverterSpec], None]] = None):
@@ -11,7 +12,8 @@ class InverterManager(ttk.Frame):
         self.parent = parent
         self.on_inverter_selected = on_inverter_selected
         self.inverters: Dict[str, InverterSpec] = {}
-        
+        self.factory_keys: Set[str] = set()
+
         self.setup_ui()
         self.load_inverters()
         
@@ -225,86 +227,18 @@ class InverterManager(ttk.Frame):
             messagebox.showinfo("Success", f"Inverter '{name}' saved successfully")
             
     def load_inverters(self):
-        """Load saved inverters from JSON file"""
-        inverter_path = Path('data/inverters.json')
-        
-        # Create directory if it doesn't exist
-        inverter_path.parent.mkdir(exist_ok=True)
-        
-        # Create empty file if it doesn't exist
-        if not inverter_path.exists():
-            with open(inverter_path, 'w') as f:
-                json.dump({}, f)
-            self.inverters = {}
-            return
-        
+        """Load inverters from merged factory + user library."""
         try:
-            with open(inverter_path, 'r') as f:
-                data = json.load(f)
-                self.inverters = {}
-                for name, specs in data.items():
-                    try:
-                        # Handle backward compatibility for old field names
-                        rated_power = specs.get('rated_power_kw', specs.get('rated_power', 10.0))
-                        max_dc_power = specs.get('max_dc_power_kw', rated_power * 1.5)  # Default to 1.5x AC if missing
-                        inverter_type_str = specs.get('inverter_type', 'String')
-                        
-                        self.inverters[name] = InverterSpec(
-                            manufacturer=specs.get('manufacturer', 'Unknown'),
-                            model=specs.get('model', 'Unknown'),
-                            inverter_type=InverterType(inverter_type_str),
-                            rated_power_kw=float(rated_power),
-                            max_dc_power_kw=float(max_dc_power),
-                            max_efficiency=float(specs.get('max_efficiency', 98.0)),
-                            mppt_channels=[MPPTChannel(**ch) for ch in specs.get('mppt_channels', [])],
-                            mppt_configuration=MPPTConfig(specs.get('mppt_configuration', 'Independent')),
-                            max_dc_voltage=float(specs.get('max_dc_voltage', 1500)),
-                            startup_voltage=float(specs.get('startup_voltage', 150)),
-                            nominal_ac_voltage=float(specs.get('nominal_ac_voltage', 400.0)),
-                            max_ac_current=float(specs.get('max_ac_current', 40.0)),
-                            power_factor=float(specs.get('power_factor', 0.99)),
-                            dimensions_mm=tuple(specs.get('dimensions_mm', (1000, 600, 300))),
-                            weight_kg=float(specs.get('weight_kg', 75.0)),
-                            ip_rating=specs.get('ip_rating', 'IP65'),
-                            max_short_circuit_current=specs.get('max_short_circuit_current')
-                        )
-                    except Exception as e:
-                        print(f"Warning: Failed to load inverter '{name}': {e}")
+            self.inverters, self.factory_keys = load_merged_inverter_specs()
             self.update_inverter_list()
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load inverters: {str(e)}")
             self.inverters = {}
+            self.factory_keys = set()
             
     def save_inverters(self):
-        """Save inverters to JSON file"""
-        inverter_path = Path('data/inverters.json')
-        inverter_path.parent.mkdir(exist_ok=True)
-        
-        data = {}
-        for inverter in self.inverters.values():
-            inv_dict = {
-                'manufacturer': inverter.manufacturer,
-                'model': inverter.model,
-                'inverter_type': inverter.inverter_type.value,
-                'rated_power_kw': inverter.rated_power_kw,
-                'max_dc_power_kw': inverter.max_dc_power_kw,
-                'max_efficiency': inverter.max_efficiency,
-                'mppt_channels': [ch.__dict__ for ch in inverter.mppt_channels],
-                'mppt_configuration': inverter.mppt_configuration.value,
-                'max_dc_voltage': inverter.max_dc_voltage,
-                'startup_voltage': inverter.startup_voltage,
-                'nominal_ac_voltage': inverter.nominal_ac_voltage,
-                'max_ac_current': inverter.max_ac_current,
-                'power_factor': inverter.power_factor,
-                'dimensions_mm': list(inverter.dimensions_mm),
-                'weight_kg': inverter.weight_kg,
-                'ip_rating': inverter.ip_rating,
-                'max_short_circuit_current': getattr(inverter, 'max_short_circuit_current', None),
-            }
-            data[f"{inverter.manufacturer} {inverter.model}"] = inv_dict
-        
-        with open(inverter_path, 'w') as f:
-            json.dump(data, f, indent=2)
+        """Save user-owned inverters (non-factory) to the user library."""
+        save_user_inverters(self.inverters, self.factory_keys)
             
     def update_inverter_list(self):
         """Update the inverter treeview grouped by manufacturer"""
@@ -338,6 +272,9 @@ class InverterManager(ttk.Frame):
         if values:
             # Leaf node — single inverter
             inv_key = values[0]
+            if inv_key in self.factory_keys:
+                messagebox.showinfo("Factory Entry", f"'{inv_key}' is part of the factory library and cannot be deleted.")
+                return
             if messagebox.askyesno("Confirm", f"Delete inverter '{inv_key}'?"):
                 del self.inverters[inv_key]
                 self.save_inverters()
@@ -348,10 +285,21 @@ class InverterManager(ttk.Frame):
             children = self.inverter_tree.get_children(item)
             if not children:
                 return
-            if messagebox.askyesno("Confirm", f"Delete all inverters for '{manufacturer}'?"):
-                for child in children:
-                    child_key = self.inverter_tree.item(child, 'values')[0]
-                    del self.inverters[child_key]
+            deletable = [
+                self.inverter_tree.item(c, 'values')[0]
+                for c in children
+                if self.inverter_tree.item(c, 'values')[0] not in self.factory_keys
+            ]
+            factory_count = len(children) - len(deletable)
+            if not deletable:
+                messagebox.showinfo("Factory Entries", f"All inverters under '{manufacturer}' are factory entries and cannot be deleted.")
+                return
+            msg = f"Delete {len(deletable)} user inverter(s) for '{manufacturer}'?"
+            if factory_count:
+                msg += f"\n({factory_count} factory entr{'y' if factory_count == 1 else 'ies'} will be kept.)"
+            if messagebox.askyesno("Confirm", msg):
+                for key in deletable:
+                    del self.inverters[key]
                 self.save_inverters()
                 self.update_inverter_list()
 

@@ -120,52 +120,14 @@ class QuickEstimate(ttk.Frame):
         return modules
     
     def load_inverter_library(self):
-        """Load inverters from the inverters JSON file"""
-        inverters = {}
+        """Load inverters from merged factory + user library."""
         try:
-            inverter_path = Path('data/inverters.json')
-            if inverter_path.exists():
-                with open(inverter_path, 'r') as f:
-                    data = json.load(f)
-                
-                from ..models.inverter import InverterSpec, MPPTChannel, MPPTConfig, InverterType
-                
-                for name, specs in data.items():
-                    try:
-                        rated_power = specs.get('rated_power_kw', specs.get('rated_power', 10.0))
-                        max_dc_power = specs.get('max_dc_power_kw', float(rated_power) * 1.5)
-                        inverter_type_str = specs.get('inverter_type', 'String')
-                        
-                        channels = []
-                        for ch in specs.get('mppt_channels', []):
-                            channels.append(MPPTChannel(**ch))
-                        
-                        inverter = InverterSpec(
-                            manufacturer=specs.get('manufacturer', 'Unknown'),
-                            model=specs.get('model', 'Unknown'),
-                            inverter_type=InverterType(inverter_type_str),
-                            rated_power_kw=float(rated_power),
-                            max_dc_power_kw=float(max_dc_power),
-                            max_efficiency=float(specs.get('max_efficiency', 98.0)),
-                            mppt_channels=channels,
-                            mppt_configuration=MPPTConfig(specs.get('mppt_configuration', 'Independent')),
-                            max_dc_voltage=float(specs.get('max_dc_voltage', 1500)),
-                            startup_voltage=float(specs.get('startup_voltage', 150)),
-                            nominal_ac_voltage=float(specs.get('nominal_ac_voltage', 400.0)),
-                            max_ac_current=float(specs.get('max_ac_current', 40.0)),
-                            power_factor=float(specs.get('power_factor', 0.99)),
-                            dimensions_mm=tuple(specs.get('dimensions_mm', (1000, 600, 300))),
-                            weight_kg=float(specs.get('weight_kg', 75.0)),
-                            ip_rating=specs.get('ip_rating', 'IP65'),
-                            max_short_circuit_current=specs.get('max_short_circuit_current')
-                        )
-                        display_name = f"{inverter.manufacturer} {inverter.model}"
-                        inverters[display_name] = inverter
-                    except Exception as e:
-                        print(f"Warning: Failed to load inverter '{name}': {e}")
+            from ..utils.inverter_library import load_merged_inverter_specs
+            inverters, _ = load_merged_inverter_specs()
+            return inverters
         except Exception as e:
             print(f"Error loading inverter library: {e}")
-        return inverters
+            return {}
 
     def load_enabled_templates(self):
         """Load tracker templates that are enabled for the current project.

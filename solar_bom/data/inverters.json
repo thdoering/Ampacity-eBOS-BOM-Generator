@@ -28,7 +28,10 @@
     ],
     "weight_kg": 75.0,
     "ip_rating": "IP65",
-    "max_short_circuit_current": 325.0
+    "max_short_circuit_current": 325.0,
+    "temperature_range": null,
+    "altitude_limit_m": null,
+    "communication_protocol": null
   },
   "CPS SCH250KTL-DO/US-800-36": {
     "manufacturer": "CPS",
@@ -136,7 +139,10 @@
     ],
     "weight_kg": 75.0,
     "ip_rating": "IP65",
-    "max_short_circuit_current": 600.0
+    "max_short_circuit_current": 600.0,
+    "temperature_range": null,
+    "altitude_limit_m": null,
+    "communication_protocol": null
   },
   "Solectria XGI 1500-125": {
     "manufacturer": "Solectria",
@@ -167,7 +173,10 @@
     ],
     "weight_kg": 75.0,
     "ip_rating": "IP65",
-    "max_short_circuit_current": 500.0
+    "max_short_circuit_current": 500.0,
+    "temperature_range": null,
+    "altitude_limit_m": null,
+    "communication_protocol": null
   },
   "Solectria XGI 1500-150/166": {
     "manufacturer": "Solectria",
@@ -198,7 +207,10 @@
     ],
     "weight_kg": 75.0,
     "ip_rating": "IP65",
-    "max_short_circuit_current": 500.0
+    "max_short_circuit_current": 500.0,
+    "temperature_range": null,
+    "altitude_limit_m": null,
+    "communication_protocol": null
   },
   "Solectria XGI 1500-125/150": {
     "manufacturer": "Solectria",
@@ -229,7 +241,10 @@
     ],
     "weight_kg": 75.0,
     "ip_rating": "IP65",
-    "max_short_circuit_current": 500.0
+    "max_short_circuit_current": 500.0,
+    "temperature_range": null,
+    "altitude_limit_m": null,
+    "communication_protocol": null
   },
   "KACO Blueplanet 125 TL3 US XL": {
     "manufacturer": "KACO",
@@ -260,7 +275,10 @@
     ],
     "weight_kg": 75.0,
     "ip_rating": "IP65",
-    "max_short_circuit_current": 300.0
+    "max_short_circuit_current": 300.0,
+    "temperature_range": null,
+    "altitude_limit_m": null,
+    "communication_protocol": null
   },
   "CPS SCH275KTL-DO/US-800-24 V2": {
     "manufacturer": "CPS",
@@ -368,7 +386,10 @@
     ],
     "weight_kg": 75.0,
     "ip_rating": "IP65",
-    "max_short_circuit_current": 600.0
+    "max_short_circuit_current": 600.0,
+    "temperature_range": null,
+    "altitude_limit_m": null,
+    "communication_protocol": null
   },
   "Sungrow SG3150U": {
     "manufacturer": "Sungrow",
@@ -399,7 +420,10 @@
     ],
     "weight_kg": 75.0,
     "ip_rating": "IP65",
-    "max_short_circuit_current": 4800.0
+    "max_short_circuit_current": 4800.0,
+    "temperature_range": null,
+    "altitude_limit_m": null,
+    "communication_protocol": null
   },
   "SMA Highpower PEAK3 125kW": {
     "manufacturer": "SMA",
@@ -430,7 +454,10 @@
     ],
     "weight_kg": 75.0,
     "ip_rating": "IP65",
-    "max_short_circuit_current": 325.0
+    "max_short_circuit_current": 325.0,
+    "temperature_range": null,
+    "altitude_limit_m": null,
+    "communication_protocol": null
   },
   "CPS SCH250K-T-US-600 Distributed": {
     "manufacturer": "CPS",
@@ -461,7 +488,10 @@
     ],
     "weight_kg": 75.0,
     "ip_rating": "IP65",
-    "max_short_circuit_current": 450.0
+    "max_short_circuit_current": 450.0,
+    "temperature_range": null,
+    "altitude_limit_m": null,
+    "communication_protocol": null
   },
   "KACO Blueplanet 155 TL3": {
     "manufacturer": "KACO",
@@ -492,7 +522,10 @@
     ],
     "weight_kg": 75.0,
     "ip_rating": "IP65",
-    "max_short_circuit_current": 300.0
+    "max_short_circuit_current": 300.0,
+    "temperature_range": null,
+    "altitude_limit_m": null,
+    "communication_protocol": null
   },
   "Solectria XGI 1500 250/250-600": {
     "manufacturer": "Solectria",
@@ -523,7 +556,10 @@
     ],
     "weight_kg": 75.0,
     "ip_rating": "IP65",
-    "max_short_circuit_current": 800.0
+    "max_short_circuit_current": 800.0,
+    "temperature_range": null,
+    "altitude_limit_m": null,
+    "communication_protocol": null
   },
   "SMA Sunny Tripower 24000TL-US": {
     "manufacturer": "SMA",
@@ -561,7 +597,10 @@
     ],
     "weight_kg": 75.0,
     "ip_rating": "IP65",
-    "max_short_circuit_current": 53.0
+    "max_short_circuit_current": 53.0,
+    "temperature_range": null,
+    "altitude_limit_m": null,
+    "communication_protocol": null
   },
   "Solectria XGI 1500-1MW-600": {
     "manufacturer": "Solectria",
@@ -592,7 +631,10 @@
     ],
     "weight_kg": 75.0,
     "ip_rating": "IP65",
-    "max_short_circuit_current": 2400.0
+    "max_short_circuit_current": 2400.0,
+    "temperature_range": null,
+    "altitude_limit_m": null,
+    "communication_protocol": null
   },
   "SMA Sunny Central 2660 UP-US": {
     "manufacturer": "SMA",
@@ -784,7 +826,10 @@
     ],
     "weight_kg": 75.0,
     "ip_rating": "IP65",
-    "max_short_circuit_current": 4800.0
+    "max_short_circuit_current": 4800.0,
+    "temperature_range": null,
+    "altitude_limit_m": null,
+    "communication_protocol": null
   },
   "CPS (Chint Power Systems) CPS SCH250K-T-US-600": {
     "manufacturer": "CPS (Chint Power Systems)",
@@ -815,7 +860,10 @@
     ],
     "weight_kg": 75.0,
     "ip_rating": "IP65",
-    "max_short_circuit_current": 450.0
+    "max_short_circuit_current": 450.0,
+    "temperature_range": null,
+    "altitude_limit_m": null,
+    "communication_protocol": null
   },
   "CPS SCH250K-T-US-600 Centralized": {
     "manufacturer": "CPS",
@@ -846,7 +894,10 @@
     ],
     "weight_kg": 75.0,
     "ip_rating": "IP65",
-    "max_short_circuit_current": 450.0
+    "max_short_circuit_current": 450.0,
+    "temperature_range": null,
+    "altitude_limit_m": null,
+    "communication_protocol": null
   },
   "CPS SCH250K-T-US-600": {
     "manufacturer": "CPS",
@@ -877,7 +928,10 @@
     ],
     "weight_kg": 75.0,
     "ip_rating": "IP65",
-    "max_short_circuit_current": 450.0
+    "max_short_circuit_current": 450.0,
+    "temperature_range": null,
+    "altitude_limit_m": null,
+    "communication_protocol": null
   },
   "Yaskawa Solectria Solar XGI 1500-250/250-600": {
     "manufacturer": "Yaskawa Solectria Solar",
@@ -908,7 +962,10 @@
     ],
     "weight_kg": 75.0,
     "ip_rating": "IP65",
-    "max_short_circuit_current": 800.0
+    "max_short_circuit_current": 800.0,
+    "temperature_range": null,
+    "altitude_limit_m": null,
+    "communication_protocol": null
   },
   "CPS (Chint Power Systems) CPS SCH125K-T-US-600": {
     "manufacturer": "CPS (Chint Power Systems)",
@@ -939,7 +996,10 @@
     ],
     "weight_kg": 75.0,
     "ip_rating": "IP65",
-    "max_short_circuit_current": 220.0
+    "max_short_circuit_current": 220.0,
+    "temperature_range": null,
+    "altitude_limit_m": null,
+    "communication_protocol": null
   },
   "CPS SCH125K-T-US-600": {
     "manufacturer": "CPS",
@@ -970,7 +1030,10 @@
     ],
     "weight_kg": 75.0,
     "ip_rating": "IP65",
-    "max_short_circuit_current": 220.0
+    "max_short_circuit_current": 220.0,
+    "temperature_range": null,
+    "altitude_limit_m": null,
+    "communication_protocol": null
   },
   "Yaskawa Solectria Solar XGI 1500-125/125-UL": {
     "manufacturer": "Yaskawa Solectria Solar",
@@ -1001,7 +1064,10 @@
     ],
     "weight_kg": 75.0,
     "ip_rating": "IP65",
-    "max_short_circuit_current": 230.0
+    "max_short_circuit_current": 230.0,
+    "temperature_range": null,
+    "altitude_limit_m": null,
+    "communication_protocol": null
   },
   "SUNGROW SG4400UD-MV-US": {
     "manufacturer": "SUNGROW",
@@ -1053,6 +1119,9 @@
     ],
     "weight_kg": 75.0,
     "ip_rating": "IP65",
-    "max_short_circuit_current": 14112.0
+    "max_short_circuit_current": 14112.0,
+    "temperature_range": null,
+    "altitude_limit_m": null,
+    "communication_protocol": null
   }
 }
