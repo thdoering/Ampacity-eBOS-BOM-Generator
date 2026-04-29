@@ -67,6 +67,7 @@ solar_bom/
 
 Runtime JSON libraries. User-specific ones are gitignored; committed ones are the part/price reference data.
 
+- `module_library_factory.json` — **read-only factory module library**, committed to git and shipped in the bundle. Never written by the running app. Hierarchical format identical to `module_templates.json`. At load time the two are merged (factory wins on conflict); user entries that collide with a factory key are silently shadowed but left intact in the user file.
 - `module_templates.json`, `tracker_templates.json`, `inverter_templates.json` — user-saved templates
 - `harness_library.json` — harness part catalog
 - `fuse_library.json` — inline harness fuses

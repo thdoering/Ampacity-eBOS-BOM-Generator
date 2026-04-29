@@ -45,6 +45,7 @@ projects/.recent_projects
 
 # Make no exceptions
 !.gitignore
+!data/module_library_factory.json
 
 # PyInstaller
 build/

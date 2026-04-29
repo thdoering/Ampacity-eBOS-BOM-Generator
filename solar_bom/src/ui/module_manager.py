@@ -13,7 +13,8 @@ class ModuleManager(ttk.Frame):
         self.parent = parent
         self.on_module_selected = on_module_selected
         self.modules: Dict[str, ModuleSpec] = {}
-        
+        self.factory_keys: set = set()
+
         self.setup_ui()
         self.load_modules()
         
@@ -47,7 +48,8 @@ class ModuleManager(ttk.Frame):
         button_frame.grid(row=1, column=0, padx=5, pady=5)
         
         ttk.Button(button_frame, text="Import PAN", command=self.import_pan).grid(row=0, column=0, padx=2)
-        ttk.Button(button_frame, text="Delete", command=self.delete_module).grid(row=0, column=1, padx=2)
+        self.delete_btn = ttk.Button(button_frame, text="Delete", command=self.delete_module)
+        self.delete_btn.grid(row=0, column=1, padx=2)
         
         # Right side - Module Editor
         editor_frame = ttk.LabelFrame(main_container, text="Module Details", padding="5")
@@ -125,7 +127,8 @@ class ModuleManager(ttk.Frame):
         ttk.Entry(temp_frame, textvariable=self.temp_coeff_isc_var).grid(row=2, column=1, padx=5, pady=2, sticky=(tk.W, tk.E))
         
         # Save button
-        ttk.Button(editor_frame, text="Save Module", command=self.save_module).grid(row=6, column=0, columnspan=2, pady=10)
+        self.save_btn = ttk.Button(editor_frame, text="Save Module", command=self.save_module)
+        self.save_btn.grid(row=6, column=0, columnspan=2, pady=10)
         
     def create_module_spec(self) -> Optional[ModuleSpec]:
         """Create ModuleSpec from current UI values"""
@@ -182,76 +185,31 @@ class ModuleManager(ttk.Frame):
             return None
             
     def load_modules(self):
-        """Load saved modules from JSON file"""
-        module_path = Path('data/module_templates.json')
-        if not module_path.exists():
-            return
-            
+        """Load saved modules from both factory and user libraries."""
+        from ..utils.module_library import load_merged_modules
         try:
-            with open(module_path, 'r') as f:
-                data = json.load(f)
-                
-            # Handle both old flat structure and new hierarchical structure
+            merged_data, self.factory_keys = load_merged_modules()
             self.modules = {}
-            
-            if data:
-                # Check if this is the new hierarchical format
-                first_value = next(iter(data.values()))
-                if isinstance(first_value, dict) and not any(key in first_value for key in ['manufacturer', 'model', 'type']):
-                    # New hierarchical format: Manufacturer -> Model -> module_data
-                    for manufacturer, models in data.items():
-                        for model, module_data in models.items():
-                            module_key = f"{manufacturer} {model}"
-                            # Handle backward compatibility for temperature coefficients
-                            module_params = {k: v for k, v in module_data.items() if k != 'type' and k != 'default_orientation' and k != 'temperature_coefficient'}
-                            
-                            # If old temperature_coefficient exists and new ones don't, use it for Pmax
-                            if 'temperature_coefficient' in module_data and 'temperature_coefficient_pmax' not in module_data:
-                                module_params['temperature_coefficient_pmax'] = module_data['temperature_coefficient']
-                            
-                            self.modules[module_key] = ModuleSpec(
-                                **module_params,
-                                type=ModuleType(module_data['type']),
-                                default_orientation=ModuleOrientation(module_data.get('default_orientation', ModuleOrientation.PORTRAIT.value))
-                            )
-                else:
-                    # Old flat format: convert on the fly
-                    self.modules = {
-                        name: ModuleSpec(
-                            **{k: v for k, v in specs.items() if k != 'type' and k != 'default_orientation'},
-                            type=ModuleType(specs['type']),
-                            default_orientation=ModuleOrientation(specs.get('default_orientation', ModuleOrientation.PORTRAIT.value))
-                        ) 
-                        for name, specs in data.items()
-                    }
-                    
+            for module_key, module_data in merged_data.items():
+                module_params = {
+                    k: v for k, v in module_data.items()
+                    if k not in ('type', 'default_orientation', 'temperature_coefficient')
+                }
+                if 'temperature_coefficient' in module_data and 'temperature_coefficient_pmax' not in module_data:
+                    module_params['temperature_coefficient_pmax'] = module_data['temperature_coefficient']
+                self.modules[module_key] = ModuleSpec(
+                    **module_params,
+                    type=ModuleType(module_data.get('type', ModuleType.MONO_PERC.value)),
+                    default_orientation=ModuleOrientation(module_data.get('default_orientation', ModuleOrientation.PORTRAIT.value))
+                )
             self.update_module_list()
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load modules: {str(e)}")
                 
     def save_modules(self):
-        """Save modules to JSON file in hierarchical format"""
-        module_path = Path('data/module_templates.json')
-        module_path.parent.mkdir(exist_ok=True)
-        
-        # Organize modules by manufacturer
-        hierarchical_data = {}
-        
-        for module in self.modules.values():
-            manufacturer = module.manufacturer
-            model = module.model
-            
-            if manufacturer not in hierarchical_data:
-                hierarchical_data[manufacturer] = {}
-                
-            hierarchical_data[manufacturer][model] = {
-                **module.__dict__,
-                'type': module.type.value,  # Convert enum to string
-                'default_orientation': module.default_orientation.value
-            }
-        
-        with open(module_path, 'w') as f:
-            json.dump(hierarchical_data, f, indent=2)
+        """Save user modules to JSON file (factory entries are never written)."""
+        from ..utils.module_library import save_user_modules
+        save_user_modules(self.modules, self.factory_keys)
             
     def update_module_list(self):
         """Update the module tree view"""
@@ -274,8 +232,12 @@ class ModuleManager(ttk.Frame):
             
             # Add modules under manufacturer
             for model, module_key, module in sorted(modules_list, key=lambda x: x[0]):
-                module_text = f"{model} ({module.wattage}W)"
-                self.module_tree.insert(manufacturer_node, 'end', text=module_text, values=(module_key,))
+                if module_key in self.factory_keys:
+                    module_text = f"{model} ({module.wattage}W) (factory)"
+                    self.module_tree.insert(manufacturer_node, 'end', text=module_text, values=(module_key,), tags=('factory',))
+                else:
+                    module_text = f"{model} ({module.wattage}W)"
+                    self.module_tree.insert(manufacturer_node, 'end', text=module_text, values=(module_key,))
             
     def import_pan(self):
         """Import module from PAN file"""
@@ -299,6 +261,15 @@ class ModuleManager(ttk.Frame):
             )
             
             name = f"{module.manufacturer} {module.model}"
+            from ..utils.module_library import is_module_in_factory
+            if is_module_in_factory(module.manufacturer, module.model):
+                messagebox.showerror(
+                    "Factory Module",
+                    f"A module with manufacturer '{module.manufacturer}' and model '{module.model}' "
+                    f"already exists in the factory library and cannot be overridden. "
+                    f"To add a custom version, give it a different model name (e.g. add a 'CUSTOM' suffix)."
+                )
+                return
             self.modules[name] = module
             self.save_modules()
             self.update_module_list()
@@ -311,6 +282,16 @@ class ModuleManager(ttk.Frame):
         """Save current module"""
         module = self.create_module_spec()
         if not module:
+            return
+
+        from ..utils.module_library import is_module_in_factory
+        if is_module_in_factory(module.manufacturer, module.model):
+            messagebox.showerror(
+                "Factory Module",
+                f"A module with manufacturer '{module.manufacturer}' and model '{module.model}' "
+                f"already exists in the factory library and cannot be overridden. "
+                f"To add a custom version, give it a different model name (e.g. add a 'CUSTOM' suffix)."
+            )
             return
 
         pmp_calc = module.vmp * module.imp
@@ -349,26 +330,31 @@ class ModuleManager(ttk.Frame):
         # Check if this is a module (has values) or manufacturer (no values)
         values = self.module_tree.item(item, 'values')
         if not values:
-            # This is a manufacturer node, ask if they want to delete all modules
+            # This is a manufacturer node, ask if they want to delete all user modules
             manufacturer = self.module_tree.item(item, 'text')
-            modules_to_delete = [key for key, module in self.modules.items() 
-                            if module.manufacturer == manufacturer]
-            
+            modules_to_delete = [
+                key for key, module in self.modules.items()
+                if module.manufacturer == manufacturer and key not in self.factory_keys
+            ]
+
             if not modules_to_delete:
                 return
-                
-            if messagebox.askyesno("Confirm", 
+
+            if messagebox.askyesno("Confirm",
                                 f"Delete all {len(modules_to_delete)} modules from {manufacturer}?"):
                 for module_key in modules_to_delete:
                     del self.modules[module_key]
                 self.save_modules()
                 self.update_module_list()
             return
-            
+
         # Delete individual module
         module_key = values[0]
+        if module_key in self.factory_keys:
+            messagebox.showwarning("Read-Only", "Factory modules cannot be deleted.")
+            return
+
         module_text = self.module_tree.item(item, 'text')
-        
         if messagebox.askyesno("Confirm", f"Delete module '{module_text}'?"):
             if module_key in self.modules:
                 del self.modules[module_key]
@@ -380,13 +366,15 @@ class ModuleManager(ttk.Frame):
         selection = self.module_tree.selection()
         if not selection:
             return
-            
+
         item = selection[0]
-        
+
         # Check if this is a module (has values) or manufacturer (no values)
         values = self.module_tree.item(item, 'values')
         if not values:
-            # This is a manufacturer node, not a module
+            # Manufacturer node — re-enable buttons (no specific module targeted)
+            self.delete_btn.config(state='normal')
+            self.save_btn.config(state='normal')
             return
             
         module_key = values[0]
@@ -420,6 +408,12 @@ class ModuleManager(ttk.Frame):
                 self.temp_coeff_isc_var.set(str(module.temperature_coefficient_isc))
             else:
                 self.temp_coeff_isc_var.set("")
+
+            # Disable edit/delete for factory modules
+            is_factory = module_key in self.factory_keys
+            btn_state = 'disabled' if is_factory else 'normal'
+            self.delete_btn.config(state=btn_state)
+            self.save_btn.config(state=btn_state)
 
             # Call the callback if provided
             if self.on_module_selected:

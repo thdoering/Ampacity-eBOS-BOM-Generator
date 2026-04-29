@@ -9,6 +9,7 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[
+    ('data/module_library_factory.json', 'data'),
     ('data/module_templates.json', 'data'),
     ('data/tracker_templates.json', 'data'),
     ('data', 'data'),

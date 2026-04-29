@@ -687,36 +687,31 @@ class SolarBOMApplication:
             # --- Embed module templates ---
             embedded_module_templates = {}
             try:
-                module_path = Path('data/module_templates.json')
-                if module_path.exists():
-                    with open(module_path, 'r') as f:
-                        all_module_data = json.load(f)
-                    
-                    # Flatten hierarchical format
-                    flat_modules = {}
-                    if all_module_data:
-                        for manufacturer, models in all_module_data.items():
-                            if isinstance(models, dict):
-                                for model_name, model_data in models.items():
-                                    module_key = f"{manufacturer} {model_name}"
-                                    flat_modules[module_key] = model_data
-                                    flat_modules[module_key]['_manufacturer'] = manufacturer
-                                    flat_modules[module_key]['_model'] = model_name
-                    
-                    # Embed modules referenced by selected_modules
-                    for module_id in self.current_project.selected_modules:
+                from src.utils.module_library import load_merged_modules as _load_all_modules
+                all_module_data, _ = _load_all_modules()
+
+                # Build flat_modules with metadata for import-side reconstruction
+                flat_modules = {}
+                for module_key, module_data in all_module_data.items():
+                    entry = dict(module_data)
+                    entry['_manufacturer'] = module_data.get('manufacturer', '')
+                    entry['_model'] = module_data.get('model', module_key)
+                    flat_modules[module_key] = entry
+
+                # Embed modules referenced by selected_modules
+                for module_id in self.current_project.selected_modules:
+                    if module_id in flat_modules:
+                        embedded_module_templates[module_id] = flat_modules[module_id]
+
+                # Also embed any modules referenced by embedded tracker templates
+                for template_key, template_data in embedded_tracker_templates.items():
+                    module_spec = template_data.get('module_spec', {})
+                    mfr = module_spec.get('manufacturer', '')
+                    model = module_spec.get('model', '')
+                    module_id = f"{mfr} {model}"
+                    if module_id and module_id not in embedded_module_templates:
                         if module_id in flat_modules:
                             embedded_module_templates[module_id] = flat_modules[module_id]
-                    
-                    # Also embed any modules referenced by embedded tracker templates
-                    for template_key, template_data in embedded_tracker_templates.items():
-                        module_spec = template_data.get('module_spec', {})
-                        mfr = module_spec.get('manufacturer', '')
-                        model = module_spec.get('model', '')
-                        module_id = f"{mfr} {model}"
-                        if module_id and module_id not in embedded_module_templates:
-                            if module_id in flat_modules:
-                                embedded_module_templates[module_id] = flat_modules[module_id]
             except Exception as e:
                 print(f"Warning: Could not embed module templates: {e}")
             

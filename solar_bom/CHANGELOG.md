@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Factory Module Library**: A read-only `data/module_library_factory.json` ships with the app alongside the existing user-editable `module_templates.json`. Factory modules appear in Module Manager, Block Configurator, and Quick Estimate alongside user modules. Factory entries are labelled `(factory)` in the Module Manager tree; their Edit and Delete actions are disabled. On conflict (same manufacturer + model), factory wins — the user entry is silently shadowed but not deleted. Users can add a custom variant by using a distinct model name (e.g. a `CUSTOM` suffix). Factory modules can be embedded into exported `.ebom` projects the same way user modules can.
+
 ## [3.4.0] - 2026-04-28
 
 ### Added

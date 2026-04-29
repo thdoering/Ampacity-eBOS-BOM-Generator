@@ -17,6 +17,7 @@ from matplotlib.patches import FancyBboxPatch, Rectangle
 from matplotlib.backends.backend_pdf import PdfPages
 import matplotlib.patheffects as pe
 from matplotlib.transforms import Affine2D
+from matplotlib.path import Path
 
 
 # Page dimensions in inches (11x17 landscape)
@@ -971,7 +972,7 @@ def _draw_page_border(fig):
 # Sidebar / Titleblock
 # ---------------------------------------------------------------------------
 
-def _draw_sidebar(fig, project_info):
+def _draw_sidebar(fig, project_info, sheet_name='STRING ALLOCATION'):
     """Draw an engineering-drawing-style titleblock on the right side.
 
     Layout matches Ampacity's standard site plan titleblock:
@@ -1085,7 +1086,7 @@ def _draw_sidebar(fig, project_info):
             fontsize=4.5, fontweight='bold', color='black',
             ha='center', va='center', fontfamily='sans-serif')
     ax.text(W * 0.69, y_sheetno_bot + SHEET_NO_H / 2,
-            'STRING ALLOCATION',
+            sheet_name,
             fontsize=5, fontweight='bold', color='black',
             ha='center', va='center', fontfamily='sans-serif')
 
@@ -1257,7 +1258,7 @@ def _create_single_wiring_page(specs, project_info, start_idx):
 
         _draw_single_wiring_diagram(ax, spec, letter)
 
-    _draw_sidebar(fig, project_info)
+    _draw_sidebar(fig, project_info, sheet_name='LV COLLECTION DETAIL(S)')
     _draw_page_border(fig)
 
     # --- Compass rose (north = left in horizontal wiring layout) ---
@@ -1309,6 +1310,36 @@ _MOD_GAP = 0.08     # gap between modules within a string
 _STRING_GAP = 0.6    # gap between adjacent strings
 _MOTOR_GAP = 2.5     # gap for driveline / motor
 _MM_TO_DU = 0.00065  # mm to data-unit conversion (1mm = 0.00065 DU)
+
+
+def _draw_rounded_bend(ax, start, elbow, end, color, linewidth, radius=0.3):
+    """Draw a line from start to end with a bezier-rounded corner at elbow."""
+    x0, y0 = start
+    xe, ye = elbow
+    x1, y1 = end
+
+    leg1_len = math.sqrt((xe - x0) ** 2 + (ye - y0) ** 2)
+    leg2_len = math.sqrt((x1 - xe) ** 2 + (y1 - ye) ** 2)
+
+    if leg1_len == 0 or leg2_len == 0:
+        ax.plot([x0, xe, x1], [y0, ye, y1], color=color, linewidth=linewidth,
+                solid_capstyle='round')
+        return
+
+    r = min(radius, leg1_len / 2, leg2_len / 2)
+
+    ti_x = xe + r * (x0 - xe) / leg1_len
+    ti_y = ye + r * (y0 - ye) / leg1_len
+    to_x = xe + r * (x1 - xe) / leg2_len
+    to_y = ye + r * (y1 - ye) / leg2_len
+
+    verts = [(x0, y0), (ti_x, ti_y), (xe, ye), (to_x, to_y), (x1, y1)]
+    codes = [Path.MOVETO, Path.LINETO, Path.CURVE3, Path.CURVE3, Path.LINETO]
+
+    patch = mpatches.PathPatch(Path(verts, codes), facecolor='none',
+                                edgecolor=color, linewidth=linewidth,
+                                capstyle='round')
+    ax.add_patch(patch)
 
 
 def _draw_single_wiring_diagram(ax, spec, letter):
@@ -1546,12 +1577,20 @@ def _draw_single_wiring_diagram(ax, spec, letter):
     elif device_position == 'north':
         _device_x = -2.0
     else:
-        # Middle — motor gap center
+        # Middle — at the motor location (which may be at either end of the tracker,
+        # not just between strings). "Middle" device position semantically means
+        # "at the motor," wherever that is.
         if motor_placement_type == 'middle_of_string' and internal_motor_string >= 0:
             sx_split = string_x_starts[internal_motor_string]
             n_h = motor_split_north
             n_half_w = n_h * _MOD_W + max(0, n_h - 1) * _MOD_GAP
             _device_x = sx_split + n_half_w + (_MOD_GAP + _MOTOR_GAP) / 2
+        elif has_motor and motor_after == 0:
+            # Motor at west/north end (before first string)
+            _device_x = _MOTOR_GAP / 2
+        elif has_motor and motor_after >= spt:
+            # Motor at east/south end (after last string)
+            _device_x = string_x_starts[spt - 1] + string_full_width(spt - 1) + _MOTOR_GAP / 2
         elif has_motor and 0 < motor_after < spt:
             _device_x = (string_x_starts[motor_after - 1] + string_full_width(motor_after - 1) + string_x_starts[motor_after]) / 2
         else:
@@ -1669,6 +1708,16 @@ def _draw_single_wiring_diagram(ax, spec, letter):
 
         harness_string_offset += h_size
 
+    # --- "TO DEVICE" label for middle-device vertical drops ---
+    if device_position == 'middle' and _device_x is not None:
+        max_hr = max(_hr_offset_for(hi) for hi in range(len(harness_sizes)))
+        # Negative harness has the deepest drop (larger y_merge offset)
+        lowest_vert_end_y = (mod_bot_y - y_range * 0.15 - max_hr) - y_range * 0.22
+        to_dev_y = lowest_vert_end_y - y_range * 0.018 - y_range * 0.012
+        ax.text(_device_x, to_dev_y, 'TO DEVICE',
+                fontsize=3, fontweight='bold', color='#555555',
+                ha='center', va='top', fontfamily='sans-serif')
+
     # --- Title ---
     circle_x = total_w * 0.02
     title_x = circle_x + 1.5  # close to circle
@@ -1721,7 +1770,16 @@ def _draw_harness_routing(ax, string_xs, merge_x, y_top, y_merge,
     fuse_w = 0.8
     fuse_label_drawn = False
 
+    _R = 0.3
+    _2R = 2 * _R
+    min_sx = min(string_xs)
+    max_sx = max(string_xs)
+
     for i, sx in enumerate(string_xs):
+        is_outer = (n > 1) and (i == 0 or i == n - 1)
+        if is_outer:
+            turn_dir = 1 if sx == min_sx else -1
+
         ax.plot([sx, sx], [y_top, y_top - stub_len],
                 color=color, linewidth=0.4, solid_capstyle='butt')
 
@@ -1730,7 +1788,8 @@ def _draw_harness_routing(ax, string_xs, merge_x, y_top, y_merge,
             fuse_bot_y = fuse_top_y - fuse_h
             ax.add_patch(Rectangle((sx - fuse_w / 2, fuse_bot_y), fuse_w, fuse_h,
                                     facecolor='white', edgecolor=color, linewidth=0.4))
-            ax.plot([sx, sx], [fuse_bot_y, y_merge],
+            wire_bot_y = y_merge + _2R if is_outer else y_merge
+            ax.plot([sx, sx], [fuse_bot_y, wire_bot_y],
                     color=color, linewidth=0.3, alpha=0.6)
             if not fuse_label_drawn:
                 ax.text(sx + fuse_w, fuse_bot_y + fuse_h / 2, 'INLINE FUSE (TYP)',
@@ -1738,12 +1797,22 @@ def _draw_harness_routing(ax, string_xs, merge_x, y_top, y_merge,
                         fontfamily='sans-serif')
                 fuse_label_drawn = True
         else:
-            ax.plot([sx, sx], [y_top - stub_len, y_merge],
+            wire_bot_y = y_merge + _2R if is_outer else y_merge
+            ax.plot([sx, sx], [y_top - stub_len, wire_bot_y],
                     color=color, linewidth=0.3, alpha=0.6)
 
-    # Horizontal collection bus at merge level
+        if is_outer:
+            _draw_rounded_bend(
+                ax,
+                start=(sx, y_merge + _2R),
+                elbow=(sx, y_merge),
+                end=(sx + turn_dir * _2R, y_merge),
+                color=color, linewidth=0.5, radius=_R
+            )
+
+    # Horizontal collection bus at merge level (shortened for rounded endpoints)
     if n > 1:
-        ax.plot([min(string_xs), max(string_xs)],
+        ax.plot([min_sx + _2R, max_sx - _2R],
                 [y_merge, y_merge],
                 color=color, linewidth=0.5)
 
@@ -1751,13 +1820,24 @@ def _draw_harness_routing(ax, string_xs, merge_x, y_top, y_merge,
     if n > 1:
         ax.plot(merge_x, y_merge, 'o', color=color, markersize=2.5,
                 markeredgecolor='black', markeredgewidth=0.3)
-        ax.text(merge_x + 1.5, y_merge - y_range * 0.008, 'Y-CONNECTOR (TYP)',
-                fontsize=2.5, color='#555555', ha='left', va='top',
-                fontfamily='sans-serif')
+        # Place label in the quadrant away from the extender wire direction
+        if device_position == 'middle' and device_x is not None:
+            if device_x > merge_x:
+                yc_lx, yc_ly, yc_ha = merge_x - 1.2, y_merge + y_range * 0.016, 'right'
+            else:
+                yc_lx, yc_ly, yc_ha = merge_x + 1.2, y_merge + y_range * 0.016, 'left'
+        else:
+            yc_lx, yc_ly, yc_ha = merge_x + 1.2, y_merge + y_range * 0.016, 'left'
+        ax.annotate('Y-CONNECTOR (TYP)',
+                    xy=(merge_x, y_merge),
+                    xytext=(yc_lx, yc_ly),
+                    fontsize=2.5, color='#555555', ha=yc_ha, va='bottom',
+                    fontfamily='sans-serif',
+                    arrowprops=dict(arrowstyle='->', color='#555555', lw=0.4,
+                                    mutation_scale=4, shrinkB=2))
 
     # Extender route from Y-connector
     hr_drop = y_range * 0.06
-    label_x = merge_x
     extender_end_y = label_y
     if device_position == 'middle' and device_x is not None and abs(device_x - merge_x) > 0.5:
         # L-shape: short horizontal nub then vertical drop.
@@ -1766,9 +1846,18 @@ def _draw_harness_routing(ax, string_xs, merge_x, y_top, y_merge,
         sign = 1 if device_x > merge_x else -1
         nub_end_x = device_x - sign * (0.3 + x_stagger)
         vert_end_y = y_merge - y_range * 0.22
-        ax.plot([merge_x, nub_end_x], [y_merge, y_merge], color=color, linewidth=0.5)
-        ax.plot([nub_end_x, nub_end_x], [y_merge, vert_end_y], color=color, linewidth=0.5)
-        label_x = nub_end_x
+        _draw_rounded_bend(
+            ax,
+            start=(merge_x, y_merge),
+            elbow=(nub_end_x, y_merge),
+            end=(nub_end_x, vert_end_y),
+            color=color, linewidth=0.5, radius=0.3
+        )
+        # Small downward arrowhead at wire termination indicating direction to device
+        ax.annotate('', xy=(nub_end_x, vert_end_y - y_range * 0.018),
+                    xytext=(nub_end_x, vert_end_y),
+                    arrowprops=dict(arrowstyle='->', color=color, lw=0.5,
+                                    mutation_scale=5))
         extender_end_y = vert_end_y
     elif device_x is not None and abs(device_x - merge_x) > 0.5:
         # Horizontal run toward device (north = left, south = right)
@@ -1779,12 +1868,19 @@ def _draw_harness_routing(ax, string_xs, merge_x, y_top, y_merge,
         # Fallback: vertical drop
         ax.plot([merge_x, merge_x], [y_merge, y_merge - hr_drop], color=color, linewidth=0.5)
 
-    # Bottom label — source circuit for 1-string, harness home run for multi-string
-    if n == 1:
-        bot_label = f'1-STRING SOURCE CIRCUIT\n#{string_gauge} CU PV WIRE (TYP)'
+    # Wire label: trunk-centered for multi-string, alongside the drop for single-string
+    if n > 1:
+        trunk_mid_x = (min_sx + max_sx) / 2
+        lbl_y = y_merge - y_range * 0.008
+        if abs(trunk_mid_x - (merge_x + 1.5)) < 3.0:
+            lbl_y -= y_range * 0.015
+        ax.text(trunk_mid_x, lbl_y,
+                f'{harness_size}-STRING HARNESS EXTENDER · #{harness_gauge} CU PV WIRE (TYP)',
+                fontsize=2.5, color='#555555', ha='center', va='top',
+                fontfamily='sans-serif')
     else:
-        bot_label = (f'{harness_size}-STRING HARNESS EXTENDER\n'
-                     f'#{harness_gauge} CU PV WIRE (TYP)')
-    ax.text(label_x, extender_end_y, bot_label,
-            fontsize=3, color=color, ha='center', va='top',
-            fontfamily='sans-serif', fontweight='bold', linespacing=1.4)
+        lbl_y = (y_merge + extender_end_y) / 2
+        ax.text(string_xs[0] + 1.5, lbl_y,
+                f'1-STRING SOURCE CIRCUIT · #{string_gauge} CU PV WIRE (TYP)',
+                fontsize=2.5, color='#555555', ha='left', va='center',
+                fontfamily='sans-serif')

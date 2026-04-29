@@ -78,49 +78,43 @@ class QuickEstimate(ttk.Frame):
         return {}
 
     def load_module_library(self):
-        """Load modules from the module templates JSON file"""
+        """Load modules from the merged factory and user module libraries."""
         modules = {}
         try:
-            module_path = Path('data/module_templates.json')
-            if module_path.exists():
-                with open(module_path, 'r') as f:
-                    data = json.load(f)
-                
-                from ..models.module import ModuleSpec, ModuleType, ModuleOrientation
-                
-                for manufacturer, models in data.items():
-                    if not isinstance(models, dict):
-                        continue
-                    for model_name, spec_data in models.items():
-                        try:
-                            # Handle enum conversions
-                            mod_type = ModuleType(spec_data.get('type', 'Mono PERC'))
-                            orientation = ModuleOrientation(spec_data.get('default_orientation', 'Portrait'))
-                            
-                            module = ModuleSpec(
-                                manufacturer=spec_data.get('manufacturer', manufacturer),
-                                model=spec_data.get('model', model_name),
-                                type=mod_type,
-                                length_mm=float(spec_data.get('length_mm', 0)),
-                                width_mm=float(spec_data.get('width_mm', 0)),
-                                depth_mm=float(spec_data.get('depth_mm', 40)),
-                                weight_kg=float(spec_data.get('weight_kg', 25)),
-                                wattage=float(spec_data.get('wattage', 0)),
-                                vmp=float(spec_data.get('vmp', 0)),
-                                imp=float(spec_data.get('imp', 0)),
-                                voc=float(spec_data.get('voc', 0)),
-                                isc=float(spec_data.get('isc', 0)),
-                                max_system_voltage=float(spec_data.get('max_system_voltage', 1500)),
-                                temperature_coefficient_pmax=spec_data.get('temperature_coefficient_pmax'),
-                                temperature_coefficient_voc=spec_data.get('temperature_coefficient_voc'),
-                                temperature_coefficient_isc=spec_data.get('temperature_coefficient_isc'),
-                                default_orientation=orientation,
-                                cells_per_module=int(spec_data.get('cells_per_module', 72))
-                            )
-                            display_name = f"{module.manufacturer} {module.model} ({module.wattage}W)"
-                            modules[display_name] = module
-                        except (ValueError, TypeError) as e:
-                            print(f"Error loading module {manufacturer}/{model_name}: {e}")
+            from ..utils.module_library import load_merged_modules
+            from ..models.module import ModuleSpec, ModuleType, ModuleOrientation
+
+            merged_data, _ = load_merged_modules()
+
+            for module_key, spec_data in merged_data.items():
+                try:
+                    mod_type = ModuleType(spec_data.get('type', 'Mono PERC'))
+                    orientation = ModuleOrientation(spec_data.get('default_orientation', 'Portrait'))
+
+                    module = ModuleSpec(
+                        manufacturer=spec_data.get('manufacturer', ''),
+                        model=spec_data.get('model', module_key),
+                        type=mod_type,
+                        length_mm=float(spec_data.get('length_mm', 0)),
+                        width_mm=float(spec_data.get('width_mm', 0)),
+                        depth_mm=float(spec_data.get('depth_mm', 40)),
+                        weight_kg=float(spec_data.get('weight_kg', 25)),
+                        wattage=float(spec_data.get('wattage', 0)),
+                        vmp=float(spec_data.get('vmp', 0)),
+                        imp=float(spec_data.get('imp', 0)),
+                        voc=float(spec_data.get('voc', 0)),
+                        isc=float(spec_data.get('isc', 0)),
+                        max_system_voltage=float(spec_data.get('max_system_voltage', 1500)),
+                        temperature_coefficient_pmax=spec_data.get('temperature_coefficient_pmax'),
+                        temperature_coefficient_voc=spec_data.get('temperature_coefficient_voc'),
+                        temperature_coefficient_isc=spec_data.get('temperature_coefficient_isc'),
+                        default_orientation=orientation,
+                        cells_per_module=int(spec_data.get('cells_per_module', 72))
+                    )
+                    display_name = f"{module.manufacturer} {module.model} ({module.wattage}W)"
+                    modules[display_name] = module
+                except (ValueError, TypeError) as e:
+                    print(f"Error loading module {module_key}: {e}")
         except Exception as e:
             print(f"Error loading module library: {e}")
         return modules
@@ -4214,8 +4208,8 @@ class QuickEstimate(ttk.Frame):
         export_btn = ttk.Button(button_row, text="Export to Excel", command=self.export_to_excel)
         export_btn.pack(side='left')
         
-        # packet_btn = ttk.Button(button_row, text="Export Packet", command=self.export_packet)
-        # packet_btn.pack(side='left', padx=(10, 0))
+        packet_btn = ttk.Button(button_row, text="Export Packet", command=self.export_packet)
+        packet_btn.pack(side='left', padx=(10, 0))
         
         pdf_btn = ttk.Button(button_row, text="Export PDF", command=self.export_pdf_only)
         pdf_btn.pack(side='left', padx=(5, 0))
