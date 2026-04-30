@@ -32,17 +32,25 @@ class InverterManager(ttk.Frame):
         list_frame = ttk.LabelFrame(main_container, text="Inverter Library", padding="5")
         list_frame.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
         
+        # Search bar
+        search_frame = ttk.Frame(list_frame)
+        search_frame.grid(row=0, column=0, columnspan=2, padx=5, pady=(5, 2), sticky=(tk.W, tk.E))
+        ttk.Label(search_frame, text="Search:").pack(side='left', padx=(0, 4))
+        self.search_var = tk.StringVar()
+        self.search_var.trace_add('write', lambda *_: self.update_inverter_list())
+        ttk.Entry(search_frame, textvariable=self.search_var).pack(side='left', fill='x', expand=True)
+
         self.inverter_tree = ttk.Treeview(list_frame, height=15, show='tree')
         self.inverter_tree.column('#0', width=420)
-        self.inverter_tree.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.N, tk.S, tk.E, tk.W))
+        self.inverter_tree.grid(row=1, column=0, padx=5, pady=5, sticky=(tk.N, tk.S, tk.E, tk.W))
         scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.inverter_tree.yview)
-        scrollbar.grid(row=0, column=1, pady=5, sticky=(tk.N, tk.S))
+        scrollbar.grid(row=1, column=1, pady=5, sticky=(tk.N, tk.S))
         self.inverter_tree.configure(yscrollcommand=scrollbar.set)
         self.inverter_tree.bind('<<TreeviewSelect>>', self.on_inverter_select)
         self.inverter_tree.bind('<Button-3>', self._show_context_menu)
-        
+
         button_frame = ttk.Frame(list_frame)
-        button_frame.grid(row=1, column=0, padx=5, pady=5)
+        button_frame.grid(row=2, column=0, padx=5, pady=5)
         
         ttk.Button(button_frame, text="Import OND", command=self.import_ond).grid(row=0, column=0, padx=2)
         ttk.Button(button_frame, text="Delete", command=self.delete_inverter).grid(row=0, column=1, padx=2)
@@ -251,6 +259,8 @@ class InverterManager(ttk.Frame):
         for item in self.inverter_tree.get_children():
             self.inverter_tree.delete(item)
 
+        filter_text = self.search_var.get().strip().lower() if hasattr(self, 'search_var') else ''
+
         # Build inverter_key -> list of estimate names that use it
         inv_to_estimates: Dict[str, list] = {}
         project = self.current_project_getter() if self.current_project_getter else None
@@ -266,12 +276,26 @@ class InverterManager(ttk.Frame):
 
         for manufacturer in sorted(manufacturers):
             inv_list = manufacturers[manufacturer]
-            # Mark the manufacturer node if any of its inverters are assigned
-            mfr_has_assignment = any(inv_to_estimates.get(ik) for ik, _ in inv_list)
-            mfr_label = f"● {manufacturer}" if mfr_has_assignment else manufacturer
-            parent = self.inverter_tree.insert('', 'end', text=mfr_label, open=False)
 
-            for inv_key, inverter in sorted(inv_list, key=lambda x: x[1].model):
+            if filter_text:
+                mfr_matches = filter_text in manufacturer.lower()
+                if mfr_matches:
+                    visible = inv_list
+                else:
+                    visible = [(ik, inv) for ik, inv in inv_list if filter_text in inv.model.lower()]
+                if not visible:
+                    continue
+                is_open = True
+            else:
+                visible = inv_list
+                is_open = False
+
+            # Mark the manufacturer node if any of its inverters are assigned
+            mfr_has_assignment = any(inv_to_estimates.get(ik) for ik, _ in visible)
+            mfr_label = f"● {manufacturer}" if mfr_has_assignment else manufacturer
+            parent = self.inverter_tree.insert('', 'end', text=mfr_label, open=is_open)
+
+            for inv_key, inverter in sorted(visible, key=lambda x: x[1].model):
                 label = f"{inverter.model} ({inverter.rated_power_kw} kW)"
                 assigned = inv_to_estimates.get(inv_key)
                 if assigned:

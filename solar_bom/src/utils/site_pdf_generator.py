@@ -1524,6 +1524,10 @@ def _draw_single_wiring_diagram(ax, spec, letter):
                                     mw, mod_h * 1.1,
                                     facecolor='#AAAAAA', edgecolor='#555555', linewidth=0.4)
             ax.add_patch(motor_rect)
+            cx = mg_left + mw / 2
+            cy = mod_bot_y + mod_h * 0.5
+            ax.text(cx, cy, 'M', fontsize=9, fontweight='bold', color='black',
+                    ha='center', va='center', fontfamily='sans-serif')
 
     # --- Polarity markers ---
     for s_idx in range(spt):

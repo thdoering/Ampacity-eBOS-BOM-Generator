@@ -361,17 +361,31 @@ class QuickEstimate(ttk.Frame):
 
     # ==================== Data Management ====================
 
+    def _group_row_spacing_set(self, group) -> bool:
+        """Return True if the group has a valid row spacing value set."""
+        rs = group.get('row_spacing_ft')
+        return rs is not None and rs > 0
+
     def add_group(self) -> int:
         """Add a new group and return its index"""
+        # Guard: require the last group to have row spacing set before adding another
+        if self.groups and not self._group_row_spacing_set(self.groups[-1]):
+            last_name = self.groups[-1].get('name', f'Group {len(self.groups)}')
+            messagebox.showwarning(
+                "Row Spacing Required",
+                f"Set row spacing for {last_name} before adding another group."
+            )
+            return -1
+
         # Start unconstrained — let the user pick a template
         default_ref = None
         default_spt = 3
-        
-        # Default row spacing: inherit from last group, or fall back to 20 ft
+
+        # First group starts blank; subsequent groups inherit from the previous group
         if self.groups:
             default_row_spacing = self.groups[-1].get('row_spacing_ft', 20.0)
         else:
-            default_row_spacing = 20.0
+            default_row_spacing = None
 
         # Inherit strings_per_inv from last group, or use None (means: use global)
         default_spi = self.groups[-1].get('strings_per_inv', None) if self.groups else None
@@ -423,10 +437,9 @@ class QuickEstimate(ttk.Frame):
         source = self.groups[sel[0]]
         new_group = copy.deepcopy(source)
         new_group['name'] = self._next_group_name()
-        
-        # Insert after the selected group
-        insert_idx = sel[0] + 1
-        self.groups.insert(insert_idx, new_group)
+
+        insert_idx = len(self.groups)
+        self.groups.append(new_group)
         self._refresh_group_listbox()
         
         self.group_listbox.selection_clear(0, tk.END)
@@ -2622,7 +2635,7 @@ class QuickEstimate(ttk.Frame):
         # Reset inverter and topology fields
         self._on_inverter_selected(None)
         if hasattr(self, 'topology_var'):
-            self.topology_var.set('Distributed String')
+            self.topology_var.set('Centralized String')
         if hasattr(self, 'lv_collection_var'):
             self.lv_collection_var.set('Wire Harness')
         if hasattr(self, 'dc_ac_ratio_var'):
@@ -4033,7 +4046,7 @@ class QuickEstimate(ttk.Frame):
         topology_row.pack(fill='x', pady=(0, 5))
         
         ttk.Label(topology_row, text="Topology:").pack(side='left', padx=(0, 5))
-        self.topology_var = tk.StringVar(value='Distributed String')
+        self.topology_var = tk.StringVar(value='Centralized String')
         topology_combo = ttk.Combobox(
             topology_row,
             textvariable=self.topology_var,
@@ -4429,7 +4442,8 @@ class QuickEstimate(ttk.Frame):
 
         # Row Spacing + GCR (bidirectional)
         ttk.Label(form_frame, text="Row Spacing (ft):").grid(row=5, column=0, sticky='w', pady=5)
-        row_spacing_var = tk.StringVar(value=f"{group.get('row_spacing_ft', 20.0):.3f}")
+        _rs_raw = group.get('row_spacing_ft')
+        row_spacing_var = tk.StringVar(value=f"{_rs_raw:.3f}" if _rs_raw is not None else "")
         row_spacing_entry = ttk.Entry(form_frame, textvariable=row_spacing_var, width=10)
         row_spacing_entry.grid(row=5, column=1, sticky='w', pady=5, padx=(10, 0))
 
@@ -4439,9 +4453,18 @@ class QuickEstimate(ttk.Frame):
         gcr_entry.grid(row=5, column=3, sticky='w', pady=5, padx=(5, 0))
 
         def _update_gcr_from_row_spacing(*args):
+            raw = row_spacing_var.get().strip()
+            if not raw:
+                group['row_spacing_ft'] = None
+                gcr_var.set("--")
+                self._mark_stale()
+                self._schedule_autosave()
+                return
             try:
-                rs_ft = float(row_spacing_var.get())
+                rs_ft = float(raw)
                 if rs_ft <= 0:
+                    group['row_spacing_ft'] = None
+                    gcr_var.set("--")
                     return
                 rs_m = rs_ft / 3.28084
                 mod_len_m = self._get_group_module_length_m(group)
@@ -4813,6 +4836,18 @@ class QuickEstimate(ttk.Frame):
         else:
             strings_per_inv = self._get_int_var(self.strings_per_inverter_var, 0)
         
+        # Validate — all groups must have row spacing set
+        unset_groups = [g.get('name', f'Group {i+1}') for i, g in enumerate(self.groups) if not self._group_row_spacing_set(g)]
+        if unset_groups:
+            if not silent:
+                messagebox.showwarning(
+                    "Row Spacing Required",
+                    "Row spacing is not set for the following group(s):\n\n" +
+                    "\n".join(f"  • {n}" for n in unset_groups) +
+                    "\n\nPlease enter a row spacing before calculating."
+                )
+            return
+
         # Validate — need at least one linked template or a legacy fallback module
         self._derive_module_from_templates()
         lv_method = self.lv_collection_var.get() if hasattr(self, 'lv_collection_var') else 'Wire Harness'
@@ -6433,7 +6468,12 @@ class QuickEstimate(ttk.Frame):
                                 _lbl = f"{_mod.get('manufacturer', '?')}-{_mod.get('wattage', '?')}W"
                                 if _lbl not in _mod_type:
                                     _mod_type[_lbl] = {'strings': 0, 'modules': 0}
-                                _ss = _qty * int(_spt)
+                                _full_spt = int(_spt)
+                                _has_partial = (_spt != _full_spt)
+                                if _has_partial:
+                                    _ss = _full_spt * _qty + (_qty // 2)
+                                else:
+                                    _ss = _qty * _full_spt
                                 _mod_type[_lbl]['strings'] += _ss
                                 _mod_type[_lbl]['modules'] += _ss * _mps
 
@@ -6986,7 +7026,12 @@ class QuickEstimate(ttk.Frame):
                         lbl = f"{mod.get('manufacturer', '?')}-{mod.get('wattage', '?')}W"
                         if lbl not in mod_type_data:
                             mod_type_data[lbl] = {'strings': 0, 'modules': 0}
-                        seg_str = qty * int(spt)
+                        full_spt = int(spt)
+                        has_partial = (spt != full_spt)
+                        if has_partial:
+                            seg_str = full_spt * qty + (qty // 2)
+                        else:
+                            seg_str = qty * full_spt
                         mod_type_data[lbl]['strings'] += seg_str
                         mod_type_data[lbl]['modules'] += seg_str * mps
             if len(mod_type_data) > 1:
