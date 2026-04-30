@@ -28,9 +28,17 @@ class ModuleManager(ttk.Frame):
         list_frame = ttk.LabelFrame(main_container, text="Module Library", padding="5")
         list_frame.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
         
+        # Search bar
+        search_frame = ttk.Frame(list_frame)
+        search_frame.grid(row=0, column=0, columnspan=2, padx=5, pady=(5, 2), sticky=(tk.W, tk.E))
+        ttk.Label(search_frame, text="Search:").pack(side='left', padx=(0, 4))
+        self.search_var = tk.StringVar()
+        self.search_var.trace_add('write', lambda *_: self.update_module_list())
+        ttk.Entry(search_frame, textvariable=self.search_var).pack(side='left', fill='x', expand=True)
+
         # Create Treeview for hierarchical module display
         self.module_tree = ttk.Treeview(list_frame, height=15)
-        self.module_tree.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.module_tree.grid(row=1, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
 
         # Configure tree columns
         self.module_tree.heading('#0', text='Modules')
@@ -38,14 +46,14 @@ class ModuleManager(ttk.Frame):
 
         # Add scrollbar for tree
         tree_scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.module_tree.yview)
-        tree_scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        tree_scrollbar.grid(row=1, column=1, sticky=(tk.N, tk.S))
         self.module_tree.configure(yscrollcommand=tree_scrollbar.set)
 
         # Bind selection event
         self.module_tree.bind('<<TreeviewSelect>>', self.on_module_select)
-        
+
         button_frame = ttk.Frame(list_frame)
-        button_frame.grid(row=1, column=0, padx=5, pady=5)
+        button_frame.grid(row=2, column=0, padx=5, pady=5)
         
         ttk.Button(button_frame, text="Import PAN", command=self.import_pan).grid(row=0, column=0, padx=2)
         self.delete_btn = ttk.Button(button_frame, text="Delete", command=self.delete_module)
@@ -212,26 +220,34 @@ class ModuleManager(ttk.Frame):
         save_user_modules(self.modules, self.factory_keys)
             
     def update_module_list(self):
-        """Update the module tree view"""
-        # Clear existing items
+        """Update the module tree view, filtered by the current search text."""
         for item in self.module_tree.get_children():
             self.module_tree.delete(item)
-        
+
+        filter_text = self.search_var.get().strip().lower() if hasattr(self, 'search_var') else ''
+
         # Group modules by manufacturer
         manufacturers = {}
         for module_key, module in self.modules.items():
-            manufacturer = module.manufacturer
-            if manufacturer not in manufacturers:
-                manufacturers[manufacturer] = []
-            manufacturers[manufacturer].append((module.model, module_key, module))
-        
-        # Add manufacturers and their modules to tree
+            manufacturers.setdefault(module.manufacturer, []).append((module.model, module_key, module))
+
         for manufacturer, modules_list in sorted(manufacturers.items()):
-            # Add manufacturer node
-            manufacturer_node = self.module_tree.insert('', 'end', text=manufacturer, open=False)
-            
-            # Add modules under manufacturer
-            for model, module_key, module in sorted(modules_list, key=lambda x: x[0]):
+            if filter_text:
+                mfr_matches = filter_text in manufacturer.lower()
+                if mfr_matches:
+                    visible_models = modules_list
+                else:
+                    visible_models = [(m, k, mod) for m, k, mod in modules_list if filter_text in m.lower()]
+                if not visible_models:
+                    continue
+                is_open = True
+            else:
+                visible_models = modules_list
+                is_open = False
+
+            manufacturer_node = self.module_tree.insert('', 'end', text=manufacturer, open=is_open)
+
+            for model, module_key, module in sorted(visible_models, key=lambda x: x[0]):
                 if module_key in self.factory_keys:
                     module_text = f"{model} ({module.wattage}W) (factory)"
                     self.module_tree.insert(manufacturer_node, 'end', text=module_text, values=(module_key,), tags=('factory',))

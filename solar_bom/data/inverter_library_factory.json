@@ -1,5 +1,378 @@
 {
+  "CPS": {
+    "SCH125KTL-AIO/US-600": {
+      "manufacturer": "CPS",
+      "model": "SCH125KTL-AIO/US-600",
+      "inverter_type": "String",
+      "rated_power_kw": 125.0,
+      "max_dc_power_kw": 187.5,
+      "max_efficiency": 99.1,
+      "mppt_channels": [
+        {
+          "max_input_current": 220.0,
+          "min_voltage": 870.0,
+          "max_voltage": 1300.0,
+          "max_power": 187500.0,
+          "num_string_inputs": 20
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 900.0,
+      "nominal_ac_voltage": 600.0,
+      "max_ac_current": 127.2,
+      "power_factor": 0.99,
+      "dimensions_mm": [
+        1085,
+        616,
+        284
+      ],
+      "weight_kg": 72.0,
+      "ip_rating": "NEMA 4X",
+      "max_short_circuit_current": 275.0
+    },
+    "SCH250K-T-US-600 Centralized": {
+      "manufacturer": "CPS",
+      "model": "SCH250K-T-US-600 Centralized",
+      "inverter_type": "String",
+      "rated_power_kw": 250.0,
+      "max_dc_power_kw": 425.0,
+      "max_efficiency": 98.83,
+      "mppt_channels": [
+        {
+          "max_input_current": 360.0,
+          "min_voltage": 900.0,
+          "max_voltage": 1300.0,
+          "max_power": 425000.0,
+          "num_string_inputs": 2
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 900.0,
+      "nominal_ac_voltage": 600.0,
+      "max_ac_current": 241.0,
+      "power_factor": 0.99,
+      "dimensions_mm": [
+        840,
+        723,
+        355
+      ],
+      "weight_kg": 127.5,
+      "ip_rating": "NEMA 4X",
+      "max_short_circuit_current": 450.0
+    },
+    "SCH250K-T-US-600 Distributed": {
+      "manufacturer": "CPS",
+      "model": "SCH250K-T-US-600 Distributed",
+      "inverter_type": "String",
+      "rated_power_kw": 250.0,
+      "max_dc_power_kw": 425.0,
+      "max_efficiency": 98.83,
+      "mppt_channels": [
+        {
+          "max_input_current": 360.0,
+          "min_voltage": 900.0,
+          "max_voltage": 1300.0,
+          "max_power": 425000.0,
+          "num_string_inputs": 30
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 900.0,
+      "nominal_ac_voltage": 600.0,
+      "max_ac_current": 241.0,
+      "power_factor": 0.99,
+      "dimensions_mm": [
+        840,
+        723,
+        355
+      ],
+      "weight_kg": 127.5,
+      "ip_rating": "NEMA 4X",
+      "max_short_circuit_current": 450.0
+    },
+    "SCH275KTL-DO/US-800-24 V2": {
+      "manufacturer": "CPS",
+      "model": "SCH275KTL-DO/US-800-24 V2",
+      "inverter_type": "String",
+      "rated_power_kw": 275.0,
+      "max_dc_power_kw": 412.5,
+      "max_efficiency": 99.0,
+      "mppt_channels": [
+        {
+          "max_input_current": 30.0,
+          "min_voltage": 900.0,
+          "max_voltage": 1300.0,
+          "max_power": 34375.0,
+          "num_string_inputs": 2
+        },
+        {
+          "max_input_current": 30.0,
+          "min_voltage": 900.0,
+          "max_voltage": 1300.0,
+          "max_power": 34375.0,
+          "num_string_inputs": 2
+        },
+        {
+          "max_input_current": 30.0,
+          "min_voltage": 900.0,
+          "max_voltage": 1300.0,
+          "max_power": 34375.0,
+          "num_string_inputs": 2
+        },
+        {
+          "max_input_current": 30.0,
+          "min_voltage": 900.0,
+          "max_voltage": 1300.0,
+          "max_power": 34375.0,
+          "num_string_inputs": 2
+        },
+        {
+          "max_input_current": 30.0,
+          "min_voltage": 900.0,
+          "max_voltage": 1300.0,
+          "max_power": 34375.0,
+          "num_string_inputs": 2
+        },
+        {
+          "max_input_current": 30.0,
+          "min_voltage": 900.0,
+          "max_voltage": 1300.0,
+          "max_power": 34375.0,
+          "num_string_inputs": 2
+        },
+        {
+          "max_input_current": 30.0,
+          "min_voltage": 900.0,
+          "max_voltage": 1300.0,
+          "max_power": 34375.0,
+          "num_string_inputs": 2
+        },
+        {
+          "max_input_current": 30.0,
+          "min_voltage": 900.0,
+          "max_voltage": 1300.0,
+          "max_power": 34375.0,
+          "num_string_inputs": 2
+        },
+        {
+          "max_input_current": 30.0,
+          "min_voltage": 900.0,
+          "max_voltage": 1300.0,
+          "max_power": 34375.0,
+          "num_string_inputs": 2
+        },
+        {
+          "max_input_current": 30.0,
+          "min_voltage": 900.0,
+          "max_voltage": 1300.0,
+          "max_power": 34375.0,
+          "num_string_inputs": 2
+        },
+        {
+          "max_input_current": 30.0,
+          "min_voltage": 900.0,
+          "max_voltage": 1300.0,
+          "max_power": 34375.0,
+          "num_string_inputs": 2
+        },
+        {
+          "max_input_current": 30.0,
+          "min_voltage": 900.0,
+          "max_voltage": 1300.0,
+          "max_power": 34375.0,
+          "num_string_inputs": 2
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 550.0,
+      "nominal_ac_voltage": 800.0,
+      "max_ac_current": 198.5,
+      "power_factor": 0.99,
+      "dimensions_mm": [
+        1050,
+        690,
+        400
+      ],
+      "weight_kg": 119.0,
+      "ip_rating": "NEMA 4X",
+      "max_short_circuit_current": 600.0
+    },
+    "SCH275KTL-DO/US-800-36 V2": {
+      "manufacturer": "CPS",
+      "model": "SCH275KTL-DO/US-800-36 V2",
+      "inverter_type": "String",
+      "rated_power_kw": 275.0,
+      "max_dc_power_kw": 412.5,
+      "max_efficiency": 99.0,
+      "mppt_channels": [
+        {
+          "max_input_current": 30.0,
+          "min_voltage": 900.0,
+          "max_voltage": 1300.0,
+          "max_power": 34375.0,
+          "num_string_inputs": 3
+        },
+        {
+          "max_input_current": 30.0,
+          "min_voltage": 900.0,
+          "max_voltage": 1300.0,
+          "max_power": 34375.0,
+          "num_string_inputs": 3
+        },
+        {
+          "max_input_current": 30.0,
+          "min_voltage": 900.0,
+          "max_voltage": 1300.0,
+          "max_power": 34375.0,
+          "num_string_inputs": 3
+        },
+        {
+          "max_input_current": 30.0,
+          "min_voltage": 900.0,
+          "max_voltage": 1300.0,
+          "max_power": 34375.0,
+          "num_string_inputs": 3
+        },
+        {
+          "max_input_current": 30.0,
+          "min_voltage": 900.0,
+          "max_voltage": 1300.0,
+          "max_power": 34375.0,
+          "num_string_inputs": 3
+        },
+        {
+          "max_input_current": 30.0,
+          "min_voltage": 900.0,
+          "max_voltage": 1300.0,
+          "max_power": 34375.0,
+          "num_string_inputs": 3
+        },
+        {
+          "max_input_current": 30.0,
+          "min_voltage": 900.0,
+          "max_voltage": 1300.0,
+          "max_power": 34375.0,
+          "num_string_inputs": 3
+        },
+        {
+          "max_input_current": 30.0,
+          "min_voltage": 900.0,
+          "max_voltage": 1300.0,
+          "max_power": 34375.0,
+          "num_string_inputs": 3
+        },
+        {
+          "max_input_current": 30.0,
+          "min_voltage": 900.0,
+          "max_voltage": 1300.0,
+          "max_power": 34375.0,
+          "num_string_inputs": 3
+        },
+        {
+          "max_input_current": 30.0,
+          "min_voltage": 900.0,
+          "max_voltage": 1300.0,
+          "max_power": 34375.0,
+          "num_string_inputs": 3
+        },
+        {
+          "max_input_current": 30.0,
+          "min_voltage": 900.0,
+          "max_voltage": 1300.0,
+          "max_power": 34375.0,
+          "num_string_inputs": 3
+        },
+        {
+          "max_input_current": 30.0,
+          "min_voltage": 900.0,
+          "max_voltage": 1300.0,
+          "max_power": 34375.0,
+          "num_string_inputs": 3
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 550.0,
+      "nominal_ac_voltage": 800.0,
+      "max_ac_current": 198.5,
+      "power_factor": 0.99,
+      "dimensions_mm": [
+        1050,
+        690,
+        400
+      ],
+      "weight_kg": 119.0,
+      "ip_rating": "NEMA 4X",
+      "max_short_circuit_current": 600.0
+    }
+  },
   "SMA": {
+    "Sunny Highpower PEAK3 125-US": {
+      "manufacturer": "SMA",
+      "model": "Sunny Highpower PEAK3 125-US",
+      "inverter_type": "String",
+      "rated_power_kw": 125.0,
+      "max_dc_power_kw": 187.5,
+      "max_efficiency": 98.5,
+      "mppt_channels": [
+        {
+          "max_input_current": 180.0,
+          "min_voltage": 710.0,
+          "max_voltage": 1425.0,
+          "max_power": 187500.0,
+          "num_string_inputs": 1
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 710.0,
+      "nominal_ac_voltage": 480.0,
+      "max_ac_current": 151.0,
+      "power_factor": 1.0,
+      "dimensions_mm": [
+        830,
+        770,
+        444
+      ],
+      "weight_kg": 85.0,
+      "ip_rating": "Type 4X",
+      "max_short_circuit_current": 325.0
+    },
+    "Sunny Highpower PEAK3 150-US": {
+      "manufacturer": "SMA",
+      "model": "Sunny Highpower PEAK3 150-US",
+      "inverter_type": "String",
+      "rated_power_kw": 150.0,
+      "max_dc_power_kw": 225.0,
+      "max_efficiency": 98.5,
+      "mppt_channels": [
+        {
+          "max_input_current": 180.0,
+          "min_voltage": 855.0,
+          "max_voltage": 1425.0,
+          "max_power": 225000.0,
+          "num_string_inputs": 1
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 855.0,
+      "nominal_ac_voltage": 600.0,
+      "max_ac_current": 151.0,
+      "power_factor": 1.0,
+      "dimensions_mm": [
+        830,
+        770,
+        444
+      ],
+      "weight_kg": 85.0,
+      "ip_rating": "Type 4X",
+      "max_short_circuit_current": 325.0
+    },
     "SC 2660 UP": {
       "manufacturer": "SMA",
       "model": "SC 2660 UP",
@@ -36,6 +409,37 @@
       ],
       "altitude_limit_m": 3000.0,
       "communication_protocol": "Modbus TCP"
+    },
+    "Sunny Central 2660 UP-US": {
+      "manufacturer": "SMA",
+      "model": "Sunny Central 2660 UP-US",
+      "inverter_type": "Central",
+      "rated_power_kw": 2667.0,
+      "max_dc_power_kw": 4000.0,
+      "max_efficiency": 98.7,
+      "mppt_channels": [
+        {
+          "max_input_current": 3200.0,
+          "min_voltage": 880.0,
+          "max_voltage": 1325.0,
+          "max_power": 4000000.0,
+          "num_string_inputs": 24
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 1030.0,
+      "nominal_ac_voltage": 600.0,
+      "max_ac_current": 2566.0,
+      "power_factor": 1.0,
+      "dimensions_mm": [
+        2815,
+        2318,
+        1588
+      ],
+      "weight_kg": 3400.0,
+      "ip_rating": "NEMA 3R",
+      "max_short_circuit_current": 6400.0
     },
     "SC 2800 UP": {
       "manufacturer": "SMA",
@@ -74,6 +478,37 @@
       "altitude_limit_m": 3000.0,
       "communication_protocol": "Modbus TCP"
     },
+    "Sunny Central 2800 UP-US": {
+      "manufacturer": "SMA",
+      "model": "Sunny Central 2800 UP-US",
+      "inverter_type": "Central",
+      "rated_power_kw": 2800.0,
+      "max_dc_power_kw": 4200.0,
+      "max_efficiency": 98.7,
+      "mppt_channels": [
+        {
+          "max_input_current": 3200.0,
+          "min_voltage": 921.0,
+          "max_voltage": 1325.0,
+          "max_power": 4200000.0,
+          "num_string_inputs": 24
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 1071.0,
+      "nominal_ac_voltage": 630.0,
+      "max_ac_current": 2566.0,
+      "power_factor": 1.0,
+      "dimensions_mm": [
+        2815,
+        2318,
+        1588
+      ],
+      "weight_kg": 3400.0,
+      "ip_rating": "NEMA 3R",
+      "max_short_circuit_current": 6400.0
+    },
     "SC 2930 UP": {
       "manufacturer": "SMA",
       "model": "SC 2930 UP",
@@ -111,6 +546,37 @@
       "altitude_limit_m": 2000.0,
       "communication_protocol": "Modbus TCP"
     },
+    "Sunny Central 2930 UP-US": {
+      "manufacturer": "SMA",
+      "model": "Sunny Central 2930 UP-US",
+      "inverter_type": "Central",
+      "rated_power_kw": 2933.0,
+      "max_dc_power_kw": 4400.0,
+      "max_efficiency": 98.7,
+      "mppt_channels": [
+        {
+          "max_input_current": 3200.0,
+          "min_voltage": 962.0,
+          "max_voltage": 1325.0,
+          "max_power": 4400000.0,
+          "num_string_inputs": 24
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 1112.0,
+      "nominal_ac_voltage": 660.0,
+      "max_ac_current": 2566.0,
+      "power_factor": 1.0,
+      "dimensions_mm": [
+        2815,
+        2318,
+        1588
+      ],
+      "weight_kg": 3400.0,
+      "ip_rating": "NEMA 3R",
+      "max_short_circuit_current": 6400.0
+    },
     "SC 3060 UP": {
       "manufacturer": "SMA",
       "model": "SC 3060 UP",
@@ -147,6 +613,577 @@
       ],
       "altitude_limit_m": 2000.0,
       "communication_protocol": "Modbus TCP"
+    },
+    "Sunny Central 3060 UP-US": {
+      "manufacturer": "SMA",
+      "model": "Sunny Central 3060 UP-US",
+      "inverter_type": "Central",
+      "rated_power_kw": 3067.0,
+      "max_dc_power_kw": 4600.0,
+      "max_efficiency": 98.7,
+      "mppt_channels": [
+        {
+          "max_input_current": 3200.0,
+          "min_voltage": 1003.0,
+          "max_voltage": 1325.0,
+          "max_power": 4600000.0,
+          "num_string_inputs": 24
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 1153.0,
+      "nominal_ac_voltage": 690.0,
+      "max_ac_current": 2566.0,
+      "power_factor": 1.0,
+      "dimensions_mm": [
+        2815,
+        2318,
+        1588
+      ],
+      "weight_kg": 3400.0,
+      "ip_rating": "NEMA 3R",
+      "max_short_circuit_current": 6400.0
+    }
+  },
+  "Solectria": {
+    "XGI 1500-125/125-UL": {
+      "manufacturer": "Solectria",
+      "model": "XGI 1500-125/125-UL",
+      "inverter_type": "String",
+      "rated_power_kw": 125.0,
+      "max_dc_power_kw": 332.0,
+      "max_efficiency": 98.9,
+      "mppt_channels": [
+        {
+          "max_input_current": 148.3,
+          "min_voltage": 860.0,
+          "max_voltage": 1450.0,
+          "max_power": 332000.0,
+          "num_string_inputs": 1
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 860.0,
+      "nominal_ac_voltage": 600.0,
+      "max_ac_current": 120.0,
+      "power_factor": 0.99,
+      "dimensions_mm": [
+        1000,
+        750,
+        380
+      ],
+      "weight_kg": 122.0,
+      "ip_rating": "Type 4X",
+      "max_short_circuit_current": 500.0
+    },
+    "XGI 1500-125/150-UL": {
+      "manufacturer": "Solectria",
+      "model": "XGI 1500-125/150-UL",
+      "inverter_type": "String",
+      "rated_power_kw": 125.0,
+      "max_dc_power_kw": 332.0,
+      "max_efficiency": 98.9,
+      "mppt_channels": [
+        {
+          "max_input_current": 148.3,
+          "min_voltage": 860.0,
+          "max_voltage": 1450.0,
+          "max_power": 332000.0,
+          "num_string_inputs": 1
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 860.0,
+      "nominal_ac_voltage": 600.0,
+      "max_ac_current": 144.0,
+      "power_factor": 0.99,
+      "dimensions_mm": [
+        1000,
+        750,
+        380
+      ],
+      "weight_kg": 122.0,
+      "ip_rating": "Type 4X",
+      "max_short_circuit_current": 500.0
+    },
+    "XGI 1500-150/166-UL": {
+      "manufacturer": "Solectria",
+      "model": "XGI 1500-150/166-UL",
+      "inverter_type": "String",
+      "rated_power_kw": 150.0,
+      "max_dc_power_kw": 332.0,
+      "max_efficiency": 99.0,
+      "mppt_channels": [
+        {
+          "max_input_current": 178.0,
+          "min_voltage": 860.0,
+          "max_voltage": 1450.0,
+          "max_power": 332000.0,
+          "num_string_inputs": 1
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 860.0,
+      "nominal_ac_voltage": 600.0,
+      "max_ac_current": 160.0,
+      "power_factor": 0.99,
+      "dimensions_mm": [
+        1000,
+        750,
+        380
+      ],
+      "weight_kg": 122.0,
+      "ip_rating": "Type 4X",
+      "max_short_circuit_current": 500.0
+    },
+    "XGI 1500-166/166-UL": {
+      "manufacturer": "Solectria",
+      "model": "XGI 1500-166/166-UL",
+      "inverter_type": "String",
+      "rated_power_kw": 166.0,
+      "max_dc_power_kw": 332.0,
+      "max_efficiency": 99.0,
+      "mppt_channels": [
+        {
+          "max_input_current": 197.7,
+          "min_voltage": 860.0,
+          "max_voltage": 1450.0,
+          "max_power": 332000.0,
+          "num_string_inputs": 1
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 860.0,
+      "nominal_ac_voltage": 600.0,
+      "max_ac_current": 160.0,
+      "power_factor": 0.99,
+      "dimensions_mm": [
+        1000,
+        750,
+        380
+      ],
+      "weight_kg": 122.0,
+      "ip_rating": "Type 4X",
+      "max_short_circuit_current": 500.0
+    },
+    "XGI 1500-0.498MW-600": {
+      "manufacturer": "Solectria",
+      "model": "XGI 1500-0.498MW-600",
+      "inverter_type": "String",
+      "rated_power_kw": 498.0,
+      "max_dc_power_kw": 2500.0,
+      "max_efficiency": 99.0,
+      "mppt_channels": [
+        {
+          "max_input_current": 588.0,
+          "min_voltage": 860.0,
+          "max_voltage": 1450.0,
+          "max_power": 2500000.0,
+          "num_string_inputs": 8
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 920.0,
+      "nominal_ac_voltage": 600.0,
+      "max_ac_current": 960.0,
+      "power_factor": 0.99,
+      "dimensions_mm": [
+        2114,
+        1516,
+        1086
+      ],
+      "weight_kg": 887.0,
+      "ip_rating": "Type 3R",
+      "max_short_circuit_current": 2400.0
+    },
+    "XGI 1500-0.50MW-600": {
+      "manufacturer": "Solectria",
+      "model": "XGI 1500-0.50MW-600",
+      "inverter_type": "String",
+      "rated_power_kw": 500.0,
+      "max_dc_power_kw": 2500.0,
+      "max_efficiency": 99.0,
+      "mppt_channels": [
+        {
+          "max_input_current": 590.0,
+          "min_voltage": 860.0,
+          "max_voltage": 1450.0,
+          "max_power": 2500000.0,
+          "num_string_inputs": 8
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 920.0,
+      "nominal_ac_voltage": 600.0,
+      "max_ac_current": 960.0,
+      "power_factor": 0.99,
+      "dimensions_mm": [
+        2114,
+        1516,
+        1086
+      ],
+      "weight_kg": 887.0,
+      "ip_rating": "Type 3R",
+      "max_short_circuit_current": 2400.0
+    },
+    "XGI 1500-0.75MW-600": {
+      "manufacturer": "Solectria",
+      "model": "XGI 1500-0.75MW-600",
+      "inverter_type": "String",
+      "rated_power_kw": 750.0,
+      "max_dc_power_kw": 2500.0,
+      "max_efficiency": 99.0,
+      "mppt_channels": [
+        {
+          "max_input_current": 886.0,
+          "min_voltage": 860.0,
+          "max_voltage": 1450.0,
+          "max_power": 2500000.0,
+          "num_string_inputs": 8
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 920.0,
+      "nominal_ac_voltage": 600.0,
+      "max_ac_current": 960.0,
+      "power_factor": 0.99,
+      "dimensions_mm": [
+        2114,
+        1516,
+        1086
+      ],
+      "weight_kg": 887.0,
+      "ip_rating": "Type 3R",
+      "max_short_circuit_current": 2400.0
+    },
+    "XGI 1500-0.85MW-600": {
+      "manufacturer": "Solectria",
+      "model": "XGI 1500-0.85MW-600",
+      "inverter_type": "String",
+      "rated_power_kw": 850.0,
+      "max_dc_power_kw": 2500.0,
+      "max_efficiency": 99.0,
+      "mppt_channels": [
+        {
+          "max_input_current": 1004.0,
+          "min_voltage": 860.0,
+          "max_voltage": 1450.0,
+          "max_power": 2500000.0,
+          "num_string_inputs": 8
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 920.0,
+      "nominal_ac_voltage": 600.0,
+      "max_ac_current": 960.0,
+      "power_factor": 0.99,
+      "dimensions_mm": [
+        2114,
+        1516,
+        1086
+      ],
+      "weight_kg": 887.0,
+      "ip_rating": "Type 3R",
+      "max_short_circuit_current": 2400.0
+    },
+    "XGI 1500-0.99MW-600": {
+      "manufacturer": "Solectria",
+      "model": "XGI 1500-0.99MW-600",
+      "inverter_type": "String",
+      "rated_power_kw": 990.0,
+      "max_dc_power_kw": 2500.0,
+      "max_efficiency": 99.0,
+      "mppt_channels": [
+        {
+          "max_input_current": 1182.0,
+          "min_voltage": 860.0,
+          "max_voltage": 1450.0,
+          "max_power": 2500000.0,
+          "num_string_inputs": 8
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 920.0,
+      "nominal_ac_voltage": 600.0,
+      "max_ac_current": 953.0,
+      "power_factor": 0.99,
+      "dimensions_mm": [
+        2114,
+        1516,
+        1086
+      ],
+      "weight_kg": 887.0,
+      "ip_rating": "Type 3R",
+      "max_short_circuit_current": 2400.0
+    },
+    "XGI 1500-1MW-600": {
+      "manufacturer": "Solectria",
+      "model": "XGI 1500-1MW-600",
+      "inverter_type": "String",
+      "rated_power_kw": 1000.0,
+      "max_dc_power_kw": 2500.0,
+      "max_efficiency": 99.0,
+      "mppt_channels": [
+        {
+          "max_input_current": 1183.0,
+          "min_voltage": 860.0,
+          "max_voltage": 1450.0,
+          "max_power": 2500000.0,
+          "num_string_inputs": 8
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 920.0,
+      "nominal_ac_voltage": 600.0,
+      "max_ac_current": 960.0,
+      "power_factor": 0.99,
+      "dimensions_mm": [
+        2114,
+        1516,
+        1086
+      ],
+      "weight_kg": 887.0,
+      "ip_rating": "Type 3R",
+      "max_short_circuit_current": 2400.0
+    }
+  },
+  "Sungrow": {
+    "SG2500U": {
+      "manufacturer": "Sungrow",
+      "model": "SG2500U",
+      "inverter_type": "Central",
+      "rated_power_kw": 2750.0,
+      "max_dc_power_kw": 4125.0,
+      "max_efficiency": 98.8,
+      "mppt_channels": [
+        {
+          "max_input_current": 3508.0,
+          "min_voltage": 800.0,
+          "max_voltage": 1300.0,
+          "max_power": 4125000.0,
+          "num_string_inputs": 21
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 840.0,
+      "nominal_ac_voltage": 550.0,
+      "max_ac_current": 2886.0,
+      "power_factor": 0.99,
+      "dimensions_mm": [
+        2991,
+        2896,
+        2438
+      ],
+      "weight_kg": 6900.0,
+      "ip_rating": "NEMA 3R",
+      "max_short_circuit_current": 4800.0
+    },
+    "SG3150U": {
+      "manufacturer": "Sungrow",
+      "model": "SG3150U",
+      "inverter_type": "Central",
+      "rated_power_kw": 3150.0,
+      "max_dc_power_kw": 4725.0,
+      "max_efficiency": 98.8,
+      "mppt_channels": [
+        {
+          "max_input_current": 3420.0,
+          "min_voltage": 940.0,
+          "max_voltage": 1300.0,
+          "max_power": 4725000.0,
+          "num_string_inputs": 24
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 955.0,
+      "nominal_ac_voltage": 630.0,
+      "max_ac_current": 2886.0,
+      "power_factor": 0.99,
+      "dimensions_mm": [
+        2991,
+        2896,
+        2438
+      ],
+      "weight_kg": 6900.0,
+      "ip_rating": "NEMA 3R",
+      "max_short_circuit_current": 4800.0
+    },
+    "SC4000UD-MV-US": {
+      "manufacturer": "Sungrow",
+      "model": "SC4000UD-MV-US",
+      "inverter_type": "Central",
+      "rated_power_kw": 4000.0,
+      "max_dc_power_kw": 4000.0,
+      "max_efficiency": 99.0,
+      "mppt_channels": [
+        {
+          "max_input_current": 1775.0,
+          "min_voltage": 1150.0,
+          "max_voltage": 1500.0,
+          "max_power": 2000000.0,
+          "num_string_inputs": 1
+        },
+        {
+          "max_input_current": 1775.0,
+          "min_voltage": 1150.0,
+          "max_voltage": 1500.0,
+          "max_power": 2000000.0,
+          "num_string_inputs": 1
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 1150.0,
+      "nominal_ac_voltage": 34500.0,
+      "max_ac_current": 67.0,
+      "power_factor": 0.99,
+      "dimensions_mm": [
+        6058,
+        2896,
+        2438
+      ],
+      "weight_kg": 17000.0,
+      "ip_rating": "Type 3R",
+      "max_short_circuit_current": 2220.0
+    }
+  },
+  "Yaskawa Solectria Solar": {
+    "XGI 1500-175-480": {
+      "manufacturer": "Yaskawa Solectria Solar",
+      "model": "XGI 1500-175-480",
+      "inverter_type": "String",
+      "rated_power_kw": 175.0,
+      "max_dc_power_kw": 179.0,
+      "max_efficiency": 99.0,
+      "mppt_channels": [
+        {
+          "max_input_current": 207.6,
+          "min_voltage": 750.0,
+          "max_voltage": 1450.0,
+          "max_power": 179000.0,
+          "num_string_inputs": 1
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 750.0,
+      "nominal_ac_voltage": 480.0,
+      "max_ac_current": 240.6,
+      "power_factor": 0.99,
+      "dimensions_mm": [
+        1125,
+        750,
+        391
+      ],
+      "weight_kg": 131.5,
+      "ip_rating": "NEMA 4X",
+      "max_short_circuit_current": 800.0
+    },
+    "XGI 1500-200/200-480": {
+      "manufacturer": "Yaskawa Solectria Solar",
+      "model": "XGI 1500-200/200-480",
+      "inverter_type": "String",
+      "rated_power_kw": 200.0,
+      "max_dc_power_kw": 204.0,
+      "max_efficiency": 99.0,
+      "mppt_channels": [
+        {
+          "max_input_current": 237.3,
+          "min_voltage": 750.0,
+          "max_voltage": 1450.0,
+          "max_power": 204000.0,
+          "num_string_inputs": 1
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 750.0,
+      "nominal_ac_voltage": 480.0,
+      "max_ac_current": 240.6,
+      "power_factor": 0.99,
+      "dimensions_mm": [
+        1125,
+        750,
+        391
+      ],
+      "weight_kg": 131.5,
+      "ip_rating": "NEMA 4X",
+      "max_short_circuit_current": 800.0
+    },
+    "XGI 1500-225-600": {
+      "manufacturer": "Yaskawa Solectria Solar",
+      "model": "XGI 1500-225-600",
+      "inverter_type": "String",
+      "rated_power_kw": 225.0,
+      "max_dc_power_kw": 230.0,
+      "max_efficiency": 99.0,
+      "mppt_channels": [
+        {
+          "max_input_current": 267.0,
+          "min_voltage": 860.0,
+          "max_voltage": 1450.0,
+          "max_power": 230000.0,
+          "num_string_inputs": 1
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 860.0,
+      "nominal_ac_voltage": 600.0,
+      "max_ac_current": 240.6,
+      "power_factor": 0.99,
+      "dimensions_mm": [
+        1125,
+        750,
+        391
+      ],
+      "weight_kg": 131.5,
+      "ip_rating": "NEMA 4X",
+      "max_short_circuit_current": 800.0
+    },
+    "XGI 1500-250/250-600": {
+      "manufacturer": "Yaskawa Solectria Solar",
+      "model": "XGI 1500-250/250-600",
+      "inverter_type": "String",
+      "rated_power_kw": 250.0,
+      "max_dc_power_kw": 255.0,
+      "max_efficiency": 99.0,
+      "mppt_channels": [
+        {
+          "max_input_current": 296.7,
+          "min_voltage": 860.0,
+          "max_voltage": 1450.0,
+          "max_power": 255000.0,
+          "num_string_inputs": 1
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 860.0,
+      "nominal_ac_voltage": 600.0,
+      "max_ac_current": 240.6,
+      "power_factor": 0.99,
+      "dimensions_mm": [
+        1125,
+        750,
+        391
+      ],
+      "weight_kg": 131.5,
+      "ip_rating": "NEMA 4X",
+      "max_short_circuit_current": 800.0
     }
   }
 }

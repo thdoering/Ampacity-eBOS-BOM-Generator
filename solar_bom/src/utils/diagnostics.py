@@ -894,10 +894,6 @@ def run_all_diagnostics(qe_widget, verbose=True):
     if lv_var:
         project_info.append(("LV Collection", lv_var.get()))
 
-    breaker_var = getattr(qe_widget, 'breaker_size_var', None)
-    if breaker_var:
-        project_info.append(("Breaker Size", f"{breaker_var.get()}A"))
-
     spi_var = getattr(qe_widget, 'strings_per_inverter_var', None)
     if spi_var and spi_var.get() != '--':
         project_info.append(("Strings/Inverter", spi_var.get()))

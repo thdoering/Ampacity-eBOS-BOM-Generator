@@ -363,8 +363,6 @@ class QuickEstimate(ttk.Frame):
 
     def add_group(self) -> int:
         """Add a new group and return its index"""
-        group_num = len(self.groups) + 1
-        
         # Start unconstrained — let the user pick a template
         default_ref = None
         default_spt = 3
@@ -379,7 +377,7 @@ class QuickEstimate(ttk.Frame):
         default_spi = self.groups[-1].get('strings_per_inv', None) if self.groups else None
 
         group = {
-            'name': f"Group {group_num}",
+            'name': self._next_group_name(),
             'device_position': 'middle',
             'driveline_angle': 0.0,
             'azimuth': 180,
@@ -403,15 +401,28 @@ class QuickEstimate(ttk.Frame):
         self._mark_dirty()
         return idx
 
+    def _next_group_name(self):
+        """Return the lowest unused 'Group N' name."""
+        import re
+        used = set()
+        for g in self.groups:
+            m = re.match(r'^Group (\d+)$', g.get('name', ''))
+            if m:
+                used.add(int(m.group(1)))
+        n = 1
+        while n in used:
+            n += 1
+        return f"Group {n}"
+
     def copy_selected_group(self):
         """Copy the currently selected group"""
         sel = self.group_listbox.curselection()
         if not sel:
             return
-        
+
         source = self.groups[sel[0]]
         new_group = copy.deepcopy(source)
-        new_group['name'] = f"{source['name']} (Copy)"
+        new_group['name'] = self._next_group_name()
         
         # Insert after the selected group
         insert_idx = sel[0] + 1
@@ -1182,7 +1193,7 @@ class QuickEstimate(ttk.Frame):
         # Recommend DC feeder
         topology = self.topology_var.get() if hasattr(self, 'topology_var') else 'Distributed String'
         if topology in ('Centralized String', 'Central Inverter'):
-            breaker = self._get_float_var(self.breaker_size_var, 400.0)
+            breaker = float(self._compute_dc_breaker_size())
             self.wire_sizing['dc_feeder'] = recommend_dc_feeder_size(breaker, material, temp)
         else:
             self.wire_sizing['dc_feeder'] = ''
@@ -1358,46 +1369,40 @@ class QuickEstimate(ttk.Frame):
         if _table_changed:
             self.refresh_wire_sizing_table()
     
+    def _compute_dc_breaker_size(self):
+        """Estimate the DC feeder/CB breaker rating from the selected inverter's MPPT channels.
+
+        Takes the largest per-MPPT max_input_current, scales by 1.25 (continuous load),
+        and rounds up to the next standard breaker size. Falls back to 400A when no
+        inverter is selected or the channel data is missing.
+        """
+        BREAKER_SIZES = [100, 125, 150, 175, 200, 225, 250, 300, 350, 400, 450, 500, 600, 700, 800]
+        if self.selected_inverter and hasattr(self.selected_inverter, 'mppt_channels'):
+            channels = self.selected_inverter.mppt_channels
+            if channels:
+                max_ch_current = max(ch.max_input_current for ch in channels)
+                target = max_ch_current * 1.25
+                for bs in BREAKER_SIZES:
+                    if bs >= target:
+                        return bs
+        return 400
+
     def _on_topology_changed_wire_sizing(self):
         """Handle topology change — show/hide DC feeder row, recalc if needed."""
         from src.utils.cable_sizing import recommend_dc_feeder_size
-        
+
         topology = self.topology_var.get()
         material = self.wire_sizing.get('feeder_material', 'aluminum')
         temp = self.wire_sizing.get('temp_rating', '90C')
         overrides = self.wire_sizing.get('user_overrides', {})
-        
+
         if topology in ('Centralized String', 'Central Inverter'):
-            # Generate DC feeder recommendation if not already overridden
             if not overrides.get('dc_feeder') and not self.wire_sizing.get('dc_feeder'):
-                try:
-                    breaker = float(self.breaker_size_var.get())
-                except (ValueError, AttributeError):
-                    breaker = 400.0
+                breaker = float(self._compute_dc_breaker_size())
                 self.wire_sizing['dc_feeder'] = recommend_dc_feeder_size(breaker, material, temp)
         else:
             self.wire_sizing['dc_feeder'] = ''
-        
-        self.refresh_wire_sizing_table()
-    
-    def _on_breaker_changed_wire_sizing(self):
-        """Handle breaker size change — update DC feeder recommendation."""
-        from src.utils.cable_sizing import recommend_dc_feeder_size
-        
-        overrides = self.wire_sizing.get('user_overrides', {})
-        if overrides.get('dc_feeder'):
-            return  # User has overridden, don't auto-update
-        
-        topology = self.topology_var.get()
-        if topology not in ('Centralized String', 'Central Inverter'):
-            return
-        
-        material = self.wire_sizing.get('feeder_material', 'aluminum')
-        temp = self.wire_sizing.get('temp_rating', '90C')
-        
-        breaker = self._get_float_var(self.breaker_size_var, 400.0)
-        
-        self.wire_sizing['dc_feeder'] = recommend_dc_feeder_size(breaker, material, temp)
+
         self.refresh_wire_sizing_table()
     
     def _on_inverter_changed_wire_sizing(self):
@@ -2075,12 +2080,15 @@ class QuickEstimate(ttk.Frame):
                 'user_overrides': {}
             }
         
-        # Restore inverter selection
-        saved_inverter_name = estimate_data.get('inverter_name', '')
-        if saved_inverter_name and hasattr(self, 'inverter_combo'):
-            if saved_inverter_name in self.available_inverters:
-                self.inverter_select_var.set(saved_inverter_name)
-                self._on_inverter_selected()
+        # Restore inverter selection from per-estimate inverter_id (or legacy inverter_name)
+        inv_id = estimate_data.get('inverter_id') or estimate_data.get('inverter_name', '')
+        if inv_id and inv_id in self.available_inverters:
+            self._on_inverter_selected(self.available_inverters[inv_id])
+            # Persist inverter_id if this came from a legacy estimate (migration)
+            if 'inverter_id' not in estimate_data and inv_id:
+                estimate_data['inverter_id'] = inv_id
+        else:
+            self._on_inverter_selected(None)
         
         # Restore topology and DC:AC ratio
         if hasattr(self, 'topology_var'):
@@ -2089,10 +2097,6 @@ class QuickEstimate(ttk.Frame):
             self.central_inv_count_var.set(str(estimate_data.get('central_inverter_count', '1')))
         if hasattr(self, 'dc_ac_ratio_var'):
             self.dc_ac_ratio_var.set(str(estimate_data.get('dc_ac_ratio', 1.25)))
-        if hasattr(self, 'breaker_size_var'):
-            self.breaker_size_var.set(estimate_data.get('breaker_size', '400'))
-        if hasattr(self, 'dc_feeder_distance_var'):
-            self.dc_feeder_distance_var.set(str(estimate_data.get('dc_feeder_distance', 500)))
         if hasattr(self, 'polarity_convention_var'):
             self.polarity_convention_var.set(estimate_data.get('polarity_convention', 'Negative Always South'))
         if hasattr(self, 'lv_collection_var'):
@@ -2154,8 +2158,6 @@ class QuickEstimate(ttk.Frame):
             self.on_group_select(None)
         
         self._last_inspect_mode = estimate_data.get('inspect_mode', False)
-        if hasattr(self, 'use_routed_var'):
-                    self.use_routed_var.set(estimate_data.get('use_routed_distances', False))
         self.pads = copy.deepcopy(estimate_data.get('pads', []))
         self.measurements = copy.deepcopy(estimate_data.get('measurements', []))
         
@@ -2192,6 +2194,9 @@ class QuickEstimate(ttk.Frame):
         # This adds missing string counts and removes stale ones
         self._refresh_wire_sizing_for_segments()
 
+        # Refresh distance hint now that pads are loaded
+        self._update_distance_hints()
+
         # Re-enable autosave now that loading is complete
         self._loading = False
 
@@ -2223,17 +2228,16 @@ class QuickEstimate(ttk.Frame):
         
         # Save inverter selection
         if self.selected_inverter:
-            estimate_data['inverter_name'] = self.inverter_select_var.get()
+            inv_id = f"{self.selected_inverter.manufacturer} {self.selected_inverter.model}"
+            estimate_data['inverter_name'] = inv_id
+            estimate_data['inverter_id'] = inv_id
         
         # Save topology and DC:AC ratio
         estimate_data['topology'] = self.topology_var.get()
         estimate_data['central_inverter_count'] = self.central_inv_count_var.get() if hasattr(self, 'central_inv_count_var') else '1'
         estimate_data['inspect_mode'] = getattr(self, '_last_inspect_mode', False)
-        estimate_data['use_routed_distances'] = self.use_routed_var.get()
-        estimate_data['breaker_size'] = self.breaker_size_var.get()
         estimate_data['polarity_convention'] = self.polarity_convention_var.get()
         estimate_data['lv_collection_method'] = self.lv_collection_var.get()
-        estimate_data['dc_feeder_distance'] = self._get_float_var(self.dc_feeder_distance_var, estimate_data.get('dc_feeder_distance', 500.0))
         estimate_data['ac_homerun_distance'] = self._get_float_var(self.ac_homerun_distance_var, estimate_data.get('ac_homerun_distance', 500.0))
         estimate_data['dc_ac_ratio'] = self._get_float_var(self.dc_ac_ratio_var, 1.25)
         
@@ -2616,16 +2620,11 @@ class QuickEstimate(ttk.Frame):
                 self.results_tree.delete(item)
         
         # Reset inverter and topology fields
-        if hasattr(self, 'inverter_select_var'):
-            self.inverter_select_var.set('')
-            self.selected_inverter = None
-            self.inverter_info_label.config(text="No inverter selected", foreground='gray')
+        self._on_inverter_selected(None)
         if hasattr(self, 'topology_var'):
             self.topology_var.set('Distributed String')
         if hasattr(self, 'lv_collection_var'):
             self.lv_collection_var.set('Wire Harness')
-        if hasattr(self, 'breaker_size_var'):
-            self.breaker_size_var.set('400')
         if hasattr(self, 'dc_ac_ratio_var'):
             self.dc_ac_ratio_var.set('1.25')
         if hasattr(self, 'strings_per_inverter_var'):
@@ -2715,13 +2714,18 @@ class QuickEstimate(ttk.Frame):
         """Legacy — module is now derived from templates. Kept for backward compat."""
         pass
 
-    def _on_inverter_selected(self, event=None):
-        """Handle inverter selection from dropdown"""
-        selected_name = self.inverter_select_var.get()
-        if selected_name in self.available_inverters:
-            self.selected_inverter = self.available_inverters[selected_name]
-            inv = self.selected_inverter
+    def _on_inverter_selected(self, inverter=None):
+        """Internal helper: apply an inverter object to the UI (not a dropdown event).
+
+        Pass an InverterSpec to activate it, or None to clear.
+        """
+        if inverter is not None:
+            self.selected_inverter = inverter
+            inv = inverter
+            inv_name = f"{inv.manufacturer} {inv.model}"
             type_str = inv.inverter_type.value if hasattr(inv, 'inverter_type') else 'String'
+            self.inverter_select_var.set(inv_name)
+            self.inverter_hint_label.pack_forget()
             self.inverter_info_label.config(
                 text=f"{inv.rated_power_kw}kW AC  |  {inv.max_dc_power_kw}kW DC  |  {inv.get_total_string_capacity()} inputs  |  {type_str}",
                 foreground='black'
@@ -2730,19 +2734,36 @@ class QuickEstimate(ttk.Frame):
             self._on_inverter_changed_wire_sizing()
             # Add inverter to project's selected_inverters so export embeds it
             if self.current_project and inv:
-                inv_id = f"{inv.manufacturer} {inv.model}"
-                if inv_id not in self.current_project.selected_inverters:
-                    self.current_project.selected_inverters.append(inv_id)
-            # Auto-save when inverter changes (but not during load)
+                if inv_name not in self.current_project.selected_inverters:
+                    self.current_project.selected_inverters.append(inv_name)
+        else:
+            self.selected_inverter = None
+            self.inverter_select_var.set('')
+            self.inverter_hint_label.pack(side='left', padx=(4, 10))
+            self.inverter_info_label.config(text="", foreground='gray')
+            if hasattr(self, 'strings_per_inverter_var'):
+                self.strings_per_inverter_var.set('--')
+            if hasattr(self, 'isc_warning_label'):
+                self.isc_warning_label.config(text="")
+
+    def refresh_inverter_from_assignment(self):
+        """Reload the inverter display from the currently-loaded estimate's inverter_id.
+
+        Called externally (e.g. from main.py) when an assignment changes via InverterManager.
+        """
+        if not self.current_project or not self.estimate_id:
+            return
+        est_data = self.current_project.quick_estimates.get(self.estimate_id, {})
+        inv_id = est_data.get('inverter_id', '')
+        if inv_id and inv_id in self.available_inverters:
             if not getattr(self, '_loading', False):
                 self._auto_unlock_allocation()
                 self._mark_stale()
+            self._on_inverter_selected(self.available_inverters[inv_id])
+            if not getattr(self, '_loading', False):
                 self.save_estimate()
-        else:
-            self.selected_inverter = None
-            self.inverter_info_label.config(text="No inverter selected", foreground='gray')
-            self.strings_per_inverter_var.set('--')
-            self.isc_warning_label.config(text="")
+        elif not inv_id:
+            self._on_inverter_selected(None)
 
     INVERTER_COLORS = [
         '#4A90D9',  # Blue
@@ -2879,34 +2900,25 @@ class QuickEstimate(ttk.Frame):
         self._mark_dirty()
 
     def _update_distance_hints(self):
-        """Update the hint text next to distance inputs based on topology."""
+        """Update the hint text next to distance inputs based on topology and pad state."""
         if not hasattr(self, 'distance_hint_label'):
             return
-        
-        use_routed = self.use_routed_var.get() if hasattr(self, 'use_routed_var') else False
-        
-        
-        if use_routed:
-            if not self.pads:
-                self.distance_hint_label.config(
-                    text="⚠ No pads placed — add pads in Site Preview first",
-                    foreground='orange'
-                )
-            else:
-                num_pads = len(self.pads)
-                self.distance_hint_label.config(
-                    text=f"✓ Using routed distances from {num_pads} pad{'s' if num_pads > 1 else ''} (avg inputs ignored)",
-                    foreground='green'
-                )
+
+        if self.pads:
+            num_pads = len(self.pads)
+            self.distance_hint_label.config(
+                text=f"✓ Using routed distances from {num_pads} pad{'s' if num_pads > 1 else ''} (DC feeder avg ignored)",
+                foreground='green'
+            )
             return
-        
-        topology = self.topology_var.get()
+
+        topology = self.topology_var.get() if hasattr(self, 'topology_var') else ''
         if topology == 'Distributed String':
             self.distance_hint_label.config(text="(DC feeders N/A for distributed — AC homeruns are primary cable)", foreground='gray')
         elif topology == 'Central Inverter':
-            self.distance_hint_label.config(text="(Long DC feeders to central pad — short AC from inverter)", foreground='gray')
+            self.distance_hint_label.config(text="(No pads placed — DC feeder distance set to 0; add pads for routed calc)", foreground='gray')
         elif topology == 'Centralized String':
-            self.distance_hint_label.config(text="(DC feeders to inverter bank — short AC from bank)", foreground='gray')
+            self.distance_hint_label.config(text="(No pads placed — DC feeder distance set to 0; add pads for routed calc)", foreground='gray')
         else:
             self.distance_hint_label.config(text="", foreground='gray')
 
@@ -2989,12 +3001,7 @@ class QuickEstimate(ttk.Frame):
         inv_summary = totals.get('inverter_summary', {})
         allocation_result = inv_summary.get('allocation_result')
         module_isc = self.selected_module.isc if self.selected_module else 0
-        
-        try:
-            breaker_size = int(self.breaker_size_var.get())
-        except (ValueError, AttributeError):
-            breaker_size = 400
-        
+
         # NEC factor — use project setting if available
         nec_factor = 1.56
         if self.current_project:
@@ -3027,7 +3034,7 @@ class QuickEstimate(ttk.Frame):
                     c['num_strings'] * c['module_isc'] * c['nec_factor']
                     for c in connections
                 )
-                calc_breaker = breaker_size  # fallback to global
+                calc_breaker = 400  # fallback
                 for bs in BREAKER_SIZES:
                     if bs >= total_current:
                         calc_breaker = bs
@@ -3057,7 +3064,7 @@ class QuickEstimate(ttk.Frame):
                     c['num_strings'] * c['module_isc'] * c['nec_factor']
                     for c in connections
                 )
-                calc_breaker = breaker_size  # fallback to global
+                calc_breaker = 400  # fallback
                 for bs in BREAKER_SIZES:
                     if bs >= total_current:
                         calc_breaker = bs
@@ -4003,16 +4010,23 @@ class QuickEstimate(ttk.Frame):
             inverter_row,
             textvariable=self.inverter_select_var,
             values=sorted(self.available_inverters.keys()),
-            state='readonly',
+            state='disabled',
             width=50
         )
-        self.inverter_combo.pack(side='left', padx=(0, 15))
-        self.inverter_combo.bind('<<ComboboxSelected>>', self._on_inverter_selected)
+        self.inverter_combo.pack(side='left', padx=(0, 5))
         self.disable_combobox_scroll(self.inverter_combo)
-        
+
+        # Hint shown when no inverter is assigned
+        self.inverter_hint_label = ttk.Label(
+            inverter_row,
+            text="Assign via Equipment → Inverters (right-click)",
+            foreground='gray'
+        )
+        self.inverter_hint_label.pack(side='left', padx=(4, 10))
+
         # Inverter info display
-        self.inverter_info_label = ttk.Label(inverter_row, text="No inverter selected", foreground='gray')
-        self.inverter_info_label.pack(side='left', padx=(5, 0))
+        self.inverter_info_label = ttk.Label(inverter_row, text="", foreground='gray')
+        self.inverter_info_label.pack(side='left', padx=(0, 0))
         
         # Row 3: Topology and DC:AC ratio
         topology_row = ttk.Frame(settings_frame)
@@ -4051,19 +4065,6 @@ class QuickEstimate(ttk.Frame):
         lv_collection_combo.pack(side='left', padx=(0, 15))
         self.disable_combobox_scroll(lv_collection_combo)
         self.lv_collection_var.trace_add('write', lambda *args: (self._auto_unlock_allocation(), self._on_lv_collection_changed(), self._mark_stale(), self._schedule_autosave()))
-
-        ttk.Label(topology_row, text="Breaker Size:").pack(side='left', padx=(0, 5))
-        self.breaker_size_var = tk.StringVar(value='400')
-        breaker_combo = ttk.Combobox(
-            topology_row,
-            textvariable=self.breaker_size_var,
-            values=['200', '300', '400', '600', '800'],
-            state='readonly',
-            width=6
-        )
-        breaker_combo.pack(side='left', padx=(0, 15))
-        self.disable_combobox_scroll(breaker_combo)
-        self.breaker_size_var.trace_add('write', lambda *args: (self._on_breaker_changed_wire_sizing(), self._mark_stale(), self._schedule_autosave()))
 
         self.spi_label = ttk.Label(topology_row, text="Strings/Device:")
         self.spi_label.pack(side='left', padx=(0, 5))
@@ -4132,26 +4133,12 @@ class QuickEstimate(ttk.Frame):
         distance_row = ttk.Frame(settings_frame)
         distance_row.pack(fill='x', pady=(5, 0))
         
-        ttk.Label(distance_row, text="Avg DC Feeder Run (ft):").pack(side='left', padx=(0, 5))
-        self.dc_feeder_distance_var = tk.StringVar(value='500')
-        ttk.Spinbox(distance_row, from_=0, to=5000, increment=50,
-                     textvariable=self.dc_feeder_distance_var, width=8).pack(side='left', padx=(0, 15))
-        self.dc_feeder_distance_var.trace_add('write', lambda *args: (self._mark_stale(), self._schedule_autosave()))
-        
         ttk.Label(distance_row, text="Avg AC Homerun (ft):").pack(side='left', padx=(0, 5))
         self.ac_homerun_distance_var = tk.StringVar(value='500')
         ttk.Spinbox(distance_row, from_=0, to=5000, increment=50,
                      textvariable=self.ac_homerun_distance_var, width=8).pack(side='left', padx=(0, 15))
         self.ac_homerun_distance_var.trace_add('write', lambda *args: (self._mark_stale(), self._schedule_autosave()))
-        
-        self.use_routed_var = tk.BooleanVar(value=False)
-        self.use_routed_cb = ttk.Checkbutton(
-            distance_row, text="Use Routed Distances",
-            variable=self.use_routed_var,
-            command=lambda: (self._mark_stale(), self._update_distance_hints(), self._schedule_autosave())
-        )
-        self.use_routed_cb.pack(side='left', padx=(10, 0))
-        
+
         # Topology hint label
         self.distance_hint_label = ttk.Label(distance_row, text="", foreground='gray')
         self.distance_hint_label.pack(side='left', padx=(5, 0))
@@ -4821,9 +4808,8 @@ class QuickEstimate(ttk.Frame):
         if topology == 'Central Inverter':
             # For Central Inverter, allocation groups = CBs.
             # Compute strings_per_cb from library BEFORE allocation runs.
-            breaker_size_early = self._get_int_var(self.breaker_size_var, 400)
+            _central_inv_breaker = self._compute_dc_breaker_size()
             strings_per_inv = 0  # Will be set after we know module_isc
-            _central_inv_breaker = breaker_size_early
         else:
             strings_per_inv = self._get_int_var(self.strings_per_inverter_var, 0)
         
@@ -5252,8 +5238,8 @@ class QuickEstimate(ttk.Frame):
         num_combiners = 0
         strings_per_cb = 0
 
-        # Global breaker size (will add UI field later, default 400A for now)
-        breaker_size = self._get_int_var(self.breaker_size_var, 400)
+        # Breaker size derived from inverter MPPT
+        breaker_size = self._compute_dc_breaker_size()
 
         if topology == 'Distributed String':
             num_devices = total_inverters_count
@@ -5578,19 +5564,20 @@ class QuickEstimate(ttk.Frame):
                     del key_dict[k]
 
         # ==================== DC Feeder and AC Homerun ====================
-        dc_feeder_avg_ft = self._get_float_var(self.dc_feeder_distance_var, 500.0)
+        # DC feeder avg is 0 when no pads exist (routed distances will be used when pads present)
+        dc_feeder_avg_ft = 0.0
         ac_homerun_avg_ft = self._get_float_var(self.ac_homerun_distance_var, 500.0)
 
         total_inverters = totals.get('inverter_summary', {}).get('total_inverters', 0)
         total_combiners = sum(totals['combiners_by_breaker'].values())
-        
+
         # Default feeder size for devices without a per-device override
         if topology == 'Distributed String':
             default_feeder_size = self.wire_sizing.get('ac_homerun', '') or '4/0 AWG'
         else:
             default_feeder_size = self.wire_sizing.get('dc_feeder', '') or '4/0 AWG'
-        
-        use_routed = self.use_routed_var.get() if hasattr(self, 'use_routed_var') else False
+
+        use_routed = bool(self.pads)
 
         # Build per-device distance list: [(dev_idx, label, distance_ft), ...]
         per_device_distances = []
@@ -5844,7 +5831,7 @@ class QuickEstimate(ttk.Frame):
             if topology == 'Distributed String'
             else self.wire_sizing.get('dc_feeder', '4/0 AWG')
         )
-        dc_feeder_avg_ft = self._get_float_var(self.dc_feeder_distance_var, 500.0) if hasattr(self, 'dc_feeder_distance_var') else 500.0
+        dc_feeder_avg_ft = 0.0
         ac_homerun_avg_ft = self._get_float_var(self.ac_homerun_distance_var, 500.0) if hasattr(self, 'ac_homerun_distance_var') else 500.0
 
         # Site-level extender totals for proportional per-device allocation
@@ -7065,6 +7052,10 @@ class QuickEstimate(ttk.Frame):
         polarity = 'Negative Always South'  # default matches the QE combobox default
         if hasattr(self, 'polarity_convention_var'):
             polarity = self.polarity_convention_var.get()
+
+        topology = 'Distributed String'
+        if hasattr(self, 'topology_var'):
+            topology = self.topology_var.get()
         
         for group in self.groups:
             for seg in group.get('segments', []):
@@ -7157,6 +7148,7 @@ class QuickEstimate(ttk.Frame):
                     'motor_split_south': m_split_south,
                     'polarity_convention': polarity,
                     'device_position': device_pos,
+                    'inverter_topology': topology,
                     'wire_gauges': {
                         'string': string_gauge,
                         'harness': harness_gauge_map,

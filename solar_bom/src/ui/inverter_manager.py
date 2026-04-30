@@ -7,10 +7,15 @@ from ..models.inverter import InverterSpec, MPPTChannel, MPPTConfig, InverterTyp
 from ..utils.inverter_library import load_merged_inverter_specs, save_user_inverters
 
 class InverterManager(ttk.Frame):
-    def __init__(self, parent, on_inverter_selected: Optional[Callable[[InverterSpec], None]] = None):
+    def __init__(self, parent,
+                 on_inverter_selected: Optional[Callable[[InverterSpec], None]] = None,
+                 current_project_getter=None,
+                 on_inverter_assignment_changed=None):
         super().__init__(parent)
         self.parent = parent
         self.on_inverter_selected = on_inverter_selected
+        self.current_project_getter = current_project_getter  # callable → Project or None
+        self.on_inverter_assignment_changed = on_inverter_assignment_changed
         self.inverters: Dict[str, InverterSpec] = {}
         self.factory_keys: Set[str] = set()
 
@@ -28,12 +33,13 @@ class InverterManager(ttk.Frame):
         list_frame.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
         
         self.inverter_tree = ttk.Treeview(list_frame, height=15, show='tree')
-        self.inverter_tree.column('#0', width=280)
+        self.inverter_tree.column('#0', width=420)
         self.inverter_tree.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.N, tk.S, tk.E, tk.W))
         scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.inverter_tree.yview)
         scrollbar.grid(row=0, column=1, pady=5, sticky=(tk.N, tk.S))
         self.inverter_tree.configure(yscrollcommand=scrollbar.set)
         self.inverter_tree.bind('<<TreeviewSelect>>', self.on_inverter_select)
+        self.inverter_tree.bind('<Button-3>', self._show_context_menu)
         
         button_frame = ttk.Frame(list_frame)
         button_frame.grid(row=1, column=0, padx=5, pady=5)
@@ -241,18 +247,35 @@ class InverterManager(ttk.Frame):
         save_user_inverters(self.inverters, self.factory_keys)
             
     def update_inverter_list(self):
-        """Update the inverter treeview grouped by manufacturer"""
+        """Update the inverter treeview grouped by manufacturer."""
         for item in self.inverter_tree.get_children():
             self.inverter_tree.delete(item)
+
+        # Build inverter_key -> list of estimate names that use it
+        inv_to_estimates: Dict[str, list] = {}
+        project = self.current_project_getter() if self.current_project_getter else None
+        if project:
+            for est_id, est_data in project.quick_estimates.items():
+                inv_id = est_data.get('inverter_id')
+                if inv_id:
+                    inv_to_estimates.setdefault(inv_id, []).append(est_data.get('name', est_id))
 
         manufacturers: Dict[str, list] = {}
         for inv_key, inverter in self.inverters.items():
             manufacturers.setdefault(inverter.manufacturer, []).append((inv_key, inverter))
 
         for manufacturer in sorted(manufacturers):
-            parent = self.inverter_tree.insert('', 'end', text=manufacturer, open=False)
-            for inv_key, inverter in sorted(manufacturers[manufacturer], key=lambda x: x[1].model):
+            inv_list = manufacturers[manufacturer]
+            # Mark the manufacturer node if any of its inverters are assigned
+            mfr_has_assignment = any(inv_to_estimates.get(ik) for ik, _ in inv_list)
+            mfr_label = f"● {manufacturer}" if mfr_has_assignment else manufacturer
+            parent = self.inverter_tree.insert('', 'end', text=mfr_label, open=False)
+
+            for inv_key, inverter in sorted(inv_list, key=lambda x: x[1].model):
                 label = f"{inverter.model} ({inverter.rated_power_kw} kW)"
+                assigned = inv_to_estimates.get(inv_key)
+                if assigned:
+                    label += f"  — selected ({', '.join(assigned)})"
                 self.inverter_tree.insert(parent, 'end', text=label, values=(inv_key,))
             
     def import_ond(self):
@@ -361,5 +384,52 @@ class InverterManager(ttk.Frame):
             self.mppt_current_var.set(str(channels[0].max_input_current))
             self.mppt_voltage_min_var.set(str(channels[0].min_voltage))
             self.mppt_voltage_max_var.set(str(channels[0].max_voltage))
-        
+
         self._update_total_inputs()
+
+    def _show_context_menu(self, event):
+        """Right-click handler on the inverter tree — shows Assign to estimate submenu."""
+        row_id = self.inverter_tree.identify_row(event.y)
+        if not row_id:
+            return
+
+        values = self.inverter_tree.item(row_id, 'values')
+        if not values:
+            return  # manufacturer node — no-op
+
+        inv_key = values[0]
+
+        menu = tk.Menu(self, tearoff=0)
+        assign_menu = tk.Menu(menu, tearoff=0)
+        menu.add_cascade(label="Assign to estimate ▶", menu=assign_menu)
+
+        project = self.current_project_getter() if self.current_project_getter else None
+
+        if not project:
+            assign_menu.add_command(label="(no project loaded)", state='disabled')
+        elif not project.quick_estimates:
+            assign_menu.add_command(label="(no estimates)", state='disabled')
+        else:
+            for est_id, est_data in project.quick_estimates.items():
+                est_name = est_data.get('name', est_id)
+                assign_menu.add_command(
+                    label=est_name,
+                    command=lambda eid=est_id, ik=inv_key: self._assign_inverter_to_estimate(ik, eid)
+                )
+
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _assign_inverter_to_estimate(self, inverter_key, estimate_id):
+        """Assign an inverter to a specific estimate and notify listeners."""
+        project = self.current_project_getter() if self.current_project_getter else None
+        if not project or estimate_id not in project.quick_estimates:
+            return
+
+        project.quick_estimates[estimate_id]['inverter_id'] = inverter_key
+        self.update_inverter_list()
+
+        if self.on_inverter_assignment_changed:
+            self.on_inverter_assignment_changed(inverter_key, estimate_id)

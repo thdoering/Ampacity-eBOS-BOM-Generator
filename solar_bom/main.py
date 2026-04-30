@@ -240,7 +240,9 @@ class SolarBOMApplication:
         from src.ui.inverter_manager import InverterManager
         inverter_manager = InverterManager(
             inverters_sub_frame,
-            on_inverter_selected=lambda inv: self._on_inverter_library_changed(inv)
+            on_inverter_selected=lambda inv: self._on_inverter_library_changed(inv),
+            current_project_getter=lambda: self.current_project,
+            on_inverter_assignment_changed=self._on_inverter_assignment_changed
         )
         inverter_manager.pack(fill='both', expand=True, padx=5, pady=5)
         self.inverter_manager = inverter_manager  # Store reference
@@ -508,13 +510,20 @@ class SolarBOMApplication:
 
     def _on_inverter_library_changed(self, inverter=None):
         """Called when an inverter is saved/modified in the inverter manager.
-        Refreshes the Quick Estimate inverter dropdown."""
+        Refreshes the Quick Estimate available inverter list."""
         if hasattr(self, 'quick_estimate_widget') and self.quick_estimate_widget:
             self.quick_estimate_widget.available_inverters = self.quick_estimate_widget.load_inverter_library()
             if hasattr(self.quick_estimate_widget, 'inverter_combo'):
                 self.quick_estimate_widget.inverter_combo['values'] = sorted(
                     self.quick_estimate_widget.available_inverters.keys()
                 )
+
+    def _on_inverter_assignment_changed(self, inverter_key, estimate_id):
+        """Called when an inverter is assigned to an estimate via InverterManager right-click."""
+        self.autosave_project()
+        qe = getattr(self, 'quick_estimate_widget', None)
+        if qe and qe.estimate_id == estimate_id:
+            qe.refresh_inverter_from_assignment()
 
     def show_about(self):
         """Show about dialog with version info"""
