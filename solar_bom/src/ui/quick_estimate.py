@@ -6065,7 +6065,7 @@ class QuickEstimate(ttk.Frame):
                 _fk = ('AC Homerun', feeder_size, parallel)
                 _fd = _feeder_summary.setdefault(_fk, {'total_raw_ft': 0.0, 'total_cable_ft': 0, 'count': 0})
                 _fd['total_raw_ft'] += dev_dist_ft
-                _fd['total_cable_ft'] += total_ft
+                _fd['total_cable_ft'] += dev_dist_ft * parallel
                 _fd['count'] += 1
             else:
                 dev_dist_ft = _per_device_ft.get(dev_idx, dc_feeder_avg_ft)
@@ -6075,9 +6075,9 @@ class QuickEstimate(ttk.Frame):
                 _wr('DC Feeder (Neg)', '', f"{feeder_size}, {dev_dist_ft:.0f}ft{parallel_lbl}", total_ft, 'ft', skip_summary=True)
                 for _ct in ('DC Feeder (Pos)', 'DC Feeder (Neg)'):
                     _fk = (_ct, feeder_size, parallel)
-                    _fd = _feeder_summary.setdefault(_fk, {'total_raw_ft': 0.0, 'total_cable_ft': 0, 'count': 0})
+                    _fd = _feeder_summary.setdefault(_fk, {'total_raw_ft': 0.0, 'total_cable_ft': 0.0, 'count': 0})
                     _fd['total_raw_ft'] += dev_dist_ft
-                    _fd['total_cable_ft'] += total_ft
+                    _fd['total_cable_ft'] += dev_dist_ft * parallel
                     _fd['count'] += 1
                 if topology == 'Centralized String':
                     ac_size = self.get_wire_size_for('ac_homerun') if hasattr(self, 'get_wire_size_for') else ''
@@ -6116,7 +6116,7 @@ class QuickEstimate(ttk.Frame):
             for (comp_type, feeder_size, parallel), data in sorted(_feeder_summary.items()):
                 count = data['count']
                 avg_ft = data['total_raw_ft'] / count if count > 0 else 0
-                total_cable_ft = data['total_cable_ft']
+                total_cable_ft = round(data['total_cable_ft'])
                 parallel_lbl = f" × {parallel}× parallel" if parallel > 1 else ""
                 runs_lbl = f" × {count} run{'s' if count != 1 else ''}"
                 desc = f"{feeder_size}, avg {avg_ft:.0f}ft{parallel_lbl}{runs_lbl}"
