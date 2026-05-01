@@ -5866,7 +5866,10 @@ class QuickEstimate(ttk.Frame):
             if topology == 'Distributed String'
             else self.wire_sizing.get('dc_feeder', '4/0 AWG')
         )
-        dc_feeder_avg_ft = 0.0
+        _display = totals.get('_display', {})
+        _routed_details = totals.get('routed_feeder_details', [])
+        _per_device_ft = {int(dev_idx): ft for dev_idx, _label, ft in _routed_details}
+        dc_feeder_avg_ft = _display.get('dc_feeder_avg_ft', 0.0)
         ac_homerun_avg_ft = self._get_float_var(self.ac_homerun_distance_var, 500.0) if hasattr(self, 'ac_homerun_distance_var') else 500.0
 
         # Site-level extender totals for proportional per-device allocation
@@ -5924,6 +5927,8 @@ class QuickEstimate(ttk.Frame):
 
         # Accumulates {(comp_type, part_num, desc, unit): total_qty} across all devices
         _summary = {}
+        # Feeder rows are consolidated separately: {(comp_type, feeder_size, parallel): {total_raw_ft, total_cable_ft, count}}
+        _feeder_summary = {}
 
         for dev in devices:
             dev_name = dev['combiner_name']
@@ -5958,15 +5963,16 @@ class QuickEstimate(ttk.Frame):
                 cell.border = thin_border
             row += 1
 
-            def _wr(comp_type, part_num, desc, qty, unit, _row_ref=None):
+            def _wr(comp_type, part_num, desc, qty, unit, skip_summary=False):
                 nonlocal row
                 for c, v in enumerate([comp_type, part_num, desc, qty, unit], 1):
                     cell = ws.cell(row=row, column=c, value=v)
                     cell.border = thin_border
                     cell.alignment = left_align if c == 1 else center_align
                 row += 1
-                key = (comp_type, part_num or '', desc or '', unit or '')
-                _summary[key] = _summary.get(key, 0) + (qty or 0)
+                if not skip_summary:
+                    key = (comp_type, part_num or '', desc or '', unit or '')
+                    _summary[key] = _summary.get(key, 0) + (qty or 0)
 
             # Combiner box (non-distributed only)
             if not is_distributed and dev.get('breaker_size') and connections:
@@ -6050,14 +6056,29 @@ class QuickEstimate(ttk.Frame):
                 _wr('Whip Cable (Pos)', pos_pn, _lib_desc(whip_library, pos_pn), count, 'ea')
                 _wr('Whip Cable (Neg)', neg_pn, _lib_desc(whip_library, neg_pn), count, 'ea')
 
-            # DC feeder / AC homerun
+            # DC feeder / AC homerun — per-device rows written with skip_summary; consolidated into _feeder_summary
             if topology == 'Distributed String':
-                total_ft = round(ac_homerun_avg_ft * parallel)
-                _wr('AC Homerun', '', f"{feeder_size}, {ac_homerun_avg_ft:.0f}ft × {parallel}× parallel", total_ft, 'ft')
+                dev_dist_ft = _per_device_ft.get(dev_idx, ac_homerun_avg_ft)
+                total_ft = round(dev_dist_ft * parallel)
+                parallel_lbl = f" × {parallel}× parallel" if parallel > 1 else ""
+                _wr('AC Homerun', '', f"{feeder_size}, {dev_dist_ft:.0f}ft{parallel_lbl}", total_ft, 'ft', skip_summary=True)
+                _fk = ('AC Homerun', feeder_size, parallel)
+                _fd = _feeder_summary.setdefault(_fk, {'total_raw_ft': 0.0, 'total_cable_ft': 0, 'count': 0})
+                _fd['total_raw_ft'] += dev_dist_ft
+                _fd['total_cable_ft'] += total_ft
+                _fd['count'] += 1
             else:
-                total_ft = round(dc_feeder_avg_ft * parallel)
-                _wr('DC Feeder (Pos)', '', f"{feeder_size}, {dc_feeder_avg_ft:.0f}ft × {parallel}× parallel", total_ft, 'ft')
-                _wr('DC Feeder (Neg)', '', f"{feeder_size}, {dc_feeder_avg_ft:.0f}ft × {parallel}× parallel", total_ft, 'ft')
+                dev_dist_ft = _per_device_ft.get(dev_idx, dc_feeder_avg_ft)
+                total_ft = round(dev_dist_ft * parallel)
+                parallel_lbl = f" × {parallel}× parallel" if parallel > 1 else ""
+                _wr('DC Feeder (Pos)', '', f"{feeder_size}, {dev_dist_ft:.0f}ft{parallel_lbl}", total_ft, 'ft', skip_summary=True)
+                _wr('DC Feeder (Neg)', '', f"{feeder_size}, {dev_dist_ft:.0f}ft{parallel_lbl}", total_ft, 'ft', skip_summary=True)
+                for _ct in ('DC Feeder (Pos)', 'DC Feeder (Neg)'):
+                    _fk = (_ct, feeder_size, parallel)
+                    _fd = _feeder_summary.setdefault(_fk, {'total_raw_ft': 0.0, 'total_cable_ft': 0, 'count': 0})
+                    _fd['total_raw_ft'] += dev_dist_ft
+                    _fd['total_cable_ft'] += total_ft
+                    _fd['count'] += 1
                 if topology == 'Centralized String':
                     ac_size = self.get_wire_size_for('ac_homerun') if hasattr(self, 'get_wire_size_for') else ''
                     ac_ft = round(ac_homerun_avg_ft)
@@ -6066,7 +6087,7 @@ class QuickEstimate(ttk.Frame):
             row += 1  # blank row between devices
 
         # Summary table — all devices combined
-        if _summary:
+        if _summary or _feeder_summary:
             row += 1
             ws.merge_cells(f'A{row}:E{row}')
             summary_title = ws.cell(row=row, column=1, value="Summary — All Devices Combined")
@@ -6086,6 +6107,20 @@ class QuickEstimate(ttk.Frame):
 
             for (comp_type, part_num, desc, unit), total_qty in sorted(_summary.items()):
                 for c, v in enumerate([comp_type, part_num, desc, total_qty, unit], 1):
+                    cell = ws.cell(row=row, column=c, value=v)
+                    cell.border = thin_border
+                    cell.alignment = left_align if c == 1 else center_align
+                row += 1
+
+            # Consolidated feeder rows — one line per (type, size, parallel) with avg run length
+            for (comp_type, feeder_size, parallel), data in sorted(_feeder_summary.items()):
+                count = data['count']
+                avg_ft = data['total_raw_ft'] / count if count > 0 else 0
+                total_cable_ft = data['total_cable_ft']
+                parallel_lbl = f" × {parallel}× parallel" if parallel > 1 else ""
+                runs_lbl = f" × {count} run{'s' if count != 1 else ''}"
+                desc = f"{feeder_size}, avg {avg_ft:.0f}ft{parallel_lbl}{runs_lbl}"
+                for c, v in enumerate([comp_type, '', desc, total_cable_ft, 'ft'], 1):
                     cell = ws.cell(row=row, column=c, value=v)
                     cell.border = thin_border
                     cell.alignment = left_align if c == 1 else center_align
