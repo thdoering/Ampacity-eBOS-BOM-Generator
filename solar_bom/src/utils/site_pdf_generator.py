@@ -1428,6 +1428,12 @@ def _draw_single_wiring_diagram(ax, spec, letter):
     x_range = ax_w_in * _SCALE
     y_range = ax_h_in * _SCALE
 
+    # Cap y_range to the 2-slot equivalent so routing fractions stay consistent
+    # regardless of how many diagrams share the page.
+    _draw_h = PAGE_HEIGHT - 2 * PAGE_MARGIN - 0.6
+    _y_range_2slot = ((_draw_h / 2) - 0.3) * _SCALE
+    y_range = min(y_range, _y_range_2slot)
+
     # Center the tracker horizontally in the available space
     x_margin = (x_range - total_w) / 2 if x_range > total_w else x_range * 0.02
     x_min = -x_margin
@@ -1850,10 +1856,15 @@ def _draw_harness_routing(ax, string_xs, merge_x, y_top, y_merge,
         trunk_x1 = max_sx - _2R if right_has_bend else max_sx
         ax.plot([trunk_x0, trunk_x1], [y_merge, y_merge], color=color, linewidth=0.5)
 
-    # Y-connector dot at merge point
+    # Y-connector dots — one per junction (N-1 for N strings).
+    # The farthest string from merge_x simply starts the trunk; every other
+    # string position is a real junction.
     if n > 1:
-        ax.plot(merge_x, y_merge, 'o', color=color, markersize=2.5,
-                markeredgecolor='black', markeredgewidth=0.3)
+        farthest_sx = max(string_xs, key=lambda x: abs(x - merge_x))
+        for _sx in string_xs:
+            if _sx != farthest_sx:
+                ax.plot(_sx, y_merge, 'o', color=color, markersize=2.5,
+                        markeredgecolor='black', markeredgewidth=0.3)
         # Place label away from both the extender wire and the termination bracket
         if device_position == 'middle' and device_x is not None:
             if device_x > merge_x:
@@ -1884,7 +1895,7 @@ def _draw_harness_routing(ax, string_xs, merge_x, y_top, y_merge,
         # own X — prevents overlapping vertical drops at device_x ± 0.3.
         sign = 1 if device_x > merge_x else -1
         nub_end_x = device_x - sign * (0.3 + x_stagger)
-        vert_end_y = y_merge - y_range * 0.22
+        vert_end_y = label_y  # shared across all harnesses/polarities → aligned tips
         if n == 1:
             # Two bends: stub-to-horizontal, then horizontal-to-drop
             _draw_rounded_bend(

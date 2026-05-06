@@ -33,6 +33,7 @@ class QuickEstimate(ttk.Frame):
         self.device_names = {}  # {device_idx: "custom_name"} for CB/SI renaming
         self.device_feeder_sizes = {}  # {device_idx: "cable_size"} per-device feeder/homerun size
         self.device_feeder_parallel_counts = {}  # {device_idx: int} per-device parallel sets per pole
+        self.device_x_offsets = {}  # {device_idx: float} cumulative E-W nudge in feet
         self.last_combiner_assignments = []  # Structured CB data for Device Configurator
         self.last_si_assignments = []        # Structured SI data for Device Configurator
         self._harness_combos = []  # Track harness combo widgets for LV collection disabling
@@ -879,6 +880,8 @@ class QuickEstimate(ttk.Frame):
                     if frac < 0.01:
                         dev_x += grp_pitch / 2
 
+            dev_x += self.device_x_offsets.get(inv_idx, 0.0)
+
             # Approximate device Y from group position
             saved_y = group_source.get('position_y', 0)
             group_y = saved_y if saved_y is not None else 0
@@ -1461,15 +1464,11 @@ class QuickEstimate(ttk.Frame):
                         if spt > 0:
                             string_counts.add(spt)
         
-        # Also include string counts from split tracker harness portions
-        split_details = getattr(self, '_split_tracker_details', {})
-        tracker_seg_map = getattr(self, '_tracker_to_segment', [])
-        for tidx, details in split_details.items():
-            for portion in details.get('portions', []):
-                for h_size in portion.get('harnesses', []):
-                    if h_size > 0:
-                        string_counts.add(h_size)
-
+        # Note: split-tracker fragments (created when a multi-string harness is
+        # cut at an inverter boundary) are intentionally excluded. They inherit
+        # their wire gauge from the nearest configured string count via the
+        # fallback in get_wire_size_for(). Including them here would clutter the
+        # Wire Sizing table with sizes the user didn't configure.
         result = sorted(string_counts)
 
         return result
@@ -2110,6 +2109,13 @@ class QuickEstimate(ttk.Frame):
             self.central_inv_count_var.set(str(estimate_data.get('central_inverter_count', '1')))
         if hasattr(self, 'dc_ac_ratio_var'):
             self.dc_ac_ratio_var.set(str(estimate_data.get('dc_ac_ratio', 1.25)))
+        # Restore the explicit strings/device override, if one was saved.
+        # Must come after dc_ac_ratio_var.set() so it overwrites the auto-recalculated value.
+        saved_spd = estimate_data.get('strings_per_device')
+        if saved_spd is not None and hasattr(self, 'strings_per_inverter_var'):
+            self._updating_spi = True
+            self.strings_per_inverter_var.set(str(saved_spd))
+            self._updating_spi = False
         if hasattr(self, 'polarity_convention_var'):
             self.polarity_convention_var.set(estimate_data.get('polarity_convention', 'Negative Always South'))
         if hasattr(self, 'lv_collection_var'):
@@ -2185,7 +2191,11 @@ class QuickEstimate(ttk.Frame):
         # Load per-device parallel counts (convert str keys back to int)
         saved_parallel_counts = estimate_data.get('device_feeder_parallel_counts', {})
         self.device_feeder_parallel_counts = {int(k): int(v) for k, v in saved_parallel_counts.items()}
-        
+
+        # Load per-device E-W nudge offsets (convert str keys back to int)
+        saved_x_offsets = estimate_data.get('device_x_offsets', {})
+        self.device_x_offsets = {int(k): float(v) for k, v in saved_x_offsets.items()}
+
         # Load allocation lock state
         self.allocation_locked = estimate_data.get('allocation_locked', False)
         self.locked_allocation_result = estimate_data.get('locked_allocation_result', None)
@@ -2253,6 +2263,8 @@ class QuickEstimate(ttk.Frame):
         estimate_data['lv_collection_method'] = self.lv_collection_var.get()
         estimate_data['ac_homerun_distance'] = self._get_float_var(self.ac_homerun_distance_var, estimate_data.get('ac_homerun_distance', 500.0))
         estimate_data['dc_ac_ratio'] = self._get_float_var(self.dc_ac_ratio_var, 1.25)
+        spi_val = self.strings_per_inverter_var.get() if hasattr(self, 'strings_per_inverter_var') else ''
+        estimate_data['strings_per_device'] = spi_val if spi_val not in ('', '--') else None
         
         # Update modified date
         estimate_data['modified_date'] = datetime.now().isoformat()
@@ -2273,7 +2285,10 @@ class QuickEstimate(ttk.Frame):
         
         # Save per-device parallel counts (convert int keys to str for JSON)
         estimate_data['device_feeder_parallel_counts'] = {str(k): v for k, v in self.device_feeder_parallel_counts.items()}
-        
+
+        # Save per-device E-W nudge offsets (convert int keys to str for JSON)
+        estimate_data['device_x_offsets'] = {str(k): v for k, v in self.device_x_offsets.items()}
+
         # Save allocation lock state
         estimate_data['allocation_locked'] = self.allocation_locked
         if self.allocation_locked and self.locked_allocation_result is not None:
@@ -2661,6 +2676,10 @@ class QuickEstimate(ttk.Frame):
     def _mark_stale(self):
         """Mark results as stale and re-enable the calculate button"""
         self._results_stale = True
+        # Split-tracker fragment data is invalidated by any structural change.
+        # Clearing here prevents stale fragments from leaking into the site
+        # preview or diagnostics until the next calculate_estimate run.
+        self._split_tracker_details = {}
         if self._calc_btn:
             self._calc_btn.config(state='normal')
 
@@ -2847,6 +2866,7 @@ class QuickEstimate(ttk.Frame):
             device_names=self.device_names,
             device_feeder_sizes=self.device_feeder_sizes,
             device_feeder_parallel_counts=self.device_feeder_parallel_counts,
+            device_x_offsets=self.device_x_offsets,
             measurements=self.measurements
         )
         self._site_preview_window = preview
@@ -2858,6 +2878,7 @@ class QuickEstimate(ttk.Frame):
             self.device_names = dict(preview.device_names)  # Save renamed devices back
             self.device_feeder_sizes = dict(preview.device_feeder_sizes)  # Save feeder sizes back
             self.device_feeder_parallel_counts = dict(preview.device_feeder_parallel_counts)  # Save parallel counts back
+            self.device_x_offsets = dict(preview.device_x_offsets)  # Save nudge offsets back
             self.measurements = list(preview.measurements)  # Save measurements back
 
             # If CB assignments were edited, refresh the estimate results
@@ -3555,6 +3576,93 @@ class QuickEstimate(ttk.Frame):
                 insert_section(f'AC HOMERUNS ({ac_wire_size}, {feeder_mat})')
                 insert_row(f"AC Homerun {ac_wire_size}, {feeder_mat} — avg {ac_avg:.0f}ft × {ac_count} runs", '', f"{ac_total:.0f}", 'ft')
     
+    def _recompute_feeders_after_device_nudge(self):
+        """Lightweight feeder-only refresh after a device nudge from Site Preview.
+
+        Re-runs only the routed-distance and aggregation step without a full
+        calculate_estimate() call.  No-ops if routed distances aren't applicable.
+        """
+        if not hasattr(self, 'last_totals') or not self.last_totals:
+            return
+
+        totals = self.last_totals
+        display = totals.get('_display', {})
+        topology = display.get('topology')
+        if not topology:
+            return
+
+        allocation_result = totals.get('inverter_summary', {}).get('allocation_result')
+        if not allocation_result or not self.pads:
+            return
+
+        row_spacing_ft = min((g.get('row_spacing_ft', 20.0) for g in self.groups), default=20.0)
+
+        try:
+            routed = self.calculate_routed_feeder_distances(allocation_result, topology, row_spacing_ft)
+        except Exception as e:
+            print(f"[Feeder refresh error] {e}")
+            return
+
+        per_device_distances = routed['feeder_distances']
+        totals['routed_feeder_details'] = per_device_distances
+
+        if topology == 'Distributed String':
+            default_feeder_size = self.wire_sizing.get('ac_homerun', '') or '4/0 AWG'
+        else:
+            default_feeder_size = self.wire_sizing.get('dc_feeder', '') or '4/0 AWG'
+
+        feeders_by_size = defaultdict(lambda: {'count': 0, 'distance_ft': 0.0, 'total_ft': 0.0})
+        for dev_idx, _, dist_ft in per_device_distances:
+            size = self.device_feeder_sizes.get(dev_idx, default_feeder_size)
+            try:
+                parallel = int(self.device_feeder_parallel_counts.get(dev_idx, 1))
+                if parallel < 1:
+                    parallel = 1
+            except (ValueError, TypeError):
+                parallel = 1
+            key = (size, parallel)
+            feeders_by_size[key]['count'] += 1
+            feeders_by_size[key]['distance_ft'] += dist_ft
+            feeders_by_size[key]['total_ft'] += dist_ft * parallel
+
+        totals['feeders_by_size'] = dict(feeders_by_size)
+
+        total_feeder_ft = sum(v['total_ft'] for v in feeders_by_size.values())
+        total_feeder_count = sum(v['count'] for v in feeders_by_size.values())
+        total_inverters = totals.get('inverter_summary', {}).get('total_inverters', 0)
+        ac_homerun_avg_ft = display.get('ac_homerun_avg_ft', 500.0)
+
+        if topology == 'Distributed String':
+            totals['dc_feeder_count'] = 0
+            totals['dc_feeder_total_ft'] = 0
+            totals['ac_homerun_count'] = total_feeder_count
+            totals['ac_homerun_total_ft'] = total_feeder_ft
+        elif topology == 'Centralized String':
+            totals['dc_feeder_count'] = total_feeder_count
+            totals['dc_feeder_total_ft'] = total_feeder_ft
+            totals['ac_homerun_count'] = total_inverters
+            totals['ac_homerun_total_ft'] = total_inverters * ac_homerun_avg_ft
+        elif topology == 'Central Inverter':
+            totals['dc_feeder_count'] = total_feeder_count
+            totals['dc_feeder_total_ft'] = total_feeder_ft
+            central_inv_count = totals.get('central_inverter_count', 1)
+            totals['ac_homerun_count'] = central_inv_count
+            totals['ac_homerun_total_ft'] = central_inv_count * ac_homerun_avg_ft
+
+        totals['_display']['use_routed'] = True
+
+        self._redraw_results_tree()
+
+    def _schedule_feeder_refresh(self, delay_ms=150):
+        """Debounce rapid device nudges into a single feeder recompute."""
+        existing = getattr(self, '_feeder_refresh_after_id', None)
+        if existing is not None:
+            try:
+                self.after_cancel(existing)
+            except Exception:
+                pass
+        self._feeder_refresh_after_id = self.after(delay_ms, self._recompute_feeders_after_device_nudge)
+
     def _build_connections_from_harness_map(self, harness_map, tracker_segment_map, module_isc, nec_factor):
         """Convert an allocation harness_map into Device Configurator connection dicts."""
         connections = []
@@ -4084,7 +4192,7 @@ class QuickEstimate(ttk.Frame):
         self.strings_per_inverter_var = tk.StringVar(value='--')
         self._updating_spi = False  # Guard to prevent infinite loop
         spi_spinbox = ttk.Spinbox(
-            topology_row, from_=1, to=100,
+            topology_row, from_=1, to=9999,
             textvariable=self.strings_per_inverter_var, width=6,
             font=('Helvetica', 10, 'bold')
         )
@@ -5145,11 +5253,13 @@ class QuickEstimate(ttk.Frame):
             else:
                 _ci_max_inputs = 24
             
-            # User's strings/CB input takes priority; library max is the ceiling
+            # User's Strings/CB input is authoritative. The library max-inputs
+            # value is only used as a default when the field is empty — never
+            # as a cap on user input. If the user picks a number that no real
+            # CB part supports, the BOM will surface that as a "NO MATCH" row.
             user_strings_per_cb = self._get_int_var(self.strings_per_inverter_var, 0)
             if user_strings_per_cb > 0:
-                # Cap at library max inputs
-                strings_per_inv = min(user_strings_per_cb, _ci_max_inputs)
+                strings_per_inv = user_strings_per_cb
             else:
                 # No user input — default to library max
                 strings_per_inv = _ci_max_inputs
@@ -6983,7 +7093,8 @@ class QuickEstimate(ttk.Frame):
             initial_inspect=False, pads=self.pads,
             device_names=self.device_names,
             device_feeder_sizes=self.device_feeder_sizes,
-            device_feeder_parallel_counts=self.device_feeder_parallel_counts
+            device_feeder_parallel_counts=self.device_feeder_parallel_counts,
+            device_x_offsets=self.device_x_offsets
         )
         temp_preview.withdraw()  # Keep it hidden
 

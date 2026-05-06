@@ -9,7 +9,8 @@ class SitePreviewWindow(tk.Toplevel):
     
     def __init__(self, parent, inv_summary, topology, colors, groups, enabled_templates, row_spacing_ft,
                  num_devices=0, device_label='CB', initial_inspect=False, pads=None, device_names=None,
-                 device_feeder_sizes=None, device_feeder_parallel_counts=None, measurements=None):
+                 device_feeder_sizes=None, device_feeder_parallel_counts=None, measurements=None,
+                 device_x_offsets=None):
         super().__init__(parent)
         self.title("Site Preview — Inverter Allocation")
         self.geometry("1100x750")
@@ -30,6 +31,7 @@ class SitePreviewWindow(tk.Toplevel):
         self.device_names = dict(device_names) if device_names else {}  # {device_idx: "custom_name"}
         self.device_feeder_sizes = dict(device_feeder_sizes) if device_feeder_sizes else {}  # {device_idx: "cable_size"}
         self.device_feeder_parallel_counts = dict(device_feeder_parallel_counts) if device_feeder_parallel_counts else {}  # {device_idx: int parallel sets per pole}
+        self.device_x_offsets = dict(device_x_offsets) if device_x_offsets else {}  # {device_idx: float} cumulative E-W nudge in feet
         self.selected_pad_idx = None
         self.placing_pad = False  # True when in "click to place" mode
         self.assigning_devices = False  # True when Assign Devices dialog is open
@@ -323,7 +325,11 @@ class SitePreviewWindow(tk.Toplevel):
         self.canvas.bind('<Configure>', lambda e: (self._invalidate_world_layer(), self.draw()))
         self.canvas.bind('<Motion>', self._on_measure_motion)
         self.bind('<Escape>', lambda e: self._measure_cancel())
-        
+        self.bind('<Left>',    self._on_arrow_nudge_left)
+        self.bind('<Right>',   self._on_arrow_nudge_right)
+        self.bind('<KP_Left>', self._on_arrow_nudge_left)
+        self.bind('<KP_Right>', self._on_arrow_nudge_right)
+
         # Bottom legend (rebuildable)
         self.legend_frame = ttk.Frame(self, padding="5")
         self.legend_frame.pack(fill='x')
@@ -667,7 +673,10 @@ class SitePreviewWindow(tk.Toplevel):
             self._compute_devices_proportional(
                 device_width_ft, device_height_ft, offset_ft
             )
-    
+
+        for i, dev in enumerate(self.device_positions):
+            dev['x'] += self.device_x_offsets.get(i, 0.0)
+
     def _apply_middle_x_bias(self, device_x, device_y, center_local, local_indices,
                               strings_per_tracker_map, pitch, group_x, group_num_trackers):
         """Shift device_x into the row-spacing gap for 'middle' placement.
@@ -851,11 +860,16 @@ class SitePreviewWindow(tk.Toplevel):
                     spt = entry['strings_per_tracker']
                     is_split = entry.get('is_split', False)
                     split_pos = entry.get('split_position', 'full')
-                    
+                    start_physical_pos = entry.get('start_physical_pos', -1)
+
                     if tidx not in assigned_strings:
                         assigned_strings[tidx] = set()
-                    
-                    if is_split and split_pos == 'tail':
+
+                    if start_physical_pos >= 0:
+                        # Use the authoritative physical position from allocation
+                        for s in range(start_physical_pos, start_physical_pos + strings_taken):
+                            assigned_strings[tidx].add(s)
+                    elif is_split and split_pos == 'tail':
                         start_idx = spt - strings_taken
                         for s in range(start_idx, spt):
                             assigned_strings[tidx].add(s)
@@ -1658,6 +1672,53 @@ class SitePreviewWindow(tk.Toplevel):
         self._redraw_after_id = None
         self.draw()
 
+    def _on_arrow_nudge_left(self, event):
+        return self._nudge_selected_device(-1)
+
+    def _on_arrow_nudge_right(self, event):
+        return self._nudge_selected_device(1)
+
+    def _nudge_selected_device(self, sign):
+        """Move the selected device E (sign=+1) or W (sign=-1) by one row-spacing step."""
+        focus = self.focus_get()
+        if isinstance(focus, (tk.Entry, ttk.Entry, tk.Text, ttk.Combobox, ttk.Spinbox)):
+            return
+        if self.selected_device_idx is None:
+            return
+        if (self.placing_pad or self.measure_mode
+                or getattr(self, 'dragging_group', False)
+                or getattr(self, '_dragging_pad', False)
+                or getattr(self, '_dragging_strings', False)
+                or getattr(self, '_dragging_panel', False)
+                or getattr(self, 'assigning_devices', False)):
+            return
+
+        dev_idx = self.selected_device_idx
+        if dev_idx >= len(self.device_positions):
+            return
+        grp_idx = self.device_positions[dev_idx].get('group_idx')
+        if grp_idx is None or grp_idx >= len(self.group_layout):
+            return
+        pitch = self.group_layout[grp_idx].get('row_spacing_ft', self.tracker_pitch_ft)
+        if not pitch:
+            return
+
+        delta = sign * pitch
+        self.device_x_offsets[dev_idx] = self.device_x_offsets.get(dev_idx, 0.0) + delta
+        parent_offsets = getattr(self.master, 'device_x_offsets', None)
+        if parent_offsets is not None:
+            parent_offsets[dev_idx] = self.device_x_offsets[dev_idx]
+
+        self.device_positions[dev_idx]['x'] += delta
+        self._update_world_bounds()
+        self._invalidate_world_layer()
+        self.draw()
+
+        if hasattr(self.master, '_schedule_feeder_refresh'):
+            self.master._schedule_feeder_refresh()
+
+        return "break"
+
     def draw(self):
         """Draw the site layout with to-scale trackers at their group positions.
         
@@ -2431,16 +2492,26 @@ class SitePreviewWindow(tk.Toplevel):
     def _reset_positions(self):
         """Reset all group positions to auto-layout and clear saved positions."""
         if not messagebox.askyesno("Reset Positions",
-                                    "This will reset all group positions to the default layout. Continue?"):
+                                    "This will reset all group positions to the default layout AND clear any combiner-box position nudges. Continue?"):
             return
-        
+
         for grp_idx, layout in enumerate(self.group_layout):
             group_spacing = self.max_tracker_length_ft * 0.1
             layout['x'] = grp_idx * (layout['width_ft'] + group_spacing)
             layout['y'] = 0
-        
+
+        self.device_x_offsets.clear()
+        parent_offsets = getattr(self.master, 'device_x_offsets', None)
+        if parent_offsets is not None:
+            parent_offsets.clear()
+
+        self._compute_device_positions()
         self._update_world_bounds()
         self._save_group_positions()
+
+        if hasattr(self.master, '_schedule_feeder_refresh'):
+            self.master._schedule_feeder_refresh()
+
         self.fit_and_redraw()
 
     def _refresh_allocation(self):
@@ -3336,12 +3407,12 @@ class SitePreviewWindow(tk.Toplevel):
         _COL_NAMES = ('device', 'strings', 'group', 'feeder', 'parallel', 'pad')
         tree = ttk.Treeview(tree_frame, columns=_COL_NAMES, show='headings',
                             selectmode='extended', height=min(num_devices, 20))
-        tree.heading('device',   text='Device')
-        tree.heading('strings',  text='Strings')
-        tree.heading('group',    text='Group')
-        tree.heading('feeder',   text=feeder_col_label)
-        tree.heading('parallel', text='Parallel')
-        tree.heading('pad',      text='Pad')
+        tree.heading('device',   text='Device',         command=lambda: _sort_tree('device'))
+        tree.heading('strings',  text='Strings',        command=lambda: _sort_tree('strings'))
+        tree.heading('group',    text='Group',          command=lambda: _sort_tree('group'))
+        tree.heading('feeder',   text=feeder_col_label, command=lambda: _sort_tree('feeder'))
+        tree.heading('parallel', text='Parallel',       command=lambda: _sort_tree('parallel'))
+        tree.heading('pad',      text='Pad',            command=lambda: _sort_tree('pad'))
 
         tree.column('device',   width=100, anchor='w',      minwidth=70)
         tree.column('strings',  width=60,  anchor='center', minwidth=40)
@@ -3356,6 +3427,38 @@ class SitePreviewWindow(tk.Toplevel):
         vsb.grid(row=0, column=1, sticky='ns')
         tree_frame.columnconfigure(0, weight=1)
         tree_frame.rowconfigure(0, weight=1)
+
+        _HEADING_BASE = {
+            'device':   'Device',
+            'strings':  'Strings',
+            'group':    'Group',
+            'feeder':   feeder_col_label,
+            'parallel': 'Parallel',
+            'pad':      'Pad',
+        }
+        _sort_state = {'col': None, 'reverse': False}
+
+        def _sort_tree(col):
+            import re as _re_s
+            if _sort_state['col'] == col:
+                _sort_state['reverse'] = not _sort_state['reverse']
+            else:
+                _sort_state['col'] = col
+                _sort_state['reverse'] = False
+            reverse = _sort_state['reverse']
+
+            def _nat_key(val):
+                return [int(p) if p.isdigit() else p.lower()
+                        for p in _re_s.split(r'(\d+)', str(val))]
+
+            iids = list(tree.get_children())
+            iids.sort(key=lambda iid: _nat_key(tree.set(iid, col)), reverse=reverse)
+            for pos, iid in enumerate(iids):
+                tree.move(iid, '', pos)
+
+            arrow = ' ▼' if reverse else ' ▲'
+            for c, base in _HEADING_BASE.items():
+                tree.heading(c, text=base + (arrow if c == col else ''))
 
         def _row_values(dev_idx):
             dev = self.device_positions[dev_idx]
