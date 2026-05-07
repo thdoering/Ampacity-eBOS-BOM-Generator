@@ -621,22 +621,39 @@ class SitePreviewWindow(tk.Toplevel):
     
     def _assign_group_positions(self):
         """Assign (x, y) positions to each group. Use saved positions if available,
-        otherwise auto-layout stacking groups left-to-right."""
+        otherwise place new groups just to the right of the existing positioned layout."""
+        group_spacing = self.max_tracker_length_ft * 0.1
+
+        # First pass: apply saved positions and record the right edge of placed groups.
+        placed_right = None
+        placed_ys = []
         for grp_idx, layout in enumerate(self.group_layout):
             group_data = self.groups[grp_idx] if grp_idx < len(self.groups) else {}
-            
             saved_x = group_data.get('position_x')
             saved_y = group_data.get('position_y')
-            
             if saved_x is not None and saved_y is not None:
                 layout['x'] = saved_x
                 layout['y'] = saved_y
-            else:
-                # Auto-layout: stack groups left to right with spacing
-                # Each group is placed one group-width + gap to the right
-                group_spacing = self.max_tracker_length_ft * 0.1
-                layout['x'] = grp_idx * (layout['width_ft'] + group_spacing)
-                layout['y'] = 0
+                right_edge = saved_x + layout['width_ft']
+                if placed_right is None or right_edge > placed_right:
+                    placed_right = right_edge
+                placed_ys.append(saved_y)
+
+        # Anchor for new groups: right of the existing layout at the average Y of placed groups.
+        if placed_right is not None:
+            anchor_x = placed_right + group_spacing
+            anchor_y = sum(placed_ys) / len(placed_ys)
+        else:
+            anchor_x = 0
+            anchor_y = 0
+
+        # Second pass: auto-layout groups that have no saved position.
+        x_cursor = anchor_x
+        for grp_idx, layout in enumerate(self.group_layout):
+            if 'x' not in layout:
+                layout['x'] = x_cursor
+                layout['y'] = anchor_y
+                x_cursor += layout['width_ft'] + group_spacing
     
     def _compute_device_positions(self):
         """Compute world-space positions for combiner boxes / string inverters.
@@ -2631,21 +2648,25 @@ class SitePreviewWindow(tk.Toplevel):
         self._device_metadata = None
 
     def _check_overlaps(self):
-        """Check for overlapping groups and return list of overlapping pair indices."""
+        """Check for overlapping groups and return list of overlapping pair indices.
 
-        def _poly(g):
+        Two-pass: group-level parallelogram SAT as a fast pre-filter, then
+        per-tracker rectangle SAT for the pairs that survive the pre-filter.
+        Only reports a collision when actual tracker rectangles intersect.
+        """
+
+        def _group_poly(g):
             gx = g['x']
             gy = g['y']
             w = g['width_ft']
             dt = g.get('driveline_tan', 0.0)
             vis_min_base = g.get('visual_min_y_base', g.get('visual_min_y', 0))
             vis_max_base = g.get('visual_max_y_base', g.get('visual_max_y', g['length_ft']))
-            rd = g.get('rotation_deg', 0.0)
             vis_min = g.get('visual_min_y', vis_min_base)
             vis_max = g.get('visual_max_y', vis_max_base)
+            rd = g.get('rotation_deg', 0.0)
             rcx = gx + w / 2
             rcy = gy + (vis_min + vis_max) / 2
-            # Parallelogram corners: left side uses base Y bounds; right side shifts by w*dt
             corners = [
                 (gx,     gy + vis_min_base),
                 (gx,     gy + vis_max_base),
@@ -2655,6 +2676,42 @@ class SitePreviewWindow(tk.Toplevel):
             if rd:
                 corners = [self._rotate_point(rcx, rcy, px, py, rd) for px, py in corners]
             return corners
+
+        def _tracker_polys(g):
+            """Return a list of 4-corner polygons, one per tracker in g."""
+            polys = []
+            ref_motor = g.get('motor_y_ft', 0)
+            alignment = g.get('tracker_alignment', 'motor')
+            dt = g.get('driveline_tan', 0.0)
+            pitch = g.get('row_spacing_ft', self.tracker_pitch_ft)
+            rd = g.get('rotation_deg', 0.0)
+            gx, gy = g['x'], g['y']
+            g_len = g['length_ft']
+            vis_min = g.get('visual_min_y', 0)
+            vis_max = g.get('visual_max_y', g_len)
+            rcx = gx + g['width_ft'] / 2
+            rcy = gy + (vis_min + vis_max) / 2
+            for t_i, t in enumerate(g['trackers']):
+                t_len = t.get('length_ft', g_len)
+                t_w = t.get('width_ft', self.max_tracker_width_ft)
+                if alignment == 'top':
+                    yo = 0.0
+                elif alignment == 'bottom':
+                    yo = g_len - t_len
+                else:
+                    yo = ref_motor - t.get('motor_y_ft', 0)
+                tx = gx + t_i * pitch
+                ty = gy + yo + t_i * pitch * dt
+                corners = [
+                    (tx,       ty),
+                    (tx + t_w, ty),
+                    (tx + t_w, ty + t_len),
+                    (tx,       ty + t_len),
+                ]
+                if rd:
+                    corners = [self._rotate_point(rcx, rcy, px, py, rd) for px, py in corners]
+                polys.append(corners)
+            return polys
 
         def _sat(a, b):
             for poly in (a, b):
@@ -2669,11 +2726,16 @@ class SitePreviewWindow(tk.Toplevel):
                         return False
             return True
 
-        polys = [_poly(g) for g in self.group_layout]
+        group_polys = [_group_poly(g) for g in self.group_layout]
         overlaps = []
-        for i in range(len(polys)):
-            for j in range(i + 1, len(polys)):
-                if _sat(polys[i], polys[j]):
+        for i in range(len(self.group_layout)):
+            for j in range(i + 1, len(self.group_layout)):
+                if not _sat(group_polys[i], group_polys[j]):
+                    continue
+                # Groups' bounding shapes overlap — check individual trackers.
+                tp_i = _tracker_polys(self.group_layout[i])
+                tp_j = _tracker_polys(self.group_layout[j])
+                if any(_sat(pi, pj) for pi in tp_i for pj in tp_j):
                     overlaps.append((i, j))
         return overlaps
     
