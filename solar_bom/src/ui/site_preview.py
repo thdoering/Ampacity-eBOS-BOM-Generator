@@ -3302,10 +3302,8 @@ class SitePreviewWindow(tk.Toplevel):
         else:
             all_device_indices = []
         
-        label_char = chr(ord('A') + (pad_num - 1) % 26)
-        
         self.pads.append({
-            'label': f"Pad {label_char}",
+            'label': f"Pad {pad_num}",
             'x': wx - 5,  # Center the 10ft-wide pad on click
             'y': wy - 4,  # Center the 8ft-tall pad on click
             'width_ft': 10.0,
@@ -5076,7 +5074,15 @@ class SitePreviewWindow(tk.Toplevel):
             self._invalidate_world_layer()
             self.draw()
         
+        def _renumber_all():
+            for i, pad in enumerate(self.pads):
+                pad['label'] = f"Pad {i + 1}"
+            self._invalidate_world_layer()
+            self.draw()
+
         menu.add_command(label="Rename", command=_rename)
+        menu.add_command(label="Renumber All Pads (1, 2, 3…)", command=_renumber_all)
+        menu.add_separator()
         menu.add_command(label="Delete", command=_delete)
         menu.tk_popup(event.x_root, event.y_root)
 

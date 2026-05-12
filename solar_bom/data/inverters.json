@@ -1154,5 +1154,133 @@
     "weight_kg": 75.0,
     "ip_rating": "IP65",
     "max_short_circuit_current": 325.0
+  },
+  "SMA STP 50-US-41": {
+    "manufacturer": "SMA",
+    "model": "STP 50-US-41",
+    "inverter_type": "String",
+    "rated_power_kw": 50.0,
+    "max_dc_power_kw": 75.0,
+    "max_efficiency": 98.0,
+    "mppt_channels": [
+      {
+        "max_input_current": 20.0,
+        "min_voltage": 500.0,
+        "max_voltage": 800.0,
+        "max_power": 12500.0,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 20.0,
+        "min_voltage": 500.0,
+        "max_voltage": 800.0,
+        "max_power": 12500.0,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 20.0,
+        "min_voltage": 500.0,
+        "max_voltage": 800.0,
+        "max_power": 12500.0,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 20.0,
+        "min_voltage": 500.0,
+        "max_voltage": 800.0,
+        "max_power": 12500.0,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 20.0,
+        "min_voltage": 500.0,
+        "max_voltage": 800.0,
+        "max_power": 12500.0,
+        "num_string_inputs": 2
+      },
+      {
+        "max_input_current": 20.0,
+        "min_voltage": 500.0,
+        "max_voltage": 800.0,
+        "max_power": 12500.0,
+        "num_string_inputs": 2
+      }
+    ],
+    "mppt_configuration": "Independent",
+    "max_dc_voltage": 1000.0,
+    "startup_voltage": 500.0,
+    "nominal_ac_voltage": 240.0,
+    "max_ac_current": 72.5,
+    "power_factor": 0.99,
+    "dimensions_mm": [
+      1000,
+      600,
+      300
+    ],
+    "weight_kg": 75.0,
+    "ip_rating": "IP65",
+    "max_short_circuit_current": 180.0
+  },
+  "CPS SCH580K-T-US-600": {
+    "manufacturer": "CPS",
+    "model": "SCH580K-T-US-600",
+    "inverter_type": "String",
+    "rated_power_kw": 250.0,
+    "max_dc_power_kw": 425.0,
+    "max_efficiency": 98.0,
+    "mppt_channels": [
+      {
+        "max_input_current": 450.0,
+        "min_voltage": 860.0,
+        "max_voltage": 1450.0,
+        "max_power": 425000.0,
+        "num_string_inputs": 1
+      }
+    ],
+    "mppt_configuration": "Independent",
+    "max_dc_voltage": 1500.0,
+    "startup_voltage": 860.0,
+    "nominal_ac_voltage": 600.0,
+    "max_ac_current": 254.0,
+    "power_factor": 0.99,
+    "dimensions_mm": [
+      1000,
+      600,
+      300
+    ],
+    "weight_kg": 75.0,
+    "ip_rating": "IP65",
+    "max_short_circuit_current": 450.0
+  },
+  "CPS SCH100K-T-US-480": {
+    "manufacturer": "CPS",
+    "model": "SCH100K-T-US-480",
+    "inverter_type": "String",
+    "rated_power_kw": 100.0,
+    "max_dc_power_kw": 120.0,
+    "max_efficiency": 98.0,
+    "mppt_channels": [
+      {
+        "max_input_current": 220.0,
+        "min_voltage": 760.0,
+        "max_voltage": 1300.0,
+        "max_power": 120000.0,
+        "num_string_inputs": 1
+      }
+    ],
+    "mppt_configuration": "Independent",
+    "max_dc_voltage": 1500.0,
+    "startup_voltage": 760.0,
+    "nominal_ac_voltage": 480.0,
+    "max_ac_current": 120.3,
+    "power_factor": 0.99,
+    "dimensions_mm": [
+      1000,
+      600,
+      300
+    ],
+    "weight_kg": 75.0,
+    "ip_rating": "IP65",
+    "max_short_circuit_current": 220.0
   }
 }

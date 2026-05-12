@@ -4345,7 +4345,7 @@ class QuickEstimate(ttk.Frame):
         list_frame = ttk.Frame(parent)
         list_frame.pack(fill='both', expand=True)
         
-        self.group_listbox = tk.Listbox(list_frame, selectmode='browse', font=('Helvetica', 10))
+        self.group_listbox = tk.Listbox(list_frame, selectmode='browse', font=('Helvetica', 10), exportselection=False)
         self.group_listbox.pack(side='left', fill='both', expand=True)
         
         # Scrollbar
@@ -4676,10 +4676,25 @@ class QuickEstimate(ttk.Frame):
         # Update count
         self._update_group_string_count(group)
         
-        # Add segment button
-        add_btn = ttk.Button(seg_frame, text="+ Add Segment",
-                            command=lambda: self._add_segment_to_group(group, group_idx))
-        add_btn.pack(anchor='w', pady=(10, 0))
+        # Add segment / Unlink all buttons
+        seg_btn_frame = ttk.Frame(seg_frame)
+        seg_btn_frame.pack(anchor='w', pady=(10, 0))
+
+        add_btn = ttk.Button(seg_btn_frame, text="+ Add Segment",
+                             command=lambda: self._add_segment_to_group(group, group_idx))
+        add_btn.pack(side='left', padx=(0, 6))
+
+        def _unlink_all():
+            for seg in group['segments']:
+                seg['template_ref'] = None
+            self._derive_module_from_templates()
+            self._auto_unlock_allocation()
+            self._mark_stale()
+            self._schedule_autosave()
+            self._rebuild_group_details(group_idx)
+
+        ttk.Button(seg_btn_frame, text="Unlink All",
+                   command=_unlink_all).pack(side='left')
     
     def _add_segment_ui(self, group: dict, group_idx: int, seg_idx: int, segment: dict):
         """Add a segment configuration row to the UI"""
@@ -4794,6 +4809,12 @@ class QuickEstimate(ttk.Frame):
 
             # Update derived module from templates
             self._derive_module_from_templates()
+
+            # If the user just unlinked the last template in this group, rebuild
+            # the panel so the dropdowns expand to show all modules immediately.
+            if selected_key is None and self.get_group_module_id(group) is None:
+                self._rebuild_group_details(group_idx)
+                return
 
             # Refresh wire sizing once (trace suppressed above)
             self._refresh_wire_sizing_for_segments()
