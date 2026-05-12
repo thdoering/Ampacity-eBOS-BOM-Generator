@@ -18,7 +18,8 @@
       "Bash(python -c \"import json; data=json.load\\(open\\(r'c:\\\\Users\\\\tyler.doering\\\\OneDrive - Quanta Services Management Partnership, L.P\\\\Desktop\\\\Python_Projects\\\\solar_bom\\\\data\\\\module_templates.json'\\)\\); print\\(list\\(data.keys\\(\\)\\)\\); print\\(list\\(data.get\\('CSI Solar', {}\\).keys\\(\\)\\)\\)\")",
       "Bash(python _merge_factory.py)",
       "Bash(del \"c:\\\\Users\\\\tyler.doering\\\\OneDrive - Quanta Services Management Partnership, L.P\\\\Desktop\\\\Python_Projects\\\\solar_bom\\\\_merge_factory.py\")",
-      "Bash(python _merge_inverter_factory.py)"
+      "Bash(python _merge_inverter_factory.py)",
+      "Bash(python tools/migrate_pricing_2026_q2.py)"
     ]
   }
 }
