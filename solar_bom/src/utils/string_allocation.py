@@ -383,10 +383,11 @@ def allocate_strings_sequential(tracker_sequence: List[int],
         }
     }
 
-def allocate_strings_spatial(tracker_entries: List[Dict], 
+def allocate_strings_spatial(tracker_entries: List[Dict],
                               max_strings_per_inverter: int,
                               pitch_ft: float,
-                              row_threshold_ft: float = None) -> Dict[str, Any]:
+                              row_threshold_ft: float = None,
+                              force_single_row: bool = False) -> Dict[str, Any]:
     """
     Spatially-aware string-to-inverter allocation.
     
@@ -444,27 +445,24 @@ def allocate_strings_spatial(tracker_entries: List[Dict],
     for entry in tracker_entries:
         motor_y_offset = entry.get('motor_y_ft', entry.get('length_ft', 180.0) / 2.0)
         entry['driveline_y'] = entry['y'] + motor_y_offset
-    
-    # Sort by driveline Y to group into rows
-    sorted_by_y = sorted(tracker_entries, key=lambda e: e['driveline_y'])
-    rows = []  # list of lists of tracker entries
-    current_row = [sorted_by_y[0]]
-    current_row_y = sorted_by_y[0]['driveline_y']
-    
-    for entry in sorted_by_y[1:]:
-        # Compare to the LAST entry added to the row (nearest neighbor chaining)
-        # instead of the first entry, so rows can gradually span a wider Y range
-        last_in_row_y = current_row[-1]['driveline_y']
-        y_diff = abs(entry['driveline_y'] - last_in_row_y)
-        if y_diff <= row_threshold_ft:
-            current_row.append(entry)
-        else:
-            rows.append(current_row)
-            current_row = [entry]
-    rows.append(current_row)
-    
-    for r_idx, row in enumerate(rows):
-        pass  # rows clustered by driveline Y
+
+    if force_single_row:
+        # Skip Y-clustering; treat all entries as one combined row so that
+        # tiers sharing a CB pool are allocated together.
+        rows = [list(tracker_entries)]
+    else:
+        sorted_by_y = sorted(tracker_entries, key=lambda e: e['driveline_y'])
+        rows = []
+        current_row = [sorted_by_y[0]]
+        for entry in sorted_by_y[1:]:
+            last_in_row_y = current_row[-1]['driveline_y']
+            y_diff = abs(entry['driveline_y'] - last_in_row_y)
+            if y_diff <= row_threshold_ft:
+                current_row.append(entry)
+            else:
+                rows.append(current_row)
+                current_row = [entry]
+        rows.append(current_row)
     
     # --- Step 2: Within each row, sort by X and split into runs by X-gap ---
     runs = []  # list of lists of tracker entries, each run is independently allocated

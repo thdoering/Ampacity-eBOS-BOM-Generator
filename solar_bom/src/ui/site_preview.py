@@ -448,8 +448,37 @@ class SitePreviewWindow(tk.Toplevel):
             group_trackers = []
             group_motor_y = None  # motor Y offset for first tracker in group (used for alignment)
             grp_pitch = group_data.get('row_spacing_ft', self.row_spacing_ft)
-            
+
+            # Compute per-tier Y offsets and E-W counters for multi-tier groups
+            _grp_segs = group_data.get('segments', [])
+            _tier_order = []
+            _seen_tl = set()
+            for _s in _grp_segs:
+                _tl = _s.get('tier_label', 'A')
+                if _tl not in _seen_tl:
+                    _tier_order.append(_tl)
+                    _seen_tl.add(_tl)
+            _tier_y_offsets = {}
+            _tier_ref_lengths = {}
+            _prev_end = 0.0
+            for _tl in _tier_order:
+                _tier_y_offsets[_tl] = 0.0 if _tl == 'A' else (
+                    _prev_end + group_data.get('tier_gaps', {}).get(_tl, grp_pitch))
+                _tl_segs = [_s for _s in _grp_segs if _s.get('tier_label', 'A') == _tl]
+                _tl_max_len = max(
+                    (self._get_preview_tracker_dims_ft(_s.get('template_ref'))[1]
+                     if self._get_preview_tracker_dims_ft(_s.get('template_ref'))
+                     else fallback_length_ft)
+                    for _s in _tl_segs
+                ) if _tl_segs else fallback_length_ft
+                _tier_ref_lengths[_tl] = _tl_max_len
+                _prev_end = _tier_y_offsets[_tl] + _tl_max_len
+            _tier_x_counters = {_tl: 0 for _tl in _tier_order}
+
             for seg in group_data['segments']:
+                _seg_tier = seg.get('tier_label', 'A')
+                if _seg_tier not in _tier_y_offsets:
+                    _seg_tier = 'A'
                 ref = seg.get('template_ref')
                 dims = self._get_preview_tracker_dims_ft(ref)
                 
@@ -486,6 +515,9 @@ class SitePreviewWindow(tk.Toplevel):
                         if group_motor_y is None and has_motor:
                             group_motor_y = motor_y
 
+                        tracker['local_x_idx'] = _tier_x_counters.get(_seg_tier, 0)
+                        tracker['tier_y_offset_ft'] = _tier_y_offsets.get(_seg_tier, 0.0)
+                        tracker['tier_ref_length'] = _tier_ref_lengths.get(_seg_tier, tracker['length_ft'])
                         group_trackers.append(tracker)
 
                         max_tracker_width_ft = max(max_tracker_width_ft, tracker['width_ft'])
@@ -512,17 +544,21 @@ class SitePreviewWindow(tk.Toplevel):
                         tracker['full_string_count'] = 0
                         if group_motor_y is None and has_motor:
                             group_motor_y = motor_y
+                        tracker['local_x_idx'] = _tier_x_counters.get(_seg_tier, 0)
+                        tracker['tier_y_offset_ft'] = _tier_y_offsets.get(_seg_tier, 0.0)
+                        tracker['tier_ref_length'] = _tier_ref_lengths.get(_seg_tier, tracker['length_ft'])
                         group_trackers.append(tracker)
                         max_tracker_width_ft = max(max_tracker_width_ft, tracker['width_ft'])
                         max_tracker_length_ft = max(max_tracker_length_ft, tracker['length_ft'])
+                    _tier_x_counters[_seg_tier] = _tier_x_counters.get(_seg_tier, 0) + 1
                     global_idx += 1
-            
-            # Group dimensions (bounding box of all its trackers laid out E-W)
-            num_trackers = len(group_trackers)
-            if num_trackers > 0:
+
+            # Group dimensions: width uses widest tier, length includes all tiers
+            _max_tier_count = max(_tier_x_counters.values()) if _tier_x_counters else len(group_trackers)
+            if group_trackers:
                 group_max_width = max(t['width_ft'] for t in group_trackers)
-                group_width = group_max_width + (num_trackers - 1) * grp_pitch
-                group_length = max(t['length_ft'] for t in group_trackers)
+                group_width = group_max_width + max(_max_tier_count - 1, 0) * grp_pitch
+                group_length = max(t['tier_y_offset_ft'] + t['length_ft'] for t in group_trackers)
             else:
                 group_width = 0
                 group_length = 0
@@ -564,14 +600,17 @@ class SitePreviewWindow(tk.Toplevel):
             if group_trackers:
                 for t_i, t in enumerate(group_trackers):
                     t_length_val = t.get('length_ft', group_length)
+                    _t_local_x = t.get('local_x_idx', t_i)
+                    _t_tier_y = t.get('tier_y_offset_ft', 0.0)
+                    _t_ref_len = t.get('tier_ref_length', t_length_val)
                     if tracker_alignment == 'top':
-                        y_offset = 0.0
+                        y_offset = _t_tier_y
                     elif tracker_alignment == 'bottom':
-                        y_offset = group_length - t_length_val
+                        y_offset = _t_tier_y + _t_ref_len - t_length_val
                     else:  # 'motor'
                         t_motor = t.get('motor_y_ft', 0)
-                        y_offset = (ref_motor or 0) - t_motor
-                    angle_y = t_i * grp_pitch * driveline_tan
+                        y_offset = _t_tier_y + (ref_motor or 0) - t_motor
+                    angle_y = _t_local_x * grp_pitch * driveline_tan
                     # Base bounds (no angle) — for parallelogram overlap checking
                     visual_min_y_base = min(visual_min_y_base, y_offset)
                     visual_max_y_base = max(visual_max_y_base, y_offset + t_length_val)
@@ -778,56 +817,75 @@ class SitePreviewWindow(tk.Toplevel):
             gx = group_data['x']
             gy = group_data['y']
             
-            # Compute X from the center of this inverter's trackers within the primary group
+            # Compute X from the center of this inverter's trackers within the primary group.
+            # Use within-tier local_x_idx (not flat list index) so multi-tier groups
+            # position the device at the correct E-W location.
             local_indices = []
             for tidx in inv_tracker_indices:
                 if tidx in tracker_to_group and tracker_to_group[tidx][0] == primary_grp_idx:
                     local_indices.append(tracker_to_group[tidx][1])
-            
+
+            group_trackers_list = group_data.get('trackers', [])
             pitch = group_data.get('row_spacing_ft', self.tracker_pitch_ft)
-            if local_indices:
-                center_local = (min(local_indices) + max(local_indices)) / 2.0
-                device_x = gx + center_local * pitch + (max_width - device_width_ft) / 2
+
+            # Resolve within-tier X indices and tier Y offsets for each local tracker
+            local_x_indices = [
+                group_trackers_list[li].get('local_x_idx', li)
+                for li in local_indices if li < len(group_trackers_list)
+            ]
+            tier_y_vals = [
+                group_trackers_list[li].get('tier_y_offset_ft', 0.0)
+                for li in local_indices if li < len(group_trackers_list)
+            ]
+
+            if local_x_indices:
+                center_local_x = (min(local_x_indices) + max(local_x_indices)) / 2.0
+                avg_tier_y = sum(tier_y_vals) / len(tier_y_vals) if tier_y_vals else 0.0
+                device_x = gx + center_local_x * pitch + (max_width - device_width_ft) / 2
             else:
-                center_local = 0
+                center_local_x = 0
+                avg_tier_y = 0.0
                 device_x = gx
-            
-            # Driveline angle Y offset based on device's X position in group
-            angle_y_offset = center_local * pitch * group_data.get('driveline_tan', 0.0)
-            
+
+            # Driveline angle Y offset based on device's E-W position
+            angle_y_offset = center_local_x * pitch * group_data.get('driveline_tan', 0.0)
+
             # Compute Y based on position setting.
             # For 'north' and 'south', find the tracker among THIS device's own trackers
             # whose X position is closest to the device's X, and anchor to that tracker's
             # edge. This places the combiner just off the tracker nearest to it, even
             # when the device's trackers have varying lengths.
             if device_position in ('north', 'south'):
-                group_trackers_list = group_data.get('trackers', [])
                 group_motor_y_ref = group_data.get('motor_y_ft', None)
                 group_length = group_data.get('length_ft', 0)
                 driveline_tan = group_data.get('driveline_tan', 0.0)
                 align_on_motor = getattr(self, 'align_on_motor', False)
-                
-                # Find the tracker closest to the device's X position (center_local)
+
+                # Find tracker closest to device's X (compare within-tier x indices)
                 closest_local_idx = None
                 closest_dist = float('inf')
                 for local_idx in local_indices:
                     if local_idx >= len(group_trackers_list):
                         continue
-                    dist = abs(local_idx - center_local)
+                    t_lx = group_trackers_list[local_idx].get('local_x_idx', local_idx)
+                    dist = abs(t_lx - center_local_x)
                     if dist < closest_dist:
                         closest_dist = dist
                         closest_local_idx = local_idx
-                
+
                 if closest_local_idx is not None:
                     t = group_trackers_list[closest_local_idx]
                     t_length = t.get('length_ft', group_length)
-                    t_angle_y = closest_local_idx * pitch * driveline_tan
-                    
+                    _t_lx = t.get('local_x_idx', closest_local_idx)
+                    _t_tier_y = t.get('tier_y_offset_ft', 0.0)
+                    _t_ref_len = t.get('tier_ref_length', t_length)
+                    t_angle_y = _t_lx * pitch * driveline_tan
+
                     if align_on_motor and t.get('has_motor', False) and group_motor_y_ref is not None:
-                        ty = gy + (group_motor_y_ref - t.get('motor_y_ft', 0)) + t_angle_y
+                        ty = gy + _t_tier_y + (group_motor_y_ref - t.get('motor_y_ft', 0)) + t_angle_y
                     else:
-                        ty = gy + (group_length - t_length) / 2 + t_angle_y
-                    
+                        ty = gy + _t_tier_y + (_t_ref_len - t_length) / 2 + t_angle_y
+
                     if device_position == 'north':
                         device_y = ty - offset_ft - device_height_ft
                     else:  # 'south'
@@ -842,15 +900,20 @@ class SitePreviewWindow(tk.Toplevel):
                         device_y = gy + vis_max + offset_ft + angle_y_offset
             else:  # 'middle'
                 motor_y = group_data.get('motor_y_ft', group_data['length_ft'] / 2)
-                device_y = gy + motor_y - device_height_ft / 2 + angle_y_offset
-                if local_indices:
+                device_y = gy + avg_tier_y + motor_y - device_height_ft / 2 + angle_y_offset
+                if local_x_indices:
                     spt_map = {
-                        li: group_data['trackers'][li].get('strings_per_tracker', 1)
-                        for li in local_indices if li < len(group_data.get('trackers', []))
+                        group_trackers_list[li].get('local_x_idx', li):
+                        group_trackers_list[li].get('strings_per_tracker', 1)
+                        for li in local_indices if li < len(group_trackers_list)
                     }
+                    _max_tier_count = (
+                        max(t.get('local_x_idx', 0) for t in group_trackers_list) + 1
+                        if group_trackers_list else 1
+                    )
                     device_x = self._apply_middle_x_bias(
-                        device_x, device_y, center_local, local_indices, spt_map,
-                        pitch, gx, len(group_data.get('trackers', []))
+                        device_x, device_y, center_local_x, local_x_indices, spt_map,
+                        pitch, gx, _max_tier_count
                     )
 
             # Build assigned_strings from this inverter's harness_map
@@ -1868,27 +1931,30 @@ class SitePreviewWindow(tk.Toplevel):
                 t_width = tracker.get('width_ft', max_width)
                 t_length = tracker.get('length_ft', 100)
                 
-                # X position within group: center-to-center = pitch
-                tx = gx + t_idx * pitch
+                # X position within group: use within-tier E-W index
+                _t_local_x = tracker.get('local_x_idx', t_idx)
+                _t_tier_y = tracker.get('tier_y_offset_ft', 0.0)
+                _t_ref_len = tracker.get('tier_ref_length', t_length)
+                tx = gx + _t_local_x * pitch
                 # Center tracker within pitch slot
                 tx_offset = (max_width - t_width) / 2 if max_width > t_width else 0
-                
+
                 # Driveline angle: offset each tracker in Y
-                angle_y_offset = t_idx * pitch * group_data.get('driveline_tan', 0.0)
-                
-                # Align tracker vertically within group
+                angle_y_offset = _t_local_x * pitch * group_data.get('driveline_tan', 0.0)
+
+                # Align tracker vertically within its tier
                 _talign = group_data.get('tracker_alignment', 'motor')
                 if _talign == 'top':
-                    ty = gy + angle_y_offset
+                    ty = gy + _t_tier_y + angle_y_offset
                 elif _talign == 'bottom':
-                    ty = gy + (group_data['length_ft'] - t_length) + angle_y_offset
+                    ty = gy + _t_tier_y + (_t_ref_len - t_length) + angle_y_offset
                 elif tracker.get('has_motor', False) and group_data.get('motor_y_ft', None) is not None:
                     # Motor alignment: offset so this tracker's motor Y matches group's reference motor Y
-                    ty = gy + (group_data['motor_y_ft'] - tracker['motor_y_ft']) + angle_y_offset
+                    ty = gy + _t_tier_y + (group_data['motor_y_ft'] - tracker['motor_y_ft']) + angle_y_offset
                 else:
                     # Center alignment fallback
-                    ty_offset = (group_data['length_ft'] - t_length) / 2
-                    ty = gy + ty_offset + angle_y_offset              
+                    ty_offset = (_t_ref_len - t_length) / 2
+                    ty = gy + _t_tier_y + ty_offset + angle_y_offset              
                 # Per-string height — adjust for partial strings
                 partial_mods = tracker.get('partial_module_count', 0)
                 partial_side = tracker.get('partial_string_side', 'north')
@@ -2694,14 +2760,17 @@ class SitePreviewWindow(tk.Toplevel):
             for t_i, t in enumerate(g['trackers']):
                 t_len = t.get('length_ft', g_len)
                 t_w = t.get('width_ft', self.max_tracker_width_ft)
+                _ov_local_x = t.get('local_x_idx', t_i)
+                _ov_tier_y = t.get('tier_y_offset_ft', 0.0)
+                _ov_ref_len = t.get('tier_ref_length', t_len)
                 if alignment == 'top':
-                    yo = 0.0
+                    yo = _ov_tier_y
                 elif alignment == 'bottom':
-                    yo = g_len - t_len
+                    yo = _ov_tier_y + _ov_ref_len - t_len
                 else:
-                    yo = ref_motor - t.get('motor_y_ft', 0)
-                tx = gx + t_i * pitch
-                ty = gy + yo + t_i * pitch * dt
+                    yo = _ov_tier_y + ref_motor - t.get('motor_y_ft', 0)
+                tx = gx + _ov_local_x * pitch
+                ty = gy + yo + _ov_local_x * pitch * dt
                 corners = [
                     (tx,       ty),
                     (tx + t_w, ty),
@@ -2953,7 +3022,7 @@ class SitePreviewWindow(tk.Toplevel):
             for grp in self.group_layout:
                 for t_i, t in enumerate(grp['trackers']):
                     if global_idx == tidx:
-                        t_x = grp['x'] + t_i * grp.get('row_spacing_ft', self.tracker_pitch_ft)
+                        t_x = grp['x'] + t.get('local_x_idx', t_i) * grp.get('row_spacing_ft', self.tracker_pitch_ft)
                         break
                     global_idx += 1
                 if t_x is not None:

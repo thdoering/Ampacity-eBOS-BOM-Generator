@@ -1368,10 +1368,14 @@ def _draw_single_wiring_diagram(ax, spec, letter):
     device_position = spec.get('device_position', 'south')  # 'north', 'south', or 'middle'
     inverter_topology = spec.get('inverter_topology', 'Distributed String')
     wire_gauges = spec.get('wire_gauges', {})
+    _connector_type = spec.get('connector_type', 'MC4')
+    _has_extender = spec.get('has_extender', False)
+    _drop_connector = 'PV4S' if 'PV4S' in _connector_type else 'MC4'
 
     string_gauge = wire_gauges.get('string', '10 AWG')
     harness_gauge_map = wire_gauges.get('harness', {})
     whip_gauge_map = wire_gauges.get('whip', {})
+    extender_gauge_map = wire_gauges.get('extender', {})
 
     # --- Module dimensions from real specs ---
     mod_width_mm = spec.get('module_width_mm', 1134)
@@ -1655,10 +1659,12 @@ def _draw_single_wiring_diagram(ax, spec, letter):
         return _harness_ranks[h_idx] * _x_stagger_step + pol
 
     harness_string_offset = 0
+    _n_harnesses = len(harness_sizes)
     for h_idx, h_size in enumerate(harness_sizes):
         h_strings = list(range(harness_string_offset, harness_string_offset + h_size))
         h_gauge = harness_gauge_map.get(str(h_size), harness_gauge_map.get(h_size, '10 AWG'))
         w_gauge = whip_gauge_map.get(str(h_size), whip_gauge_map.get(h_size, '10 AWG'))
+        e_gauge = extender_gauge_map.get(str(h_size), extender_gauge_map.get(h_size, h_gauge))
 
         pos_xs = []
         neg_xs = []
@@ -1690,7 +1696,12 @@ def _draw_single_wiring_diagram(ax, spec, letter):
                                'positive', label_y=Y(F_MERGE) - y_range * 0.08,
                                y_range=y_range, device_x=_device_x,
                                hr_offset=_hr_offset_for(h_idx), device_position=device_position,
-                               x_stagger=_x_stagger_for(h_idx, 'positive'))
+                               x_stagger=_x_stagger_for(h_idx, 'positive'),
+                               whip_gauge=w_gauge, extender_gauge=e_gauge,
+                               has_extender=_has_extender,
+                               drop_connector_type=_drop_connector,
+                               label_first_drop=(h_idx == 0),
+                               label_last_drop=(h_idx == _n_harnesses - 1))
 
         if device_position == 'south':
             neg_merge_x = max(neg_xs)
@@ -1707,7 +1718,11 @@ def _draw_single_wiring_diagram(ax, spec, letter):
                                'negative', label_y=Y(F_MERGE) - y_range * 0.08,
                                y_range=y_range, device_x=_device_x,
                                hr_offset=_hr_offset_for(h_idx), device_position=device_position,
-                               x_stagger=_x_stagger_for(h_idx, 'negative'))
+                               x_stagger=_x_stagger_for(h_idx, 'negative'),
+                               whip_gauge=w_gauge, extender_gauge=e_gauge,
+                               has_extender=_has_extender,
+                               drop_connector_type=_drop_connector,
+                               label_first_drop=False, label_last_drop=False)
 
         harness_string_offset += h_size
 
@@ -1789,7 +1804,10 @@ def _draw_harness_routing(ax, string_xs, merge_x, y_top, y_merge,
                            color, harness_size, harness_gauge, string_gauge,
                            polarity_label, label_y, y_range=100, device_x=None,
                            hr_offset=0, hr_base_y=None, device_position='south',
-                           x_stagger=0.0):
+                           x_stagger=0.0,
+                           whip_gauge=None, extender_gauge=None, has_extender=False,
+                           drop_connector_type='MC4', label_first_drop=False,
+                           label_last_drop=False):
     """Draw the collection routing for one polarity of one harness group."""
     # hr_offset (data units, positive = push down) shifts the merge level
     # and bottom label. Used to stagger parallel home-run drops so their
@@ -1817,6 +1835,16 @@ def _draw_harness_routing(ax, string_xs, merge_x, y_top, y_merge,
 
         ax.plot([sx, sx], [y_top, y_top - stub_len],
                 color=color, linewidth=0.4, solid_capstyle='butt')
+
+        # CHANGE3_DEFERRED: drop connector labels (MC4 / PV4S at first/last drop)
+        # if polarity_label == 'positive':
+        #     is_first = (i == 0 and label_first_drop)
+        #     is_last = (i == n - 1 and label_last_drop)
+        #     if is_first or is_last:
+        #         conn_lbl = drop_connector_type + (' (TYP)' if is_last and n > 1 else '')
+        #         ax.text(sx, y_top - stub_len * 0.3, conn_lbl,
+        #                 fontsize=3, color='#444444', ha='center', va='top',
+        #                 fontfamily='sans-serif')
 
         if draw_fuses:
             fuse_top_y = y_top - stub_len
@@ -1972,3 +2000,7 @@ def _draw_harness_routing(ax, string_xs, merge_x, y_top, y_merge,
                     f'1-STRING SOURCE CIRCUIT · #{string_gauge} CU PV WIRE (TYP)',
                     fontsize=2.5, color='#555555', ha='center', va='top',
                     fontfamily='sans-serif')
+
+    # CHANGE3_DEFERRED: segment labels (HARNESS / EXTENDER / WHIP) and junction markers,
+    # trunk-end MC4 connector label. Params whip_gauge, extender_gauge, has_extender,
+    # drop_connector_type, label_first_drop, label_last_drop are wired in but unused here.

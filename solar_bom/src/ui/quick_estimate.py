@@ -63,7 +63,8 @@ class QuickEstimate(ttk.Frame):
         self._suppress_harness_trace = False
 
         self.setup_ui()
-        
+        self._update_export_button_state()
+
         # Load most recent estimate or show empty state
         self._refresh_estimate_dropdown(auto_select=True)
 
@@ -399,8 +400,10 @@ class QuickEstimate(ttk.Frame):
             'tracker_alignment': 'motor',
             'row_spacing_ft': default_row_spacing,
             'strings_per_inv': default_spi,
+            'tier_gaps': {},
+            'link_id': None,
             'segments': [
-                {'quantity': 1, 'strings_per_tracker': default_spt, 'harness_config': str(default_spt), 'template_ref': default_ref}
+                {'quantity': 1, 'strings_per_tracker': default_spt, 'harness_config': str(default_spt), 'template_ref': default_ref, 'tier_label': 'A'}
             ]
         }
         self.groups.append(group)
@@ -510,7 +513,10 @@ class QuickEstimate(ttk.Frame):
         for group in self.groups:
             total_trackers = sum(seg['quantity'] for seg in group['segments'])
             total_strings = sum(int(seg['quantity'] * seg['strings_per_tracker']) for seg in group['segments'])
-            display = f"{group['name']}  ({total_trackers}T / {total_strings}S)"
+            n_tiers = len(set(seg.get('tier_label', 'A') for seg in group['segments']))
+            tier_tag = f'  [{n_tiers}T]' if n_tiers > 1 else ''
+            link_tag = '  [L]' if group.get('link_id') else ''
+            display = f"{group['name']}  ({total_trackers}T / {total_strings}S){tier_tag}{link_tag}"
             self.group_listbox.insert(tk.END, display)
         
         if preserve_selection and old_idx is not None and old_idx < len(self.groups):
@@ -2143,6 +2149,15 @@ class QuickEstimate(ttk.Frame):
                 # Backward compat: older saves have no per-group strings_per_inv
                 if 'strings_per_inv' not in group:
                     group['strings_per_inv'] = None
+                # Backward compat: add tier_label to segments that pre-date tiers
+                if 'tier_gaps' not in group:
+                    group['tier_gaps'] = {}
+                for seg in group.get('segments', []):
+                    if 'tier_label' not in seg:
+                        seg['tier_label'] = 'A'
+                # Backward compat: add link_id for group CB pool linking
+                if 'link_id' not in group:
+                    group['link_id'] = None
             self.groups = copy.deepcopy(saved_groups)
         elif saved_subarrays:
             # Backward compat: convert old subarray/block format to groups
@@ -2659,6 +2674,7 @@ class QuickEstimate(ttk.Frame):
             self.strings_per_inverter_var.set('--')
         if hasattr(self, 'isc_warning_label'):
             self.isc_warning_label.config(text="")
+        self._update_export_button_state()
 
     def _schedule_autosave(self):
         """Debounced auto-save — saves estimate after a brief pause"""
@@ -2681,12 +2697,21 @@ class QuickEstimate(ttk.Frame):
         # preview or diagnostics until the next calculate_estimate run.
         self._split_tracker_details = {}
         if self._calc_btn:
-            self._calc_btn.config(state='normal')
+            self._calc_btn.config(state='normal', style='Stale.TButton')
+        self._update_export_button_state()
 
     def _mark_dirty(self):
         """Mark results stale and schedule autosave — convenience for the common pair."""
         self._mark_stale()
         self._schedule_autosave()
+
+    def _update_export_button_state(self):
+        """Enable or disable export buttons to match current stale state."""
+        state = 'disabled' if self._results_stale else 'normal'
+        for attr in ('_export_excel_btn', '_export_packet_btn', '_export_pdf_btn'):
+            btn = getattr(self, attr, None)
+            if btn is not None:
+                btn.config(state=state)
 
     def _get_int_var(self, var, default=0):
         """Safely get an integer from a tk StringVar."""
@@ -4053,6 +4078,9 @@ class QuickEstimate(ttk.Frame):
     
     def setup_ui(self):
         """Create and arrange UI components"""
+        style = ttk.Style()
+        style.configure('Stale.TButton', foreground='red', font=('TkDefaultFont', 9, 'bold'))
+
         # Main container with padding
         main_container = ttk.Frame(self, padding="10")
         main_container.pack(fill='both', expand=True)
@@ -4275,14 +4303,14 @@ class QuickEstimate(ttk.Frame):
         self._calc_btn = ttk.Button(button_row, text="Calculate Estimate", command=self.calculate_estimate, state='disabled')
         self._calc_btn.pack(side='left', padx=(0, 10))
         
-        export_btn = ttk.Button(button_row, text="Export to Excel", command=self.export_to_excel)
-        export_btn.pack(side='left')
-        
-        packet_btn = ttk.Button(button_row, text="Export Packet", command=self.export_packet)
-        packet_btn.pack(side='left', padx=(10, 0))
-        
-        pdf_btn = ttk.Button(button_row, text="Export PDF", command=self.export_pdf_only)
-        pdf_btn.pack(side='left', padx=(5, 0))
+        self._export_excel_btn = ttk.Button(button_row, text="Export to Excel", command=self.export_to_excel)
+        self._export_excel_btn.pack(side='left')
+
+        self._export_packet_btn = ttk.Button(button_row, text="Export Packet", command=self.export_packet)
+        self._export_packet_btn.pack(side='left', padx=(10, 0))
+
+        self._export_pdf_btn = ttk.Button(button_row, text="Export PDF", command=self.export_pdf_only)
+        self._export_pdf_btn.pack(side='left', padx=(5, 0))
         
         preview_btn = ttk.Button(button_row, text="Site Preview", command=self.show_site_preview)
         preview_btn.pack(side='left', padx=(10, 0))
@@ -4649,40 +4677,196 @@ class QuickEstimate(ttk.Frame):
             self._schedule_autosave()
         spi_override_var.trace_add('write', _on_spi_change)
 
-        # Segments section
+        # CB Pool — link this group with another so they share one combiner pool
+        ttk.Label(form_frame, text="CB Pool:").grid(row=7, column=0, sticky='w', pady=5)
+        cb_pool_frame = ttk.Frame(form_frame)
+        cb_pool_frame.grid(row=7, column=1, columnspan=3, sticky='w', pady=5, padx=(10, 0))
+
+        def _pool_options():
+            """Return combobox options: (standalone) + all other group names."""
+            opts = ['(standalone)']
+            for gi, g in enumerate(self.groups):
+                if gi != group_idx:
+                    opts.append(g['name'])
+            return opts
+
+        def _current_pool_display():
+            """Return the name of the first other group sharing our link_id, or '(standalone)'."""
+            lid = group.get('link_id')
+            if not lid:
+                return '(standalone)'
+            for gi, g in enumerate(self.groups):
+                if gi != group_idx and g.get('link_id') == lid:
+                    return g['name']
+            # No other group found with same link_id — orphan, clear it
+            group['link_id'] = None
+            return '(standalone)'
+
+        def _pool_status_text():
+            """Return a summary of all groups sharing this pool, for the status label."""
+            lid = group.get('link_id')
+            if not lid:
+                return ''
+            peers = [g['name'] for gi, g in enumerate(self.groups)
+                     if gi != group_idx and g.get('link_id') == lid]
+            if not peers:
+                return ''
+            return f"Pool with: {', '.join(peers)}"
+
+        cb_pool_var = tk.StringVar(value=_current_pool_display())
+        cb_pool_combo = ttk.Combobox(cb_pool_frame, textvariable=cb_pool_var,
+                                     values=_pool_options(),
+                                     state='readonly', width=18)
+        cb_pool_combo.pack(side='left')
+        self.disable_combobox_scroll(cb_pool_combo)
+
+        cb_pool_status = ttk.Label(cb_pool_frame, text=_pool_status_text(), foreground='gray')
+        cb_pool_status.pack(side='left', padx=(8, 0))
+
+        def _on_pool_change(event=None):
+            selected = cb_pool_var.get()
+            if selected == '(standalone)':
+                group['link_id'] = None
+            else:
+                # Find the selected group and share its link_id (or create one)
+                target_grp = next((g for g in self.groups if g['name'] == selected), None)
+                if target_grp is None:
+                    return
+                if target_grp.get('link_id'):
+                    group['link_id'] = target_grp['link_id']
+                else:
+                    shared_id = str(uuid.uuid4())
+                    target_grp['link_id'] = shared_id
+                    group['link_id'] = shared_id
+            # Refresh the pool status label and listbox
+            cb_pool_status.config(text=_pool_status_text())
+            self._refresh_group_listbox()
+            self._mark_stale()
+            self._schedule_autosave()
+
+        cb_pool_combo.bind('<<ComboboxSelected>>', _on_pool_change)
+
+        # Segments section (with per-tier rows)
         seg_frame = ttk.LabelFrame(two_col_frame, text="Segments (left to right)", padding="10")
         seg_frame.pack(side='left', fill='both', expand=True, pady=10, padx=(0, 10))
-        
+
         # String count display
         self.group_string_count_label = ttk.Label(seg_frame, text="", font=('Helvetica', 10, 'bold'))
-        self.group_string_count_label.pack(anchor='w', pady=(0, 10))
-        
-        # Headers
+        self.group_string_count_label.pack(anchor='w', pady=(0, 5))
+
+        # Column headers (shared across all tiers)
         header_frame = ttk.Frame(seg_frame)
         header_frame.pack(fill='x')
         ttk.Label(header_frame, text="Qty", width=6).pack(side='left', padx=2)
         ttk.Label(header_frame, text="Tracker Template", width=30).pack(side='left', padx=2)
         ttk.Label(header_frame, text="Harness Config", width=14).pack(side='left', padx=2)
         ttk.Label(header_frame, text="", width=9).pack(side='left', padx=2)
-        
-        # Container for segment rows
-        self.segment_rows_container = ttk.Frame(seg_frame)
-        self.segment_rows_container.pack(fill='x', pady=(5, 0))
-        
-        # Add existing segment rows
-        for i, seg in enumerate(group['segments']):
-            self._add_segment_ui(group, group_idx, i, seg)
-        
-        # Update count
-        self._update_group_string_count(group)
-        
-        # Add segment / Unlink all buttons
-        seg_btn_frame = ttk.Frame(seg_frame)
-        seg_btn_frame.pack(anchor='w', pady=(10, 0))
 
-        add_btn = ttk.Button(seg_btn_frame, text="+ Add Segment",
-                             command=lambda: self._add_segment_to_group(group, group_idx))
-        add_btn.pack(side='left', padx=(0, 6))
+        # Scrollable area for tier frames
+        tier_area = ttk.Frame(seg_frame)
+        tier_area.pack(fill='both', expand=True)
+
+        def _rebuild_tier_ui():
+            for w in tier_area.winfo_children():
+                w.destroy()
+            self._harness_combos = [c for c in self._harness_combos
+                                     if c[0].winfo_exists()]
+
+            for tier_label in self._group_tier_labels(group):
+                tier_segs = [s for s in group['segments']
+                              if s.get('tier_label', 'A') == tier_label]
+
+                if tier_label == 'A':
+                    tier_box = ttk.LabelFrame(tier_area, text="Tier A", padding="5")
+                else:
+                    tier_box = ttk.LabelFrame(tier_area, text=f"Tier {tier_label}", padding="5")
+                    gap_row = ttk.Frame(tier_box)
+                    gap_row.pack(fill='x', pady=(0, 4))
+                    ttk.Label(gap_row, text="N-S gap from prev tier (ft):").pack(side='left')
+                    gap_val = group.get('tier_gaps', {}).get(
+                        tier_label, group.get('row_spacing_ft', 20.0) or 20.0)
+                    gap_var = tk.StringVar(value=f"{float(gap_val):.1f}")
+                    gap_entry = ttk.Entry(gap_row, textvariable=gap_var, width=8)
+                    gap_entry.pack(side='left', padx=5)
+
+                    def _on_gap_change(*args, tl=tier_label, gv=gap_var):
+                        try:
+                            gap_ft = float(gv.get())
+                            group.setdefault('tier_gaps', {})[tl] = gap_ft
+                            self._mark_stale()
+                            self._schedule_autosave()
+                        except ValueError:
+                            pass
+                    gap_var.trace_add('write', _on_gap_change)
+
+                    def _delete_tier(tl=tier_label):
+                        group['segments'] = [
+                            s for s in group['segments']
+                            if s.get('tier_label', 'A') != tl
+                        ]
+                        group.get('tier_gaps', {}).pop(tl, None)
+                        self._mark_stale()
+                        self._schedule_autosave()
+                        self._refresh_group_listbox()
+                        self._rebuild_group_details(group_idx)
+
+                    ttk.Button(gap_row, text="Delete Tier",
+                               command=_delete_tier).pack(side='left', padx=(8, 0))
+
+                tier_box.pack(fill='x', pady=(5, 0))
+
+                tier_rows_frame = ttk.Frame(tier_box)
+                tier_rows_frame.pack(fill='x')
+
+                for seg in tier_segs:
+                    global_seg_idx = group['segments'].index(seg)
+                    self._add_segment_ui(group, group_idx, global_seg_idx, seg,
+                                         container=tier_rows_frame)
+
+                ttk.Button(tier_box, text="+ Add Segment",
+                           command=lambda tl=tier_label: self._add_segment_to_group(
+                               group, group_idx, tl)
+                           ).pack(anchor='w', pady=(5, 0))
+
+        _rebuild_tier_ui()
+        self._update_group_string_count(group)
+
+        # Bottom: Add Tier + Unlink All
+        bottom_btn_frame = ttk.Frame(seg_frame)
+        bottom_btn_frame.pack(anchor='w', pady=(10, 0))
+
+        def _add_tier():
+            existing = self._group_tier_labels(group)
+            next_label = next(
+                (l for l in 'BCDEFGHIJKLMNOPQRSTUVWXYZ' if l not in existing), None)
+            if next_label is None:
+                return
+            compatible = self.get_compatible_templates(group)
+            if compatible:
+                default_ref = compatible[0]
+                default_spt = self.enabled_templates[default_ref].get('strings_per_tracker', 3)
+            else:
+                default_ref = None
+                default_spt = 3
+            default_harness = self._get_default_harness_config_from_template(default_ref)
+            if not default_harness:
+                default_harness = str(default_spt)
+            default_gap = group.get('row_spacing_ft', 20.0) or 20.0
+            group.setdefault('tier_gaps', {})[next_label] = default_gap
+            group['segments'].append({
+                'quantity': 1,
+                'strings_per_tracker': default_spt,
+                'harness_config': default_harness,
+                'template_ref': default_ref,
+                'tier_label': next_label,
+            })
+            self._mark_stale()
+            self._schedule_autosave()
+            self._refresh_group_listbox()
+            self._rebuild_group_details(group_idx)
+
+        ttk.Button(bottom_btn_frame, text="+ Add Tier",
+                   command=_add_tier).pack(side='left', padx=(0, 6))
 
         def _unlink_all():
             for seg in group['segments']:
@@ -4693,12 +4877,19 @@ class QuickEstimate(ttk.Frame):
             self._schedule_autosave()
             self._rebuild_group_details(group_idx)
 
-        ttk.Button(seg_btn_frame, text="Unlink All",
+        ttk.Button(bottom_btn_frame, text="Unlink All",
                    command=_unlink_all).pack(side='left')
     
-    def _add_segment_ui(self, group: dict, group_idx: int, seg_idx: int, segment: dict):
+    def _group_tier_labels(self, group: dict) -> list:
+        """Return sorted unique tier labels present in the group's segments."""
+        labels = sorted(set(seg.get('tier_label', 'A') for seg in group.get('segments', [])))
+        return labels if labels else ['A']
+
+    def _add_segment_ui(self, group: dict, group_idx: int, seg_idx: int, segment: dict,
+                         container=None):
         """Add a segment configuration row to the UI"""
-        row_frame = ttk.Frame(self.segment_rows_container)
+        parent = container if container is not None else getattr(self, 'segment_rows_container', None)
+        row_frame = ttk.Frame(parent)
         row_frame.pack(fill='x', pady=2)
         
         # Quantity
@@ -4754,20 +4945,25 @@ class QuickEstimate(ttk.Frame):
         elif self.lv_collection_var.get() == 'Trunk Bus':
             harness_combo.config(state='disabled')
         
+        # Within-tier index for up/down boundary checks
+        _tier_label = segment.get('tier_label', 'A')
+        _tier_segs = [s for s in group['segments'] if s.get('tier_label', 'A') == _tier_label]
+        _within_tier_idx = _tier_segs.index(segment) if segment in _tier_segs else 0
+
         # Move up button
         up_btn = ttk.Button(row_frame, text="▲", width=2,
                            command=lambda si=seg_idx: self._move_segment(group, group_idx, si, -1))
         up_btn.pack(side='left', padx=(2, 0))
-        if seg_idx == 0:
+        if _within_tier_idx == 0:
             up_btn.config(state='disabled')
-        
+
         # Move down button
         down_btn = ttk.Button(row_frame, text="▼", width=2,
                              command=lambda si=seg_idx: self._move_segment(group, group_idx, si, 1))
         down_btn.pack(side='left', padx=(0, 2))
-        if seg_idx == len(group['segments']) - 1:
+        if _within_tier_idx == len(_tier_segs) - 1:
             down_btn.config(state='disabled')
-        
+
         # Delete button
         del_btn = ttk.Button(row_frame, text="×", width=3,
                             command=lambda: self._delete_segment(group, group_idx, seg_idx))
@@ -4859,9 +5055,8 @@ class QuickEstimate(ttk.Frame):
             self._schedule_autosave()
         harness_var.trace_add('write', on_harness_change)
     
-    def _add_segment_to_group(self, group: dict, group_idx: int):
-        """Add a new segment to the group and refresh UI"""
-        # Default to first compatible template if available
+    def _add_segment_to_group(self, group: dict, group_idx: int, tier_label: str = 'A'):
+        """Add a new segment to the given tier and rebuild the group detail panel."""
         compatible = self.get_compatible_templates(group)
         if compatible:
             default_ref = compatible[0]
@@ -4869,44 +5064,49 @@ class QuickEstimate(ttk.Frame):
         else:
             default_ref = None
             default_spt = 3
-        
-        # Auto-derive harness config from template motor position
+
         default_harness = self._get_default_harness_config_from_template(default_ref)
         if not default_harness:
             default_harness = str(default_spt)
-        
-        group['segments'].append({
+
+        # Insert after the last segment belonging to this tier
+        insert_idx = len(group['segments'])
+        for i, seg in enumerate(group['segments']):
+            if seg.get('tier_label', 'A') == tier_label:
+                insert_idx = i + 1
+
+        group['segments'].insert(insert_idx, {
             'quantity': 1,
             'strings_per_tracker': default_spt,
             'harness_config': default_harness,
-            'template_ref': default_ref
+            'template_ref': default_ref,
+            'tier_label': tier_label,
         })
-        new_seg_idx = len(group['segments']) - 1
-        self._add_segment_ui(group, group_idx, new_seg_idx, group['segments'][-1])
-        # The previous last row's down button must now be enabled
-        if new_seg_idx > 0:
-            rows = self.segment_rows_container.winfo_children()
-            if len(rows) >= 2:
-                prev_children = rows[-2].winfo_children()
-                if len(prev_children) > 4:
-                    prev_children[4].config(state='normal')  # down_btn is index 4
-        self._update_group_string_count(group)
         self._refresh_wire_sizing_for_segments()
         self._mark_dirty()
+        self._rebuild_group_details(group_idx)
     
     def _move_segment(self, group: dict, group_idx: int, seg_idx: int, direction: int):
-        """Move a segment up (-1) or down (+1) within the group"""
+        """Move a segment up (-1) or down (+1) within its tier."""
         new_idx = seg_idx + direction
         if new_idx < 0 or new_idx >= len(group['segments']):
             return
-        group['segments'][seg_idx], group['segments'][new_idx] = group['segments'][new_idx], group['segments'][seg_idx]
+        # Only swap if both segments belong to the same tier
+        seg = group['segments'][seg_idx]
+        neighbor = group['segments'][new_idx]
+        if seg.get('tier_label', 'A') != neighbor.get('tier_label', 'A'):
+            return
+        group['segments'][seg_idx], group['segments'][new_idx] = neighbor, seg
         self._auto_unlock_allocation()
         self._rebuild_group_details(group_idx)
 
     def _delete_segment(self, group: dict, group_idx: int, seg_idx: int):
-        """Delete a segment from the group"""
-        if len(group['segments']) <= 1:
-            return  # Keep at least one segment
+        """Delete a segment; refuses to remove the last segment of a tier."""
+        seg = group['segments'][seg_idx]
+        tier_label = seg.get('tier_label', 'A')
+        tier_segs = [s for s in group['segments'] if s.get('tier_label', 'A') == tier_label]
+        if len(tier_segs) <= 1:
+            return  # Keep at least one segment per tier
         del group['segments'][seg_idx]
         self._reconcile_locked_allocation()
         self._rebuild_group_details(group_idx)
@@ -5217,45 +5417,73 @@ class QuickEstimate(ttk.Frame):
             driveline_angle_deg = group.get('driveline_angle', 0.0)
             driveline_tan = math.tan(math.radians(driveline_angle_deg)) if driveline_angle_deg != 0 else 0.0
 
-            tracker_within_group = 0
-            for seg in group['segments']:
-                qty = seg['quantity']
-                spt = seg['strings_per_tracker']
-                if qty <= 0:
-                    continue
+            # Compute Y offsets for each tier within this group
+            tier_labels = self._group_tier_labels(group)
+            tier_y_offsets = {}
+            prev_tier_end_y = 0.0
+            for tier_label in tier_labels:
+                tier_y_offsets[tier_label] = prev_tier_end_y if tier_label != 'A' else 0.0
+                if tier_label != 'A':
+                    gap = group.get('tier_gaps', {}).get(tier_label, grp_row_spacing)
+                    tier_y_offsets[tier_label] = prev_tier_end_y + gap
+                # Compute max tracker length in this tier for the next tier's base Y
+                tier_segs_here = [s for s in group['segments']
+                                  if s.get('tier_label', 'A') == tier_label and s.get('quantity', 0) > 0]
+                max_len_here = max(
+                    (self._get_estimate_tracker_dims_ft(s.get('template_ref'))[1]
+                     if self._get_estimate_tracker_dims_ft(s.get('template_ref')) else fallback_length_ft)
+                    for s in tier_segs_here
+                ) if tier_segs_here else fallback_length_ft
+                prev_tier_end_y = tier_y_offsets[tier_label] + max_len_here
 
-                ref = seg.get('template_ref')
-                dims = self._get_estimate_tracker_dims_ft(ref)
-                t_length = dims[1] if dims else fallback_length_ft
-                
-                # Partial string pairing (same logic as tracker_sequence)
-                full_spt = int(spt)
-                has_partial = (spt != full_spt)
+            # Build tracker entries tier by tier (same X range per tier, different Y)
+            for tier_label in tier_labels:
+                tier_y_off = tier_y_offsets[tier_label]
+                tracker_within_tier = 0
+                for seg in group['segments']:
+                    if seg.get('tier_label', 'A') != tier_label:
+                        continue
+                    qty = seg['quantity']
+                    spt = seg['strings_per_tracker']
+                    if qty <= 0:
+                        continue
 
-                for i in range(qty):
-                    if has_partial:
-                        if i % 2 == 0 and i + 1 < qty:
-                            effective_spt = full_spt + 1
+                    ref = seg.get('template_ref')
+                    dims = self._get_estimate_tracker_dims_ft(ref)
+                    t_length = dims[1] if dims else fallback_length_ft
+
+                    full_spt = int(spt)
+                    has_partial = (spt != full_spt)
+
+                    for i in range(qty):
+                        if has_partial:
+                            if i % 2 == 0 and i + 1 < qty:
+                                effective_spt = full_spt + 1
+                            else:
+                                effective_spt = full_spt
                         else:
-                            effective_spt = full_spt
-                    else:
-                        effective_spt = int(spt)
-                    
-                    local_x_offset = tracker_within_group * grp_row_spacing
-                    tracker_entries.append({
-                        'original_idx': flat_idx,
-                        'spt': effective_spt,
-                        'x': group_x + local_x_offset,
-                        'y': group_y + local_x_offset * driveline_tan,
-                        'length_ft': t_length,
-                        'motor_y_ft': group_ref_motor_y_ft,
-                        'row_spacing_ft': grp_row_spacing,
-                    })
-                    flat_idx += 1
-                    tracker_within_group += 1
+                            effective_spt = int(spt)
 
-            # Advance auto-layout cursor for next group
-            group_width = group_tracker_counts[grp_idx] * grp_row_spacing
+                        local_x_offset = tracker_within_tier * grp_row_spacing
+                        tracker_entries.append({
+                            'original_idx': flat_idx,
+                            'spt': effective_spt,
+                            'x': group_x + local_x_offset,
+                            'y': group_y + tier_y_off + local_x_offset * driveline_tan,
+                            'length_ft': t_length,
+                            'motor_y_ft': group_ref_motor_y_ft,
+                            'row_spacing_ft': grp_row_spacing,
+                        })
+                        flat_idx += 1
+                        tracker_within_tier += 1
+
+            # Advance auto-layout cursor: use the widest tier's tracker count
+            max_tier_count = max(
+                sum(s['quantity'] for s in group['segments']
+                    if s.get('tier_label', 'A') == tl and s.get('quantity', 0) > 0)
+                for tl in tier_labels
+            ) if tier_labels else group_tracker_counts[grp_idx]
+            group_width = max_tier_count * grp_row_spacing
             auto_x_cursor += group_width + grp_row_spacing * 2  # Extra gap between groups
 
         # For Central Inverter, compute strings_per_cb from library now that we have module_isc
@@ -5297,23 +5525,57 @@ class QuickEstimate(ttk.Frame):
                 allocation_result = self.locked_allocation_result
                 spatial_runs = allocation_result.get('spatial_runs', 1)
             elif tracker_entries:
-                # Run allocation per group (respects per-group strings_per_inv override)
-                # then merge results with remapped tracker indices
-                merged_inverters = []
-                flat_offset = 0  # running global tracker index offset per group
-
-                for grp_idx, group in enumerate(self.groups):
+                # Build per-group entry slices first so we can combine linked groups.
+                per_group_entries = []
+                flat_offset = 0
+                for group in self.groups:
                     grp_count = sum(seg['quantity'] for seg in group['segments'])
-                    grp_entries = tracker_entries[flat_offset:flat_offset + grp_count]
-
-                    grp_spi = group.get('strings_per_inv') or strings_per_inv
-                    grp_pitch = group.get('row_spacing_ft', 20.0)
-
-                    if grp_entries and grp_spi > 0:
-                        grp_result = allocate_strings_spatial(grp_entries, grp_spi, grp_pitch)
-                        merged_inverters.extend(grp_result.get('inverters', []))
-
+                    per_group_entries.append(tracker_entries[flat_offset:flat_offset + grp_count])
                     flat_offset += grp_count
+
+                # Group indices by link_id; standalone groups each get their own bucket.
+                link_buckets = {}   # link_id -> [grp_idx, ...]
+                standalone = []     # [grp_idx, ...]
+                for gi, g in enumerate(self.groups):
+                    lid = g.get('link_id')
+                    if lid:
+                        link_buckets.setdefault(lid, []).append(gi)
+                    else:
+                        standalone.append(gi)
+
+                merged_inverters = []
+                num_spatial_runs = 0
+
+                # Allocate standalone groups individually.
+                for gi in standalone:
+                    g = self.groups[gi]
+                    grp_entries = per_group_entries[gi]
+                    grp_spi = g.get('strings_per_inv') or strings_per_inv
+                    grp_pitch = g.get('row_spacing_ft', 20.0) or 20.0
+                    if grp_entries and grp_spi > 0:
+                        multi_tier = len(self._group_tier_labels(g)) > 1
+                        grp_result = allocate_strings_spatial(
+                            grp_entries, grp_spi, grp_pitch,
+                            force_single_row=multi_tier)
+                        merged_inverters.extend(grp_result.get('inverters', []))
+                        num_spatial_runs += grp_result.get('spatial_runs', 1)
+
+                # Allocate linked groups together — one allocation per pool.
+                for lid, grp_indices in link_buckets.items():
+                    combined_entries = []
+                    for gi in grp_indices:
+                        combined_entries.extend(per_group_entries[gi])
+                    if not combined_entries:
+                        continue
+                    # Use the first linked group's strings_per_inv override, fall back to global.
+                    primary_g = self.groups[grp_indices[0]]
+                    pool_spi = primary_g.get('strings_per_inv') or strings_per_inv
+                    pool_pitch = primary_g.get('row_spacing_ft', 20.0) or 20.0
+                    pool_result = allocate_strings_spatial(
+                        combined_entries, pool_spi, pool_pitch,
+                        force_single_row=True)
+                    merged_inverters.extend(pool_result.get('inverters', []))
+                    num_spatial_runs += pool_result.get('spatial_runs', 1)
 
                 if merged_inverters:
                     # Build merged summary
@@ -5327,7 +5589,7 @@ class QuickEstimate(ttk.Frame):
                     inv_sizes = [inv['total_strings'] for inv in merged_inverters]
                     allocation_result = {
                         'inverters': merged_inverters,
-                        'spatial_runs': len(self.groups),
+                        'spatial_runs': num_spatial_runs,
                         'summary': {
                             'total_inverters': len(merged_inverters),
                             'total_strings': total_inv_strings,
@@ -5340,7 +5602,7 @@ class QuickEstimate(ttk.Frame):
                             'tracker_type_counts': {},
                         }
                     }
-                    spatial_runs = len(self.groups)
+                    spatial_runs = num_spatial_runs
                 else:
                     allocation_result = allocate_strings_sequential(tracker_sequence, strings_per_inv)
                     spatial_runs = 1
@@ -5835,6 +6097,9 @@ class QuickEstimate(ttk.Frame):
         # Store totals for Excel export
         self.last_totals = totals
         self._results_stale = False
+        if self._calc_btn:
+            self._calc_btn.config(style='TButton')
+        self._update_export_button_state()
         
         # Combiner assignments: preserve if allocation is locked (user edited devices),
         # otherwise rebuild from scratch with correct positions.
@@ -6472,8 +6737,13 @@ class QuickEstimate(ttk.Frame):
             silent: If True, skip os.startfile and success messagebox.
         """
         
-        # Run calculation first to ensure results are current
-        self.calculate_estimate()
+        if getattr(self, '_results_stale', True):
+            messagebox.showwarning(
+                "Recalculate Required",
+                "The estimate has changed since the last calculation.\n\n"
+                "Click Calculate Estimate before exporting.",
+            )
+            return
 
         unalloc = self._count_unallocated_strings()
         if unalloc > 0:
@@ -7031,7 +7301,13 @@ class QuickEstimate(ttk.Frame):
         """Export a PDF containing the String Allocation and Harness Drawings."""
         import os
 
-        self.calculate_estimate()
+        if getattr(self, '_results_stale', True):
+            messagebox.showwarning(
+                "Recalculate Required",
+                "The estimate has changed since the last calculation.\n\n"
+                "Click Calculate Estimate before exporting.",
+            )
+            return
 
         if not self.selected_module:
             messagebox.showwarning("No Module", "Please select a module before exporting.")
@@ -7268,7 +7544,16 @@ class QuickEstimate(ttk.Frame):
         topology = 'Distributed String'
         if hasattr(self, 'topology_var'):
             topology = self.topology_var.get()
-        
+
+        import os as _os
+        _cur_dir = _os.path.dirname(_os.path.abspath(__file__))
+        _proj_root = _os.path.dirname(_os.path.dirname(_cur_dir))
+        try:
+            with open(_os.path.join(_proj_root, 'data', 'harness_library.json')) as _hf:
+                _harness_lib = json.load(_hf)
+        except Exception:
+            _harness_lib = {}
+
         for group in self.groups:
             for seg in group.get('segments', []):
                 ref = seg.get('template_ref')
@@ -7330,10 +7615,32 @@ class QuickEstimate(ttk.Frame):
                 string_gauge = self.get_wire_size_for('string', 1)
                 harness_gauge_map = {}
                 whip_gauge_map = {}
+                extender_gauge_map = {}
                 for h_size in set(harness_sizes):
                     harness_gauge_map[h_size] = self.get_wire_size_for('harness', h_size)
                     whip_gauge_map[h_size] = self.get_wire_size_for('whip', h_size)
-                
+                    extender_gauge_map[h_size] = self.get_wire_size_for('extender', h_size)
+
+                # Determine connector_type from harness library (matches by string count and spacing)
+                _mod_width_mm = mod_spec.get('width_mm', 1134)
+                _spacing_ft = (mps * _mod_width_mm + (mps - 1) * 20) / 1000 * 3.28084
+                _avail = [26.0, 102.0, 113.0, 122.0, 133.0]
+                _target_sp = max(_avail)
+                for _sp in sorted(_avail):
+                    if _sp >= _spacing_ft:
+                        _target_sp = _sp
+                        break
+                connector_type = 'MC4'
+                for _pn, _he in _harness_lib.items():
+                    if _pn.startswith('_comment_'):
+                        continue
+                    if (_he.get('num_strings') == harness_sizes[0] and
+                            abs(_he.get('string_spacing_ft', 0) - _target_sp) < 0.1):
+                        connector_type = _he.get('connector_type', 'MC4')
+                        break
+
+                has_extender = len(harness_sizes) > 1
+
                 # Determine predominant device position from groups
                 device_pos = 'south'  # default
                 if hasattr(self, 'groups') and self.groups:
@@ -7361,10 +7668,13 @@ class QuickEstimate(ttk.Frame):
                     'polarity_convention': polarity,
                     'device_position': device_pos,
                     'inverter_topology': topology,
+                    'connector_type': connector_type,
+                    'has_extender': has_extender,
                     'wire_gauges': {
                         'string': string_gauge,
                         'harness': harness_gauge_map,
                         'whip': whip_gauge_map,
+                        'extender': extender_gauge_map,
                     },
                 })
         
@@ -7372,7 +7682,13 @@ class QuickEstimate(ttk.Frame):
 
     def export_pdf_only(self):
         """Export just the site PDF (no Excel BOM) for quick testing."""
-        self.calculate_estimate()
+        if getattr(self, '_results_stale', True):
+            messagebox.showwarning(
+                "Recalculate Required",
+                "The estimate has changed since the last calculation.\n\n"
+                "Click Calculate Estimate before exporting.",
+            )
+            return
 
         unalloc = self._count_unallocated_strings()
         if unalloc > 0:
