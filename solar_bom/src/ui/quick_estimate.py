@@ -6112,6 +6112,16 @@ class QuickEstimate(ttk.Frame):
             # Fresh or unlocked — rebuild from allocation + harness configs
             self._build_combiner_assignments(totals, topology)
 
+        # Keep DC in sync with the fresh allocation so the BOM read below sees current
+        # data on the first calc after a structural change. Skip Trunk Bus — its devices
+        # are LBDs, not CBs, and DC isn't consulted for them.
+        if self.last_combiner_assignments and lv_method != 'Trunk Bus':
+            main_app = getattr(self, 'main_app', None)
+            if main_app and hasattr(main_app, 'device_configurator'):
+                dc = main_app.device_configurator
+                if getattr(dc, 'data_source', 'blocks') == 'quick_estimate':
+                    dc.sync_from_qe_assignments(self.last_combiner_assignments)
+
         # Read combiner BOM from Device Configurator (single source of truth)
         # Falls back to simple assignment-based totals if DC isn't available
         # For Trunk Bus, skip combiner BOM entirely — LBDs are handled separately.

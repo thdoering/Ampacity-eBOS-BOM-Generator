@@ -32,6 +32,7 @@ class SitePreviewWindow(tk.Toplevel):
         self.device_feeder_sizes = dict(device_feeder_sizes) if device_feeder_sizes else {}  # {device_idx: "cable_size"}
         self.device_feeder_parallel_counts = dict(device_feeder_parallel_counts) if device_feeder_parallel_counts else {}  # {device_idx: int parallel sets per pole}
         self.device_x_offsets = dict(device_x_offsets) if device_x_offsets else {}  # {device_idx: float} cumulative E-W nudge in feet
+        self.device_color_offsets = {}  # {device_idx: int} how many steps forward in the color palette
         self.selected_pad_idx = None
         self.placing_pad = False  # True when in "click to place" mode
         self.assigning_devices = False  # True when Assign Devices dialog is open
@@ -4857,8 +4858,13 @@ class SitePreviewWindow(tk.Toplevel):
                 start_var = tk.IntVar(value=1)
                 ttk.Spinbox(frm, from_=1, to=999, textvariable=start_var, width=6).grid(row=2, column=1, sticky='w')
 
+                reverse_var = tk.BooleanVar(value=False)
+                ttk.Checkbutton(frm, text="Reverse order (last → first)",
+                                variable=reverse_var).grid(
+                    row=3, column=0, columnspan=2, sticky='w', pady=(4, 0))
+
                 btn_frame = ttk.Frame(frm)
-                btn_frame.grid(row=3, column=0, columnspan=2, pady=(10, 0))
+                btn_frame.grid(row=4, column=0, columnspan=2, pady=(10, 0))
 
                 def _do_rename():
                     try:
@@ -4866,7 +4872,8 @@ class SitePreviewWindow(tk.Toplevel):
                     except (ValueError, tk.TclError):
                         return
                     prefix = prefix_var.get()
-                    for n, dev_idx in enumerate(dev_indices):
+                    ordered = list(reversed(dev_indices)) if reverse_var.get() else dev_indices
+                    for n, dev_idx in enumerate(ordered):
                         device_data[dev_idx]['name'] = f'{prefix}{start + n:02d}'
                     _sort_device_data()
                     ren_dlg.destroy()
@@ -5097,11 +5104,43 @@ class SitePreviewWindow(tk.Toplevel):
         dh = dialog.winfo_height()
         dialog.geometry(f"+{px + (pw - dw) // 2}+{py + (ph - dh) // 2}")
 
+    def _show_device_color_menu(self, dev_idx, event):
+        """Right-click context menu for a combiner box — lets user cycle its string color."""
+        menu = tk.Menu(self, tearoff=0)
+
+        def _cycle():
+            self.device_color_offsets[dev_idx] = self.device_color_offsets.get(dev_idx, 0) + 1
+            self._recolor_from_cb_assignments()
+            self._invalidate_world_layer()
+            self.draw()
+
+        def _reset():
+            self.device_color_offsets.pop(dev_idx, None)
+            self._recolor_from_cb_assignments()
+            self._invalidate_world_layer()
+            self.draw()
+
+        dev_label = ''
+        if hasattr(self, 'device_positions') and dev_idx < len(self.device_positions):
+            dev_label = self.device_positions[dev_idx].get('label', '')
+        title = dev_label if dev_label else f'CB-{dev_idx + 1:02d}'
+
+        menu.add_command(label=f"Cycle Color — {title}", command=_cycle)
+        menu.add_command(label="Reset to Default Color", command=_reset)
+        menu.tk_popup(event.x_root, event.y_root)
+
     def _on_pad_right_click(self, event):
-        """Show context menu for pads."""
+        """Show context menu for devices (CBs) or pads."""
         if self.measure_mode:
             self._measure_finish()
             return
+
+        # Device (CB) right-click: offer color cycling
+        hit_dev = self.hit_test_device(event.x, event.y)
+        if hit_dev is not None:
+            self._show_device_color_menu(hit_dev, event)
+            return
+
         hit = self.hit_test_pad(event.x, event.y)
         if hit is None:
             return
@@ -5290,7 +5329,7 @@ class SitePreviewWindow(tk.Toplevel):
                     if global_idx in physical_order:
                         new_assignments = []
                         for dev_idx, count in physical_order[global_idx]:
-                            color = self.colors[dev_idx % len(self.colors)]
+                            color = self.colors[(dev_idx + self.device_color_offsets.get(dev_idx, 0)) % len(self.colors)]
                             new_assignments.append({
                                 'color': color,
                                 'strings': count,
@@ -5327,7 +5366,7 @@ class SitePreviewWindow(tk.Toplevel):
                     if global_idx in tracker_cb_map:
                         new_assignments = []
                         for _start_pos, cb_idx, strings_taken in tracker_cb_map[global_idx]:
-                            color = self.colors[cb_idx % len(self.colors)]
+                            color = self.colors[(cb_idx + self.device_color_offsets.get(cb_idx, 0)) % len(self.colors)]
                             new_assignments.append({
                                 'color': color,
                                 'strings': strings_taken,

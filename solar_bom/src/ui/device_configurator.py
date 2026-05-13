@@ -626,6 +626,123 @@ class DeviceConfigurator(ttk.Frame):
                 f"with {total_cb_conns} connections from Quick Estimate"
             )
 
+    def sync_from_qe_assignments(self, assignments):
+        """Programmatically sync combiner configs from QE assignments, preserving manual overrides.
+
+        Called by calculate_estimate after rebuilding assignments so DC always reflects the
+        freshest allocation without user having to click 'Calculate Estimate' twice.
+        Silent: no message boxes, no status_var updates.
+        """
+        if not assignments:
+            return
+
+        # Snapshot existing overrides before clearing
+        breaker_overrides = {}
+        for combiner_id, config in self.combiner_configs.items():
+            breaker_overrides[combiner_id] = (config.user_breaker_size, config.breaker_manually_set)
+
+        conn_overrides = {}
+        for combiner_id, config in self.combiner_configs.items():
+            for conn in config.connections:
+                key = (combiner_id, conn.tracker_id, conn.harness_id)
+                conn_overrides[key] = {
+                    'user_fuse_size': conn.user_fuse_size,
+                    'fuse_manually_set': conn.fuse_manually_set,
+                    'user_cable_size': conn.user_cable_size,
+                    'cable_manually_set': conn.cable_manually_set,
+                }
+
+        prior_edited_cells = set(self.edited_cells)
+
+        # Clear state
+        self.combiner_configs.clear()
+        self.edited_cells.clear()
+
+        # QE widget needed for wire sizing
+        qe_widget = None
+        if hasattr(self, 'main_app') and hasattr(self.main_app, 'quick_estimate_widget'):
+            qe_widget = self.main_app.quick_estimate_widget
+
+        nec_factor = 1.56
+        if self.current_project:
+            nec_factor = getattr(self.current_project, 'nec_safety_factor', 1.56)
+
+        for cb_data in assignments:
+            cb_name = cb_data['combiner_name']
+            combiner_id = cb_name
+
+            connections = []
+            for conn_data in cb_data['connections']:
+                actual_cable = (
+                    qe_widget.get_wire_size_for('whip', conn_data['num_strings'])
+                    if qe_widget else '10 AWG'
+                )
+                connection = HarnessConnection(
+                    block_id='QE',
+                    tracker_id=conn_data['tracker_label'],
+                    harness_id=conn_data['harness_label'],
+                    num_strings=conn_data['num_strings'],
+                    module_isc=conn_data['module_isc'],
+                    nec_factor=conn_data['nec_factor'],
+                    actual_cable_size=actual_cable,
+                )
+                connections.append(connection)
+
+            combiner_config = CombinerBoxConfig(
+                combiner_id=combiner_id,
+                block_id='QE',
+                connections=connections,
+                use_whips=self.use_whips_var.get(),
+                whip_length_ft=3 if self.use_whips_var.get() else 0,
+            )
+
+            # Apply fuse uniformity rule BEFORE restoring per-connection overrides
+            if combiner_config.connections:
+                max_fuse = max(conn.calculated_fuse_size for conn in combiner_config.connections)
+                for conn in combiner_config.connections:
+                    conn.calculated_fuse_size = max_fuse
+                    if conn.user_fuse_size and conn.user_fuse_size < max_fuse:
+                        conn.user_fuse_size = None
+                        conn.fuse_manually_set = False
+
+            # Restore breaker override if it was manually set
+            if combiner_id in breaker_overrides:
+                prev_breaker, was_manual = breaker_overrides[combiner_id]
+                if was_manual:
+                    combiner_config.user_breaker_size = prev_breaker
+                    combiner_config.breaker_manually_set = True
+                    breaker_cell = f"{combiner_id}_breaker"
+                    if breaker_cell in prior_edited_cells:
+                        self.edited_cells.add(breaker_cell)
+
+            # Restore per-connection fuse/cable overrides
+            for conn in combiner_config.connections:
+                key = (combiner_id, conn.tracker_id, conn.harness_id)
+                if key not in conn_overrides:
+                    continue
+                prev = conn_overrides[key]
+                if prev['fuse_manually_set']:
+                    conn.user_fuse_size = prev['user_fuse_size']
+                    conn.fuse_manually_set = True
+                    fuse_cell = f"{combiner_id}_{conn.tracker_id}_{conn.harness_id}_fuse"
+                    if fuse_cell in prior_edited_cells:
+                        self.edited_cells.add(fuse_cell)
+                if prev['cable_manually_set']:
+                    conn.user_cable_size = prev['user_cable_size']
+                    conn.cable_manually_set = True
+                    cable_cell = f"{combiner_id}_{conn.tracker_id}_{conn.harness_id}_cable"
+                    if cable_cell in prior_edited_cells:
+                        self.edited_cells.add(cable_cell)
+
+            self.combiner_configs[combiner_id] = combiner_config
+
+        self.data_source = 'quick_estimate'
+        if hasattr(self, 'data_source_var'):
+            self.data_source_var.set('quick_estimate')
+
+        self.refresh_display()
+        self.save_configuration_to_project()
+
     def _load_si_from_quick_estimate(self, qe_widget):
         """Populate string_inverter_configs from QE last_si_assignments (Distributed String)."""
         self.string_inverter_configs.clear()
