@@ -10,7 +10,7 @@ class SitePreviewWindow(tk.Toplevel):
     def __init__(self, parent, inv_summary, topology, colors, groups, enabled_templates, row_spacing_ft,
                  num_devices=0, device_label='CB', initial_inspect=False, pads=None, device_names=None,
                  device_feeder_sizes=None, device_feeder_parallel_counts=None, measurements=None,
-                 device_x_offsets=None):
+                 device_x_offsets=None, corridors=None):
         super().__init__(parent)
         self.title("Site Preview — Inverter Allocation")
         self.geometry("1100x750")
@@ -87,6 +87,13 @@ class SitePreviewWindow(tk.Toplevel):
         self.current_measure_pts = []   # world-coord points for the in-progress measurement
         self.measure_mode = False
         self.measure_mouse_pos = None   # canvas coords of cursor (for rubber-band)
+
+        # Corridor state
+        self.corridors = list(corridors) if corridors else []
+        self.drawing_corridor = False
+        self.current_corridor_pts = []  # world-coord vertices for the in-progress corridor
+        self.corridor_mouse_pos = None  # canvas coords of cursor (for rubber-band)
+        self.selected_corridor_idx = None
 
         self._world_dirty = True  # True → rebuild world layer on next draw()
 
@@ -301,6 +308,11 @@ class SitePreviewWindow(tk.Toplevel):
                         command=self.draw).pack(side='left', padx=4)
 
         ttk.Button(top_bar2, text="Clear Dims", command=self._measure_clear).pack(side='left', padx=2)
+
+        ttk.Separator(top_bar2, orient='vertical').pack(side='left', fill='y', padx=8, pady=2)
+
+        self.corridor_btn = ttk.Button(top_bar2, text="Add Corridor", command=self._toggle_corridor_mode)
+        self.corridor_btn.pack(side='left', padx=2)
         
         # Canvas
         canvas_frame = ttk.Frame(self)
@@ -325,7 +337,9 @@ class SitePreviewWindow(tk.Toplevel):
         self.canvas.bind('<Button-3>', self._on_pad_right_click)
         self.canvas.bind('<Configure>', lambda e: (self._invalidate_world_layer(), self.draw()))
         self.canvas.bind('<Motion>', self._on_measure_motion)
-        self.bind('<Escape>', lambda e: self._measure_cancel())
+        self.bind('<Escape>', lambda e: self._cancel_drawing_mode())
+        self.bind('<Return>', lambda e: self._corridor_finish())
+        self.bind('<Delete>', lambda e: self._delete_selected_corridor())
         self.bind('<Left>',    self._on_arrow_nudge_left)
         self.bind('<Right>',   self._on_arrow_nudge_right)
         self.bind('<KP_Left>', self._on_arrow_nudge_left)
@@ -1266,6 +1280,21 @@ class SitePreviewWindow(tk.Toplevel):
             self.draw()
             return
 
+        # Corridor draw mode — each click plants a vertex (axis-snapped unless Shift held)
+        if self.drawing_corridor:
+            wx, wy = self.canvas_to_world(event.x, event.y)
+            if self.current_corridor_pts:
+                prev_x, prev_y = self.current_corridor_pts[-1]
+                if not (event.state & 0x0001):  # Shift not held → axis-snap
+                    if abs(wx - prev_x) >= abs(wy - prev_y):
+                        wy = prev_y
+                    else:
+                        wx = prev_x
+            self.current_corridor_pts.append((wx, wy))
+            self._invalidate_world_layer()
+            self.draw()
+            return
+
         # Pad placement mode — click to place
         if self.placing_pad:
             wx, wy = self.canvas_to_world(event.x, event.y)
@@ -1376,6 +1405,16 @@ class SitePreviewWindow(tk.Toplevel):
 
         self.selected_pad_idx = None
 
+        # Check corridors (before groups so they're easy to click)
+        hit_corr = self.hit_test_corridor(event.x, event.y)
+        if hit_corr is not None:
+            self.selected_corridor_idx = None if self.selected_corridor_idx == hit_corr else hit_corr
+            self._invalidate_world_layer()
+            self.draw()
+            return
+
+        self.selected_corridor_idx = None
+
         hit = self.hit_test_group(event.x, event.y)
         ctrl = event.state & 0x4
         if hit is not None:
@@ -1409,7 +1448,14 @@ class SitePreviewWindow(tk.Toplevel):
             self.draw()
 
     def _on_device_double_click(self, event):
-        """Handle double-click on canvas — rename device if clicked on one."""
+        """Handle double-click on canvas — commit corridor draw, or rename device."""
+        if self.drawing_corridor:
+            # ButtonPress-1 already added the second click as a vertex; pop it to avoid duplicate
+            if len(self.current_corridor_pts) > 1:
+                self.current_corridor_pts.pop()
+            self._corridor_finish()
+            return
+
         dev_idx = self.hit_test_device(event.x, event.y)
         if dev_idx is None:
             return
@@ -2185,6 +2231,9 @@ class SitePreviewWindow(tk.Toplevel):
         
         # Overlap warnings
         self._draw_overlap_warnings()
+
+        # Corridors (above pads, below measurements)
+        self._draw_corridors()
 
         # Measurement annotations
         self._draw_measurements()
@@ -3230,6 +3279,9 @@ class SitePreviewWindow(tk.Toplevel):
         """Activate or deactivate the measurement drawing tool."""
         self.measure_mode = not self.measure_mode
         if self.measure_mode:
+            # Deactivate corridor mode if active
+            if self.drawing_corridor:
+                self._corridor_cancel()
             self.measure_btn.config(text="Stop Measuring")
             self.canvas.config(cursor='crosshair')
             self.current_measure_pts = []
@@ -3240,7 +3292,28 @@ class SitePreviewWindow(tk.Toplevel):
             self.canvas.config(cursor='')
 
     def _on_measure_motion(self, event):
-        """Redraw the rubber-band line from the last placed vertex to the cursor."""
+        """Redraw rubber-band lines for measure or corridor draw mode."""
+        # Corridor rubber-band
+        if self.drawing_corridor:
+            self.canvas.delete('corridor_rubber')
+            if self.current_corridor_pts:
+                self.corridor_mouse_pos = (event.x, event.y)
+                wx_last, wy_last = self.current_corridor_pts[-1]
+                cx_last, cy_last = self.world_to_canvas(wx_last, wy_last)
+                wx, wy = self.canvas_to_world(event.x, event.y)
+                # Apply axis-snap to rubber-band preview too (unless Shift)
+                if not (event.state & 0x0001):
+                    if abs(wx - wx_last) >= abs(wy - wy_last):
+                        wy = wy_last
+                    else:
+                        wx = wx_last
+                cx_end, cy_end = self.world_to_canvas(wx, wy)
+                self.canvas.create_line(
+                    cx_last, cy_last, cx_end, cy_end,
+                    fill='#C2185B', width=2, dash=(4, 4), tags='corridor_rubber'
+                )
+            return
+
         if not self.measure_mode or not self.current_measure_pts:
             self.canvas.delete('measure_rubber')
             return
@@ -3308,6 +3381,150 @@ class SitePreviewWindow(tk.Toplevel):
         self.canvas.delete('measure_rubber')
         self._invalidate_world_layer()
         self.draw()
+
+    def _cancel_drawing_mode(self):
+        """Cancel whichever drawing mode is active (measure or corridor)."""
+        if self.drawing_corridor:
+            self._corridor_cancel()
+        elif self.measure_mode:
+            self._measure_cancel()
+
+    # ---- Corridor draw mode ----
+
+    def _toggle_corridor_mode(self):
+        """Enter or exit corridor draw mode."""
+        if self.drawing_corridor:
+            self._corridor_finish()  # _corridor_finish resets drawing_corridor and button text
+        else:
+            # Deactivate measure mode if it was on
+            if self.measure_mode:
+                self._measure_finish()
+                self.measure_mode = False
+                self.measure_btn.config(text="Measure")
+            self.drawing_corridor = True
+            self.corridor_btn.config(text="Stop Drawing Corridor")
+            self.canvas.config(cursor='crosshair')
+            self.current_corridor_pts = []
+            self.corridor_mouse_pos = None
+
+    def _corridor_finish(self):
+        """Commit the in-progress corridor (≥2 points) and exit draw mode."""
+        if not self.drawing_corridor:
+            return
+        pts = list(self.current_corridor_pts)
+        if len(pts) >= 2:
+            n = len(self.corridors) + 1
+            all_device_indices = (list(range(len(self.device_positions)))
+                                  if not self.corridors and hasattr(self, 'device_positions')
+                                  else [])
+            self.corridors.append({
+                'id': f'corridor_{n}',
+                'label': f'Corridor {n}',
+                'points': pts,
+                'assigned_devices': all_device_indices,
+            })
+        self.current_corridor_pts = []
+        self.corridor_mouse_pos = None
+        self.drawing_corridor = False
+        self.canvas.delete('corridor_rubber')
+        self.corridor_btn.config(text="Add Corridor")
+        self.canvas.config(cursor='')
+        self._invalidate_world_layer()
+        self.draw()
+
+    def _corridor_cancel(self):
+        """Discard the current in-progress corridor without saving (Escape)."""
+        if not self.current_corridor_pts and not self.drawing_corridor:
+            return
+        self.current_corridor_pts = []
+        self.corridor_mouse_pos = None
+        self.drawing_corridor = False
+        self.canvas.delete('corridor_rubber')
+        self.corridor_btn.config(text="Add Corridor")
+        self.canvas.config(cursor='')
+        self._invalidate_world_layer()
+        self.draw()
+
+    def _show_corridor_context_menu(self, c_idx, event):
+        """Show right-click context menu for a corridor."""
+        corridor = self.corridors[c_idx]
+        menu = tk.Menu(self, tearoff=0)
+
+        def _rename():
+            current = corridor.get('label', f'Corridor {c_idx + 1}')
+            new_name = simpledialog.askstring("Rename Corridor", "New label:",
+                                              initialvalue=current, parent=self)
+            if new_name and new_name.strip():
+                corridor['label'] = new_name.strip()
+                self._invalidate_world_layer()
+                self.draw()
+
+        def _delete():
+            label = corridor.get('label', f'Corridor {c_idx + 1}')
+            if not messagebox.askyesno("Delete Corridor", f"Delete '{label}'?", parent=self):
+                return
+            del self.corridors[c_idx]
+            self.selected_corridor_idx = None
+            self._invalidate_world_layer()
+            self.draw()
+
+        menu.add_command(label="Rename Corridor…", command=_rename)
+        menu.add_separator()
+        menu.add_command(label="Delete Corridor", command=_delete)
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _delete_selected_corridor(self):
+        """Delete the currently selected corridor (if any) and clear device assignments."""
+        if self.selected_corridor_idx is None or self.selected_corridor_idx >= len(self.corridors):
+            return
+        del self.corridors[self.selected_corridor_idx]
+        self.selected_corridor_idx = None
+        self._invalidate_world_layer()
+        self.draw()
+
+    def _draw_corridors(self):
+        """Draw all saved corridors and the current in-progress corridor."""
+        CORRIDOR_COLOR = '#C2185B'
+        FONT = ('Helvetica', 8, 'bold')
+
+        def _draw_one(pts, selected=False, in_progress=False):
+            if len(pts) < 2:
+                return
+            width = 4 if selected else 3
+            cpx = [self.world_to_canvas(wx, wy) for wx, wy in pts]
+            for i in range(len(pts) - 1):
+                cx1, cy1 = cpx[i]
+                cx2, cy2 = cpx[i + 1]
+                self.canvas.create_line(
+                    cx1, cy1, cx2, cy2,
+                    fill=CORRIDOR_COLOR, width=width,
+                    dash=(6, 3) if in_progress else (),
+                    tags='world'
+                )
+            for cx, cy in cpx:
+                r = 4
+                self.canvas.create_oval(
+                    cx - r, cy - r, cx + r, cy + r,
+                    fill=CORRIDOR_COLOR, outline='#7B0032', tags='world'
+                )
+
+        for c_idx, corridor in enumerate(self.corridors):
+            pts = corridor.get('points', [])
+            if len(pts) < 2:
+                continue
+            selected = (c_idx == self.selected_corridor_idx)
+            _draw_one(pts, selected=selected)
+            # Label near first vertex
+            lx, ly = self.world_to_canvas(*pts[0])
+            self._draw_text_with_bg(
+                lx + 8, ly - 10,
+                text=corridor.get('label', f'Corridor {c_idx + 1}'),
+                font=FONT, fill=CORRIDOR_COLOR, bg='white'
+            )
+
+        # In-progress corridor
+        if self.drawing_corridor and len(self.current_corridor_pts) >= 2:
+            _draw_one(self.current_corridor_pts, in_progress=True)
 
     def _draw_measurements(self):
         """Draw all saved measurements and the current in-progress segments."""
@@ -3447,6 +3664,31 @@ class SitePreviewWindow(tk.Toplevel):
                 return i
         return None
 
+    def hit_test_corridor(self, cx, cy):
+        """Return the index of the corridor whose polyline is near canvas coords (cx, cy), or None."""
+        TOLERANCE = 6  # pixels
+        for c_idx, corridor in enumerate(self.corridors):
+            pts = corridor.get('points', [])
+            if len(pts) < 2:
+                continue
+            cpx = [self.world_to_canvas(wx, wy) for wx, wy in pts]
+            for i in range(len(cpx) - 1):
+                x1, y1 = cpx[i]
+                x2, y2 = cpx[i + 1]
+                # Point-to-segment distance
+                dx, dy = x2 - x1, y2 - y1
+                seg_len_sq = dx * dx + dy * dy
+                if seg_len_sq == 0:
+                    dist = math.hypot(cx - x1, cy - y1)
+                else:
+                    t = max(0.0, min(1.0, ((cx - x1) * dx + (cy - y1) * dy) / seg_len_sq))
+                    px = x1 + t * dx
+                    py = y1 + t * dy
+                    dist = math.hypot(cx - px, cy - py)
+                if dist <= TOLERANCE:
+                    return c_idx
+        return None
+
     def hit_test_device(self, cx, cy):
         """Return the index of the device under canvas coords, or None."""
         if not hasattr(self, 'device_positions') or not self.device_positions:
@@ -3483,8 +3725,8 @@ class SitePreviewWindow(tk.Toplevel):
 
         num_devices = len(self.device_positions)
         dialog_height = max(320, min(640, 160 + num_devices * 22))
-        dialog.geometry(f"720x{dialog_height}")
-        dialog.minsize(600, 300)
+        dialog.geometry(f"860x{dialog_height}")
+        dialog.minsize(700, 300)
 
         # Build pad label list
         pad_labels = [pad.get('label', f'Pad {i+1}') for i, pad in enumerate(self.pads)]
@@ -3534,7 +3776,7 @@ class SitePreviewWindow(tk.Toplevel):
         tree_frame = ttk.Frame(dialog)
         tree_frame.pack(fill='both', expand=True, padx=10, pady=(0, 0))
 
-        _COL_NAMES = ('device', 'strings', 'group', 'feeder', 'parallel', 'pad')
+        _COL_NAMES = ('device', 'strings', 'group', 'feeder', 'parallel', 'pad', 'corridor')
         tree = ttk.Treeview(tree_frame, columns=_COL_NAMES, show='headings',
                             selectmode='extended', height=min(num_devices, 20))
         tree.heading('device',   text='Device',         command=lambda: _sort_tree('device'))
@@ -3543,13 +3785,15 @@ class SitePreviewWindow(tk.Toplevel):
         tree.heading('feeder',   text=feeder_col_label, command=lambda: _sort_tree('feeder'))
         tree.heading('parallel', text='Parallel',       command=lambda: _sort_tree('parallel'))
         tree.heading('pad',      text='Pad',            command=lambda: _sort_tree('pad'))
+        tree.heading('corridor', text='Corridor',       command=lambda: _sort_tree('corridor'))
 
         tree.column('device',   width=100, anchor='w',      minwidth=70)
         tree.column('strings',  width=60,  anchor='center', minwidth=40)
         tree.column('group',    width=110, anchor='w',      minwidth=70)
         tree.column('feeder',   width=110, anchor='center', minwidth=70)
         tree.column('parallel', width=70,  anchor='center', minwidth=50)
-        tree.column('pad',      width=140, anchor='w',      minwidth=80)
+        tree.column('pad',      width=130, anchor='w',      minwidth=80)
+        tree.column('corridor', width=120, anchor='w',      minwidth=80)
 
         vsb = ttk.Scrollbar(tree_frame, orient='vertical', command=tree.yview)
         tree.configure(yscrollcommand=vsb.set)
@@ -3558,6 +3802,16 @@ class SitePreviewWindow(tk.Toplevel):
         tree_frame.columnconfigure(0, weight=1)
         tree_frame.rowconfigure(0, weight=1)
 
+        # Build corridor label list and device→corridor lookup
+        _NO_CORRIDOR = '— (no corridor)'
+        corridor_labels = [c.get('label', f'Corridor {i+1}') for i, c in enumerate(self.corridors)]
+        corridor_options = [_NO_CORRIDOR] + corridor_labels  # for combobox
+        device_to_corridor = {}  # dev_idx -> corridor_idx (or None)
+        for c_idx, corridor in enumerate(self.corridors):
+            for dev_idx in corridor.get('assigned_devices', []):
+                device_to_corridor[dev_idx] = c_idx
+        _snap_corridor_assigned = [list(c.get('assigned_devices', [])) for c in self.corridors]
+
         _HEADING_BASE = {
             'device':   'Device',
             'strings':  'Strings',
@@ -3565,6 +3819,7 @@ class SitePreviewWindow(tk.Toplevel):
             'feeder':   feeder_col_label,
             'parallel': 'Parallel',
             'pad':      'Pad',
+            'corridor': 'Corridor',
         }
         _sort_state = {'col': None, 'reverse': False}
 
@@ -3600,7 +3855,9 @@ class SitePreviewWindow(tk.Toplevel):
             pad_idx = device_to_pad.get(dev_idx, 0)
             if pad_idx >= len(pad_labels):
                 pad_idx = 0
-            return (dev['label'], str(num_strings), grp_name, feeder_val, str(parallel_val), pad_labels[pad_idx])
+            c_idx = device_to_corridor.get(dev_idx)
+            corr_label = corridor_labels[c_idx] if c_idx is not None and c_idx < len(corridor_labels) else _NO_CORRIDOR
+            return (dev['label'], str(num_strings), grp_name, feeder_val, str(parallel_val), pad_labels[pad_idx], corr_label)
 
         for dev_idx in range(num_devices):
             tree.insert('', 'end', iid=f"dev_{dev_idx}", values=_row_values(dev_idx))
@@ -3686,7 +3943,7 @@ class SitePreviewWindow(tk.Toplevel):
                 editor.bind('<FocusOut>', _commit_parallel)
                 editor.bind('<Escape>',   lambda e: _destroy_editor())
 
-            else:  # col_index == 5  (pad)
+            elif col_index == 5:  # pad
                 old_pad_idx = device_to_pad.get(dev_idx, 0)
                 if old_pad_idx >= len(pad_labels):
                     old_pad_idx = 0
@@ -3717,6 +3974,46 @@ class SitePreviewWindow(tk.Toplevel):
                 editor.bind('<Return>',   _commit_pad)
                 editor.bind('<Tab>',      _commit_pad)
                 editor.bind('<FocusOut>', _commit_pad)
+                editor.bind('<Escape>',   lambda e: _destroy_editor())
+
+            else:  # col_index == 6  (corridor)
+                if not self.corridors:
+                    return  # No corridors — column is display-only
+                old_c_idx = device_to_corridor.get(dev_idx)
+                old_label = corridor_labels[old_c_idx] if old_c_idx is not None and old_c_idx < len(corridor_labels) else _NO_CORRIDOR
+                var = tk.StringVar(value=old_label)
+                editor = ttk.Combobox(tree, textvariable=var, values=corridor_options, state='readonly')
+                editor.place(x=bx, y=by, width=bw, height=bh)
+                editor.focus_set()
+                _active_editor[0] = editor
+
+                def _commit_corridor(e=None, _idx=dev_idx, _var=var, _ed=editor, _old_c=old_c_idx):
+                    if _active_editor[0] is not _ed:
+                        return
+                    new_label = _var.get()
+                    new_c_idx = next((i for i, lbl in enumerate(corridor_labels) if lbl == new_label), None)
+                    # Remove from old corridor
+                    if _old_c is not None and _old_c < len(self.corridors):
+                        old_assigned = self.corridors[_old_c].get('assigned_devices', [])
+                        if _idx in old_assigned:
+                            old_assigned.remove(_idx)
+                    # Add to new corridor
+                    if new_c_idx is not None and new_c_idx < len(self.corridors):
+                        if _idx not in self.corridors[new_c_idx].get('assigned_devices', []):
+                            self.corridors[new_c_idx].setdefault('assigned_devices', []).append(_idx)
+                        device_to_corridor[_idx] = new_c_idx
+                    else:
+                        device_to_corridor.pop(_idx, None)
+                    display = corridor_labels[new_c_idx] if new_c_idx is not None else _NO_CORRIDOR
+                    tree.set(f"dev_{_idx}", 'corridor', display)
+                    _destroy_editor()
+                    self._invalidate_world_layer()
+                    self._schedule_redraw()
+
+                editor.bind('<<ComboboxSelected>>', _commit_corridor)
+                editor.bind('<Return>',   _commit_corridor)
+                editor.bind('<Tab>',      _commit_corridor)
+                editor.bind('<FocusOut>', _commit_corridor)
                 editor.bind('<Escape>',   lambda e: _destroy_editor())
 
         tree.bind('<Double-1>', _on_double_click)
@@ -3754,6 +4051,21 @@ class SitePreviewWindow(tk.Toplevel):
                         self.pads[new_pad_idx].setdefault('assigned_devices', []).append(i)
                     device_to_pad[i] = new_pad_idx
                     tree.set(iid, col_name, value)
+                elif col_index == 6:
+                    new_c_idx = next((ci for ci, lbl in enumerate(corridor_labels) if lbl == value), None)
+                    old_c_idx = device_to_corridor.get(i)
+                    if old_c_idx is not None and old_c_idx < len(self.corridors):
+                        old_assigned = self.corridors[old_c_idx].get('assigned_devices', [])
+                        if i in old_assigned:
+                            old_assigned.remove(i)
+                    if new_c_idx is not None and new_c_idx < len(self.corridors):
+                        if i not in self.corridors[new_c_idx].get('assigned_devices', []):
+                            self.corridors[new_c_idx].setdefault('assigned_devices', []).append(i)
+                        device_to_corridor[i] = new_c_idx
+                    else:
+                        device_to_corridor.pop(i, None)
+                    display = corridor_labels[new_c_idx] if new_c_idx is not None else _NO_CORRIDOR
+                    tree.set(iid, col_name, display)
             self._invalidate_world_layer()
             self._schedule_redraw()
 
@@ -3779,8 +4091,12 @@ class SitePreviewWindow(tk.Toplevel):
                 choices = feeder_sizes_list
             elif col_index == 4:
                 choices = [str(i) for i in range(1, 11)]
-            else:
+            elif col_index == 5:
                 choices = pad_labels
+            else:
+                if not self.corridors:
+                    return
+                choices = corridor_options
 
             context_menu.delete(0, 'end')
             context_menu.add_command(
@@ -3813,6 +4129,14 @@ class SitePreviewWindow(tk.Toplevel):
             for pad_idx, assigned in enumerate(_snap_assigned):
                 for dev_idx in assigned:
                     device_to_pad[dev_idx] = pad_idx
+            # Restore corridor assignments
+            for c_idx, corridor in enumerate(self.corridors):
+                if c_idx < len(_snap_corridor_assigned):
+                    corridor['assigned_devices'] = list(_snap_corridor_assigned[c_idx])
+            device_to_corridor.clear()
+            for c_idx, corridor in enumerate(self.corridors):
+                for dev_idx in corridor.get('assigned_devices', []):
+                    device_to_corridor[dev_idx] = c_idx
             for dev_idx in range(num_devices):
                 tree.item(f"dev_{dev_idx}", values=_row_values(dev_idx))
             self._invalidate_world_layer()
@@ -5130,9 +5454,20 @@ class SitePreviewWindow(tk.Toplevel):
         menu.tk_popup(event.x_root, event.y_root)
 
     def _on_pad_right_click(self, event):
-        """Show context menu for devices (CBs) or pads."""
+        """Show context menu for corridors, devices (CBs), or pads."""
         if self.measure_mode:
             self._measure_finish()
+            return
+        if self.drawing_corridor:
+            return
+
+        # Corridor right-click
+        hit_corr = self.hit_test_corridor(event.x, event.y)
+        if hit_corr is not None:
+            self.selected_corridor_idx = hit_corr
+            self._invalidate_world_layer()
+            self.draw()
+            self._show_corridor_context_menu(hit_corr, event)
             return
 
         # Device (CB) right-click: offer color cycling
@@ -5195,28 +5530,38 @@ class SitePreviewWindow(tk.Toplevel):
         menu.tk_popup(event.x_root, event.y_root)
 
     def _draw_routes(self):
-        """Draw L-shaped Manhattan routes from each device to its assigned pad."""
+        """Draw routes from each device to its assigned pad.
+
+        Devices assigned to a corridor draw three-leg paths (row→corridor→pad).
+        Unassigned devices draw the original L-shaped Manhattan path.
+        """
         if not self.show_routes_var.get():
             return
         if not self.pads or not hasattr(self, 'device_positions') or not self.device_positions:
             return
-        
+
         PAD_COLORS = ['#C62828', '#1565C0', '#2E7D32', '#E65100', '#6A1B9A',
                       '#00838F', '#AD1457', '#4E342E']
-        
+
         # Build device -> pad lookup
         device_to_pad = {}
         for pad_idx, pad in enumerate(self.pads):
             for dev_idx in pad.get('assigned_devices', []):
                 device_to_pad[dev_idx] = pad_idx
-        
+
+        # Build device -> corridor lookup
+        device_to_corridor = {}
+        for c_idx, corridor in enumerate(self.corridors):
+            for dev_idx in corridor.get('assigned_devices', []):
+                device_to_corridor[dev_idx] = c_idx
+
         for dev_idx, dev in enumerate(self.device_positions):
             pad_idx = device_to_pad.get(dev_idx)
             if pad_idx is None or pad_idx >= len(self.pads):
                 continue
-            
+
             pad = self.pads[pad_idx]
-            
+
             # Device center — apply group rotation
             dev_cx = dev['x'] + dev['width_ft'] / 2
             dev_cy = dev['y'] + dev['height_ft'] / 2
@@ -5228,7 +5573,45 @@ class SitePreviewWindow(tk.Toplevel):
             pad_cx = pad['x'] + pad.get('width_ft', 10.0) / 2
             pad_cy = pad['y'] + pad.get('height_ft', 8.0) / 2
 
-            # Row direction: E-W tilted by driveline_angle, then rotated by azimuth
+            color = PAD_COLORS[pad_idx % len(PAD_COLORS)]
+            dash_pattern = (4, 4) if self.topology == 'Distributed String' else ()
+            line_width = 1
+
+            # --- Corridor-assigned: three-leg path ---
+            c_idx = device_to_corridor.get(dev_idx)
+            if c_idx is not None and c_idx < len(self.corridors):
+                corridor = self.corridors[c_idx]
+                pts = corridor.get('points', [])
+                if len(pts) >= 2:
+                    try:
+                        from src.utils.corridor_routing import three_leg_distance
+                        total_dist, path_geom = three_leg_distance(
+                            (dev_cx, dev_cy), (pad_cx, pad_cy), pts
+                        )
+                        # Draw the full three-leg path
+                        canvas_pts = [self.world_to_canvas(wx, wy) for wx, wy in path_geom]
+                        for i in range(len(canvas_pts) - 1):
+                            self.canvas.create_line(
+                                canvas_pts[i][0], canvas_pts[i][1],
+                                canvas_pts[i + 1][0], canvas_pts[i + 1][1],
+                                fill=color, width=line_width, dash=dash_pattern, tags='world'
+                            )
+                        if self.inspect_mode and self.selected_device_idx == dev_idx:
+                            font_size = max(6, min(10, int(8 * self.scale)))
+                            mid_idx = len(canvas_pts) // 2
+                            lx, ly = canvas_pts[mid_idx]
+                            self._draw_text_with_bg(
+                                lx, ly - 8,
+                                text=f"{total_dist:.0f} ft",
+                                font=('Helvetica', font_size, 'bold'),
+                                fill=color
+                            )
+                        continue
+                    except Exception as e:
+                        print(f"Warning: corridor route draw failed for device {dev_idx}: {e}", flush=True)
+                        # Fall through to L-shape below
+
+            # --- Default: L-shape ---
             grp_idx = dev.get('group_idx')
             grp = self.group_layout[grp_idx] if (grp_idx is not None and grp_idx < len(self.group_layout)) else {}
             driveline_tan = grp.get('driveline_tan', 0.0)
@@ -5243,45 +5626,27 @@ class SitePreviewWindow(tk.Toplevel):
             else:
                 row_dx, row_dy = dx_u, dy_u
 
-            # Corner: projection of pad onto the line through device in row direction
             t = (pad_cx - dev_cx) * row_dx + (pad_cy - dev_cy) * row_dy
             corner_x = dev_cx + t * row_dx
             corner_y = dev_cy + t * row_dy
 
-            # Convert to canvas coords
             cx1, cy1 = self.world_to_canvas(dev_cx, dev_cy)
             cx_corner, cy_corner = self.world_to_canvas(corner_x, corner_y)
             cx2, cy2 = self.world_to_canvas(pad_cx, pad_cy)
 
-            color = PAD_COLORS[pad_idx % len(PAD_COLORS)]
-
-            # Determine line style based on topology
-            if self.topology == 'Distributed String':
-                dash_pattern = (4, 4)  # Dashed for AC
-            else:
-                dash_pattern = ()  # Solid for DC
-
-            line_width = 1
-
-            # Leg 1: along the row/driveline direction
             self.canvas.create_line(
                 cx1, cy1, cx_corner, cy_corner,
                 fill=color, width=line_width, dash=dash_pattern, tags='world'
             )
-
-            # Leg 2: from turn point to pad
             self.canvas.create_line(
                 cx_corner, cy_corner, cx2, cy2,
                 fill=color, width=line_width, dash=dash_pattern, tags='world'
             )
 
-            # Show distance label if this device is selected in inspect mode
             if self.inspect_mode and self.selected_device_idx == dev_idx:
                 leg1 = abs(t)
                 leg2 = math.sqrt((pad_cx - corner_x) ** 2 + (pad_cy - corner_y) ** 2)
                 total_dist = leg1 + leg2
-
-                # Place label at the corner of the L
                 font_size = max(6, min(10, int(8 * self.scale)))
                 self._draw_text_with_bg(
                     cx_corner, cy_corner - 8,

@@ -56,7 +56,8 @@ def generate_site_pdf(filepath: str,
                       show_routes: bool = True,
                       align_on_motor: bool = True,
                       wiring_specs: Optional[List[Dict]] = None,
-                      table_corner: str = 'top-right') -> bool:
+                      table_corner: str = 'top-right',
+                      corridors: Optional[List[Dict]] = None) -> bool:
     """
     Generate an 11x17 landscape PDF of the string allocation site preview,
     optionally followed by DC cabling wiring diagram pages.
@@ -84,7 +85,8 @@ def generate_site_pdf(filepath: str,
             # ===== Page 1: Site Preview =====
             fig = _create_site_page(group_layout, device_positions, pads,
                                      colors, topology, device_label, project_info,
-                                     show_routes, align_on_motor, table_corner)
+                                     show_routes, align_on_motor, table_corner,
+                                     corridors=corridors)
             pdf.savefig(fig)
             plt.close(fig)
 
@@ -107,12 +109,13 @@ def generate_site_pdf(filepath: str,
 
 def _create_site_page(group_layout, device_positions, pads, colors,
                        topology, device_label, project_info,
-                       show_routes, align_on_motor, table_corner='top-right'):
+                       show_routes, align_on_motor, table_corner='top-right',
+                       corridors=None):
     """Create the Page 1 figure (site preview)."""
 
     # Pre-compute bounds and table placement before creating axes so we can
     # shrink the drawing width when no clear corner is available.
-    world_bounds_raw = _compute_world_bounds(group_layout, device_positions, pads)
+    world_bounds_raw = _compute_world_bounds(group_layout, device_positions, pads, corridors=corridors)
     table_w, table_h = _compute_table_dims(project_info)
     chosen_corner = table_corner
     effective_drawing_w = DRAWING_WIDTH
@@ -167,8 +170,10 @@ def _create_site_page(group_layout, device_positions, pads, colors,
     _draw_groups(ax, group_layout, max_width)
     _draw_devices(ax, device_positions, device_label, pads, group_layout)
     if show_routes:
-        _draw_routes(ax, device_positions, pads, topology, group_layout)
+        _draw_routes(ax, device_positions, pads, topology, group_layout, corridors=corridors)
     _draw_pads(ax, pads)
+    if corridors:
+        _draw_corridors_pdf(ax, corridors)
     if align_on_motor:
         _draw_motor_alignment_lines(ax, group_layout)
     _draw_compass(ax)
@@ -211,7 +216,7 @@ def _group_rotation_info(group_data):
     return rcx, rcy, rd
 
 
-def _compute_world_bounds(group_layout, device_positions, pads):
+def _compute_world_bounds(group_layout, device_positions, pads, corridors=None):
     """Compute the bounding box of all drawn elements in world feet."""
     if not group_layout:
         return None
@@ -267,6 +272,11 @@ def _compute_world_bounds(group_layout, device_positions, pads):
         ph = pad.get('height_ft', 8)
         xs.extend([pad['x'], pad['x'] + pw])
         ys.extend([pad['y'], pad['y'] + ph])
+
+    for corridor in (corridors or []):
+        for wx, wy in corridor.get('points', []):
+            xs.append(wx)
+            ys.append(wy)
 
     if not xs:
         return None
@@ -469,8 +479,11 @@ def _draw_devices(ax, device_positions, device_label, pads, group_layout=None):
                 bbox=dict(facecolor='white', edgecolor='none', alpha=0.85, pad=1))
 
 
-def _draw_routes(ax, device_positions, pads, topology, group_layout=None):
-    """Draw routes from devices to their assigned pads, following the driveline direction."""
+def _draw_routes(ax, device_positions, pads, topology, group_layout=None, corridors=None):
+    """Draw routes from devices to their assigned pads.
+
+    Corridor-assigned devices get three-leg paths; others get L-shaped paths.
+    """
     if not pads or not device_positions:
         return
 
@@ -478,6 +491,11 @@ def _draw_routes(ax, device_positions, pads, topology, group_layout=None):
     for pad_idx, pad in enumerate(pads):
         for dev_idx in pad.get('assigned_devices', []):
             device_to_pad[dev_idx] = pad_idx
+
+    device_to_corridor = {}
+    for c_idx, corridor in enumerate(corridors or []):
+        for dev_idx in corridor.get('assigned_devices', []):
+            device_to_corridor[dev_idx] = c_idx
 
     for dev_idx, dev in enumerate(device_positions):
         pad_idx = device_to_pad.get(dev_idx)
@@ -502,7 +520,27 @@ def _draw_routes(ax, device_positions, pads, topology, group_layout=None):
         pad_cx = pad['x'] + pad.get('width_ft', 10) / 2
         pad_cy = pad['y'] + pad.get('height_ft', 8) / 2
 
-        # Row direction: E-W tilted by driveline_angle, then rotated by azimuth
+        color = PAD_COLORS[pad_idx % len(PAD_COLORS)]
+        linestyle = '--' if topology == 'Distributed String' else '-'
+
+        # --- Corridor three-leg path ---
+        c_idx = device_to_corridor.get(dev_idx)
+        if c_idx is not None and corridors and c_idx < len(corridors):
+            corridor_pts = corridors[c_idx].get('points', [])
+            if len(corridor_pts) >= 2:
+                try:
+                    from .corridor_routing import three_leg_distance
+                    _dist, path_geom = three_leg_distance(
+                        (dev_cx, dev_cy), (pad_cx, pad_cy), corridor_pts
+                    )
+                    xs = [p[0] for p in path_geom]
+                    ys = [p[1] for p in path_geom]
+                    ax.plot(xs, ys, color=color, linewidth=0.4, linestyle=linestyle, alpha=0.6)
+                    continue
+                except Exception as e:
+                    print(f"Warning: PDF corridor route failed for device {dev_idx}: {e}")
+
+        # --- L-shape fallback ---
         driveline_tan = grp.get('driveline_tan', 0.0)
         rotation_deg = grp.get('rotation_deg', 0.0)
         mag = math.sqrt(1.0 + driveline_tan ** 2)
@@ -515,13 +553,9 @@ def _draw_routes(ax, device_positions, pads, topology, group_layout=None):
         else:
             row_dx, row_dy = dx_u, dy_u
 
-        # Corner: projection of pad onto line through device in row direction
         t = (pad_cx - dev_cx) * row_dx + (pad_cy - dev_cy) * row_dy
         corner_x = dev_cx + t * row_dx
         corner_y = dev_cy + t * row_dy
-
-        color = PAD_COLORS[pad_idx % len(PAD_COLORS)]
-        linestyle = '--' if topology == 'Distributed String' else '-'
 
         ax.plot([dev_cx, corner_x, pad_cx], [dev_cy, corner_y, pad_cy],
                 color=color, linewidth=0.4, linestyle=linestyle, alpha=0.6)
@@ -559,6 +593,23 @@ def _draw_pads(ax, pads):
             ax.text(cx, cy + ph * 0.25, f"({num_assigned} devices)",
                     fontsize=3.5, color='#CCCCCC', ha='center', va='center',
                     fontfamily='sans-serif')
+
+
+def _draw_corridors_pdf(ax, corridors):
+    """Draw corridor polylines in magenta with labels."""
+    CORRIDOR_COLOR = '#C2185B'
+    for c_idx, corridor in enumerate(corridors):
+        pts = corridor.get('points', [])
+        if len(pts) < 2:
+            continue
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        ax.plot(xs, ys, color=CORRIDOR_COLOR, linewidth=1.0, zorder=4)
+        ax.scatter(xs, ys, color=CORRIDOR_COLOR, s=4, zorder=5)
+        label = corridor.get('label', f'Corridor {c_idx + 1}')
+        ax.text(xs[0] + 1, ys[0] - 2, label,
+                fontsize=4, color=CORRIDOR_COLOR, fontfamily='sans-serif',
+                fontweight='bold', zorder=6)
 
 
 def _draw_motor_alignment_lines(ax, group_layout):

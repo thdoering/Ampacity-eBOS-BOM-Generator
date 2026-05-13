@@ -30,6 +30,7 @@ class QuickEstimate(ttk.Frame):
         self.groups = []
         self.pads = []  # Collection points (inverter pads)
         self.measurements = []  # Saved measurement polylines [[wx,wy],...] per measurement
+        self.corridors = []  # Cable corridors [{id, label, points, assigned_devices}]
         self.device_names = {}  # {device_idx: "custom_name"} for CB/SI renaming
         self.device_feeder_sizes = {}  # {device_idx: "cable_size"} per-device feeder/homerun size
         self.device_feeder_parallel_counts = {}  # {device_idx: int} per-device parallel sets per pole
@@ -800,6 +801,7 @@ class QuickEstimate(ttk.Frame):
             'feeder_distances': [],
             'feeder_total_ft': 0,
             'feeder_count': 0,
+            'routed_feeder_paths': {},  # {dev_idx: [(x,y),...]} three-leg or L-shape geometry
         }
         
         if not self.pads or not allocation_result:
@@ -920,7 +922,13 @@ class QuickEstimate(ttk.Frame):
         for pad_idx, pad in enumerate(self.pads):
             for dev_idx in pad.get('assigned_devices', []):
                 device_to_pad[dev_idx] = pad_idx
-        
+
+        # Build device -> corridor lookup
+        device_to_corridor = {}
+        for c_idx, corridor in enumerate(self.corridors):
+            for dev_idx in corridor.get('assigned_devices', []):
+                device_to_corridor[dev_idx] = c_idx
+
         # Compute routed feeder distance (row-direction projection) from each device to its pad
         for dev_idx, dev_pos in enumerate(device_positions):
             if dev_pos is None:
@@ -970,30 +978,50 @@ class QuickEstimate(ttk.Frame):
                 dev_x = rot_cx + dx * cos_r - dy * sin_r
                 dev_y = rot_cy + dx * sin_r + dy * cos_r
 
-            # Row direction vector (driveline + azimuth rotation)
-            driveline_tan = math.tan(math.radians(driveline_angle_deg)) if driveline_angle_deg != 0 else 0.0
-            mag = math.sqrt(1.0 + driveline_tan ** 2)
-            rdx_u, rdy_u = 1.0 / mag, driveline_tan / mag
-            if rotation_deg != 0:
-                cos_r = math.cos(math.radians(rotation_deg))
-                sin_r = math.sin(math.radians(rotation_deg))
-                row_dx = rdx_u * cos_r - rdy_u * sin_r
-                row_dy = rdx_u * sin_r + rdy_u * cos_r
-            else:
-                row_dx, row_dy = rdx_u, rdy_u
+            # Corridor-aware routing (three-leg) or L-shape fallback
+            routed = 0.0
+            used_corridor = False
+            c_idx = device_to_corridor.get(dev_idx)
+            if c_idx is not None and c_idx < len(self.corridors):
+                corridor = self.corridors[c_idx]
+                pts = corridor.get('points', [])
+                if len(pts) >= 2:
+                    try:
+                        from src.utils.corridor_routing import three_leg_distance
+                        routed, path_geom = three_leg_distance(
+                            (dev_x, dev_y), (pad_cx, pad_cy), pts
+                        )
+                        result['routed_feeder_paths'][dev_idx] = path_geom
+                        used_corridor = True
+                    except Exception as e:
+                        print(f"Warning: corridor routing failed for device {dev_idx}: {e}", flush=True)
 
-            # Corner via projection onto row direction line through device
-            t = (pad_cx - dev_x) * row_dx + (pad_cy - dev_y) * row_dy
-            corner_x = dev_x + t * row_dx
-            corner_y = dev_y + t * row_dy
-            leg2 = math.sqrt((pad_cx - corner_x) ** 2 + (pad_cy - corner_y) ** 2)
-            routed = abs(t) + leg2
+            if not used_corridor:
+                # L-shape routing
+                driveline_tan = math.tan(math.radians(driveline_angle_deg)) if driveline_angle_deg != 0 else 0.0
+                mag = math.sqrt(1.0 + driveline_tan ** 2)
+                rdx_u, rdy_u = 1.0 / mag, driveline_tan / mag
+                if rotation_deg != 0:
+                    cos_r = math.cos(math.radians(rotation_deg))
+                    sin_r = math.sin(math.radians(rotation_deg))
+                    row_dx = rdx_u * cos_r - rdy_u * sin_r
+                    row_dy = rdx_u * sin_r + rdy_u * cos_r
+                else:
+                    row_dx, row_dy = rdx_u, rdy_u
+                t = (pad_cx - dev_x) * row_dx + (pad_cy - dev_y) * row_dy
+                corner_x = dev_x + t * row_dx
+                corner_y = dev_y + t * row_dy
+                leg2 = math.sqrt((pad_cx - corner_x) ** 2 + (pad_cy - corner_y) ** 2)
+                routed = abs(t) + leg2
+                result['routed_feeder_paths'][dev_idx] = [
+                    (dev_x, dev_y), (corner_x, corner_y), (pad_cx, pad_cy)
+                ]
 
             label = f"Dev-{dev_idx+1:02d}"
             result['feeder_distances'].append((dev_idx, label, routed))
             result['feeder_total_ft'] += routed
             result['feeder_count'] += 1
-        
+
         return result
     
     def _build_wire_sizing_frame(self, parent):
@@ -1052,6 +1080,8 @@ class QuickEstimate(ttk.Frame):
         self._ws_homerun_var = tk.StringVar(value=self.wire_sizing.get('ac_homerun', ''))
         self._ws_dc_feeder_blanket_var = tk.BooleanVar(value=self.wire_sizing.get('dc_feeder_blanket_enabled', False))
         self._ws_ac_homerun_blanket_var = tk.BooleanVar(value=self.wire_sizing.get('ac_homerun_blanket_enabled', False))
+        self._ws_dc_feeder_parallel_var = tk.IntVar(value=self.wire_sizing.get('dc_feeder_parallel', 1))
+        self._ws_ac_homerun_parallel_var = tk.IntVar(value=self.wire_sizing.get('ac_homerun_parallel', 1))
         
         # Available LV cable sizes (copper AWG only — pre-made assemblies)
         self._ws_lv_sizes = CABLE_SIZE_ORDER  # ['10 AWG' through '4/0 AWG']
@@ -1059,12 +1089,31 @@ class QuickEstimate(ttk.Frame):
         # Traces for temp and material changes
         self._ws_temp_var.trace_add('write', lambda *a: self._on_wire_sizing_setting_changed())
         self._ws_material_var.trace_add('write', lambda *a: self._on_wire_sizing_setting_changed())
+        self._ws_dc_feeder_parallel_var.trace_add('write', lambda *a: self._on_feeder_parallel_changed('dc'))
+        self._ws_ac_homerun_parallel_var.trace_add('write', lambda *a: self._on_feeder_parallel_changed('ac'))
         
     def _on_wire_sizing_setting_changed(self):
         """Handle change to temp rating or feeder material — recalc recommendations."""
         self.wire_sizing['temp_rating'] = self._ws_temp_var.get()
         self.wire_sizing['feeder_material'] = self._ws_material_var.get()
         self._reset_wire_sizing_to_recommended()
+        self._mark_dirty()
+
+    def _on_feeder_parallel_changed(self, feeder_type):
+        """Handle change to DC feeder or AC homerun parallel set count."""
+        try:
+            if feeder_type == 'dc':
+                val = max(1, int(self._ws_dc_feeder_parallel_var.get()))
+                self.wire_sizing['dc_feeder_parallel'] = val
+            else:
+                val = max(1, int(self._ws_ac_homerun_parallel_var.get()))
+                self.wire_sizing['ac_homerun_parallel'] = val
+        except (ValueError, TypeError):
+            return
+        # Push the new value to all per-device overrides so the global control
+        # reliably overrides any per-device entries set via the assignment dialog.
+        for dev_idx in list(self.device_feeder_parallel_counts):
+            self.device_feeder_parallel_counts[dev_idx] = val
         self._mark_dirty()
 
     def refresh_wire_sizing_table(self):
@@ -1144,7 +1193,13 @@ class QuickEstimate(ttk.Frame):
                             variable=self._ws_dc_feeder_blanket_var,
                             command=lambda: self._on_feeder_blanket_toggled('dc_feeder')
                             ).pack(side='left', padx=(6, 0))
-        
+            ttk.Label(feeder_row, text="×").pack(side='left', padx=(8, 1))
+            self._ws_dc_feeder_parallel_var.set(self.wire_sizing.get('dc_feeder_parallel', 1))
+            dc_par_spin = ttk.Spinbox(feeder_row, textvariable=self._ws_dc_feeder_parallel_var,
+                                      from_=1, to=10, increment=1, width=3)
+            dc_par_spin.pack(side='left')
+            ttk.Label(feeder_row, text="parallel sets").pack(side='left', padx=(2, 0))
+
         # AC Homerun row (all topologies)
         homerun_row = ttk.Frame(self._ws_rows_frame)
         homerun_row.pack(fill='x', pady=1)
@@ -1178,6 +1233,12 @@ class QuickEstimate(ttk.Frame):
                             variable=self._ws_ac_homerun_blanket_var,
                             command=lambda: self._on_feeder_blanket_toggled('ac_homerun')
                             ).pack(side='left', padx=(6, 0))
+            ttk.Label(homerun_row, text="×").pack(side='left', padx=(8, 1))
+            self._ws_ac_homerun_parallel_var.set(self.wire_sizing.get('ac_homerun_parallel', 1))
+            ac_par_spin = ttk.Spinbox(homerun_row, textvariable=self._ws_ac_homerun_parallel_var,
+                                      from_=1, to=10, increment=1, width=3)
+            ac_par_spin.pack(side='left')
+            ttk.Label(homerun_row, text="parallel sets").pack(side='left', padx=(2, 0))
         else:
             homerun_combo = ttk.Combobox(
                 homerun_row, textvariable=self._ws_homerun_var,
@@ -1186,6 +1247,12 @@ class QuickEstimate(ttk.Frame):
             homerun_combo.pack(side='left', padx=2)
             self.disable_combobox_scroll(homerun_combo)
             self._ws_homerun_var.trace_add('write', lambda *a: self._on_feeder_size_changed('ac_homerun'))
+            ttk.Label(homerun_row, text="×").pack(side='left', padx=(8, 1))
+            self._ws_ac_homerun_parallel_var.set(self.wire_sizing.get('ac_homerun_parallel', 1))
+            ac_par_spin = ttk.Spinbox(homerun_row, textvariable=self._ws_ac_homerun_parallel_var,
+                                      from_=1, to=10, increment=1, width=3)
+            ac_par_spin.pack(side='left')
+            ttk.Label(homerun_row, text="parallel sets").pack(side='left', padx=(2, 0))
     
     def _reset_wire_sizing_to_recommended(self):
         """Reset all wire sizes to calculated recommendations."""
@@ -2194,6 +2261,7 @@ class QuickEstimate(ttk.Frame):
         self._last_inspect_mode = estimate_data.get('inspect_mode', False)
         self.pads = copy.deepcopy(estimate_data.get('pads', []))
         self.measurements = copy.deepcopy(estimate_data.get('measurements', []))
+        self.corridors = copy.deepcopy(estimate_data.get('corridors', []))
         
         # Load device names (convert str keys back to int)
         saved_names = estimate_data.get('device_names', {})
@@ -2288,9 +2356,10 @@ class QuickEstimate(ttk.Frame):
         estimate_data['groups'] = copy.deepcopy(self.groups)
         estimate_data['subarrays'] = {}
         
-        # Save pads and measurements
+        # Save pads, measurements, and corridors
         estimate_data['pads'] = copy.deepcopy(self.pads)
         estimate_data['measurements'] = copy.deepcopy(self.measurements)
+        estimate_data['corridors'] = copy.deepcopy(self.corridors)
         
         # Save device names (convert int keys to str for JSON)
         estimate_data['device_names'] = {str(k): v for k, v in self.device_names.items()}
@@ -2892,7 +2961,8 @@ class QuickEstimate(ttk.Frame):
             device_feeder_sizes=self.device_feeder_sizes,
             device_feeder_parallel_counts=self.device_feeder_parallel_counts,
             device_x_offsets=self.device_x_offsets,
-            measurements=self.measurements
+            measurements=self.measurements,
+            corridors=self.corridors
         )
         self._site_preview_window = preview
 
@@ -2905,6 +2975,7 @@ class QuickEstimate(ttk.Frame):
             self.device_feeder_parallel_counts = dict(preview.device_feeder_parallel_counts)  # Save parallel counts back
             self.device_x_offsets = dict(preview.device_x_offsets)  # Save nudge offsets back
             self.measurements = list(preview.measurements)  # Save measurements back
+            self.corridors = list(preview.corridors)  # Save corridors back
 
             # If CB assignments were edited, refresh the estimate results
             if hasattr(self, 'last_combiner_assignments') and self.last_combiner_assignments:
@@ -3610,6 +3681,18 @@ class QuickEstimate(ttk.Frame):
         if not hasattr(self, 'last_totals') or not self.last_totals:
             return
 
+        # Sync parallel counts from UI vars before recomputing
+        if hasattr(self, '_ws_dc_feeder_parallel_var'):
+            try:
+                self.wire_sizing['dc_feeder_parallel'] = max(1, int(self._ws_dc_feeder_parallel_var.get()))
+            except (ValueError, TypeError):
+                pass
+        if hasattr(self, '_ws_ac_homerun_parallel_var'):
+            try:
+                self.wire_sizing['ac_homerun_parallel'] = max(1, int(self._ws_ac_homerun_parallel_var.get()))
+            except (ValueError, TypeError):
+                pass
+
         totals = self.last_totals
         display = totals.get('_display', {})
         topology = display.get('topology')
@@ -3636,19 +3719,18 @@ class QuickEstimate(ttk.Frame):
         else:
             default_feeder_size = self.wire_sizing.get('dc_feeder', '') or '4/0 AWG'
 
+        if topology == 'Distributed String':
+            parallel_count = max(1, self.wire_sizing.get('ac_homerun_parallel', 1))
+        else:
+            parallel_count = max(1, self.wire_sizing.get('dc_feeder_parallel', 1))
+
         feeders_by_size = defaultdict(lambda: {'count': 0, 'distance_ft': 0.0, 'total_ft': 0.0})
         for dev_idx, _, dist_ft in per_device_distances:
             size = self.device_feeder_sizes.get(dev_idx, default_feeder_size)
-            try:
-                parallel = int(self.device_feeder_parallel_counts.get(dev_idx, 1))
-                if parallel < 1:
-                    parallel = 1
-            except (ValueError, TypeError):
-                parallel = 1
-            key = (size, parallel)
+            key = (size, parallel_count)
             feeders_by_size[key]['count'] += 1
             feeders_by_size[key]['distance_ft'] += dist_ft
-            feeders_by_size[key]['total_ft'] += dist_ft * parallel
+            feeders_by_size[key]['total_ft'] += dist_ft * parallel_count
 
         totals['feeders_by_size'] = dict(feeders_by_size)
 
@@ -5128,7 +5210,19 @@ class QuickEstimate(ttk.Frame):
         for item in self.results_tree.get_children():
             self.results_tree.delete(item)
         self.checked_items.clear()
-        
+
+        # Sync parallel counts from UI vars — trace-based writes can miss edge cases
+        if hasattr(self, '_ws_dc_feeder_parallel_var'):
+            try:
+                self.wire_sizing['dc_feeder_parallel'] = max(1, int(self._ws_dc_feeder_parallel_var.get()))
+            except (ValueError, TypeError):
+                pass
+        if hasattr(self, '_ws_ac_homerun_parallel_var'):
+            try:
+                self.wire_sizing['ac_homerun_parallel'] = max(1, int(self._ws_ac_homerun_parallel_var.get()))
+            except (ValueError, TypeError):
+                pass
+
         # Sync all group listbox text before calculating
         self._refresh_group_listbox(preserve_selection=True)
         
@@ -6037,19 +6131,18 @@ class QuickEstimate(ttk.Frame):
         # - 'count'       = number of physical runs (devices)
         # - 'distance_ft' = sum of raw run distances (not multiplied) — used for avg display
         # - 'total_ft'    = distance_ft × parallel_count (actual cable footage needed)
+        if topology == 'Distributed String':
+            parallel_count = max(1, self.wire_sizing.get('ac_homerun_parallel', 1))
+        else:
+            parallel_count = max(1, self.wire_sizing.get('dc_feeder_parallel', 1))
+
         feeders_by_size = defaultdict(lambda: {'count': 0, 'distance_ft': 0.0, 'total_ft': 0.0})
         for dev_idx, label, dist_ft in per_device_distances:
             size = self.device_feeder_sizes.get(dev_idx, default_feeder_size)
-            try:
-                parallel = int(self.device_feeder_parallel_counts.get(dev_idx, 1))
-                if parallel < 1:
-                    parallel = 1
-            except (ValueError, TypeError):
-                parallel = 1
-            key = (size, parallel)
+            key = (size, parallel_count)
             feeders_by_size[key]['count'] += 1
             feeders_by_size[key]['distance_ft'] += dist_ft
-            feeders_by_size[key]['total_ft'] += dist_ft * parallel
+            feeders_by_size[key]['total_ft'] += dist_ft * parallel_count
         
         totals['feeders_by_size'] = dict(feeders_by_size)
         
@@ -6343,12 +6436,10 @@ class QuickEstimate(ttk.Frame):
             is_distributed = dev.get('_is_distributed', False)
 
             feeder_size = self.device_feeder_sizes.get(dev_idx, default_feeder_size)
-            try:
-                parallel = int(self.device_feeder_parallel_counts.get(dev_idx, 1))
-                if parallel < 1:
-                    parallel = 1
-            except (ValueError, TypeError):
-                parallel = 1
+            if is_distributed:
+                parallel = max(1, self.wire_sizing.get('ac_homerun_parallel', 1))
+            else:
+                parallel = max(1, self.wire_sizing.get('dc_feeder_parallel', 1))
 
             total_strings = sum(conn['num_strings'] for conn in connections)
             parallel_txt = f", {parallel}× parallel" if parallel > 1 else ""
@@ -7532,6 +7623,7 @@ class QuickEstimate(ttk.Frame):
                 show_routes=True,
                 align_on_motor=True,
                 wiring_specs=wiring_specs,
+                corridors=self.corridors,
             )
             return result
 
