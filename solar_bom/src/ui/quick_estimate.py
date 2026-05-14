@@ -395,13 +395,14 @@ class QuickEstimate(ttk.Frame):
 
         group = {
             'name': self._next_group_name(),
-            'device_position': 'middle',
+            'device_position': 'driveline',
             'driveline_angle': 0.0,
             'azimuth': 180,
             'tracker_alignment': 'motor',
             'row_spacing_ft': default_row_spacing,
             'strings_per_inv': default_spi,
             'tier_gaps': {},
+            'tier_alignment': 'left',
             'link_id': None,
             'segments': [
                 {'quantity': 1, 'strings_per_tracker': default_spt, 'harness_config': str(default_spt), 'template_ref': default_ref, 'tier_label': 'A'}
@@ -2225,6 +2226,9 @@ class QuickEstimate(ttk.Frame):
                 # Backward compat: add link_id for group CB pool linking
                 if 'link_id' not in group:
                     group['link_id'] = None
+                # Backward compat: tier E-W alignment
+                if 'tier_alignment' not in group:
+                    group['tier_alignment'] = 'left'
             self.groups = copy.deepcopy(saved_groups)
         elif saved_subarrays:
             # Backward compat: convert old subarray/block format to groups
@@ -4591,14 +4595,41 @@ class QuickEstimate(ttk.Frame):
             self._schedule_autosave()
         name_var.trace_add('write', update_name)
         
-        # Device Position dropdown
+        # Device Position dropdown — options generated dynamically for N tiers
+        _tier_labels_dp = self._group_tier_labels(group)
+        _n_dp_tiers = len(_tier_labels_dp)
+        if _n_dp_tiers == 1:
+            _dp_values = ['north', 'driveline', 'south']
+        else:
+            _dp_values = ['north']
+            for _dpi in range(_n_dp_tiers):
+                _dp_values.append(f'driveline_{_dpi + 1}')
+                if _dpi < _n_dp_tiers - 1:
+                    _dp_values.append(f'between_{_dpi + 1}_{_dpi + 2}')
+            _dp_values.append('south')
+
+        _dp_saved = group.get('device_position', 'driveline')
+        if _n_dp_tiers == 1:
+            if _dp_saved not in _dp_values:
+                _dp_saved = 'driveline'
+        else:
+            _dp_default = f'between_1_2' if 'between_1_2' in _dp_values else _dp_values[1]
+            if _dp_saved in ('middle', 'driveline'):
+                _dp_saved = _dp_default
+            elif _dp_saved == 'between':
+                _dp_saved = 'between_1_2' if 'between_1_2' in _dp_values else _dp_default
+            elif _dp_saved not in _dp_values:
+                _dp_saved = _dp_default
+        group['device_position'] = _dp_saved
+
         ttk.Label(form_frame, text="Device Position:").grid(row=1, column=0, sticky='w', pady=5)
-        device_pos_var = tk.StringVar(value=group.get('device_position', 'middle'))
+        device_pos_var = tk.StringVar(value=_dp_saved)
         device_pos_combo = ttk.Combobox(form_frame, textvariable=device_pos_var,
-                                         values=['north', 'middle', 'south'],
-                                         state='readonly', width=10)
+                                         values=_dp_values,
+                                         state='readonly', width=12)
         device_pos_combo.grid(row=1, column=1, sticky='w', pady=5, padx=(10, 0))
-        
+        self.disable_combobox_scroll(device_pos_combo)
+
         def on_device_position_change(*args):
             group['device_position'] = device_pos_var.get()
             self._mark_stale()
@@ -4828,6 +4859,23 @@ class QuickEstimate(ttk.Frame):
 
         cb_pool_combo.bind('<<ComboboxSelected>>', _on_pool_change)
 
+        # Tier Alignment — only shown for multi-tier groups
+        _n_tiers_align = len(self._group_tier_labels(group))
+        if _n_tiers_align > 1:
+            ttk.Label(form_frame, text="Tier Alignment:").grid(row=8, column=0, sticky='w', pady=5)
+            tier_align_var = tk.StringVar(value=group.get('tier_alignment', 'left'))
+            tier_align_combo = ttk.Combobox(form_frame, textvariable=tier_align_var,
+                                            values=['left', 'center', 'right'],
+                                            state='readonly', width=10)
+            tier_align_combo.grid(row=8, column=1, sticky='w', pady=5, padx=(10, 0))
+            self.disable_combobox_scroll(tier_align_combo)
+
+            def _on_tier_align_change(*args):
+                group['tier_alignment'] = tier_align_var.get()
+                self._mark_stale()
+                self._schedule_autosave()
+            tier_align_combo.bind('<<ComboboxSelected>>', _on_tier_align_change)
+
         # Segments section (with per-tier rows)
         seg_frame = ttk.LabelFrame(two_col_frame, text="Segments (left to right)", padding="10")
         seg_frame.pack(side='left', fill='both', expand=True, pady=10, padx=(0, 10))
@@ -4865,8 +4913,7 @@ class QuickEstimate(ttk.Frame):
                     gap_row = ttk.Frame(tier_box)
                     gap_row.pack(fill='x', pady=(0, 4))
                     ttk.Label(gap_row, text="N-S gap from prev tier (ft):").pack(side='left')
-                    gap_val = group.get('tier_gaps', {}).get(
-                        tier_label, group.get('row_spacing_ft', 20.0) or 20.0)
+                    gap_val = group.get('tier_gaps', {}).get(tier_label, 3.0)
                     gap_var = tk.StringVar(value=f"{float(gap_val):.1f}")
                     gap_entry = ttk.Entry(gap_row, textvariable=gap_var, width=8)
                     gap_entry.pack(side='left', padx=5)
@@ -4933,7 +4980,7 @@ class QuickEstimate(ttk.Frame):
             default_harness = self._get_default_harness_config_from_template(default_ref)
             if not default_harness:
                 default_harness = str(default_spt)
-            default_gap = group.get('row_spacing_ft', 20.0) or 20.0
+            default_gap = 3.0
             group.setdefault('tier_gaps', {})[next_label] = default_gap
             group['segments'].append({
                 'quantity': 1,
@@ -4947,8 +4994,9 @@ class QuickEstimate(ttk.Frame):
             self._refresh_group_listbox()
             self._rebuild_group_details(group_idx)
 
-        ttk.Button(bottom_btn_frame, text="+ Add Tier",
-                   command=_add_tier).pack(side='left', padx=(0, 6))
+        # Tier feature paused — button hidden
+        # ttk.Button(bottom_btn_frame, text="+ Add Tier",
+        #            command=_add_tier).pack(side='left', padx=(0, 6))
 
         def _unlink_all():
             for seg in group['segments']:
@@ -5518,7 +5566,7 @@ class QuickEstimate(ttk.Frame):
             for tier_label in tier_labels:
                 tier_y_offsets[tier_label] = prev_tier_end_y if tier_label != 'A' else 0.0
                 if tier_label != 'A':
-                    gap = group.get('tier_gaps', {}).get(tier_label, grp_row_spacing)
+                    gap = group.get('tier_gaps', {}).get(tier_label, 3.0)
                     tier_y_offsets[tier_label] = prev_tier_end_y + gap
                 # Compute max tracker length in this tier for the next tier's base Y
                 tier_segs_here = [s for s in group['segments']
@@ -5529,6 +5577,24 @@ class QuickEstimate(ttk.Frame):
                     for s in tier_segs_here
                 ) if tier_segs_here else fallback_length_ft
                 prev_tier_end_y = tier_y_offsets[tier_label] + max_len_here
+
+            # Compute E-W alignment offsets per tier
+            tier_align = group.get('tier_alignment', 'left')
+            tier_counts_align = {
+                tl: sum(s['quantity'] for s in group['segments']
+                        if s.get('tier_label', 'A') == tl and s.get('quantity', 0) > 0)
+                for tl in tier_labels
+            }
+            max_tier_count_align = max(tier_counts_align.values()) if tier_counts_align else 1
+            tier_x_offsets_align = {}
+            for tl in tier_labels:
+                diff = max_tier_count_align - tier_counts_align.get(tl, 0)
+                if tier_align == 'right':
+                    tier_x_offsets_align[tl] = diff
+                elif tier_align == 'center':
+                    tier_x_offsets_align[tl] = diff // 2
+                else:
+                    tier_x_offsets_align[tl] = 0
 
             # Build tracker entries tier by tier (same X range per tier, different Y)
             for tier_label in tier_labels:
@@ -5558,7 +5624,8 @@ class QuickEstimate(ttk.Frame):
                         else:
                             effective_spt = int(spt)
 
-                        local_x_offset = tracker_within_tier * grp_row_spacing
+                        abs_x_idx = tier_x_offsets_align.get(tier_label, 0) + tracker_within_tier
+                        local_x_offset = abs_x_idx * grp_row_spacing
                         tracker_entries.append({
                             'original_idx': flat_idx,
                             'spt': effective_spt,
