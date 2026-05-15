@@ -273,7 +273,9 @@ class QuickEstimate(ttk.Frame):
                     
                     # Update modules_per_string from template
                     if hasattr(self, 'modules_per_string_var'):
+                        self._updating_mps = True
                         self.modules_per_string_var.set(str(mps))
+                        self._updating_mps = False
                     
                     # Update module info label
                     if hasattr(self, 'module_info_label'):
@@ -294,7 +296,9 @@ class QuickEstimate(ttk.Frame):
                 self.selected_module = self.available_modules[saved_module_name]
                 saved_mps = estimate_data.get('modules_per_string', 28)
                 if hasattr(self, 'modules_per_string_var'):
+                    self._updating_mps = True
                     self.modules_per_string_var.set(str(saved_mps))
+                    self._updating_mps = False
                 if hasattr(self, 'module_info_label'):
                     self.module_info_label.config(
                         text=f"(Legacy) {self.selected_module.manufacturer} {self.selected_module.model} ({self.selected_module.wattage}W)  —  link templates to update",
@@ -311,7 +315,9 @@ class QuickEstimate(ttk.Frame):
                         self.selected_module = mod
                         saved_mps = estimate_data.get('modules_per_string', 28)
                         if hasattr(self, 'modules_per_string_var'):
+                            self._updating_mps = True
                             self.modules_per_string_var.set(str(saved_mps))
+                            self._updating_mps = False
                         if hasattr(self, 'module_info_label'):
                             self.module_info_label.config(
                                 text=f"(Legacy) {mod.manufacturer} {mod.model} ({mod.wattage}W)  —  link templates to update",
@@ -2594,7 +2600,9 @@ class QuickEstimate(ttk.Frame):
         # modules_per_string: store saved value as fallback; templates will override if linked
         self._saved_modules_per_string = estimate_data.get('modules_per_string', 28)
         if hasattr(self, 'modules_per_string_var'):
+            self._updating_mps = True
             self.modules_per_string_var.set(str(self._saved_modules_per_string))
+            self._updating_mps = False
         # Load wire sizing (new format) or migrate from old wire_gauge
         saved_wire_sizing = estimate_data.get('wire_sizing')
         if saved_wire_sizing:
@@ -3221,6 +3229,9 @@ class QuickEstimate(ttk.Frame):
 
     def _mark_stale(self):
         """Mark results as stale and re-enable the calculate button"""
+        import traceback
+        print("[QE _mark_stale] called from:")
+        traceback.print_stack()
         self._results_stale = True
         # Split-tracker fragment data is invalidated by any structural change.
         # Clearing here prevents stale fragments from leaking into the site
@@ -3490,6 +3501,16 @@ class QuickEstimate(ttk.Frame):
             self.isc_warning_label.config(text="")
         
         self._mark_dirty()
+
+    def _on_modules_per_string_changed(self, *args):
+        """Trace handler for modules_per_string_var. Programmatic sets should wrap
+        their `.set()` with `self._updating_mps = True/False` to suppress the
+        stale/autosave side effects; the SPI display is always refreshed."""
+        self._update_strings_per_inverter()
+        if getattr(self, '_updating_mps', False):
+            return
+        self._mark_stale()
+        self._schedule_autosave()
 
     def _update_distance_hints(self):
         """Update the hint text next to distance inputs based on topology and pad state."""
@@ -4778,7 +4799,8 @@ class QuickEstimate(ttk.Frame):
         
         # Modules per string — hidden var, derived from template
         self.modules_per_string_var = tk.StringVar(value=str(getattr(self, 'modules_per_string_default', 28)))
-        self.modules_per_string_var.trace_add('write', lambda *args: (self._update_strings_per_inverter(), self._mark_stale(), self._schedule_autosave()))
+        self._updating_mps = False  # Guard to suppress trace side effects on programmatic sets
+        self.modules_per_string_var.trace_add('write', self._on_modules_per_string_changed)
 
         # Wire sizing dict — populated dynamically based on harness configs
         # Keys: 'temp_rating', 'feeder_material', 'by_string_count', 'dc_feeder', 'ac_homerun', 'user_overrides'
@@ -5177,13 +5199,14 @@ class QuickEstimate(ttk.Frame):
         gcr_entry = ttk.Entry(form_frame, textvariable=gcr_var, width=8)
         gcr_entry.grid(row=5, column=3, sticky='w', pady=5, padx=(5, 0))
 
-        def _update_gcr_from_row_spacing(*args):
+        def _update_gcr_from_row_spacing(*args, _is_init=False):
             raw = row_spacing_var.get().strip()
             if not raw:
                 group['row_spacing_ft'] = None
                 gcr_var.set("--")
-                self._mark_stale()
-                self._schedule_autosave()
+                if not _is_init:
+                    self._mark_stale()
+                    self._schedule_autosave()
                 return
             try:
                 rs_ft = float(raw)
@@ -5198,8 +5221,9 @@ class QuickEstimate(ttk.Frame):
                 else:
                     gcr_var.set("--")
                 group['row_spacing_ft'] = rs_ft
-                self._mark_stale()
-                self._schedule_autosave()
+                if not _is_init:
+                    self._mark_stale()
+                    self._schedule_autosave()
             except ValueError:
                 pass
 
@@ -5229,7 +5253,7 @@ class QuickEstimate(ttk.Frame):
         gcr_entry.bind('<Return>', _update_row_spacing_from_gcr)
 
         # Populate GCR on load
-        _update_gcr_from_row_spacing()
+        _update_gcr_from_row_spacing(_is_init=True)
 
         # Strings per Device override
         ttk.Label(form_frame, text="Strings/Device:").grid(row=6, column=0, sticky='w', pady=5)
