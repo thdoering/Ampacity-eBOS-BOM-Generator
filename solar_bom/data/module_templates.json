@@ -1962,5 +1962,53 @@
       "default_orientation": "Portrait",
       "cells_per_module": 72
     }
+  },
+  "VERTEX N": {
+    "TSM-NEG21C.20/700": {
+      "manufacturer": "VERTEX N",
+      "model": "TSM-NEG21C.20/700",
+      "type": "Bifacial",
+      "length_mm": 2384.0,
+      "width_mm": 1303.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 700.0,
+      "vmp": 40.5,
+      "imp": 17.29,
+      "voc": 48.6,
+      "isc": 18.32,
+      "max_system_voltage": 1500,
+      "efficiency": null,
+      "temperature_coefficient_pmax": -0.29,
+      "temperature_coefficient_voc": -0.24,
+      "temperature_coefficient_isc": 0.04,
+      "bifaciality_factor": null,
+      "default_orientation": "Portrait",
+      "cells_per_module": 72
+    }
+  },
+  "BOVIET": {
+    "BVM8611M-615R-H-HC-BF-DG": {
+      "manufacturer": "BOVIET",
+      "model": "BVM8611M-615R-H-HC-BF-DG",
+      "type": "Mono PERC",
+      "length_mm": 2382.0,
+      "width_mm": 1134.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 615.0,
+      "vmp": 41.34,
+      "imp": 14.88,
+      "voc": 48.45,
+      "isc": 15.89,
+      "max_system_voltage": 1500,
+      "efficiency": null,
+      "temperature_coefficient_pmax": -0.3,
+      "temperature_coefficient_voc": -0.25,
+      "temperature_coefficient_isc": 0.046,
+      "bifaciality_factor": null,
+      "default_orientation": "Portrait",
+      "cells_per_module": 72
+    }
   }
 }

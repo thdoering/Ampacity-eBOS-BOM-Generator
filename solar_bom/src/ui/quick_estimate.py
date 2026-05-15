@@ -405,17 +405,15 @@ class QuickEstimate(ttk.Frame):
             'id': uuid.uuid4().hex[:8],
             'circuit_id': None,
             'name': self._next_group_name(),
-            'device_position': 'driveline',
+            'device_position': 'middle',
             'driveline_angle': 0.0,
             'azimuth': 180,
             'tracker_alignment': 'motor',
             'row_spacing_ft': default_row_spacing,
             'strings_per_inv': default_spi,
-            'tier_gaps': {},
-            'tier_alignment': 'left',
             'link_id': None,
             'segments': [
-                {'quantity': 1, 'strings_per_tracker': default_spt, 'harness_config': str(default_spt), 'template_ref': default_ref, 'tier_label': 'A'}
+                {'quantity': 1, 'strings_per_tracker': default_spt, 'harness_config': str(default_spt), 'template_ref': default_ref}
             ]
         }
         self.groups.append(group)
@@ -560,10 +558,8 @@ class QuickEstimate(ttk.Frame):
         def _group_display(g):
             total_trackers = sum(seg['quantity'] for seg in g['segments'])
             total_strings = sum(int((seg.get('quantity') or 0) * (seg.get('strings_per_tracker') or 0)) for seg in g['segments'])
-            n_tiers = len(set(seg.get('tier_label', 'A') for seg in g['segments']))
-            tier_tag = f'  [{n_tiers}T]' if n_tiers > 1 else ''
             link_tag = '  [L]' if g.get('link_id') else ''
-            return f"{g['name']}  ({total_trackers}T / {total_strings}S){tier_tag}{link_tag}"
+            return f"{g['name']}  ({total_trackers}T / {total_strings}S){link_tag}"
 
         # Insert circuits with their child groups
         for circuit in self.circuits:
@@ -2672,18 +2668,18 @@ class QuickEstimate(ttk.Frame):
                 # Backward compat: older saves have no per-group strings_per_inv
                 if 'strings_per_inv' not in group:
                     group['strings_per_inv'] = None
-                # Backward compat: add tier_label to segments that pre-date tiers
-                if 'tier_gaps' not in group:
-                    group['tier_gaps'] = {}
+                # Migration: map tier device_position values to 'middle'
+                dp = group.get('device_position', 'middle')
+                if dp == 'driveline' or dp.startswith('driveline_') or dp.startswith('between'):
+                    group['device_position'] = 'middle'
+                # Drop obsolete tier keys
+                group.pop('tier_gaps', None)
+                group.pop('tier_alignment', None)
                 for seg in group.get('segments', []):
-                    if 'tier_label' not in seg:
-                        seg['tier_label'] = 'A'
+                    seg.pop('tier_label', None)
                 # Backward compat: add link_id for group CB pool linking
                 if 'link_id' not in group:
                     group['link_id'] = None
-                # Backward compat: tier E-W alignment
-                if 'tier_alignment' not in group:
-                    group['tier_alignment'] = 'left'
                 # Backward compat: assign stable id and circuit_id to older groups
                 if 'id' not in group:
                     group['id'] = uuid.uuid4().hex[:8]
@@ -3229,9 +3225,6 @@ class QuickEstimate(ttk.Frame):
 
     def _mark_stale(self):
         """Mark results as stale and re-enable the calculate button"""
-        import traceback
-        print("[QE _mark_stale] called from:")
-        traceback.print_stack()
         self._results_stale = True
         # Split-tracker fragment data is invalidated by any structural change.
         # Clearing here prevents stale fragments from leaking into the site
@@ -5093,31 +5086,11 @@ class QuickEstimate(ttk.Frame):
             self._schedule_autosave()
         name_var.trace_add('write', update_name)
         
-        # Device Position dropdown — options generated dynamically for N tiers
-        _tier_labels_dp = self._group_tier_labels(group)
-        _n_dp_tiers = len(_tier_labels_dp)
-        if _n_dp_tiers == 1:
-            _dp_values = ['north', 'driveline', 'south']
-        else:
-            _dp_values = ['north']
-            for _dpi in range(_n_dp_tiers):
-                _dp_values.append(f'driveline_{_dpi + 1}')
-                if _dpi < _n_dp_tiers - 1:
-                    _dp_values.append(f'between_{_dpi + 1}_{_dpi + 2}')
-            _dp_values.append('south')
-
-        _dp_saved = group.get('device_position', 'driveline')
-        if _n_dp_tiers == 1:
-            if _dp_saved not in _dp_values:
-                _dp_saved = 'driveline'
-        else:
-            _dp_default = f'between_1_2' if 'between_1_2' in _dp_values else _dp_values[1]
-            if _dp_saved in ('middle', 'driveline'):
-                _dp_saved = _dp_default
-            elif _dp_saved == 'between':
-                _dp_saved = 'between_1_2' if 'between_1_2' in _dp_values else _dp_default
-            elif _dp_saved not in _dp_values:
-                _dp_saved = _dp_default
+        # Device Position dropdown
+        _dp_values = ['north', 'middle', 'south']
+        _dp_saved = group.get('device_position', 'middle')
+        if _dp_saved not in _dp_values:
+            _dp_saved = 'middle'
         group['device_position'] = _dp_saved
 
         ttk.Label(form_frame, text="Device Position:").grid(row=1, column=0, sticky='w', pady=5)
@@ -5359,24 +5332,7 @@ class QuickEstimate(ttk.Frame):
 
         cb_pool_combo.bind('<<ComboboxSelected>>', _on_pool_change)
 
-        # Tier Alignment — only shown for multi-tier groups
-        _n_tiers_align = len(self._group_tier_labels(group))
-        if _n_tiers_align > 1:
-            ttk.Label(form_frame, text="Tier Alignment:").grid(row=8, column=0, sticky='w', pady=5)
-            tier_align_var = tk.StringVar(value=group.get('tier_alignment', 'left'))
-            tier_align_combo = ttk.Combobox(form_frame, textvariable=tier_align_var,
-                                            values=['left', 'center', 'right'],
-                                            state='readonly', width=10)
-            tier_align_combo.grid(row=8, column=1, sticky='w', pady=5, padx=(10, 0))
-            self.disable_combobox_scroll(tier_align_combo)
-
-            def _on_tier_align_change(*args):
-                group['tier_alignment'] = tier_align_var.get()
-                self._mark_stale()
-                self._schedule_autosave()
-            tier_align_combo.bind('<<ComboboxSelected>>', _on_tier_align_change)
-
-        # Segments section (with per-tier rows)
+        # Segments section
         seg_frame = ttk.LabelFrame(two_col_frame, text="Segments (left to right)", padding="10")
         seg_frame.pack(side='left', fill='both', expand=True, pady=10, padx=(0, 10))
 
@@ -5396,107 +5352,25 @@ class QuickEstimate(ttk.Frame):
         tier_area = ttk.Frame(seg_frame)
         tier_area.pack(fill='both', expand=True)
 
-        def _rebuild_tier_ui():
+        def _rebuild_segments_ui():
             for w in tier_area.winfo_children():
                 w.destroy()
             self._harness_combos = [c for c in self._harness_combos
                                      if c[0].winfo_exists()]
+            for seg_idx, seg in enumerate(group['segments']):
+                self._add_segment_ui(group, group_idx, seg_idx, seg,
+                                     container=tier_area)
 
-            for tier_label in self._group_tier_labels(group):
-                tier_segs = [s for s in group['segments']
-                              if s.get('tier_label', 'A') == tier_label]
-
-                if tier_label == 'A':
-                    tier_box = ttk.LabelFrame(tier_area, text="Tier A", padding="5")
-                else:
-                    tier_box = ttk.LabelFrame(tier_area, text=f"Tier {tier_label}", padding="5")
-                    gap_row = ttk.Frame(tier_box)
-                    gap_row.pack(fill='x', pady=(0, 4))
-                    ttk.Label(gap_row, text="N-S gap from prev tier (ft):").pack(side='left')
-                    gap_val = group.get('tier_gaps', {}).get(tier_label, 3.0)
-                    gap_var = tk.StringVar(value=f"{float(gap_val):.1f}")
-                    gap_entry = ttk.Entry(gap_row, textvariable=gap_var, width=8)
-                    gap_entry.pack(side='left', padx=5)
-
-                    def _on_gap_change(*args, tl=tier_label, gv=gap_var):
-                        try:
-                            gap_ft = float(gv.get())
-                            group.setdefault('tier_gaps', {})[tl] = gap_ft
-                            self._mark_stale()
-                            self._schedule_autosave()
-                        except ValueError:
-                            pass
-                    gap_var.trace_add('write', _on_gap_change)
-
-                    def _delete_tier(tl=tier_label):
-                        group['segments'] = [
-                            s for s in group['segments']
-                            if s.get('tier_label', 'A') != tl
-                        ]
-                        group.get('tier_gaps', {}).pop(tl, None)
-                        self._mark_stale()
-                        self._schedule_autosave()
-                        self._refresh_group_listbox()
-                        self._rebuild_group_details(group_idx)
-
-                    ttk.Button(gap_row, text="Delete Tier",
-                               command=_delete_tier).pack(side='left', padx=(8, 0))
-
-                tier_box.pack(fill='x', pady=(5, 0))
-
-                tier_rows_frame = ttk.Frame(tier_box)
-                tier_rows_frame.pack(fill='x')
-
-                for seg in tier_segs:
-                    global_seg_idx = group['segments'].index(seg)
-                    self._add_segment_ui(group, group_idx, global_seg_idx, seg,
-                                         container=tier_rows_frame)
-
-                ttk.Button(tier_box, text="+ Add Segment",
-                           command=lambda tl=tier_label: self._add_segment_to_group(
-                               group, group_idx, tl)
-                           ).pack(anchor='w', pady=(5, 0))
-
-        _rebuild_tier_ui()
+        _rebuild_segments_ui()
         self._update_group_string_count(group)
 
-        # Bottom: Add Tier + Unlink All
+        # Bottom: Add Segment + Unlink All
         bottom_btn_frame = ttk.Frame(seg_frame)
         bottom_btn_frame.pack(anchor='w', pady=(10, 0))
 
-        def _add_tier():
-            existing = self._group_tier_labels(group)
-            next_label = next(
-                (l for l in 'BCDEFGHIJKLMNOPQRSTUVWXYZ' if l not in existing), None)
-            if next_label is None:
-                return
-            compatible = self.get_compatible_templates(group)
-            if compatible:
-                default_ref = compatible[0]
-                default_spt = self.enabled_templates[default_ref].get('strings_per_tracker', 3)
-            else:
-                default_ref = None
-                default_spt = 3
-            default_harness = self._get_default_harness_config_from_template(default_ref)
-            if not default_harness:
-                default_harness = str(default_spt)
-            default_gap = 3.0
-            group.setdefault('tier_gaps', {})[next_label] = default_gap
-            group['segments'].append({
-                'quantity': 1,
-                'strings_per_tracker': default_spt,
-                'harness_config': default_harness,
-                'template_ref': default_ref,
-                'tier_label': next_label,
-            })
-            self._mark_stale()
-            self._schedule_autosave()
-            self._refresh_group_listbox()
-            self._rebuild_group_details(group_idx)
-
-        # Tier feature paused — button hidden
-        # ttk.Button(bottom_btn_frame, text="+ Add Tier",
-        #            command=_add_tier).pack(side='left', padx=(0, 6))
+        ttk.Button(bottom_btn_frame, text="+ Add Segment",
+                   command=lambda: self._add_segment_to_group(group, group_idx)
+                   ).pack(side='left', padx=(0, 6))
 
         def _unlink_all():
             for seg in group['segments']:
@@ -5510,11 +5384,6 @@ class QuickEstimate(ttk.Frame):
         ttk.Button(bottom_btn_frame, text="Unlink All",
                    command=_unlink_all).pack(side='left')
     
-    def _group_tier_labels(self, group: dict) -> list:
-        """Return sorted unique tier labels present in the group's segments."""
-        labels = sorted(set(seg.get('tier_label', 'A') for seg in group.get('segments', [])))
-        return labels if labels else ['A']
-
     def _add_segment_ui(self, group: dict, group_idx: int, seg_idx: int, segment: dict,
                          container=None):
         """Add a segment configuration row to the UI"""
@@ -5575,23 +5444,18 @@ class QuickEstimate(ttk.Frame):
         elif self.lv_collection_var.get() == 'Trunk Bus':
             harness_combo.config(state='disabled')
         
-        # Within-tier index for up/down boundary checks
-        _tier_label = segment.get('tier_label', 'A')
-        _tier_segs = [s for s in group['segments'] if s.get('tier_label', 'A') == _tier_label]
-        _within_tier_idx = _tier_segs.index(segment) if segment in _tier_segs else 0
-
         # Move up button
         up_btn = ttk.Button(row_frame, text="▲", width=2,
                            command=lambda si=seg_idx: self._move_segment(group, group_idx, si, -1))
         up_btn.pack(side='left', padx=(2, 0))
-        if _within_tier_idx == 0:
+        if seg_idx == 0:
             up_btn.config(state='disabled')
 
         # Move down button
         down_btn = ttk.Button(row_frame, text="▼", width=2,
                              command=lambda si=seg_idx: self._move_segment(group, group_idx, si, 1))
         down_btn.pack(side='left', padx=(0, 2))
-        if _within_tier_idx == len(_tier_segs) - 1:
+        if seg_idx == len(group['segments']) - 1:
             down_btn.config(state='disabled')
 
         # Delete button
@@ -5685,8 +5549,8 @@ class QuickEstimate(ttk.Frame):
             self._schedule_autosave()
         harness_var.trace_add('write', on_harness_change)
     
-    def _add_segment_to_group(self, group: dict, group_idx: int, tier_label: str = 'A'):
-        """Add a new segment to the given tier and rebuild the group detail panel."""
+    def _add_segment_to_group(self, group: dict, group_idx: int):
+        """Add a new segment to the group and rebuild the group detail panel."""
         compatible = self.get_compatible_templates(group)
         if compatible:
             default_ref = compatible[0]
@@ -5699,44 +5563,30 @@ class QuickEstimate(ttk.Frame):
         if not default_harness:
             default_harness = str(default_spt)
 
-        # Insert after the last segment belonging to this tier
-        insert_idx = len(group['segments'])
-        for i, seg in enumerate(group['segments']):
-            if seg.get('tier_label', 'A') == tier_label:
-                insert_idx = i + 1
-
-        group['segments'].insert(insert_idx, {
+        group['segments'].append({
             'quantity': 1,
             'strings_per_tracker': default_spt,
             'harness_config': default_harness,
             'template_ref': default_ref,
-            'tier_label': tier_label,
         })
         self._refresh_wire_sizing_for_segments()
         self._mark_dirty()
         self._rebuild_group_details(group_idx)
     
     def _move_segment(self, group: dict, group_idx: int, seg_idx: int, direction: int):
-        """Move a segment up (-1) or down (+1) within its tier."""
+        """Move a segment up (-1) or down (+1) within the group."""
         new_idx = seg_idx + direction
         if new_idx < 0 or new_idx >= len(group['segments']):
             return
-        # Only swap if both segments belong to the same tier
-        seg = group['segments'][seg_idx]
-        neighbor = group['segments'][new_idx]
-        if seg.get('tier_label', 'A') != neighbor.get('tier_label', 'A'):
-            return
-        group['segments'][seg_idx], group['segments'][new_idx] = neighbor, seg
+        group['segments'][seg_idx], group['segments'][new_idx] = (
+            group['segments'][new_idx], group['segments'][seg_idx])
         self._auto_unlock_allocation()
         self._rebuild_group_details(group_idx)
 
     def _delete_segment(self, group: dict, group_idx: int, seg_idx: int):
-        """Delete a segment; refuses to remove the last segment of a tier."""
-        seg = group['segments'][seg_idx]
-        tier_label = seg.get('tier_label', 'A')
-        tier_segs = [s for s in group['segments'] if s.get('tier_label', 'A') == tier_label]
-        if len(tier_segs) <= 1:
-            return  # Keep at least one segment per tier
+        """Delete a segment; refuses to remove the last segment in the group."""
+        if len(group['segments']) <= 1:
+            return  # Keep at least one segment per group
         del group['segments'][seg_idx]
         self._reconcile_locked_allocation()
         self._rebuild_group_details(group_idx)
@@ -6004,17 +5854,11 @@ class QuickEstimate(ttk.Frame):
         fallback_width_ft = 6.0
         fallback_length_ft = 180.0
 
-        # Pre-compute tracker count per group for auto-layout fallback
-        group_tracker_counts = []
-        for group in self.groups:
-            count = sum(seg['quantity'] for seg in group['segments'] if seg['quantity'] > 0)
-            group_tracker_counts.append(count)
-
         tracker_entries = []
         flat_idx = 0
         auto_x_cursor = 0.0  # Running X for auto-layout
 
-        for grp_idx, group in enumerate(self.groups):
+        for group in self.groups:
             saved_x = group.get('position_x')
             saved_y = group.get('position_y')
 
@@ -6070,92 +5914,44 @@ class QuickEstimate(ttk.Frame):
             driveline_angle_deg = group.get('driveline_angle', 0.0)
             driveline_tan = math.tan(math.radians(driveline_angle_deg)) if driveline_angle_deg != 0 else 0.0
 
-            # Compute Y offsets for each tier within this group
-            tier_labels = self._group_tier_labels(group)
-            tier_y_offsets = {}
-            prev_tier_end_y = 0.0
-            for tier_label in tier_labels:
-                tier_y_offsets[tier_label] = prev_tier_end_y if tier_label != 'A' else 0.0
-                if tier_label != 'A':
-                    gap = group.get('tier_gaps', {}).get(tier_label, 3.0)
-                    tier_y_offsets[tier_label] = prev_tier_end_y + gap
-                # Compute max tracker length in this tier for the next tier's base Y
-                tier_segs_here = [s for s in group['segments']
-                                  if s.get('tier_label', 'A') == tier_label and s.get('quantity', 0) > 0]
-                max_len_here = max(
-                    (self._get_estimate_tracker_dims_ft(s.get('template_ref'))[1]
-                     if self._get_estimate_tracker_dims_ft(s.get('template_ref')) else fallback_length_ft)
-                    for s in tier_segs_here
-                ) if tier_segs_here else fallback_length_ft
-                prev_tier_end_y = tier_y_offsets[tier_label] + max_len_here
+            # Build tracker entries left-to-right across all segments
+            tracker_within_group = 0
+            for seg in group['segments']:
+                qty = seg['quantity']
+                spt = seg['strings_per_tracker']
+                if qty <= 0:
+                    continue
 
-            # Compute E-W alignment offsets per tier
-            tier_align = group.get('tier_alignment', 'left')
-            tier_counts_align = {
-                tl: sum(s['quantity'] for s in group['segments']
-                        if s.get('tier_label', 'A') == tl and s.get('quantity', 0) > 0)
-                for tl in tier_labels
-            }
-            max_tier_count_align = max(tier_counts_align.values()) if tier_counts_align else 1
-            tier_x_offsets_align = {}
-            for tl in tier_labels:
-                diff = max_tier_count_align - tier_counts_align.get(tl, 0)
-                if tier_align == 'right':
-                    tier_x_offsets_align[tl] = diff
-                elif tier_align == 'center':
-                    tier_x_offsets_align[tl] = diff // 2
-                else:
-                    tier_x_offsets_align[tl] = 0
+                ref = seg.get('template_ref')
+                dims = self._get_estimate_tracker_dims_ft(ref)
+                t_length = dims[1] if dims else fallback_length_ft
 
-            # Build tracker entries tier by tier (same X range per tier, different Y)
-            for tier_label in tier_labels:
-                tier_y_off = tier_y_offsets[tier_label]
-                tracker_within_tier = 0
-                for seg in group['segments']:
-                    if seg.get('tier_label', 'A') != tier_label:
-                        continue
-                    qty = seg['quantity']
-                    spt = seg['strings_per_tracker']
-                    if qty <= 0:
-                        continue
+                full_spt = int(spt)
+                has_partial = (spt != full_spt)
 
-                    ref = seg.get('template_ref')
-                    dims = self._get_estimate_tracker_dims_ft(ref)
-                    t_length = dims[1] if dims else fallback_length_ft
-
-                    full_spt = int(spt)
-                    has_partial = (spt != full_spt)
-
-                    for i in range(qty):
-                        if has_partial:
-                            if i % 2 == 0 and i + 1 < qty:
-                                effective_spt = full_spt + 1
-                            else:
-                                effective_spt = full_spt
+                for i in range(qty):
+                    if has_partial:
+                        if i % 2 == 0 and i + 1 < qty:
+                            effective_spt = full_spt + 1
                         else:
-                            effective_spt = int(spt)
+                            effective_spt = full_spt
+                    else:
+                        effective_spt = int(spt)
 
-                        abs_x_idx = tier_x_offsets_align.get(tier_label, 0) + tracker_within_tier
-                        local_x_offset = abs_x_idx * grp_row_spacing
-                        tracker_entries.append({
-                            'original_idx': flat_idx,
-                            'spt': effective_spt,
-                            'x': group_x + local_x_offset,
-                            'y': group_y + tier_y_off + local_x_offset * driveline_tan,
-                            'length_ft': t_length,
-                            'motor_y_ft': group_ref_motor_y_ft,
-                            'row_spacing_ft': grp_row_spacing,
-                        })
-                        flat_idx += 1
-                        tracker_within_tier += 1
+                    local_x_offset = tracker_within_group * grp_row_spacing
+                    tracker_entries.append({
+                        'original_idx': flat_idx,
+                        'spt': effective_spt,
+                        'x': group_x + local_x_offset,
+                        'y': group_y + local_x_offset * driveline_tan,
+                        'length_ft': t_length,
+                        'motor_y_ft': group_ref_motor_y_ft,
+                        'row_spacing_ft': grp_row_spacing,
+                    })
+                    flat_idx += 1
+                    tracker_within_group += 1
 
-            # Advance auto-layout cursor: use the widest tier's tracker count
-            max_tier_count = max(
-                sum(s['quantity'] for s in group['segments']
-                    if s.get('tier_label', 'A') == tl and s.get('quantity', 0) > 0)
-                for tl in tier_labels
-            ) if tier_labels else group_tracker_counts[grp_idx]
-            group_width = max_tier_count * grp_row_spacing
+            group_width = tracker_within_group * grp_row_spacing
             auto_x_cursor += group_width + grp_row_spacing * 2  # Extra gap between groups
 
         # For Central Inverter, compute strings_per_cb from library now that we have module_isc
@@ -6225,10 +6021,9 @@ class QuickEstimate(ttk.Frame):
                     grp_spi = g.get('strings_per_inv') or strings_per_inv
                     grp_pitch = g.get('row_spacing_ft', 20.0) or 20.0
                     if grp_entries and grp_spi > 0:
-                        multi_tier = len(self._group_tier_labels(g)) > 1
                         grp_result = allocate_strings_spatial(
                             grp_entries, grp_spi, grp_pitch,
-                            force_single_row=multi_tier)
+                            force_single_row=False)
                         merged_inverters.extend(grp_result.get('inverters', []))
                         num_spatial_runs += grp_result.get('spatial_runs', 1)
 

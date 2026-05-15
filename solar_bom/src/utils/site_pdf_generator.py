@@ -1417,6 +1417,13 @@ def _draw_single_wiring_diagram(ax, spec, letter):
         internal_motor_string = motor_string_index_1b - 1
     polarity = spec.get('polarity_convention', 'positive_north')
     device_position = spec.get('device_position', 'south')  # 'north', 'south', or 'middle'
+    # Tier-specific positions ('driveline_N', 'between_N_M') from the tier mechanic
+    # are semantically at-the-motor — same as 'middle' for a single-tracker typical
+    # wiring diagram. Normalize so downstream routing draws L-shaped drops + arrows
+    # and the centered device label, instead of falling through to the horizontal-only
+    # branch (no arrow, no bracket, no label).
+    if device_position.startswith('driveline_') or device_position.startswith('between'):
+        device_position = 'middle'
     inverter_topology = spec.get('inverter_topology', 'Distributed String')
     wire_gauges = spec.get('wire_gauges', {})
     _connector_type = spec.get('connector_type', 'MC4')
