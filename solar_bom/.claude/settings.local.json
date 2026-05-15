@@ -28,7 +28,8 @@
       "Bash(python -m py_compile src/utils/corridor_routing.py)",
       "Bash(python -m py_compile src/utils/site_pdf_generator.py)",
       "Bash(python -c \"from src.utils.corridor_routing import three_leg_distance, pick_entry, polyline_arc_length; pts=[\\(0,0\\),\\(0,100\\)]; d, g = three_leg_distance\\(\\(20,50\\),\\(80,50\\),pts\\); print\\(f'dist={d:.1f}, path={g}'\\)\")",
-      "Bash(python -m py_compile src/ui/site_preview.py src/ui/quick_estimate.py src/utils/corridor_routing.py src/utils/site_pdf_generator.py)"
+      "Bash(python -m py_compile src/ui/site_preview.py src/ui/quick_estimate.py src/utils/corridor_routing.py src/utils/site_pdf_generator.py)",
+      "Bash(timeout 10 python main.py)"
     ]
   }
 }

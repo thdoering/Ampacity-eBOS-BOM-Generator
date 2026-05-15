@@ -28,6 +28,7 @@ class QuickEstimate(ttk.Frame):
         self.selected_inverter = None  # Currently selected InverterSpec
         
         self.groups = []
+        self.circuits = []  # Organizational circuit containers (visual only, no BOM impact)
         self.pads = []  # Collection points (inverter pads)
         self.measurements = []  # Saved measurement polylines [[wx,wy],...] per measurement
         self.corridors = []  # Cable corridors [{id, label, points, assigned_devices}]
@@ -39,6 +40,7 @@ class QuickEstimate(ttk.Frame):
         self.last_si_assignments = []        # Structured SI data for Device Configurator
         self._harness_combos = []  # Track harness combo widgets for LV collection disabling
         self.selected_group_idx = None
+        self._selected_group_id = None  # Stable-ID-based selection tracking
         self._updating_listbox = False
         self.enabled_templates = self.load_enabled_templates()
 
@@ -394,6 +396,8 @@ class QuickEstimate(ttk.Frame):
         default_spi = self.groups[-1].get('strings_per_inv', None) if self.groups else None
 
         group = {
+            'id': uuid.uuid4().hex[:8],
+            'circuit_id': None,
             'name': self._next_group_name(),
             'device_position': 'driveline',
             'driveline_angle': 0.0,
@@ -409,17 +413,13 @@ class QuickEstimate(ttk.Frame):
             ]
         }
         self.groups.append(group)
-        self._refresh_group_listbox()
-        
+        self._refresh_group_tree()
+
         # Select the new group
-        idx = len(self.groups) - 1
-        self.group_listbox.selection_clear(0, tk.END)
-        self.group_listbox.selection_set(idx)
-        self.group_listbox.see(idx)
-        self.on_group_select(None)
+        self._restore_selection_by_id(group['id'])
         
         self._mark_dirty()
-        return idx
+        return len(self.groups) - 1
 
     def _next_group_name(self):
         """Return the lowest unused 'Group N' name."""
@@ -436,94 +436,538 @@ class QuickEstimate(ttk.Frame):
 
     def copy_selected_group(self):
         """Copy the currently selected group"""
-        sel = self.group_listbox.curselection()
-        if not sel:
+        if self._selected_group_id is None:
             return
 
-        source = self.groups[sel[0]]
+        source = next((g for g in self.groups if g.get('id') == self._selected_group_id), None)
+        if source is None:
+            return
+
         new_group = copy.deepcopy(source)
+        new_group['id'] = uuid.uuid4().hex[:8]
         new_group['name'] = self._next_group_name()
 
-        insert_idx = len(self.groups)
         self.groups.append(new_group)
-        self._refresh_group_listbox()
-        
-        self.group_listbox.selection_clear(0, tk.END)
-        self.group_listbox.selection_set(insert_idx)
-        self.group_listbox.see(insert_idx)
-        self.on_group_select(None)
-        
+        self._refresh_group_tree()
+        self._restore_selection_by_id(new_group['id'])
+
         self._mark_dirty()
 
     def delete_selected_group(self):
-        """Delete the currently selected group"""
-        sel = self.group_listbox.curselection()
-        if not sel:
+        """Delete selected group(s). Multi-select deletes all with a confirm prompt."""
+        if not hasattr(self, 'group_tree'):
             return
-        
-        idx = sel[0]
-        del self.groups[idx]
+        group_iids = [iid for iid in self.group_tree.selection() if iid.startswith('group:')]
+        if not group_iids:
+            return
+
+        if len(group_iids) > 1:
+            if not messagebox.askyesno(
+                "Delete Groups",
+                f"Delete {len(group_iids)} selected groups?"
+            ):
+                return
+            gids = {iid[6:] for iid in group_iids}
+            first_idx = next((i for i, g in enumerate(self.groups) if g.get('id') in gids), 0)
+            self.groups = [g for g in self.groups if g.get('id') not in gids]
+        else:
+            gid = group_iids[0][6:]
+            first_idx = next((i for i, g in enumerate(self.groups) if g.get('id') == gid), 0)
+            del self.groups[first_idx]
+
         self._reconcile_locked_allocation()
+        self._selected_group_id = None
         self.selected_group_idx = None
-        self._refresh_group_listbox(preserve_selection=False)
-        
-        # Select nearest group
+        self._refresh_group_tree(preserve_selection=False)
+
         if self.groups:
-            new_idx = min(idx, len(self.groups) - 1)
-            self.group_listbox.selection_set(new_idx)
-            self.on_group_select(None)
+            new_idx = min(first_idx, len(self.groups) - 1)
+            self._restore_selection_by_id(self.groups[new_idx].get('id'))
         else:
             self.clear_details_panel()
-        
+
         self._mark_dirty()
     
     def move_group_up(self):
-        """Move selected group up"""
-        sel = self.group_listbox.curselection()
-        if not sel or sel[0] == 0:
+        """Move selected group up within its bucket (circuit or root)"""
+        gid = self._selected_group_id
+        if gid is None:
             return
-        
-        idx = sel[0]
-        self.groups[idx], self.groups[idx - 1] = self.groups[idx - 1], self.groups[idx]
-        self._refresh_group_listbox()
-        self.group_listbox.selection_set(idx - 1)
-        self.on_group_select(None)
-        
+        group = next((g for g in self.groups if g.get('id') == gid), None)
+        if group is None:
+            return
+        circuit_id = group.get('circuit_id')
+        peers = [g for g in self.groups if g.get('circuit_id') == circuit_id]
+        peer_idx = peers.index(group)
+        if peer_idx == 0:
+            return
+        # Swap in self.groups
+        global_idx = self.groups.index(group)
+        prev_peer = peers[peer_idx - 1]
+        prev_global_idx = self.groups.index(prev_peer)
+        self.groups[global_idx], self.groups[prev_global_idx] = self.groups[prev_global_idx], self.groups[global_idx]
+        self._refresh_group_tree()
+        self._restore_selection_by_id(gid)
         self._mark_dirty()
-    
+
     def move_group_down(self):
-        """Move selected group down"""
-        sel = self.group_listbox.curselection()
-        if not sel or sel[0] >= len(self.groups) - 1:
+        """Move selected group down within its bucket (circuit or root)"""
+        gid = self._selected_group_id
+        if gid is None:
             return
-        
-        idx = sel[0]
-        self.groups[idx], self.groups[idx + 1] = self.groups[idx + 1], self.groups[idx]
-        self._refresh_group_listbox()
-        self.group_listbox.selection_set(idx + 1)
-        self.on_group_select(None)
-        
+        group = next((g for g in self.groups if g.get('id') == gid), None)
+        if group is None:
+            return
+        circuit_id = group.get('circuit_id')
+        peers = [g for g in self.groups if g.get('circuit_id') == circuit_id]
+        peer_idx = peers.index(group)
+        if peer_idx >= len(peers) - 1:
+            return
+        # Swap in self.groups
+        global_idx = self.groups.index(group)
+        next_peer = peers[peer_idx + 1]
+        next_global_idx = self.groups.index(next_peer)
+        self.groups[global_idx], self.groups[next_global_idx] = self.groups[next_global_idx], self.groups[global_idx]
+        self._refresh_group_tree()
+        self._restore_selection_by_id(gid)
         self._mark_dirty()
     
-    def _refresh_group_listbox(self, preserve_selection=True):
-        """Refresh the listbox display from self.groups"""
-        sel = self.group_listbox.curselection()
-        old_idx = sel[0] if sel else None
-        
+    def _refresh_group_tree(self, preserve_selection=True):
+        """Refresh the treeview display from self.groups and self.circuits."""
+        if not hasattr(self, 'group_tree'):
+            return
+        saved_id = self._selected_group_id if preserve_selection else None
+
+        # Snapshot open/closed state of every circuit node before clearing.
+        # Circuits absent from the snapshot are brand-new and default to open.
+        existing_iids = set(self.group_tree.get_children())
+        open_circuits = {
+            iid for iid in existing_iids
+            if iid.startswith('circuit:') and self.group_tree.item(iid, 'open')
+        }
+        known_circuits = {iid for iid in existing_iids if iid.startswith('circuit:')}
+
         self._updating_listbox = True
-        self.group_listbox.delete(0, tk.END)
-        for group in self.groups:
-            total_trackers = sum(seg['quantity'] for seg in group['segments'])
-            total_strings = sum(int(seg['quantity'] * seg['strings_per_tracker']) for seg in group['segments'])
-            n_tiers = len(set(seg.get('tier_label', 'A') for seg in group['segments']))
+        for item in self.group_tree.get_children():
+            self.group_tree.delete(item)
+
+        def _group_display(g):
+            total_trackers = sum(seg['quantity'] for seg in g['segments'])
+            total_strings = sum(int((seg.get('quantity') or 0) * (seg.get('strings_per_tracker') or 0)) for seg in g['segments'])
+            n_tiers = len(set(seg.get('tier_label', 'A') for seg in g['segments']))
             tier_tag = f'  [{n_tiers}T]' if n_tiers > 1 else ''
-            link_tag = '  [L]' if group.get('link_id') else ''
-            display = f"{group['name']}  ({total_trackers}T / {total_strings}S){tier_tag}{link_tag}"
-            self.group_listbox.insert(tk.END, display)
-        
-        if preserve_selection and old_idx is not None and old_idx < len(self.groups):
-            self.group_listbox.selection_set(old_idx)
+            link_tag = '  [L]' if g.get('link_id') else ''
+            return f"{g['name']}  ({total_trackers}T / {total_strings}S){tier_tag}{link_tag}"
+
+        # Insert circuits with their child groups
+        for circuit in self.circuits:
+            cid = circuit['id']
+            circuit_iid = f"circuit:{cid}"
+            child_groups = [g for g in self.groups if g.get('circuit_id') == cid]
+            n = len(child_groups)
+            total_trackers = sum(seg['quantity'] for g in child_groups for seg in g['segments'])
+            total_strings = sum(int((seg.get('quantity') or 0) * (seg.get('strings_per_tracker') or 0)) for g in child_groups for seg in g['segments'])
+            label = f"{circuit['name']}  ({n} group{'s' if n != 1 else ''} / {total_trackers}T / {total_strings}S)"
+            # Restore previous open state; default open for brand-new circuits,
+            # but collapsed when loading from file.
+            if circuit_iid in known_circuits:
+                is_open = circuit_iid in open_circuits
+            else:
+                is_open = not getattr(self, '_loading', False)
+            self.group_tree.insert('', 'end', iid=circuit_iid, text=label, open=is_open)
+            for g in child_groups:
+                self.group_tree.insert(circuit_iid, 'end', iid=f"group:{g['id']}", text=_group_display(g))
+
+        # Insert root-level groups (no circuit)
+        for g in self.groups:
+            if g.get('circuit_id') is None:
+                self.group_tree.insert('', 'end', iid=f"group:{g['id']}", text=_group_display(g))
+
         self._updating_listbox = False
+
+        if preserve_selection and saved_id:
+            iid = f"group:{saved_id}"
+            if self.group_tree.exists(iid):
+                self.group_tree.selection_set(iid)
+                self.group_tree.see(iid)
+
+    def _refresh_group_listbox(self, preserve_selection=True):
+        """Backward-compat alias for _refresh_group_tree."""
+        self._refresh_group_tree(preserve_selection=preserve_selection)
+
+    def _restore_selection_by_id(self, gid):
+        """Select the group with stable ID gid in the tree and update details panel."""
+        if gid is None or not hasattr(self, 'group_tree'):
+            return
+        iid = f"group:{gid}"
+        if self.group_tree.exists(iid):
+            self.group_tree.selection_set(iid)
+            self.group_tree.see(iid)
+            self.on_group_select(None)
+
+    # -------------------- Sort / Renumber --------------------
+
+    def _sort_groups(self, mode):
+        """Sort groups within each bucket (circuit or root) by the given mode."""
+        saved_id = self._selected_group_id
+
+        def _string_count(g):
+            return sum(seg['quantity'] * seg['strings_per_tracker'] for seg in g['segments'])
+
+        def _tracker_count(g):
+            return sum(seg['quantity'] for seg in g['segments'])
+
+        reverse = mode.endswith('_desc')
+
+        # Collect groups per bucket
+        root_groups = [g for g in self.groups if g.get('circuit_id') is None]
+        circuit_groups = {c['id']: [g for g in self.groups if g.get('circuit_id') == c['id']]
+                          for c in self.circuits}
+
+        import re as _re
+
+        def _natural_key_str(name):
+            """Split a name on digit runs so 'Block 10' sorts after 'Block 9'."""
+            parts = _re.split(r'(\d+)', name.lower())
+            return [int(p) if p.isdigit() else p for p in parts]
+
+        def _natural_key(g):
+            return _natural_key_str(g['name'])
+
+        def _sort_bucket(bucket):
+            if mode in ('name_asc', 'name_desc'):
+                bucket.sort(key=_natural_key, reverse=reverse)
+            elif mode in ('strings_desc', 'strings_asc'):
+                bucket.sort(key=_string_count, reverse=reverse)
+            elif mode in ('trackers_desc', 'trackers_asc'):
+                bucket.sort(key=_tracker_count, reverse=reverse)
+
+        _sort_bucket(root_groups)
+        for bucket in circuit_groups.values():
+            _sort_bucket(bucket)
+
+        # Also sort the circuits themselves by the same key
+        if mode in ('name_asc', 'name_desc'):
+            self.circuits.sort(key=lambda c: _natural_key_str(c['name']), reverse=reverse)
+        elif mode in ('strings_desc', 'strings_asc'):
+            self.circuits.sort(
+                key=lambda c: sum(_string_count(g) for g in circuit_groups[c['id']]),
+                reverse=reverse
+            )
+        elif mode in ('trackers_desc', 'trackers_asc'):
+            self.circuits.sort(
+                key=lambda c: sum(_tracker_count(g) for g in circuit_groups[c['id']]),
+                reverse=reverse
+            )
+
+        # Reconstruct self.groups: circuit groups first (in new circuit order), then root
+        new_groups = []
+        for c in self.circuits:
+            new_groups.extend(circuit_groups[c['id']])
+        new_groups.extend(root_groups)
+        self.groups[:] = new_groups
+
+        self._refresh_group_tree()
+        self._restore_selection_by_id(saved_id)
+        self._mark_dirty()
+
+    def renumber_groups(self):
+        """Rename all groups Group 1…N in displayed order (circuits first, then root)."""
+        if not self.groups:
+            return
+        if not messagebox.askyesno(
+            "Renumber Groups",
+            "Rename all groups Group 1, Group 2, … in displayed order?\nThis cannot be undone."
+        ):
+            return
+        saved_id = self._selected_group_id
+        n = 1
+        # Circuits first, in circuit order
+        for c in self.circuits:
+            for g in self.groups:
+                if g.get('circuit_id') == c['id']:
+                    g['name'] = f"Group {n}"
+                    n += 1
+        # Then root groups
+        for g in self.groups:
+            if g.get('circuit_id') is None:
+                g['name'] = f"Group {n}"
+                n += 1
+        self._refresh_group_tree()
+        self._restore_selection_by_id(saved_id)
+        self._mark_dirty()
+
+    # -------------------- Circuit management --------------------
+
+    def _add_circuit(self):
+        """Prompt for a name and create a new circuit container."""
+        name = simpledialog.askstring("New Circuit", "Circuit name:", parent=self)
+        if not name or not name.strip():
+            return
+        circuit = {'id': uuid.uuid4().hex[:8], 'name': name.strip()}
+        self.circuits.append(circuit)
+        self._refresh_group_tree()
+        # Select the new circuit node
+        iid = f"circuit:{circuit['id']}"
+        if self.group_tree.exists(iid):
+            self.group_tree.selection_set(iid)
+            self.group_tree.see(iid)
+        self._mark_dirty()
+
+    def _rename_circuit(self, circuit_id):
+        """Prompt for a new name and rename the given circuit."""
+        circuit = next((c for c in self.circuits if c['id'] == circuit_id), None)
+        if circuit is None:
+            return
+        new_name = simpledialog.askstring(
+            "Rename Circuit", "Circuit name:", initialvalue=circuit['name'], parent=self
+        )
+        if not new_name or not new_name.strip():
+            return
+        circuit['name'] = new_name.strip()
+        self._refresh_group_tree()
+        self._mark_dirty()
+
+    def _delete_circuit(self, circuit_id):
+        """Delete a circuit, moving its groups to root."""
+        circuit = next((c for c in self.circuits if c['id'] == circuit_id), None)
+        if circuit is None:
+            return
+        if not messagebox.askyesno(
+            "Delete Circuit",
+            f"Delete circuit '{circuit['name']}'?\nIts groups will be moved to root level."
+        ):
+            return
+        for g in self.groups:
+            if g.get('circuit_id') == circuit_id:
+                g['circuit_id'] = None
+        self.circuits.remove(circuit)
+        self._refresh_group_tree()
+        self._mark_dirty()
+
+    def _move_group_to_circuit(self, group_id, circuit_id):
+        """Move a group into a circuit (or to root if circuit_id is None)."""
+        group = next((g for g in self.groups if g.get('id') == group_id), None)
+        if group is None:
+            return
+        group['circuit_id'] = circuit_id
+        self._selected_group_id = group_id
+        self._refresh_group_tree()
+        self._restore_selection_by_id(group_id)
+        self._mark_dirty()
+
+    def _move_group_to_new_circuit(self, group_id):
+        """Prompt for a name, create a circuit, then move the group into it."""
+        name = simpledialog.askstring("New Circuit", "Circuit name:", parent=self)
+        if not name or not name.strip():
+            return
+        circuit = {'id': uuid.uuid4().hex[:8], 'name': name.strip()}
+        self.circuits.append(circuit)
+        self._move_group_to_circuit(group_id, circuit['id'])
+
+    def _move_groups_to_circuit(self, group_ids, group_iids, circuit_id):
+        """Move multiple groups into a circuit (or root). Restores full selection."""
+        changed = False
+        for gid in group_ids:
+            group = next((g for g in self.groups if g.get('id') == gid), None)
+            if group and group.get('circuit_id') != circuit_id:
+                group['circuit_id'] = circuit_id
+                changed = True
+        if not changed:
+            return
+        self._refresh_group_tree()
+        # Restore multi-selection
+        self._updating_listbox = True
+        still_exist = [iid for iid in group_iids if self.group_tree.exists(iid)]
+        if still_exist:
+            self.group_tree.selection_set(still_exist)
+        self._updating_listbox = False
+        self._mark_dirty()
+
+    def _move_groups_to_new_circuit(self, group_ids, group_iids):
+        """Prompt for a name, create a circuit, move all groups into it."""
+        name = simpledialog.askstring("New Circuit", "Circuit name:", parent=self)
+        if not name or not name.strip():
+            return
+        circuit = {'id': uuid.uuid4().hex[:8], 'name': name.strip()}
+        self.circuits.append(circuit)
+        self._move_groups_to_circuit(group_ids, group_iids, circuit['id'])
+
+    # -------------------- Drag-and-drop into circuits --------------------
+
+    def _on_tree_press(self, event):
+        """Record press position; suppress click-deselect when dragging a multi-selection."""
+        iid = self.group_tree.identify_row(event.y)
+        self._drag_start_xy = (event.x, event.y)
+        self._drag_active = False
+        self._drag_press_iid = iid
+        self._drag_highlight_iid = None
+        self._drag_orig_tags = {}
+        self._dragging_iids = []
+        self._drag_suppress = False
+
+        ctrl = bool(event.state & 0x4)
+        shift = bool(event.state & 0x1)
+
+        # If pressing on an already-selected group node with no modifier held,
+        # suppress the default click (which would collapse the multi-selection)
+        # so the user can drag the whole selection.
+        if (iid and iid.startswith('group:')
+                and iid in self.group_tree.selection()
+                and len([s for s in self.group_tree.selection() if s.startswith('group:')]) > 1
+                and not ctrl and not shift):
+            self._pre_drag_selection = list(self.group_tree.selection())
+            self._drag_suppress = True
+            return 'break'
+
+        self._pre_drag_selection = list(self.group_tree.selection())
+
+    def _on_drag_motion(self, event):
+        """Activate drag once threshold is exceeded; highlight circuit drop targets."""
+        if not hasattr(self, '_drag_start_xy'):
+            return
+
+        dx = abs(event.x - self._drag_start_xy[0])
+        dy = abs(event.y - self._drag_start_xy[1])
+
+        if not self._drag_active and (dx > 6 or dy > 6):
+            press_iid = getattr(self, '_drag_press_iid', None)
+            if not press_iid or not press_iid.startswith('group:'):
+                return
+
+            # Determine which group IIDs to drag
+            pre_sel = getattr(self, '_pre_drag_selection', [])
+            if press_iid in pre_sel:
+                self._dragging_iids = [s for s in pre_sel if s.startswith('group:')]
+            else:
+                self._dragging_iids = [press_iid]
+
+            if not self._dragging_iids:
+                return
+
+            # Restore the intended selection in the tree
+            self._updating_listbox = True
+            self.group_tree.selection_set(self._dragging_iids)
+            self._updating_listbox = False
+
+            self._drag_active = True
+            self.group_tree.configure(cursor='hand2')
+
+        if not self._drag_active:
+            return
+
+        # Highlight circuit node under cursor as drop target
+        target_iid = self.group_tree.identify_row(event.y)
+
+        # Clear previous highlight if we've moved off it
+        if self._drag_highlight_iid and self._drag_highlight_iid != target_iid:
+            orig = self._drag_orig_tags.pop(self._drag_highlight_iid, ())
+            try:
+                self.group_tree.item(self._drag_highlight_iid, tags=orig)
+            except Exception:
+                pass
+            self._drag_highlight_iid = None
+
+        # Apply highlight to circuit target only
+        if (target_iid and target_iid.startswith('circuit:')
+                and target_iid not in self._drag_orig_tags):
+            orig = self.group_tree.item(target_iid, 'tags')
+            self._drag_orig_tags[target_iid] = orig
+            self.group_tree.item(target_iid, tags=('drag_over',))
+            self._drag_highlight_iid = target_iid
+
+    def _on_drag_end(self, event):
+        """Complete the drag: move groups to the drop target circuit or root."""
+        # Plain click on a selected item with no drag — restore click selection
+        if not getattr(self, '_drag_active', False):
+            if getattr(self, '_drag_suppress', False):
+                iid = getattr(self, '_drag_press_iid', None)
+                if iid and hasattr(self, 'group_tree') and self.group_tree.exists(iid):
+                    self.group_tree.selection_set(iid)
+                    self.on_group_select(None)
+            return
+
+        self._drag_active = False
+        self.group_tree.configure(cursor='')
+
+        # Remove highlight
+        if self._drag_highlight_iid:
+            orig = self._drag_orig_tags.pop(self._drag_highlight_iid, ())
+            try:
+                self.group_tree.item(self._drag_highlight_iid, tags=orig)
+            except Exception:
+                pass
+            self._drag_highlight_iid = None
+
+        # Determine drop target
+        target_iid = self.group_tree.identify_row(event.y)
+        if target_iid and target_iid.startswith('circuit:'):
+            target_circuit_id = target_iid[8:]
+        elif target_iid and target_iid.startswith('group:'):
+            # Dropped onto a group — use that group's circuit (or root)
+            target_group = next(
+                (g for g in self.groups if g.get('id') == target_iid[6:]), None
+            )
+            target_circuit_id = target_group.get('circuit_id') if target_group else None
+        else:
+            target_circuit_id = None  # empty area = root
+
+        dragging = getattr(self, '_dragging_iids', [])
+        if not dragging:
+            return
+
+        group_ids = [iid[6:] for iid in dragging]
+        self._move_groups_to_circuit(group_ids, dragging, target_circuit_id)
+
+    def _on_tree_right_click(self, event):
+        """Right-click context menu for circuit and group nodes."""
+        iid = self.group_tree.identify_row(event.y)
+        if not iid:
+            return
+
+        # If the right-clicked item is already in the selection, keep the full
+        # multi-selection. Otherwise, select only the right-clicked item.
+        if iid not in self.group_tree.selection():
+            self.group_tree.selection_set(iid)
+
+        menu = tk.Menu(self, tearoff=0)
+
+        if iid.startswith('circuit:'):
+            cid = iid[8:]
+            circuit = next((c for c in self.circuits if c['id'] == cid), None)
+            if circuit is None:
+                return
+            menu.add_command(label="Rename", command=lambda: self._rename_circuit(cid))
+            menu.add_command(label="Delete", command=lambda: self._delete_circuit(cid))
+
+        elif iid.startswith('group:'):
+            # Collect all selected group IDs for bulk move
+            sel_gids = [s[6:] for s in self.group_tree.selection() if s.startswith('group:')]
+            sel_iids = [s for s in self.group_tree.selection() if s.startswith('group:')]
+            n = len(sel_gids)
+            label = "Move to Circuit" if n <= 1 else f"Move {n} Groups to Circuit"
+
+            move_menu = tk.Menu(menu, tearoff=0)
+            move_menu.add_command(
+                label="(None / Root)",
+                command=lambda: self._move_groups_to_circuit(sel_gids, sel_iids, None)
+            )
+            if self.circuits:
+                move_menu.add_separator()
+                for c in self.circuits:
+                    move_menu.add_command(
+                        label=c['name'],
+                        command=lambda cid=c['id']: self._move_groups_to_circuit(sel_gids, sel_iids, cid)
+                    )
+            move_menu.add_separator()
+            move_menu.add_command(
+                label="+ New Circuit…",
+                command=lambda: self._move_groups_to_new_circuit(sel_gids, sel_iids)
+            )
+            menu.add_cascade(label=label, menu=move_menu)
+
+        if menu.index('end') is not None:
+            menu.post(event.x_root, event.y_root)
 
     def round_whip_length(self, raw_length_ft):
         """Apply 5% waste factor and round up to nearest 10ft increment (min 10ft)"""
@@ -2197,23 +2641,26 @@ class QuickEstimate(ttk.Frame):
         if hasattr(self, 'ac_homerun_distance_var'):
             self.ac_homerun_distance_var.set(str(estimate_data.get('ac_homerun_distance', 50)))
         
+        # Load circuits (new; absent in older files — backward compat: treat as empty)
+        self.circuits = copy.deepcopy(estimate_data.get('circuits', []))
+
         # Load groups (new format) or convert from old subarrays format
         saved_subarrays = estimate_data.get('subarrays', {})
         saved_groups = estimate_data.get('groups', estimate_data.get('rows', []))
-        
+
         self.groups.clear()
-        self._refresh_group_listbox()
-        
+        self._refresh_group_tree()
+
         if saved_groups:
             # Ensure all segments have template_ref field (backward compat)
-            global_row_spacing_fallback = estimate_data.get('row_spacing_ft', 20.0)
+            global_row_spacing_fallback = estimate_data.get('row_spacing_ft') or 20.0
             for group in saved_groups:
                 for seg in group.get('segments', []):
                     if 'template_ref' not in seg:
                         seg['template_ref'] = None
-                # Backward compat: older saves have no per-group row spacing
-                if 'row_spacing_ft' not in group:
-                    group['row_spacing_ft'] = global_row_spacing_fallback
+                # Backward compat: older saves have no per-group row spacing (or have 0/None)
+                if not group.get('row_spacing_ft'):
+                    group['row_spacing_ft'] = global_row_spacing_fallback or 20.0
                 # Backward compat: older saves have no per-group strings_per_inv
                 if 'strings_per_inv' not in group:
                     group['strings_per_inv'] = None
@@ -2229,6 +2676,11 @@ class QuickEstimate(ttk.Frame):
                 # Backward compat: tier E-W alignment
                 if 'tier_alignment' not in group:
                     group['tier_alignment'] = 'left'
+                # Backward compat: assign stable id and circuit_id to older groups
+                if 'id' not in group:
+                    group['id'] = uuid.uuid4().hex[:8]
+                if 'circuit_id' not in group:
+                    group['circuit_id'] = None
             self.groups = copy.deepcopy(saved_groups)
         elif saved_subarrays:
             # Backward compat: convert old subarray/block format to groups
@@ -2247,6 +2699,8 @@ class QuickEstimate(ttk.Frame):
                     if not segments:
                         segments = [{'quantity': 1, 'strings_per_tracker': 3, 'harness_config': '3', 'template_ref': None}]
                     self.groups.append({
+                        'id': uuid.uuid4().hex[:8],
+                        'circuit_id': None,
                         'name': block_data.get('name', f"Group {group_num}"),
                         'segments': segments
                     })
@@ -2255,12 +2709,11 @@ class QuickEstimate(ttk.Frame):
             self.add_group()
             return
         
-        self._refresh_group_listbox()
-        
+        self._refresh_group_tree()
+
         # Select first group
         if self.groups:
-            self.group_listbox.selection_set(0)
-            self.on_group_select(None)
+            self._restore_selection_by_id(self.groups[0].get('id'))
         
         self._last_inspect_mode = estimate_data.get('inspect_mode', False)
         self.pads = copy.deepcopy(estimate_data.get('pads', []))
@@ -2358,6 +2811,7 @@ class QuickEstimate(ttk.Frame):
         
         # Save groups (new format) — deep copy to avoid reference aliasing
         estimate_data['groups'] = copy.deepcopy(self.groups)
+        estimate_data['circuits'] = copy.deepcopy(self.circuits)
         estimate_data['subarrays'] = {}
         
         # Save pads, measurements, and corridors
@@ -2713,8 +3167,11 @@ class QuickEstimate(ttk.Frame):
 
     def _clear_estimate_ui(self):
         """Clear the groups and details when switching/deleting estimates"""
-        # Clear groups and pads
+        # Clear groups, circuits, and pads
         self.groups.clear()
+        self.circuits.clear()
+        self._selected_group_id = None
+        self.selected_group_idx = None
         self.pads.clear()
         self.device_names.clear()
         self.device_feeder_sizes.clear()
@@ -2723,8 +3180,8 @@ class QuickEstimate(ttk.Frame):
         self.allocation_locked = False
         self.locked_allocation_result = None
         self.manually_edited = False
-        if hasattr(self, 'group_listbox'):
-            self._refresh_group_listbox()
+        if hasattr(self, 'group_tree'):
+            self._refresh_group_tree()
         
         # Clear details panel
         if hasattr(self, 'details_container'):
@@ -2854,11 +3311,10 @@ class QuickEstimate(ttk.Frame):
             inv = inverter
             inv_name = f"{inv.manufacturer} {inv.model}"
             type_str = inv.inverter_type.value if hasattr(inv, 'inverter_type') else 'String'
-            self.inverter_select_var.set(inv_name)
-            self.inverter_hint_label.pack_forget()
+            self.inverter_name_label.config(text=inv_name, foreground='black')
             self.inverter_info_label.config(
                 text=f"{inv.rated_power_kw}kW AC  |  {inv.max_dc_power_kw}kW DC  |  {inv.get_total_string_capacity()} inputs  |  {type_str}",
-                foreground='black'
+                foreground='gray'
             )
             self._update_strings_per_inverter()
             self._on_inverter_changed_wire_sizing()
@@ -2868,8 +3324,10 @@ class QuickEstimate(ttk.Frame):
                     self.current_project.selected_inverters.append(inv_name)
         else:
             self.selected_inverter = None
-            self.inverter_select_var.set('')
-            self.inverter_hint_label.pack(side='left', padx=(4, 10))
+            self.inverter_name_label.config(
+                text="Assign via Equipment → Inverters (right-click)",
+                foreground='gray'
+            )
             self.inverter_info_label.config(text="", foreground='gray')
             if hasattr(self, 'strings_per_inverter_var'):
                 self.strings_per_inverter_var.set('--')
@@ -4235,33 +4693,20 @@ class QuickEstimate(ttk.Frame):
         self.module_info_label = ttk.Label(module_row, text="No templates linked — link a tracker template to a segment", foreground='gray')
         self.module_info_label.pack(side='left', padx=(5, 0))
         
-        # Row 2: Inverter selection
+        # Row 2: Inverter display (read-only, assigned via InverterManager right-click)
         inverter_row = ttk.Frame(settings_frame)
         inverter_row.pack(fill='x', pady=(0, 5))
-        
-        ttk.Label(inverter_row, text="Inverter:").pack(side='left', padx=(0, 5))
-        self.inverter_select_var = tk.StringVar()
-        self.inverter_combo = ttk.Combobox(
-            inverter_row,
-            textvariable=self.inverter_select_var,
-            values=sorted(self.available_inverters.keys()),
-            state='disabled',
-            width=50
-        )
-        self.inverter_combo.pack(side='left', padx=(0, 5))
-        self.disable_combobox_scroll(self.inverter_combo)
 
-        # Hint shown when no inverter is assigned
-        self.inverter_hint_label = ttk.Label(
+        ttk.Label(inverter_row, text="Inverter:", font=('Helvetica', 9, 'bold')).pack(side='left', padx=(0, 5))
+        self.inverter_name_label = ttk.Label(
             inverter_row,
             text="Assign via Equipment → Inverters (right-click)",
             foreground='gray'
         )
-        self.inverter_hint_label.pack(side='left', padx=(4, 10))
+        self.inverter_name_label.pack(side='left', padx=(5, 0))
 
-        # Inverter info display
         self.inverter_info_label = ttk.Label(inverter_row, text="", foreground='gray')
-        self.inverter_info_label.pack(side='left', padx=(0, 0))
+        self.inverter_info_label.pack(side='left', padx=(8, 0))
         
         # Row 3: Topology and DC:AC ratio
         topology_row = ttk.Frame(settings_frame)
@@ -4450,39 +4895,53 @@ class QuickEstimate(ttk.Frame):
         ttk.Button(check_btn_frame, text="Select None", command=self._results_select_none).pack(side='left')
 
     def setup_tree_panel(self, parent):
-        """Setup the left row list panel"""
-        # Label
+        """Setup the left row list panel with treeview, circuits, sort, and renumber."""
         tree_label = ttk.Label(parent, text="Tracker Groups", font=('Helvetica', 10, 'bold'))
         tree_label.pack(anchor='w', pady=(0, 5))
-        
-        # Listbox frame
+
         list_frame = ttk.Frame(parent)
         list_frame.pack(fill='both', expand=True)
-        
-        self.group_listbox = tk.Listbox(list_frame, selectmode='browse', font=('Helvetica', 10), exportselection=False)
-        self.group_listbox.pack(side='left', fill='both', expand=True)
-        
-        # Scrollbar
-        list_scroll = ttk.Scrollbar(list_frame, orient='vertical', command=self.group_listbox.yview)
+
+        self.group_tree = ttk.Treeview(list_frame, selectmode='extended', show='tree')
+        self.group_tree.pack(side='left', fill='both', expand=True)
+        self.group_tree.tag_configure('drag_over', background='#cce8ff')
+
+        list_scroll = ttk.Scrollbar(list_frame, orient='vertical', command=self.group_tree.yview)
         list_scroll.pack(side='right', fill='y')
-        self.group_listbox.configure(yscrollcommand=list_scroll.set)
-        
-        # Bind selection
-        self.group_listbox.bind('<<ListboxSelect>>', self.on_group_select)
-        
-        # Buttons frame
+        self.group_tree.configure(yscrollcommand=list_scroll.set)
+
+        self.group_tree.bind('<<TreeviewSelect>>', self.on_group_select)
+        self.group_tree.bind('<Button-3>', self._on_tree_right_click)
+        self.group_tree.bind('<ButtonPress-1>', self._on_tree_press)
+        self.group_tree.bind('<B1-Motion>', self._on_drag_motion)
+        self.group_tree.bind('<ButtonRelease-1>', self._on_drag_end)
+
+        # Row 1: group/circuit action buttons
         btn_frame = ttk.Frame(parent)
         btn_frame.pack(fill='x', pady=(10, 0))
-        
         ttk.Button(btn_frame, text="+ Group", command=self.add_group).pack(side='left', padx=(0, 5))
         ttk.Button(btn_frame, text="Copy", command=self.copy_selected_group).pack(side='left', padx=(0, 5))
         ttk.Button(btn_frame, text="Delete", command=self.delete_selected_group).pack(side='left', padx=(0, 5))
-        
-        # Move buttons
+        ttk.Button(btn_frame, text="+ Circuit", command=self._add_circuit).pack(side='left', padx=(0, 5))
+
+        # Row 2: move, sort, renumber
         move_frame = ttk.Frame(parent)
         move_frame.pack(fill='x', pady=(5, 0))
         ttk.Button(move_frame, text="▲ Up", command=self.move_group_up).pack(side='left', padx=(0, 5))
-        ttk.Button(move_frame, text="▼ Down", command=self.move_group_down).pack(side='left')
+        ttk.Button(move_frame, text="▼ Down", command=self.move_group_down).pack(side='left', padx=(0, 5))
+
+        sort_btn = ttk.Menubutton(move_frame, text="Sort ▾")
+        sort_menu = tk.Menu(sort_btn, tearoff=0)
+        sort_btn['menu'] = sort_menu
+        sort_menu.add_command(label="Name (A→Z)", command=lambda: self._sort_groups('name_asc'))
+        sort_menu.add_command(label="Name (Z→A)", command=lambda: self._sort_groups('name_desc'))
+        sort_menu.add_command(label="String Count (high→low)", command=lambda: self._sort_groups('strings_desc'))
+        sort_menu.add_command(label="String Count (low→high)", command=lambda: self._sort_groups('strings_asc'))
+        sort_menu.add_command(label="Tracker Count (high→low)", command=lambda: self._sort_groups('trackers_desc'))
+        sort_menu.add_command(label="Tracker Count (low→high)", command=lambda: self._sort_groups('trackers_asc'))
+        sort_btn.pack(side='left', padx=(0, 5))
+
+        ttk.Button(move_frame, text="Renumber", command=self.renumber_groups).pack(side='left')
 
     def setup_details_panel(self, parent):
         """Setup the right details panel"""
@@ -4510,41 +4969,58 @@ class QuickEstimate(ttk.Frame):
         self.details_label.config(text="Details")
 
     def on_group_select(self, event):
-        """Handle row selection changes"""
+        """Handle treeview selection changes (single or multi-select)."""
         if getattr(self, '_updating_listbox', False):
             return
-        
-        sel = self.group_listbox.curselection()
+        if not hasattr(self, 'group_tree'):
+            return
+
+        sel = self.group_tree.selection()
         if not sel:
             return
-        
-        new_idx = sel[0]
-        
-        # Sync the previous row's listbox text before switching (inline, no selection_set)
-        if self.selected_group_idx is not None and self.selected_group_idx != new_idx and self.selected_group_idx < len(self.groups):
-            prev = self.selected_group_idx
-            group = self.groups[prev]
-            total_trackers = sum(seg['quantity'] for seg in group['segments'])
-            total_strings = sum(seg['quantity'] * seg['strings_per_tracker'] for seg in group['segments'])
-            display = f"{group['name']}  ({total_trackers}T / {total_strings}S)"
-            self._updating_listbox = True
-            self.group_listbox.delete(prev)
-            self.group_listbox.insert(prev, display)
-            self.group_listbox.selection_clear(0, tk.END)
-            self.group_listbox.selection_set(new_idx)
-            self._updating_listbox = False
-        
-        if new_idx < 0 or new_idx >= len(self.groups):
+
+        group_iids = [iid for iid in sel if iid.startswith('group:')]
+        circuit_iids = [iid for iid in sel if iid.startswith('circuit:')]
+
+        # Only circuits selected
+        if not group_iids:
             self.clear_details_panel()
             return
-        
-        # Clear existing details
+
+        # Multi-group selection — show a summary, don't rebuild the full editor
+        if len(group_iids) > 1:
+            self._harness_combos = []
+            for widget in self.details_container.winfo_children():
+                widget.destroy()
+            self.details_label.config(text="Details")
+            ttk.Label(
+                self.details_container,
+                text=f"{len(group_iids)} groups selected\n\nDrag into a circuit, or use\nright-click → Move to Circuit.",
+                foreground='gray',
+                justify='center'
+            ).pack(pady=20)
+            # Keep primary tracking on the last item in tree order
+            gid = group_iids[-1][6:]
+            self._selected_group_id = gid
+            self.selected_group_idx = next(
+                (i for i, g in enumerate(self.groups) if g.get('id') == gid), None
+            )
+            return
+
+        # Single group selected
+        iid = group_iids[0]
+        gid = iid[6:]
+        group_idx = next((i for i, g in enumerate(self.groups) if g.get('id') == gid), None)
+        if group_idx is None:
+            self.clear_details_panel()
+            return
+
+        self._selected_group_id = gid
+        self.selected_group_idx = group_idx
         self._harness_combos = []
         for widget in self.details_container.winfo_children():
             widget.destroy()
-        
-        self.selected_group_idx = new_idx
-        self.show_group_details(new_idx)
+        self.show_group_details(group_idx)
 
     def show_group_details(self, group_idx: int):
         """Show segment editor for the selected group"""
@@ -5254,6 +5730,17 @@ class QuickEstimate(ttk.Frame):
 
     def calculate_estimate(self, silent=False):
         """Calculate and display the rolled-up BOM estimate"""
+        try:
+            self._calculate_estimate_impl(silent=silent)
+        except Exception as e:
+            import traceback
+            err = traceback.format_exc()
+            print(f"[QuickEstimate] calculate_estimate error:\n{err}")
+            if not silent:
+                messagebox.showerror("Calculation Error", f"An unexpected error occurred:\n\n{e}\n\nSee console for details.")
+
+    def _calculate_estimate_impl(self, silent=False):
+        """Internal implementation of calculate_estimate."""
         # Clear previous results
         for item in self.results_tree.get_children():
             self.results_tree.delete(item)

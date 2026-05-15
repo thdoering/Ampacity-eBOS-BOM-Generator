@@ -746,16 +746,19 @@ class TrackerTemplateCreator(ttk.Frame):
         """Update the template tree view with checkbox functionality"""
         # Save expanded state of all nodes
         expanded_nodes = set()
-        
+
+        def _strip_dot(text):
+            return text[2:] if text.startswith('● ') else text
+
         def save_expanded_state(item, path=""):
             """Recursively save expanded state of tree"""
             if self.template_tree.item(item, 'open'):
-                item_text = self.template_tree.item(item, 'text')
+                item_text = _strip_dot(self.template_tree.item(item, 'text'))
                 full_path = f"{path}/{item_text}" if path else item_text
                 expanded_nodes.add(full_path)
-            
+
             for child in self.template_tree.get_children(item):
-                item_text = self.template_tree.item(item, 'text')
+                item_text = _strip_dot(self.template_tree.item(item, 'text'))
                 child_path = f"{path}/{item_text}" if path else item_text
                 save_expanded_state(child, child_path)
         
@@ -795,25 +798,41 @@ class TrackerTemplateCreator(ttk.Frame):
         
         # Store template_key mapping for quick lookup
         self.tree_item_to_template = {}
-        
+
+        # Precompute which parent levels contain any enabled template (for ● indicator)
+        enabled_mfrs = set()
+        enabled_mfr_models = set()
+        enabled_mfr_model_strings = set()
+        for mfr in hierarchy:
+            for mdl in hierarchy[mfr]:
+                for ss in hierarchy[mfr][mdl]:
+                    for (_, tk, _) in hierarchy[mfr][mdl][ss]:
+                        if self._is_template_enabled(tk):
+                            enabled_mfrs.add(mfr)
+                            enabled_mfr_models.add((mfr, mdl))
+                            enabled_mfr_model_strings.add((mfr, mdl, ss))
+
         # Add items to tree hierarchically
         for manufacturer in sorted(hierarchy.keys()):
             # Add manufacturer node
             manufacturer_path = manufacturer
-            manufacturer_node = self.template_tree.insert('', 'end', text=manufacturer, values=('',), 
+            mfr_label = f"● {manufacturer}" if manufacturer in enabled_mfrs else manufacturer
+            manufacturer_node = self.template_tree.insert('', 'end', text=mfr_label, values=('',),
                                                         open=(manufacturer_path in expanded_nodes))
-            
+
             for model in sorted(hierarchy[manufacturer].keys()):
                 # Add model node
                 model_path = f"{manufacturer}/{model}"
-                model_node = self.template_tree.insert(manufacturer_node, 'end', text=model, values=('',),
+                model_label = f"● {model}" if (manufacturer, model) in enabled_mfr_models else model
+                model_node = self.template_tree.insert(manufacturer_node, 'end', text=model_label, values=('',),
                                                     open=(model_path in expanded_nodes))
-                
+
                 for string_size in sorted(hierarchy[manufacturer][model].keys()):
                     # Add string size node
                     string_size_text = f"{string_size} modules per string"
                     string_size_path = f"{manufacturer}/{model}/{string_size_text}"
-                    string_size_node = self.template_tree.insert(model_node, 'end', text=string_size_text, 
+                    ss_label = f"● {string_size_text}" if (manufacturer, model, string_size) in enabled_mfr_model_strings else string_size_text
+                    string_size_node = self.template_tree.insert(model_node, 'end', text=ss_label,
                                                             values=('',),
                                                             open=(string_size_path in expanded_nodes))
                     
@@ -958,23 +977,25 @@ class TrackerTemplateCreator(ttk.Frame):
             self.update_template_list()
 
             # Expand the parent nodes to show the new template
+            # Strip ● prefix (added when parent contains enabled templates) for text comparison
+            _strip_dot = lambda t: t[2:] if t.startswith('● ') else t
             for manufacturer_item in self.template_tree.get_children():
-                manufacturer_text = self.template_tree.item(manufacturer_item, 'text')
+                manufacturer_text = _strip_dot(self.template_tree.item(manufacturer_item, 'text'))
                 if manufacturer_text == manufacturer:
                     self.template_tree.item(manufacturer_item, open=True)
-                    
+
                     # Find and expand the model node
                     model = template.module_spec.model
                     for model_item in self.template_tree.get_children(manufacturer_item):
-                        model_text = self.template_tree.item(model_item, 'text')
+                        model_text = _strip_dot(self.template_tree.item(model_item, 'text'))
                         if model_text == model:
                             self.template_tree.item(model_item, open=True)
-                            
+
                             # Find and expand the string size node
                             string_size = template.modules_per_string
                             string_size_text = f"{string_size} modules per string"
                             for string_item in self.template_tree.get_children(model_item):
-                                string_text = self.template_tree.item(string_item, 'text')
+                                string_text = _strip_dot(self.template_tree.item(string_item, 'text'))
                                 if string_text == string_size_text:
                                     self.template_tree.item(string_item, open=True)
                                     break
