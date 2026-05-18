@@ -10,6 +10,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Factory Module Library**: A read-only `data/module_library_factory.json` ships with the app alongside the existing user-editable `module_templates.json`. Factory modules appear in Module Manager, Block Configurator, and Quick Estimate alongside user modules. Factory entries are labelled `(factory)` in the Module Manager tree; their Edit and Delete actions are disabled. On conflict (same manufacturer + model), factory wins — the user entry is silently shadowed but not deleted. Users can add a custom variant by using a distinct model name (e.g. a `CUSTOM` suffix). Factory modules can be embedded into exported `.ebom` projects the same way user modules can.
 
+## [3.5.0] - 2026-05-15
+
+### Added
+- **Factory Module & Inverter Libraries**: Read-only factory libraries now ship bundled with the app and merge at load time; user-added entries are preserved and never overwritten
+- **LV Collection Detail Drawings**: PDF wiring diagrams now render LV collection detail layouts with per-harness junction dots and corrected routing fractions
+- **Cable Corridors**: Drawable polyline corridors in Site Preview with axis-snap, vertex editing, device assignment, and PDF rendering; parallel-sets spinboxes for DC feeder and AC homerun multiply footage per set in the BOM
+- **Device Sequencing Controls**: Controls in Device Configurator and Site Preview for setting the order/sequence of devices
+- **Device E-W Nudge**: Per-device east-west position nudge via arrow keys in Site Preview, persisted to project; included in Reset Positions dialog
+- **Sortable Device Assignment Table**: Site Preview device assignment table columns are now sortable
+- **Unlink All Tracker Templates**: New button to unlink all tracker templates in a group at once for faster individual editing
+- **Module Search Bar**: Search bar added to Module Manager
+- **Inverter Search Bar**: Search bar above the inverter tree, matching the Module Manager pattern
+- **Circuit Containers**: Groups can be organized into named circuit containers (visual/organizational only — no BOM impact)
+- **Enabled Template Indicators**: Manufacturer/model/string-size nodes in Tracker Creator show a ● indicator when they contain enabled templates
+
+### Changed
+- **Default Topology**: New Quick Estimates now default to Centralized String topology
+- **Inverter Selection Workflow**: Inverter selection for Quick Estimate now happens on the Inverter equipment page instead of inside the estimate tab
+- **Row Spacing Enforcement**: First group starts blank; "Add Group" and "Calculate Estimate" are blocked until all groups have a spacing value set
+- **Copied Groups**: Copied groups append to the end of the list instead of inserting after the source group
+- **System Summary Total Strings**: Now correctly counts paired half-strings for fractional strings_per_tracker values
+- **Motor Rectangle Label**: "M" label now centered in the motor rectangle on LV Collection Detail wiring diagrams
+- **Pad Numbering**: Revised pad numbering scheme
+- **Removed Global Breaker Size / Avg DC Feeder Inputs**: These global inputs removed from Quick Estimate in favor of per-device configuration
+- **Strings/CB Cap Removed**: Library max is now the default only — no longer a ceiling on user input; spinbox upper bound raised to 9999
+- **Group List → Tree View**: Group listbox replaced with a hierarchical tree view supporting circuit containers and stable ID-based selection
+- **Pricing Data**: Updated copper price and harness library pricing
+
+### Fixed
+- **Auto-Numbering Retains Assignments**: Device auto-numbering after assignment now correctly retains string allocations
+- **Overlap Detection**: Fixed overlap bug when placing new blocks in site preview
+- **Block Details DC Feeder Display**: Fixed DC feeder display in Block Details sheet
+- **Calculate Estimate Stale Bug**: Fixed issue where Calculate Estimate was always marked stale and never used the cached result
+- **String Coloring**: Fixed string color in Site Preview to use start_physical_pos from the allocation record when available
+- **Strings per Device on Load**: strings_per_device override now restored on project load without being overwritten by DC/AC ratio recalculation
+- **Rounding Bug**: Fixed rounding bug in estimate calculations
+
 ## [3.4.0] - 2026-04-28
 
 ### Added
