@@ -2102,5 +2102,51 @@
       "default_orientation": "Portrait",
       "cells_per_module": 72
     }
+  },
+  "Silfab": {
+    "SIL-580 XM+ Bifacial": {
+      "manufacturer": "Silfab",
+      "model": "SIL-580 XM+ Bifacial",
+      "type": "Bifacial",
+      "length_mm": 2278,
+      "width_mm": 1133,
+      "depth_mm": 35,
+      "weight_kg": 28.5,
+      "wattage": 580,
+      "vmp": 44.27,
+      "imp": 13.1,
+      "voc": 52.27,
+      "isc": 13.85,
+      "max_system_voltage": 1500,
+      "efficiency": 22.4,
+      "temperature_coefficient_pmax": -0.29,
+      "temperature_coefficient_voc": -0.24,
+      "temperature_coefficient_isc": 0.04,
+      "bifaciality_factor": 0.8,
+      "default_orientation": "Portrait",
+      "cells_per_module": 144
+    },
+    "SIL-620 XL": {
+      "manufacturer": "Silfab",
+      "model": "SIL-620 XL",
+      "type": "Bifacial",
+      "length_mm": 2465.0,
+      "width_mm": 1133.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 635.0,
+      "vmp": 48.16,
+      "imp": 12.87,
+      "voc": 57.21,
+      "isc": 13.55,
+      "max_system_voltage": 1500,
+      "efficiency": null,
+      "temperature_coefficient_pmax": -0.29,
+      "temperature_coefficient_voc": -0.24,
+      "temperature_coefficient_isc": 0.04,
+      "bifaciality_factor": null,
+      "default_orientation": "Portrait",
+      "cells_per_module": 72
+    }
   }
 }

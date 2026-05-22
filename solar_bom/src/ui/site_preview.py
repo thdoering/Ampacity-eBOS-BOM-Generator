@@ -1942,6 +1942,7 @@ class SitePreviewWindow(tk.Toplevel):
 
                 # Align tracker vertically within the group
                 _talign = group_data.get('tracker_alignment', 'motor')
+                group_length = group_data.get('length_ft', t_length)
                 if _talign == 'top':
                     ty = gy + angle_y_offset
                 elif _talign == 'bottom':

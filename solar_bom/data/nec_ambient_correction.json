@@ -1,0 +1,47 @@
+{
+  "_comment": "NEC 2023 Table 310.15(B)(1)(a) - Ambient Temperature Correction Factors for Ampacity. Base ambient = 30°C. For ambient <= 0°C use first bin; for ambient above table max conductor is derated to 0.",
+  "60C": [
+    {"min_c":   0, "max_c":  10, "factor": 1.29},
+    {"min_c":  11, "max_c":  15, "factor": 1.22},
+    {"min_c":  16, "max_c":  20, "factor": 1.15},
+    {"min_c":  21, "max_c":  25, "factor": 1.08},
+    {"min_c":  26, "max_c":  30, "factor": 1.00},
+    {"min_c":  31, "max_c":  35, "factor": 0.91},
+    {"min_c":  36, "max_c":  40, "factor": 0.82},
+    {"min_c":  41, "max_c":  45, "factor": 0.71},
+    {"min_c":  46, "max_c":  50, "factor": 0.58},
+    {"min_c":  51, "max_c":  55, "factor": 0.41}
+  ],
+  "75C": [
+    {"min_c":   0, "max_c":  10, "factor": 1.20},
+    {"min_c":  11, "max_c":  15, "factor": 1.15},
+    {"min_c":  16, "max_c":  20, "factor": 1.11},
+    {"min_c":  21, "max_c":  25, "factor": 1.05},
+    {"min_c":  26, "max_c":  30, "factor": 1.00},
+    {"min_c":  31, "max_c":  35, "factor": 0.94},
+    {"min_c":  36, "max_c":  40, "factor": 0.88},
+    {"min_c":  41, "max_c":  45, "factor": 0.82},
+    {"min_c":  46, "max_c":  50, "factor": 0.75},
+    {"min_c":  51, "max_c":  55, "factor": 0.67},
+    {"min_c":  56, "max_c":  60, "factor": 0.58},
+    {"min_c":  61, "max_c":  65, "factor": 0.47},
+    {"min_c":  66, "max_c":  70, "factor": 0.33}
+  ],
+  "90C": [
+    {"min_c":   0, "max_c":  10, "factor": 1.15},
+    {"min_c":  11, "max_c":  15, "factor": 1.12},
+    {"min_c":  16, "max_c":  20, "factor": 1.08},
+    {"min_c":  21, "max_c":  25, "factor": 1.04},
+    {"min_c":  26, "max_c":  30, "factor": 1.00},
+    {"min_c":  31, "max_c":  35, "factor": 0.96},
+    {"min_c":  36, "max_c":  40, "factor": 0.91},
+    {"min_c":  41, "max_c":  45, "factor": 0.87},
+    {"min_c":  46, "max_c":  50, "factor": 0.82},
+    {"min_c":  51, "max_c":  55, "factor": 0.76},
+    {"min_c":  56, "max_c":  60, "factor": 0.71},
+    {"min_c":  61, "max_c":  65, "factor": 0.65},
+    {"min_c":  66, "max_c":  70, "factor": 0.58},
+    {"min_c":  71, "max_c":  75, "factor": 0.50},
+    {"min_c":  76, "max_c":  80, "factor": 0.41}
+  ]
+}

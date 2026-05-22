@@ -5,7 +5,7 @@ This module provides functions to calculate recommended cable sizes
 for all four cable types in a harness assembly based on electrical load.
 """
 
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Tuple
 import json
 import os
 
@@ -453,20 +453,264 @@ def select_lbd_size(num_strings: int, module_isc: float,
     """
     Auto-select the smallest LBD (Load Break Disconnect) rating
     that can handle the block's current.
-    
+
     Args:
         num_strings: Number of strings in the LBD block
         module_isc: Module short circuit current in amperes
         nec_factor: NEC safety factor (default 1.56)
-        
+
     Returns:
         int: LBD ampere rating (250, 300, 350, 400, 450, or 500)
     """
     required_amps = num_strings * module_isc * nec_factor
-    
+
     for size in LBD_SIZES:
         if size >= required_amps:
             return size
-    
+
     # If current exceeds all standard sizes, return largest
-    return LBD_SIZES[-1]
+    return LBD_SIZES[-1]
+
+
+# ---------------------------------------------------------------------------
+# NEC 2023 enhanced sizing — new data file caches
+# ---------------------------------------------------------------------------
+
+_nec_table_310_17_cache = None
+_ambient_correction_cache = None
+_ccc_adjustment_cache = None
+_insulation_types_cache = None
+_chapter9_table8_cache = None
+
+
+def _data_path(filename: str) -> str:
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'data', filename)
+
+
+def _load_table_310_17() -> dict:
+    global _nec_table_310_17_cache
+    if _nec_table_310_17_cache is None:
+        try:
+            with open(_data_path('nec_table_310_17.json'), 'r') as f:
+                _nec_table_310_17_cache = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            print(f"Warning: Could not load NEC Table 310.17: {e}")
+            _nec_table_310_17_cache = {"copper": {}, "aluminum": {}}
+    return _nec_table_310_17_cache
+
+
+def _load_ambient_correction() -> dict:
+    global _ambient_correction_cache
+    if _ambient_correction_cache is None:
+        try:
+            with open(_data_path('nec_ambient_correction.json'), 'r') as f:
+                _ambient_correction_cache = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            print(f"Warning: Could not load NEC ambient correction table: {e}")
+            _ambient_correction_cache = {}
+    return _ambient_correction_cache
+
+
+def _load_ccc_adjustment() -> dict:
+    global _ccc_adjustment_cache
+    if _ccc_adjustment_cache is None:
+        try:
+            with open(_data_path('nec_ccc_adjustment.json'), 'r') as f:
+                _ccc_adjustment_cache = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            print(f"Warning: Could not load NEC CCC adjustment table: {e}")
+            _ccc_adjustment_cache = {"bins": []}
+    return _ccc_adjustment_cache
+
+
+def _load_insulation_types() -> dict:
+    global _insulation_types_cache
+    if _insulation_types_cache is None:
+        try:
+            with open(_data_path('insulation_types.json'), 'r') as f:
+                _insulation_types_cache = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            print(f"Warning: Could not load insulation types: {e}")
+            _insulation_types_cache = {}
+    return _insulation_types_cache
+
+
+def _load_chapter9_table8() -> dict:
+    global _chapter9_table8_cache
+    if _chapter9_table8_cache is None:
+        try:
+            with open(_data_path('nec_chapter_9_table_8.json'), 'r') as f:
+                _chapter9_table8_cache = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            print(f"Warning: Could not load NEC Chapter 9 Table 8: {e}")
+            _chapter9_table8_cache = {"copper": {}, "aluminum": {}}
+    return _chapter9_table8_cache
+
+
+# ---------------------------------------------------------------------------
+# Public lookup functions
+# ---------------------------------------------------------------------------
+
+def get_base_ampacity(gauge: str, material: str, temp_rating_c: int,
+                      installation_method: str) -> float:
+    """Base ampacity from NEC 310.16 (conduit/buried) or 310.17 (free_air)."""
+    temp_key = f"{temp_rating_c}C"
+    if installation_method == 'free_air':
+        table = _load_table_310_17()
+    else:
+        table = _load_nec_table()
+    return float(table.get(material, {}).get(gauge, {}).get(temp_key, 0))
+
+
+def get_ambient_correction(ambient_c: float, conductor_temp_rating_c: int) -> float:
+    """Correction factor from NEC 2023 Table 310.15(B)(1)(a)."""
+    temp_key = f"{conductor_temp_rating_c}C"
+    bins = _load_ambient_correction().get(temp_key, [])
+    if not bins:
+        return 1.0
+    # Clamp below-table ambients to the first bin
+    if ambient_c <= bins[0]['min_c']:
+        return bins[0]['factor']
+    for b in bins:
+        if b['min_c'] <= ambient_c <= b['max_c']:
+            return b['factor']
+    return 0.0  # above table max — conductor cannot operate at this ambient
+
+
+def get_ccc_adjustment(num_ccc: int) -> float:
+    """Adjustment factor from NEC 2023 Table 310.15(C)(1). Returns 1.0 for ≤3 CCCs."""
+    for b in _load_ccc_adjustment().get('bins', []):
+        if b['min_ccc'] <= num_ccc <= b['max_ccc']:
+            return b['factor']
+    return 0.35  # fallback for very large counts
+
+
+def get_termination_cap_ampacity(gauge: str, material: str, termination_temp_c: int) -> float:
+    """Termination ampacity cap per NEC 110.14(C). Always uses Table 310.16."""
+    temp_key = f"{termination_temp_c}C"
+    table = _load_nec_table()
+    return float(table.get(material, {}).get(gauge, {}).get(temp_key, 0))
+
+
+def get_required_ampacity(isc_total_a: float, ocpd_rating_a: float) -> Tuple[float, str]:
+    """Required ampacity: max(Isc × 1.5625, OCPD). Returns (value, source_label)."""
+    nec_690_8 = isc_total_a * 1.5625
+    if ocpd_rating_a >= nec_690_8:
+        return ocpd_rating_a, "OCPD rating (NEC 240.4)"
+    return nec_690_8, "NEC 690.8 (Isc × 1.5625)"
+
+
+def get_voltage_drop_pct(current_a: float, one_way_length_ft: float, gauge: str,
+                          material: str, source_voltage: float) -> float:
+    """DC voltage drop percentage: 2 × I × L × R_per_kft / 1000 / V × 100."""
+    r_per_kft = _load_chapter9_table8().get(material, {}).get(gauge, 0.0)
+    if r_per_kft == 0 or source_voltage == 0:
+        return 0.0
+    return (2.0 * current_a * one_way_length_ft * r_per_kft) / 1000.0 / source_voltage * 100.0
+
+
+def autosize_conductor(
+    isc_total_a: float,
+    ocpd_rating_a: float,
+    material: str,
+    insulation_type: str,
+    installation_method: str,
+    ambient_c: float,
+    ccc_count: int,
+    termination_temp_c: int,
+    one_way_length_ft: float,
+    source_voltage: float,
+    vd_target_pct: float,
+) -> dict:
+    """
+    Select the smallest standard gauge satisfying both ampacity (NEC 690.8 /
+    110.14(C) / ambient+CCC derating) and voltage drop.
+
+    Returns a structured breakdown dict suitable for display and audit.
+    If one_way_length_ft <= 0, the VD check is skipped (vd_passes=True).
+    """
+    insulation_data = _load_insulation_types().get(insulation_type, {})
+    conductor_temp_c = insulation_data.get('temp_rating_c', 90)
+    temp_key = f"{conductor_temp_c}C"
+
+    if installation_method == 'free_air':
+        table_label = f"NEC 2023 Table 310.17, {conductor_temp_c}°C"
+    else:
+        table_label = f"NEC 2023 Table 310.16, {conductor_temp_c}°C"
+
+    term_source = f"NEC 110.14(C), {termination_temp_c}°C terminals"
+    required_a, req_source = get_required_ampacity(isc_total_a, ocpd_rating_a)
+
+    available = get_available_sizes(material)
+    if not available:
+        available = CABLE_SIZE_ORDER_EXTENDED
+
+    def _calc_for(gauge):
+        base = get_base_ampacity(gauge, material, conductor_temp_c, installation_method)
+        af = get_ambient_correction(ambient_c, conductor_temp_c)
+        cf = 1.0 if installation_method == 'free_air' else get_ccc_adjustment(ccc_count)
+        adj = base * af * cf
+        tc = get_termination_cap_ampacity(gauge, material, termination_temp_c)
+        final = min(adj, tc)
+        return base, af, cf, adj, tc, final
+
+    def _vd(gauge):
+        if one_way_length_ft <= 0 or source_voltage <= 0:
+            return 0.0
+        return get_voltage_drop_pct(required_a, one_way_length_ft, gauge, material, source_voltage)
+
+    # Pass 1: find minimum gauge that satisfies ampacity
+    amp_idx = None
+    for i, gauge in enumerate(available):
+        _, _, _, _, _, final = _calc_for(gauge)
+        if final >= required_a:
+            amp_idx = i
+            break
+
+    def _build_result(gauge, amp_passes, vd_pct, vd_passes, binding):
+        base, af, cf, adj, tc, final = _calc_for(gauge)
+        return {
+            "gauge": gauge,
+            "material": material,
+            "installation_method": installation_method,
+            "insulation_type": insulation_type,
+            "conductor_temp_rating_c": conductor_temp_c,
+            "termination_temp_rating_c": termination_temp_c,
+            "base_ampacity": base,
+            "base_ampacity_source": table_label,
+            "ambient_temp_c": ambient_c,
+            "ambient_correction": round(af, 4),
+            "ccc_count": ccc_count,
+            "ccc_adjustment": round(cf, 4),
+            "adjusted_ampacity": round(adj, 2),
+            "termination_capped_ampacity": round(tc, 2),
+            "termination_cap_source": term_source,
+            "final_ampacity": round(final, 2),
+            "required_ampacity": round(required_a, 2),
+            "required_ampacity_source": req_source,
+            "ampacity_passes": amp_passes,
+            "vd_pct": round(vd_pct, 3),
+            "vd_target_pct": vd_target_pct,
+            "vd_passes": vd_passes,
+            "binding_constraint": binding,
+        }
+
+    if amp_idx is None:
+        # No gauge satisfies ampacity — return largest with failure noted
+        gauge = available[-1]
+        vd = _vd(gauge)
+        return _build_result(gauge, False, vd, vd <= vd_target_pct or one_way_length_ft <= 0, "ampacity")
+
+    # Pass 2: starting at amp_idx, find first gauge that also satisfies VD
+    for idx in range(amp_idx, len(available)):
+        gauge = available[idx]
+        vd = _vd(gauge)
+        vd_ok = (one_way_length_ft <= 0) or (vd <= vd_target_pct)
+        if vd_ok:
+            binding = "voltage_drop" if idx > amp_idx else "ampacity"
+            return _build_result(gauge, True, vd, True, binding)
+
+    # All gauges satisfy ampacity but VD still fails on largest
+    gauge = available[-1]
+    vd = _vd(gauge)
+    return _build_result(gauge, True, vd, False, "voltage_drop")

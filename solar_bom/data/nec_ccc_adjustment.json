@@ -1,0 +1,12 @@
+{
+  "_comment": "NEC 2023 Table 310.15(C)(1) - Adjustment Factors for More Than Three Current-Carrying Conductors in a Raceway, Cable, or Directly Buried in Earth. Does NOT apply to conductors in free air.",
+  "bins": [
+    {"min_ccc":  1, "max_ccc":   3, "factor": 1.00},
+    {"min_ccc":  4, "max_ccc":   6, "factor": 0.80},
+    {"min_ccc":  7, "max_ccc":   9, "factor": 0.70},
+    {"min_ccc": 10, "max_ccc":  20, "factor": 0.50},
+    {"min_ccc": 21, "max_ccc":  30, "factor": 0.45},
+    {"min_ccc": 31, "max_ccc":  40, "factor": 0.40},
+    {"min_ccc": 41, "max_ccc": 999, "factor": 0.35}
+  ]
+}

@@ -65,6 +65,13 @@ class QuickEstimate(ttk.Frame):
         # Guard to suppress re-entrant harness trace during on_template_change
         self._suppress_harness_trace = False
 
+        self.wire_sizing_settings = {}   # populated in setup_ui; persisted in .ebom
+        self._updating_wss = False       # guard against re-entrant WSS trace callbacks
+        self._wss_autosize_results = {}  # {(sc, cable_key) or cable_key: full result dict}
+        self._wire_length_estimates = {}   # {cable_key: one_way_ft} — populated after calc
+        self._source_voltage_by_cable = {} # {cable_key: volts} — populated after calc
+        self._refreshing_ws_table = False  # guard: suppress feeder trace during table rebuild
+
         self.setup_ui()
         self._update_export_button_state()
 
@@ -1516,7 +1523,8 @@ class QuickEstimate(ttk.Frame):
         ttk.Label(header_row, text="Harness", font=header_font, width=10).pack(side='left', padx=2)
         ttk.Label(header_row, text="Extender", font=header_font, width=10).pack(side='left', padx=2)
         ttk.Label(header_row, text="Whip", font=header_font, width=10).pack(side='left', padx=2)
-        
+        ttk.Label(header_row, text="Sizing Detail", font=header_font).pack(side='left', padx=2)
+
         # Dynamic rows container — cleared and rebuilt by refresh_wire_sizing_table
         self._ws_rows_frame = ttk.Frame(ws_frame)
         self._ws_rows_frame.pack(fill='x')
@@ -1538,7 +1546,582 @@ class QuickEstimate(ttk.Frame):
         self._ws_material_var.trace_add('write', lambda *a: self._on_wire_sizing_setting_changed())
         self._ws_dc_feeder_parallel_var.trace_add('write', lambda *a: self._on_feeder_parallel_changed('dc'))
         self._ws_ac_homerun_parallel_var.trace_add('write', lambda *a: self._on_feeder_parallel_changed('ac'))
-        
+
+    # ------------------------------------------------------------------
+    # Wire Sizing Settings — collapsible panel (Change 2)
+    # ------------------------------------------------------------------
+
+    # Cable-type rows in the WSS panel: (key, label, default_insulation, default_material)
+    _WSS_CABLE_TYPES = [
+        ('harness',    'Harness',    'PV Wire', 'copper'),
+        ('extender',   'Extender',   'PV Wire', 'copper'),
+        ('whip',       'Whip',       'PV Wire', 'copper'),
+        ('dc_feeder',  'DC Feeder',  'PV Wire', 'copper'),
+        ('ac_homerun', 'AC Homerun', 'XHHW-2',  'aluminum'),
+    ]
+
+    # Display ↔ internal install-method strings
+    _WSS_INSTALL_TO_INTERNAL = {
+        'Free Air':      'free_air',
+        'In Conduit':    'conduit',
+        'Direct Buried': 'buried',
+    }
+    _WSS_INSTALL_TO_DISPLAY = {v: k for k, v in _WSS_INSTALL_TO_INTERNAL.items()}
+
+    @classmethod
+    def _make_default_wss(cls) -> dict:
+        """Return a fresh wire_sizing_settings dict populated with defaults."""
+        d = {'ambient_c': 30, 'soil_c': 20}
+        for key, _, insulation, material in cls._WSS_CABLE_TYPES:
+            d[key] = {
+                'insulation': insulation,
+                'term_temp_c': 90,
+                'install_method': 'conduit',
+                'material': material,
+                'vd_target_pct': 2.0,
+                'circuits_sharing': 1,
+            }
+        return d
+
+    def _add_tooltip(self, widget, text: str):
+        """Attach a simple hover tooltip to a widget."""
+        tip = [None]
+
+        def _show(event):
+            if tip[0]:
+                return
+            x = widget.winfo_rootx() + 20
+            y = widget.winfo_rooty() + widget.winfo_height() + 2
+            w = tk.Toplevel(widget)
+            w.wm_overrideredirect(True)
+            w.wm_geometry(f"+{x}+{y}")
+            ttk.Label(w, text=text, background="#ffffe0",
+                      relief='solid', borderwidth=1, wraplength=320).pack()
+            tip[0] = w
+
+        def _hide(event):
+            if tip[0]:
+                tip[0].destroy()
+                tip[0] = None
+
+        widget.bind('<Enter>', _show)
+        widget.bind('<Leave>', _hide)
+
+    def _build_wire_sizing_settings_panel(self, parent):
+        """Build the collapsible Wire Sizing Settings panel."""
+        from src.utils.cable_sizing import _load_insulation_types
+
+        outer = ttk.Frame(parent)
+        outer.pack(fill='x', pady=(2, 4))
+
+        # Toggle header button
+        self._wss_expanded = False
+        self._wss_toggle_btn = ttk.Button(
+            outer,
+            text="▶  Wire Sizing Settings",
+            command=self._toggle_wire_sizing_settings,
+        )
+        self._wss_toggle_btn.pack(anchor='w')
+
+        # Content frame — not packed until expanded
+        content = ttk.Frame(outer, relief='groove', padding="8")
+        self._wss_content = content
+        self._wss_vars = {}     # {cable_key: {field: tk.StringVar}}
+        self._wss_widgets = {}  # {cable_key: {name: widget}}
+
+        insulation_data = _load_insulation_types()
+        all_insulations = [k for k in insulation_data if not k.startswith('_')]
+
+        # Ambient / Soil temp row
+        env_row = ttk.Frame(content)
+        env_row.pack(fill='x', pady=(0, 6))
+
+        ttk.Label(env_row, text="Ambient (°C):").pack(side='left')
+        self._wss_ambient_var = tk.StringVar(
+            value=str(self.wire_sizing_settings.get('ambient_c', 30)))
+        amb_spin = ttk.Spinbox(env_row, from_=-20, to=80, increment=1,
+                               textvariable=self._wss_ambient_var, width=5)
+        amb_spin.pack(side='left', padx=(2, 12))
+        self._add_tooltip(
+            amb_spin,
+            "ASHRAE 2% dry-bulb design temperature. "
+            "Look up at https://ashrae-meteo.info/v3.0/",
+        )
+
+        ttk.Label(env_row, text="Soil Temp (°C):").pack(side='left')
+        self._wss_soil_var = tk.StringVar(
+            value=str(self.wire_sizing_settings.get('soil_c', 20)))
+        soil_spin = ttk.Spinbox(env_row, from_=0, to=50, increment=1,
+                                textvariable=self._wss_soil_var, width=5)
+        soil_spin.pack(side='left', padx=(2, 0))
+        self._add_tooltip(
+            soil_spin,
+            "Used for buried conductor sizing. Soil temps may vary across large "
+            "sites; use the warmest expected value.",
+        )
+
+        self._wss_ambient_var.trace_add('write', lambda *a: self._on_wss_global_changed())
+        self._wss_soil_var.trace_add('write', lambda *a: self._on_wss_global_changed())
+
+        ttk.Separator(content, orient='horizontal').pack(fill='x', pady=(0, 4))
+
+        # Grid for per-cable-type rows
+        grid = ttk.Frame(content)
+        grid.pack(fill='x')
+
+        hdr_font = ('TkDefaultFont', 8, 'bold')
+        for col, txt in enumerate(
+            ['', 'Insulation', 'Term Temp', 'Install Method', 'Material', 'VD %', 'Circuits']
+        ):
+            ttk.Label(grid, text=txt, font=hdr_font).grid(
+                row=0, column=col, padx=3, pady=(0, 2), sticky='w')
+
+        for row_idx, (cable_key, cable_label, def_ins, def_mat) in enumerate(
+            self._WSS_CABLE_TYPES, start=1
+        ):
+            s = self.wire_sizing_settings.get(cable_key, {})
+            ins       = s.get('insulation',     def_ins)
+            term      = str(s.get('term_temp_c', 90))
+            inst_int  = s.get('install_method',  'conduit')
+            inst_disp = self._WSS_INSTALL_TO_DISPLAY.get(inst_int, 'In Conduit')
+            mat       = s.get('material',        def_mat)
+            vd        = str(s.get('vd_target_pct', 2.0))
+            circuits  = str(s.get('circuits_sharing', 1))
+
+            ttk.Label(grid, text=cable_label, width=9).grid(
+                row=row_idx, column=0, padx=3, sticky='w')
+
+            # Insulation combo
+            ins_var = tk.StringVar(value=ins)
+            ins_combo = ttk.Combobox(
+                grid, textvariable=ins_var,
+                values=all_insulations, state='readonly', width=10)
+            ins_combo.grid(row=row_idx, column=1, padx=3, pady=1)
+            self.disable_combobox_scroll(ins_combo)
+
+            # Term temp combo
+            term_var = tk.StringVar(value=term)
+            term_combo = ttk.Combobox(
+                grid, textvariable=term_var,
+                values=['75', '90'], state='readonly', width=4)
+            term_combo.grid(row=row_idx, column=2, padx=3, pady=1)
+            self.disable_combobox_scroll(term_combo)
+
+            # Install method combo — filtered by insulation's valid_install_methods
+            ins_obj = insulation_data.get(ins, {})
+            valid_inst_int = ins_obj.get('valid_install_methods', ['conduit'])
+            valid_inst_disp = [
+                d for d in ['Free Air', 'In Conduit', 'Direct Buried']
+                if self._WSS_INSTALL_TO_INTERNAL[d] in valid_inst_int
+            ]
+            install_var = tk.StringVar(value=inst_disp)
+            install_combo = ttk.Combobox(
+                grid, textvariable=install_var,
+                values=valid_inst_disp, state='readonly', width=13)
+            install_combo.grid(row=row_idx, column=3, padx=3, pady=1)
+            self.disable_combobox_scroll(install_combo)
+
+            # Material combo — filtered by insulation's materials
+            valid_mats = ins_obj.get('materials', ['copper', 'aluminum'])
+            eff_mat = mat if mat in valid_mats else valid_mats[0]
+            material_var = tk.StringVar(value=eff_mat)
+            material_combo = ttk.Combobox(
+                grid, textvariable=material_var,
+                values=valid_mats, state='readonly', width=8)
+            material_combo.grid(row=row_idx, column=4, padx=3, pady=1)
+            self.disable_combobox_scroll(material_combo)
+
+            # VD target spinbox
+            vd_var = tk.StringVar(value=vd)
+            vd_spin = ttk.Spinbox(
+                grid, from_=0.5, to=10.0, increment=0.5,
+                textvariable=vd_var, width=5)
+            vd_spin.grid(row=row_idx, column=5, padx=3, pady=1)
+
+            # Circuits sharing spinbox (hidden when Free Air)
+            circuits_var = tk.StringVar(value=circuits)
+            circuits_spin = ttk.Spinbox(
+                grid, from_=1, to=50, increment=1,
+                textvariable=circuits_var, width=4)
+            self._add_tooltip(
+                circuits_spin,
+                "Number of complete circuits sharing this raceway. "
+                "CCCs = circuits × 2 for DC cables, × 3 for AC homerun.",
+            )
+            # Always grid first (establishes config for grid_remove/grid pair later)
+            circuits_spin.grid(row=row_idx, column=6, padx=3, pady=1)
+            if inst_disp == 'Free Air':
+                circuits_spin.grid_remove()
+
+            # Store vars and widget refs
+            self._wss_vars[cable_key] = {
+                'insulation': ins_var,
+                'term_temp':  term_var,
+                'install':    install_var,
+                'material':   material_var,
+                'vd':         vd_var,
+                'circuits':   circuits_var,
+            }
+            self._wss_widgets[cable_key] = {
+                'ins_combo':     ins_combo,
+                'install_combo': install_combo,
+                'material_combo': material_combo,
+                'circuits_spin': circuits_spin,
+                'grid_row':      row_idx,
+            }
+
+            # Traces
+            ins_var.trace_add(
+                'write', lambda *a, ck=cable_key: self._on_wss_insulation_changed(ck))
+            install_var.trace_add(
+                'write', lambda *a, ck=cable_key: self._on_wss_install_changed(ck))
+            for _v in (term_var, material_var, vd_var, circuits_var):
+                _v.trace_add('write', lambda *a: self._on_wss_changed())
+
+    def _toggle_wire_sizing_settings(self):
+        """Show/hide the Wire Sizing Settings content frame."""
+        self._wss_expanded = not self._wss_expanded
+        if self._wss_expanded:
+            self._wss_content.pack(fill='x', pady=(4, 0))
+            self._wss_toggle_btn.config(text="▼  Wire Sizing Settings")
+        else:
+            self._wss_content.pack_forget()
+            self._wss_toggle_btn.config(text="▶  Wire Sizing Settings")
+
+    def _on_wss_global_changed(self):
+        if getattr(self, '_updating_wss', False) or getattr(self, '_loading', False):
+            return
+        self._sync_wss_vars_to_dict()
+        self._mark_stale()
+        self._schedule_autosave()
+
+    def _on_wss_changed(self):
+        if getattr(self, '_updating_wss', False) or getattr(self, '_loading', False):
+            return
+        self._sync_wss_vars_to_dict()
+        self._mark_stale()
+        self._schedule_autosave()
+
+    def _on_wss_insulation_changed(self, cable_key: str):
+        """Update install-method and material dropdowns when insulation type changes."""
+        if getattr(self, '_updating_wss', False) or getattr(self, '_loading', False):
+            return
+        from src.utils.cable_sizing import _load_insulation_types
+        insulation_data = _load_insulation_types()
+        vars_    = self._wss_vars.get(cable_key, {})
+        widgets_ = self._wss_widgets.get(cable_key, {})
+        ins      = vars_['insulation'].get()
+        ins_obj  = insulation_data.get(ins, {})
+
+        # Re-filter install methods
+        valid_inst_int = ins_obj.get('valid_install_methods', ['conduit'])
+        valid_inst_disp = [
+            d for d in ['Free Air', 'In Conduit', 'Direct Buried']
+            if self._WSS_INSTALL_TO_INTERNAL[d] in valid_inst_int
+        ]
+        install_combo = widgets_.get('install_combo')
+        if install_combo:
+            install_combo['values'] = valid_inst_disp
+            if vars_['install'].get() not in valid_inst_disp:
+                self._updating_wss = True
+                vars_['install'].set(valid_inst_disp[0] if valid_inst_disp else 'In Conduit')
+                self._updating_wss = False
+
+        # Re-filter materials
+        valid_mats = ins_obj.get('materials', ['copper', 'aluminum'])
+        mat_combo = widgets_.get('material_combo')
+        if mat_combo:
+            mat_combo['values'] = valid_mats
+            if vars_['material'].get() not in valid_mats:
+                self._updating_wss = True
+                vars_['material'].set(valid_mats[0] if valid_mats else 'copper')
+                self._updating_wss = False
+
+        self._on_wss_changed()
+
+    def _on_wss_install_changed(self, cable_key: str):
+        """Show or hide the circuits spinbox based on install method."""
+        if getattr(self, '_updating_wss', False) or getattr(self, '_loading', False):
+            return
+        vars_    = self._wss_vars.get(cable_key, {})
+        widgets_ = self._wss_widgets.get(cable_key, {})
+        inst_disp = vars_.get('install', tk.StringVar()).get()
+        cspin     = widgets_.get('circuits_spin')
+        row       = widgets_.get('grid_row', 1)
+        if cspin:
+            if inst_disp == 'Free Air':
+                cspin.grid_remove()
+            else:
+                cspin.grid(row=row, column=6, padx=3, pady=1)
+        self._on_wss_changed()
+
+    def _sync_wss_vars_to_dict(self):
+        """Copy current tkinter variable values into self.wire_sizing_settings."""
+        if not hasattr(self, '_wss_ambient_var'):
+            return
+        try:
+            self.wire_sizing_settings['ambient_c'] = int(self._wss_ambient_var.get())
+        except (ValueError, TypeError):
+            pass
+        try:
+            self.wire_sizing_settings['soil_c'] = int(self._wss_soil_var.get())
+        except (ValueError, TypeError):
+            pass
+        for cable_key, *_ in self._WSS_CABLE_TYPES:
+            vars_ = self._wss_vars.get(cable_key)
+            if not vars_:
+                continue
+            d = self.wire_sizing_settings.setdefault(cable_key, {})
+            d['insulation'] = vars_['insulation'].get()
+            try:
+                d['term_temp_c'] = int(vars_['term_temp'].get())
+            except (ValueError, TypeError):
+                d['term_temp_c'] = 90
+            d['install_method'] = self._WSS_INSTALL_TO_INTERNAL.get(
+                vars_['install'].get(), 'conduit')
+            d['material'] = vars_['material'].get()
+            try:
+                d['vd_target_pct'] = float(vars_['vd'].get())
+            except (ValueError, TypeError):
+                d['vd_target_pct'] = 2.0
+            try:
+                d['circuits_sharing'] = max(1, int(vars_['circuits'].get()))
+            except (ValueError, TypeError):
+                d['circuits_sharing'] = 1
+
+    def _populate_wss_panel(self):
+        """Restore wire_sizing_settings dict values into the tkinter widgets."""
+        if not hasattr(self, '_wss_ambient_var'):
+            return
+        self._updating_wss = True
+        try:
+            self._wss_ambient_var.set(
+                str(self.wire_sizing_settings.get('ambient_c', 30)))
+            self._wss_soil_var.set(
+                str(self.wire_sizing_settings.get('soil_c', 20)))
+            for cable_key, *_ in self._WSS_CABLE_TYPES:
+                s     = self.wire_sizing_settings.get(cable_key, {})
+                vars_ = self._wss_vars.get(cable_key)
+                if not vars_:
+                    continue
+                vars_['insulation'].set(s.get('insulation', 'PV Wire'))
+                vars_['term_temp'].set(str(s.get('term_temp_c', 90)))
+                inst_int = s.get('install_method', 'conduit')
+                inst_disp = self._WSS_INSTALL_TO_DISPLAY.get(inst_int, 'In Conduit')
+                vars_['install'].set(inst_disp)
+                vars_['material'].set(s.get('material', 'copper'))
+                vars_['vd'].set(str(s.get('vd_target_pct', 2.0)))
+                vars_['circuits'].set(str(s.get('circuits_sharing', 1)))
+                # Sync circuits spinbox visibility
+                cspin = self._wss_widgets.get(cable_key, {}).get('circuits_spin')
+                row   = self._wss_widgets.get(cable_key, {}).get('grid_row', 1)
+                if cspin:
+                    if inst_disp == 'Free Air':
+                        cspin.grid_remove()
+                    else:
+                        cspin.grid(row=row, column=6, padx=3, pady=1)
+        finally:
+            self._updating_wss = False
+
+    def _autosize_for_cable(self, cable_key: str, isc_total_a: float,
+                             ocpd_rating_a: float, string_count=None) -> str:
+        """Call autosize_conductor using wire_sizing_settings for the given cable type.
+
+        Returns the recommended gauge string. Caches the full result dict in
+        self._wss_autosize_results keyed by (string_count, cable_key) for LV types
+        or cable_key for feeder types, for later use in the Sizing Detail display.
+        """
+        from src.utils.cable_sizing import autosize_conductor
+
+        s = self.wire_sizing_settings.get(cable_key, {})
+        install_method = s.get('install_method', 'conduit')
+        circuits = max(1, s.get('circuits_sharing', 1))
+        ccc_per_circuit = 3 if cable_key == 'ac_homerun' else 2
+        ccc_count = circuits * ccc_per_circuit
+
+        # Buried conductors use soil temp for the ambient correction lookup
+        if install_method == 'buried':
+            ambient = self.wire_sizing_settings.get('soil_c', 20)
+        else:
+            ambient = self.wire_sizing_settings.get('ambient_c', 30)
+
+        result = autosize_conductor(
+            isc_total_a=isc_total_a,
+            ocpd_rating_a=ocpd_rating_a,
+            material=s.get('material', 'copper'),
+            insulation_type=s.get('insulation', 'PV Wire'),
+            installation_method=install_method,
+            ambient_c=ambient,
+            ccc_count=ccc_count,
+            termination_temp_c=s.get('term_temp_c', 90),
+            one_way_length_ft=self._wire_length_estimates.get(cable_key, 0),
+            source_voltage=self._source_voltage_by_cable.get(cable_key, 0),
+            vd_target_pct=s.get('vd_target_pct', 2.0),
+        )
+
+        result_key = (string_count, cable_key) if string_count is not None else cable_key
+        self._wss_autosize_results[result_key] = result
+        return result['gauge']
+
+    def _compute_wire_length_estimates(self, totals: dict):
+        """Derive average one-way cable lengths from BOM totals and cache in instance dicts.
+
+        Called after _calculate_estimate_impl so that _autosize_for_cable can pass real
+        lengths and system voltage to autosize_conductor for voltage-drop sizing.
+        """
+        # Harness: one-way = half of string footprint (device typically near mid-tracker)
+        module_width_ft = (self.selected_module.width_mm / 304.8) if self.selected_module else 3.72
+        try:
+            mps = int(self.modules_per_string_var.get())
+        except (ValueError, AttributeError):
+            mps = 28
+        harness_one_way_ft = module_width_ft * mps / 2.0
+
+        # Extender: weighted average from pos extender lengths
+        ext_pos = totals.get('extenders_pos_by_length', {})
+        total_ext_len = sum(length * qty for (length, _g), qty in ext_pos.items())
+        total_ext_qty = sum(ext_pos.values())
+        extender_one_way_ft = (total_ext_len / total_ext_qty) if total_ext_qty > 0 else 0.0
+
+        # Whip: weighted average
+        whips = totals.get('whips_by_length', {})
+        total_whip_len = sum(length * qty for (length, _g), qty in whips.items())
+        total_whip_qty = sum(whips.values())
+        whip_one_way_ft = (total_whip_len / total_whip_qty) if total_whip_qty > 0 else 0.0
+
+        # DC feeder: average single-run length (undo parallel multiplier)
+        dc_total = totals.get('dc_feeder_total_ft', 0.0)
+        dc_count = totals.get('dc_feeder_count', 0)
+        parallel_dc = max(1, self.wire_sizing.get('dc_feeder_parallel', 1))
+        dc_one_way_ft = (dc_total / parallel_dc / dc_count) if dc_count > 0 else 0.0
+
+        # AC homerun: average single-run length (undo parallel multiplier)
+        ac_total = totals.get('ac_homerun_total_ft', 0.0)
+        ac_count = totals.get('ac_homerun_count', 0)
+        parallel_ac = max(1, self.wire_sizing.get('ac_homerun_parallel', 1))
+        ac_one_way_ft = (ac_total / parallel_ac / ac_count) if ac_count > 0 else 0.0
+
+        # DC string voltage — used for harness/extender/whip/feeder
+        vmp = self.selected_module.vmp if self.selected_module else 40.0
+        string_voltage = vmp * mps
+
+        # AC voltage — used for homerun
+        ac_voltage = 480.0
+        if self.selected_inverter and hasattr(self.selected_inverter, 'nominal_ac_voltage'):
+            v = self.selected_inverter.nominal_ac_voltage
+            if v and v > 0:
+                ac_voltage = float(v)
+
+        self._wire_length_estimates = {
+            'harness':    harness_one_way_ft,
+            'extender':   extender_one_way_ft,
+            'whip':       whip_one_way_ft,
+            'dc_feeder':  dc_one_way_ft,
+            'ac_homerun': ac_one_way_ft,
+        }
+        self._source_voltage_by_cable = {
+            'harness':    string_voltage,
+            'extender':   string_voltage,
+            'whip':       string_voltage,
+            'dc_feeder':  string_voltage,
+            'ac_homerun': ac_voltage,
+        }
+
+    def _update_wire_sizing_with_lengths(self):
+        """Re-run autosizing with real cable lengths; update non-overridden gauge cells.
+
+        Called after _compute_wire_length_estimates so that VD can escalate gauges and
+        detail labels reflect real voltage-drop numbers. User-overridden rows are left
+        unchanged — only _wss_autosize_results is updated for them (so the detail label
+        still shows the correct NEC breakdown for the manually-chosen gauge).
+        """
+        overrides = self.wire_sizing.get('user_overrides', {})
+        module_isc = self.selected_module.isc if self.selected_module else 13.0
+        active_counts = self._collect_active_string_counts()
+        by_sc = self.wire_sizing.setdefault('by_string_count', {})
+        topology = self.topology_var.get() if hasattr(self, 'topology_var') else 'Distributed String'
+
+        for sc in active_counts:
+            isc_total = sc * module_isc
+            for cable_type in ('harness', 'extender', 'whip'):
+                new_gauge = self._autosize_for_cable(cable_type, isc_total, 0, sc)
+                if not overrides.get(f"{sc}_{cable_type}"):
+                    entry = by_sc.setdefault(sc, {})
+                    entry[cable_type] = new_gauge
+
+        if topology in ('Centralized String', 'Central Inverter'):
+            breaker = float(self._compute_dc_breaker_size())
+            new_gauge = self._autosize_for_cable('dc_feeder', 0, breaker)
+            if not overrides.get('dc_feeder'):
+                self.wire_sizing['dc_feeder'] = new_gauge
+
+        if self.selected_inverter and hasattr(self.selected_inverter, 'max_ac_current'):
+            max_ac = self.selected_inverter.max_ac_current
+            new_gauge = self._autosize_for_cable('ac_homerun', 0, max_ac * 1.25)
+            if not overrides.get('ac_homerun'):
+                self.wire_sizing['ac_homerun'] = new_gauge
+
+        self.refresh_wire_sizing_table()
+
+    # ------------------------------------------------------------------
+    # Wire Sizing table — Sizing Detail helpers (Change 4)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _format_sizing_detail_short(result: dict) -> str:
+        """One-line summary for the Sizing Detail table cell."""
+        if not result:
+            return ""
+        mat  = 'Cu' if result['material'] == 'copper' else 'Al'
+        src  = result.get('required_ampacity_source', '')
+        req_label = 'Isc×1.56' if 'Isc' in src else f"OCPD={result['required_ampacity']:.0f}A"
+        pass_mark = '✓' if result.get('ampacity_passes') else '✗'
+        vd_pct = result.get('vd_pct', 0)
+        if vd_pct > 0:
+            vd_part = f" · VD {vd_pct:.1f}%"
+            if result.get('binding_constraint') == 'voltage_drop':
+                vd_part += " (VD↑)"
+        else:
+            vd_part = ""
+        return (
+            f"{result['gauge']} {mat} · "
+            f"{result['final_ampacity']:.0f}A avail · "
+            f"req {result['required_ampacity']:.1f}A ({req_label}) {pass_mark}"
+            f"{vd_part}"
+        )
+
+    @staticmethod
+    def _format_sizing_detail_full(result: dict) -> str:
+        """Multi-line breakdown for the hover tooltip."""
+        if not result:
+            return ""
+        mat  = 'Cu' if result['material'] == 'copper' else 'Al'
+        src  = result.get('required_ampacity_source', '')
+        req_label = 'NEC 690.8 (Isc×1.5625)' if 'Isc' in src else 'OCPD rating (NEC 240.4)'
+        amp_pass = '✓ PASS' if result.get('ampacity_passes') else '✗ FAIL'
+        vd_str = (
+            f"{result['vd_pct']:.2f}% / {result['vd_target_pct']:.1f}% "
+            f"({'✓' if result.get('vd_passes') else '✗'})"
+            if result.get('vd_pct', 0) > 0 else '— (no length input yet)'
+        )
+        install_disp = {
+            'free_air': 'free air (NEC 310.17)',
+            'conduit':  'in conduit (NEC 310.16)',
+            'buried':   'direct buried (NEC 310.16)',
+        }.get(result.get('installation_method', ''), result.get('installation_method', ''))
+        return (
+            f"{result['gauge']} {mat}, {result.get('insulation_type', '')} — {install_disp}\n"
+            f"Base: {result['base_ampacity']:.1f} A  ({result['base_ampacity_source']})\n"
+            f"Ambient {result['ambient_temp_c']:.0f}°C correction: ×{result['ambient_correction']:.3f}\n"
+            f"CCC count {result['ccc_count']}: ×{result['ccc_adjustment']:.3f}\n"
+            f"Adjusted: {result['adjusted_ampacity']:.1f} A\n"
+            f"Termination cap {result['termination_temp_rating_c']}°C "
+            f"({result['termination_cap_source']}): {result['termination_capped_ampacity']:.1f} A\n"
+            f"Final ampacity: {result['final_ampacity']:.1f} A\n"
+            f"Required: {result['required_ampacity']:.1f} A  ({req_label})\n"
+            f"Ampacity: {amp_pass}   VD: {vd_str}"
+        )
+
     def _on_wire_sizing_setting_changed(self):
         """Handle change to temp rating or feeder material — recalc recommendations."""
         self.wire_sizing['temp_rating'] = self._ws_temp_var.get()
@@ -1548,6 +2131,8 @@ class QuickEstimate(ttk.Frame):
 
     def _on_feeder_parallel_changed(self, feeder_type):
         """Handle change to DC feeder or AC homerun parallel set count."""
+        if getattr(self, '_refreshing_ws_table', False):
+            return
         try:
             if feeder_type == 'dc':
                 val = max(1, int(self._ws_dc_feeder_parallel_var.get()))
@@ -1569,22 +2154,45 @@ class QuickEstimate(ttk.Frame):
             return
         
         from src.utils.cable_sizing import CABLE_SIZE_ORDER, get_available_sizes
-        
+
+        # Remove accumulated write traces from reused feeder/homerun vars before the
+        # .set() calls below. Without this, each call that adds a new trace (e.g.
+        # non-distributed topologies always add one) causes the old traces to fire on
+        # the next programmatic .set(), triggering _mark_dirty() post-Calculate.
+        self._refreshing_ws_table = True
+        for _tv in (
+            getattr(self, '_ws_feeder_var', None),
+            getattr(self, '_ws_homerun_var', None),
+        ):
+            if _tv is not None:
+                for _ops, _name in list(_tv.trace_info()):
+                    if 'write' in _ops:
+                        _tv.trace_remove('write', _name)
+
         # Clear existing rows
         for widget in self._ws_rows_frame.winfo_children():
             widget.destroy()
         self._ws_lv_combos.clear()
-        
+
         active_counts = self._collect_active_string_counts()
         topology = self.topology_var.get() if hasattr(self, 'topology_var') else 'Distributed String'
         by_sc = self.wire_sizing.get('by_string_count', {})
-        
+        overrides = self.wire_sizing.get('user_overrides', {})
+
         # Build LV rows (harness/extender/whip per string count)
         for sc in active_counts:
             row_frame = ttk.Frame(self._ws_rows_frame)
             row_frame.pack(fill='x', pady=1)
-            
-            ttk.Label(row_frame, text=f"{sc}-str", width=7).pack(side='left')
+
+            any_overridden = any(
+                overrides.get(f"{sc}_{ct}") for ct in ('harness', 'extender', 'whip')
+            )
+            sc_lbl = (
+                tk.Label(row_frame, text=f"{sc}-str", width=7, background='#ffffaa')
+                if any_overridden
+                else ttk.Label(row_frame, text=f"{sc}-str", width=7)
+            )
+            sc_lbl.pack(side='left')
             
             # Get current sizes from wire_sizing dict (int or str key)
             entry = by_sc.get(sc) or by_sc.get(str(sc)) or {}
@@ -1604,7 +2212,15 @@ class QuickEstimate(ttk.Frame):
                 
                 # Bind change handler with closure
                 var.trace_add('write', lambda *a, s=sc, ct=cable_type: self._on_lv_size_changed(s, ct))
-        
+
+            # Sizing detail label (uses harness result as representative for the row)
+            result = self._wss_autosize_results.get((sc, 'harness'))
+            detail_lbl = ttk.Label(row_frame, text=self._format_sizing_detail_short(result),
+                                   foreground='gray', font=('TkDefaultFont', 7))
+            detail_lbl.pack(side='left', padx=(4, 0))
+            if result:
+                self._add_tooltip(detail_lbl, self._format_sizing_detail_full(result))
+
         # Separator before feeder rows
         if active_counts and (topology != 'Distributed String' or True):
             sep = ttk.Separator(self._ws_rows_frame, orient='horizontal')
@@ -1615,7 +2231,12 @@ class QuickEstimate(ttk.Frame):
             feeder_row = ttk.Frame(self._ws_rows_frame)
             feeder_row.pack(fill='x', pady=1)
 
-            ttk.Label(feeder_row, text="DC Fdr", width=7, foreground='gray').pack(side='left')
+            dc_overridden = bool(overrides.get('dc_feeder'))
+            if dc_overridden:
+                tk.Label(feeder_row, text="DC Fdr", width=7,
+                         foreground='gray', background='#ffffaa').pack(side='left')
+            else:
+                ttk.Label(feeder_row, text="DC Fdr", width=7, foreground='gray').pack(side='left')
             material = self.wire_sizing.get('feeder_material', 'aluminum')
             feeder_sizes = get_available_sizes(material)
             current_feeder = self.wire_sizing.get('dc_feeder', '')
@@ -1646,6 +2267,13 @@ class QuickEstimate(ttk.Frame):
                                       from_=1, to=10, increment=1, width=3)
             dc_par_spin.pack(side='left')
             ttk.Label(feeder_row, text="parallel sets").pack(side='left', padx=(2, 0))
+            feeder_result = self._wss_autosize_results.get('dc_feeder')
+            dc_detail_lbl = ttk.Label(feeder_row,
+                                      text=self._format_sizing_detail_short(feeder_result),
+                                      foreground='gray', font=('TkDefaultFont', 7))
+            dc_detail_lbl.pack(side='left', padx=(8, 0))
+            if feeder_result:
+                self._add_tooltip(dc_detail_lbl, self._format_sizing_detail_full(feeder_result))
 
         # AC Homerun row (all topologies)
         homerun_row = ttk.Frame(self._ws_rows_frame)
@@ -1653,8 +2281,12 @@ class QuickEstimate(ttk.Frame):
 
         is_distributed = (topology == 'Distributed String')
         label_color = 'gray' if is_distributed else 'black'
-
-        ttk.Label(homerun_row, text="AC HR", width=7, foreground=label_color).pack(side='left')
+        ac_overridden = bool(overrides.get('ac_homerun'))
+        if ac_overridden:
+            tk.Label(homerun_row, text="AC HR", width=7,
+                     foreground=label_color, background='#ffffaa').pack(side='left')
+        else:
+            ttk.Label(homerun_row, text="AC HR", width=7, foreground=label_color).pack(side='left')
         material = self.wire_sizing.get('feeder_material', 'aluminum')
         homerun_sizes = get_available_sizes(material)
         current_homerun = self.wire_sizing.get('ac_homerun', '')
@@ -1700,47 +2332,55 @@ class QuickEstimate(ttk.Frame):
                                       from_=1, to=10, increment=1, width=3)
             ac_par_spin.pack(side='left')
             ttk.Label(homerun_row, text="parallel sets").pack(side='left', padx=(2, 0))
-    
+        homerun_result = self._wss_autosize_results.get('ac_homerun')
+        ac_detail_lbl = ttk.Label(homerun_row,
+                                  text=self._format_sizing_detail_short(homerun_result),
+                                  foreground='gray', font=('TkDefaultFont', 7))
+        ac_detail_lbl.pack(side='left', padx=(8, 0))
+        if homerun_result:
+            self._add_tooltip(ac_detail_lbl, self._format_sizing_detail_full(homerun_result))
+
+        self._refreshing_ws_table = False
+
     def _reset_wire_sizing_to_recommended(self):
-        """Reset all wire sizes to calculated recommendations."""
-        from src.utils.cable_sizing import (
-            recommend_lv_cable_sizes, recommend_dc_feeder_size, 
-            recommend_ac_homerun_size
-        )
-        
+        """Reset all wire sizes to calculated recommendations using wire_sizing_settings."""
         temp = self._ws_temp_var.get() if hasattr(self, '_ws_temp_var') else '90C'
         material = self._ws_material_var.get() if hasattr(self, '_ws_material_var') else 'aluminum'
-        
+
         self.wire_sizing['temp_rating'] = temp
         self.wire_sizing['feeder_material'] = material
         self.wire_sizing['user_overrides'] = {}  # Clear all overrides
-        
-        # Get module Isc
+
         module_isc = self.selected_module.isc if self.selected_module else 13.0
-        
+
         # Recommend LV sizes for each active string count
         active_counts = self._collect_active_string_counts()
         by_sc = {}
         for sc in active_counts:
-            sizes = recommend_lv_cable_sizes(sc, module_isc, nec_factor=1.56, temp_rating=temp)
-            by_sc[sc] = sizes
+            isc_total = sc * module_isc
+            by_sc[sc] = {
+                'harness':  self._autosize_for_cable('harness',  isc_total, 0, sc),
+                'extender': self._autosize_for_cable('extender', isc_total, 0, sc),
+                'whip':     self._autosize_for_cable('whip',     isc_total, 0, sc),
+            }
         self.wire_sizing['by_string_count'] = by_sc
-        
+
         # Recommend DC feeder
         topology = self.topology_var.get() if hasattr(self, 'topology_var') else 'Distributed String'
         if topology in ('Centralized String', 'Central Inverter'):
             breaker = float(self._compute_dc_breaker_size())
-            self.wire_sizing['dc_feeder'] = recommend_dc_feeder_size(breaker, material, temp)
+            self.wire_sizing['dc_feeder'] = self._autosize_for_cable('dc_feeder', 0, breaker)
         else:
             self.wire_sizing['dc_feeder'] = ''
-        
+
         # Recommend AC homerun
         if self.selected_inverter and hasattr(self.selected_inverter, 'max_ac_current'):
             max_ac = self.selected_inverter.max_ac_current
-            self.wire_sizing['ac_homerun'] = recommend_ac_homerun_size(max_ac, material, temp)
+            self.wire_sizing['ac_homerun'] = self._autosize_for_cable(
+                'ac_homerun', 0, max_ac * 1.25)
         else:
             self.wire_sizing['ac_homerun'] = ''
-        
+
         # Rebuild the table UI with new values
         self.refresh_wire_sizing_table()
         self._mark_dirty()
@@ -1792,6 +2432,8 @@ class QuickEstimate(ttk.Frame):
 
     def _on_feeder_size_changed(self, feeder_type):
         """Handle user changing DC feeder or AC homerun size."""
+        if getattr(self, '_refreshing_ws_table', False):
+            return
         if feeder_type == 'dc_feeder':
             self.wire_sizing['dc_feeder'] = self._ws_feeder_var.get()
             if self.wire_sizing.get('dc_feeder_blanket_enabled', False):
@@ -1867,15 +2509,12 @@ class QuickEstimate(ttk.Frame):
         """Refresh wire sizing when segments/harness configs change.
         Preserves user overrides, adds new string counts with recommendations,
         removes string counts no longer in use."""
-        from src.utils.cable_sizing import recommend_lv_cable_sizes
-        
         if not hasattr(self, '_ws_rows_frame'):
             return
-        
-        temp = self.wire_sizing.get('temp_rating', '90C')
+
         module_isc = self.selected_module.isc if self.selected_module else 13.0
         overrides = self.wire_sizing.get('user_overrides', {})
-        
+
         active_counts = self._collect_active_string_counts()
         by_sc = self.wire_sizing.get('by_string_count', {})
 
@@ -1883,8 +2522,12 @@ class QuickEstimate(ttk.Frame):
         _table_changed = False
         for sc in active_counts:
             if sc not in by_sc and str(sc) not in by_sc:
-                sizes = recommend_lv_cable_sizes(sc, module_isc, nec_factor=1.56, temp_rating=temp)
-                by_sc[sc] = sizes
+                isc_total = sc * module_isc
+                by_sc[sc] = {
+                    'harness':  self._autosize_for_cable('harness',  isc_total, 0, sc),
+                    'extender': self._autosize_for_cable('extender', isc_total, 0, sc),
+                    'whip':     self._autosize_for_cable('whip',     isc_total, 0, sc),
+                }
                 _table_changed = True
 
         # Remove string counts no longer in use, clearing any overrides for them
@@ -1925,39 +2568,31 @@ class QuickEstimate(ttk.Frame):
 
     def _on_topology_changed_wire_sizing(self):
         """Handle topology change — show/hide DC feeder row, recalc if needed."""
-        from src.utils.cable_sizing import recommend_dc_feeder_size
-
         topology = self.topology_var.get()
-        material = self.wire_sizing.get('feeder_material', 'aluminum')
-        temp = self.wire_sizing.get('temp_rating', '90C')
         overrides = self.wire_sizing.get('user_overrides', {})
 
         if topology in ('Centralized String', 'Central Inverter'):
             if not overrides.get('dc_feeder') and not self.wire_sizing.get('dc_feeder'):
                 breaker = float(self._compute_dc_breaker_size())
-                self.wire_sizing['dc_feeder'] = recommend_dc_feeder_size(breaker, material, temp)
+                self.wire_sizing['dc_feeder'] = self._autosize_for_cable('dc_feeder', 0, breaker)
         else:
             self.wire_sizing['dc_feeder'] = ''
 
         self.refresh_wire_sizing_table()
-    
+
     def _on_inverter_changed_wire_sizing(self):
         """Handle inverter change — update AC homerun recommendation."""
-        from src.utils.cable_sizing import recommend_ac_homerun_size
-        
         overrides = self.wire_sizing.get('user_overrides', {})
         if overrides.get('ac_homerun'):
             return  # User has overridden, don't auto-update
-        
-        material = self.wire_sizing.get('feeder_material', 'aluminum')
-        temp = self.wire_sizing.get('temp_rating', '90C')
-        
+
         if self.selected_inverter and hasattr(self.selected_inverter, 'max_ac_current'):
             max_ac = self.selected_inverter.max_ac_current
-            self.wire_sizing['ac_homerun'] = recommend_ac_homerun_size(max_ac, material, temp)
+            self.wire_sizing['ac_homerun'] = self._autosize_for_cable(
+                'ac_homerun', 0, max_ac * 1.25)
         else:
             self.wire_sizing['ac_homerun'] = ''
-        
+
         self.refresh_wire_sizing_table()
     
     def _collect_active_string_counts(self):
@@ -2613,6 +3248,22 @@ class QuickEstimate(ttk.Frame):
                 'ac_homerun': '',
                 'user_overrides': {}
             }
+
+        # Load wire sizing settings (Change 2) — missing key or sub-field → defaults
+        saved_wss = estimate_data.get('wire_sizing_settings')
+        defaults = self._make_default_wss()
+        if saved_wss:
+            wss = copy.deepcopy(defaults)
+            wss['ambient_c'] = saved_wss.get('ambient_c', defaults['ambient_c'])
+            wss['soil_c'] = saved_wss.get('soil_c', defaults['soil_c'])
+            for cable_key in [k for k, *_ in self._WSS_CABLE_TYPES]:
+                if cable_key in saved_wss:
+                    for field, def_val in defaults[cable_key].items():
+                        wss[cable_key][field] = saved_wss[cable_key].get(field, def_val)
+            self.wire_sizing_settings = wss
+        else:
+            self.wire_sizing_settings = defaults
+        self._populate_wss_panel()
         
         # Restore inverter selection from per-estimate inverter_id (or legacy inverter_name)
         inv_id = estimate_data.get('inverter_id') or estimate_data.get('inverter_name', '')
@@ -2792,6 +3443,7 @@ class QuickEstimate(ttk.Frame):
         
         estimate_data['modules_per_string'] = self._get_int_var(self.modules_per_string_var, 28)
         estimate_data['wire_sizing'] = copy.deepcopy(self.wire_sizing)
+        estimate_data['wire_sizing_settings'] = copy.deepcopy(self.wire_sizing_settings)
         
         # Save inverter selection
         if self.selected_inverter:
@@ -4805,6 +5457,9 @@ class QuickEstimate(ttk.Frame):
             'ac_homerun': '',
             'user_overrides': {}
         }
+
+        # Per-cable-type enhanced sizing settings (Change 2)
+        self.wire_sizing_settings = self._make_default_wss()
         
         ttk.Label(settings_inner, text="Polarity:").pack(side='left', padx=(10, 5))
         self.polarity_convention_var = tk.StringVar(value='Negative Always South')
@@ -4841,7 +5496,10 @@ class QuickEstimate(ttk.Frame):
         
         # Wire Sizing frame (right side of Global Settings)
         self._build_wire_sizing_frame(settings_container)
-        
+
+        # Wire Sizing Settings collapsible panel (below Global Settings row)
+        self._build_wire_sizing_settings_panel(bottom_frame)
+
         # Button row
         button_row = ttk.Frame(bottom_frame)
         button_row.pack(fill='x', pady=(0, 10))
@@ -6668,6 +7326,10 @@ class QuickEstimate(ttk.Frame):
                         print(f"[QE] Device Configurator refresh failed: {e}")
 
         self._redraw_results_tree()
+
+        # Update wire sizing detail labels with real cable lengths now that totals are known
+        self._compute_wire_length_estimates(totals)
+        self._update_wire_sizing_with_lengths()
 
     def _write_block_details_sheet(self, wb):
         """Write a Block Details sheet with per-device part breakdowns."""

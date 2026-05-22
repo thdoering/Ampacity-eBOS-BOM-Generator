@@ -1,0 +1,9 @@
+{
+  "_comment": "Insulation type catalog. temp_rating_c drives the NEC ampacity table column. valid_install_methods controls UI filtering.",
+  "PV Wire":  {"temp_rating_c": 90, "materials": ["copper"],             "valid_install_methods": ["free_air", "conduit", "buried"]},
+  "USE-2":    {"temp_rating_c": 90, "materials": ["copper", "aluminum"], "valid_install_methods": ["free_air", "conduit", "buried"]},
+  "RHW-2":    {"temp_rating_c": 90, "materials": ["copper", "aluminum"], "valid_install_methods": ["conduit", "buried"]},
+  "THWN-2":   {"temp_rating_c": 90, "materials": ["copper", "aluminum"], "valid_install_methods": ["conduit"]},
+  "XHHW":     {"temp_rating_c": 75, "materials": ["copper", "aluminum"], "valid_install_methods": ["conduit", "buried"]},
+  "XHHW-2":   {"temp_rating_c": 90, "materials": ["copper", "aluminum"], "valid_install_methods": ["conduit", "buried"]}
+}
