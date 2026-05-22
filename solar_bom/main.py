@@ -514,78 +514,80 @@ class SolarBOMApplication:
             messagebox.showerror("Error", "Failed to save project")
 
     def apply_recommended_sizes_all_blocks(self):
-        """Apply recommended cable sizes to all harnesses in all blocks"""
+        """Apply recommended cable sizes to all harnesses and DC feeders in all blocks."""
         if not self.current_project:
             messagebox.showwarning("No Project", "Please load a project first.")
             return
-        
+
         if not hasattr(self, 'block_configurator') or not self.block_configurator:
             messagebox.showwarning("Error", "Block configurator not available. Please reload the project.")
             return
-        
-        from src.utils.cable_sizing import calculate_all_cable_sizes
+
+        from src.utils.cable_sizing import autosize_harness_for_block
         from src.models.block import WiringType
-        
-        # Get NEC factor from project
-        nec_factor = getattr(self.current_project, 'nec_safety_factor', 1.56)
-        
+        from src.models.project import Project
+
+        wss = (self.current_project.wire_sizing_settings
+               if hasattr(self.current_project, 'wire_sizing_settings')
+               else Project._default_wire_sizing_settings())
+
         blocks_updated = 0
         harnesses_updated = 0
-        
-        # Update the live BlockConfig objects in block_configurator
+
         for block_id, block in self.block_configurator.blocks.items():
-            if not hasattr(block, 'wiring_config') or not block.wiring_config:
-                continue
-            
-            if block.wiring_config.wiring_type != WiringType.HARNESS:
-                continue
-            
-            if not hasattr(block.wiring_config, 'harness_groupings') or not block.wiring_config.harness_groupings:
-                continue
-            
-            # Get module Isc from block's tracker template
-            module_isc = 10.0  # Default fallback
-            if (block.tracker_template and 
-                hasattr(block.tracker_template, 'module_spec') and 
-                block.tracker_template.module_spec):
-                module_isc = block.tracker_template.module_spec.isc
-            
             block_changed = False
-            
-            for string_count, harness_list in block.wiring_config.harness_groupings.items():
-                for harness in harness_list:
-                    num_strings = len(harness.string_indices)
-                    
-                    # Calculate recommended sizes
-                    recommended = calculate_all_cable_sizes(num_strings, module_isc, nec_factor)
-                    
-                    # Apply recommended sizes
-                    harness.string_cable_size = recommended['string']
-                    harness.cable_size = recommended['harness']
-                    harness.extender_cable_size = recommended['extender']
-                    harness.whip_cable_size = recommended['whip']
-                    
-                    harnesses_updated += 1
-                    block_changed = True
-            
+
+            # --- LV harnesses ---
+            if (hasattr(block, 'wiring_config') and block.wiring_config
+                    and block.wiring_config.wiring_type == WiringType.HARNESS
+                    and hasattr(block.wiring_config, 'harness_groupings')
+                    and block.wiring_config.harness_groupings):
+
+                module_isc = 10.0
+                if (block.tracker_template
+                        and hasattr(block.tracker_template, 'module_spec')
+                        and block.tracker_template.module_spec):
+                    module_isc = block.tracker_template.module_spec.isc
+
+                for harness_list in block.wiring_config.harness_groupings.values():
+                    for harness in harness_list:
+                        num_strings = len(harness.string_indices)
+                        harness.string_cable_size = '10 AWG'
+                        harness.cable_size = autosize_harness_for_block(
+                            num_strings, module_isc, wss, 'harness')['gauge']
+                        harness.extender_cable_size = autosize_harness_for_block(
+                            num_strings, module_isc, wss, 'extender')['gauge']
+                        harness.whip_cable_size = autosize_harness_for_block(
+                            num_strings, module_isc, wss, 'whip')['gauge']
+                        harnesses_updated += 1
+                        block_changed = True
+
+            # --- DC feeder (respects manually-set flag) ---
+            self.block_configurator.auto_apply_dc_feeder_size(block)
+
             if block_changed:
                 blocks_updated += 1
-        
-        # Update the serialized blocks in project for saving
-        serialized_blocks = {}
-        for block_id, block in self.block_configurator.blocks.items():
-            serialized_blocks[block_id] = block.to_dict()
-        self.current_project.blocks = serialized_blocks
-        
-        # Save the project
+
+        # Serialize updated blocks back to project
+        self.current_project.blocks = {
+            bid: blk.to_dict()
+            for bid, blk in self.block_configurator.blocks.items()
+        }
+
         if blocks_updated > 0:
             self.save_project()
             messagebox.showinfo(
-                "Cable Sizes Updated", 
-                f"Applied recommended cable sizes to {harnesses_updated} harness(es) in {blocks_updated} block(s).\n\nProject saved.\n\nSelect a block to see the updated values."
+                "Cable Sizes Updated",
+                f"Applied recommended cable sizes to {harnesses_updated} harness(es) in "
+                f"{blocks_updated} block(s).\n\nProject saved.\n\n"
+                "Select a block to see the updated values."
             )
         else:
-            messagebox.showinfo("No Changes", "No harness configurations found to update.\n\nMake sure blocks have Wire Harness wiring type configured with harness groupings.")
+            messagebox.showinfo(
+                "No Changes",
+                "No harness configurations found to update.\n\n"
+                "Make sure blocks have Wire Harness wiring type configured with harness groupings."
+            )
 
 
     def export_project(self):

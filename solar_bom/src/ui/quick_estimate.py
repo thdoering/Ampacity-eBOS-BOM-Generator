@@ -1556,7 +1556,7 @@ class QuickEstimate(ttk.Frame):
         ('harness',    'Harness',    'PV Wire', 'copper'),
         ('extender',   'Extender',   'PV Wire', 'copper'),
         ('whip',       'Whip',       'PV Wire', 'copper'),
-        ('dc_feeder',  'DC Feeder',  'PV Wire', 'copper'),
+        ('dc_feeder',  'DC Feeder',  'USE-2',   'aluminum'),
         ('ac_homerun', 'AC Homerun', 'XHHW-2',  'aluminum'),
     ]
 
@@ -1568,6 +1568,11 @@ class QuickEstimate(ttk.Frame):
     }
     _WSS_INSTALL_TO_DISPLAY = {v: k for k, v in _WSS_INSTALL_TO_INTERNAL.items()}
 
+    _WSS_DEFAULT_INSTALL = {
+        'harness': 'free_air', 'extender': 'free_air', 'whip': 'free_air',
+        'dc_feeder': 'buried', 'ac_homerun': 'buried',
+    }
+
     @classmethod
     def _make_default_wss(cls) -> dict:
         """Return a fresh wire_sizing_settings dict populated with defaults."""
@@ -1576,7 +1581,7 @@ class QuickEstimate(ttk.Frame):
             d[key] = {
                 'insulation': insulation,
                 'term_temp_c': 90,
-                'install_method': 'conduit',
+                'install_method': cls._WSS_DEFAULT_INSTALL.get(key, 'free_air'),
                 'material': material,
                 'vd_target_pct': 2.0,
                 'circuits_sharing': 1,
@@ -1789,18 +1794,25 @@ class QuickEstimate(ttk.Frame):
             self._wss_toggle_btn.config(text="▶  Wire Sizing Settings")
 
     def _on_wss_global_changed(self):
-        if getattr(self, '_updating_wss', False) or getattr(self, '_loading', False):
+        updating = getattr(self, '_updating_wss', False)
+        loading = getattr(self, '_loading', False)
+        print(f"[DBG _on_wss_global_changed] updating={updating} loading={loading} ambient_var={getattr(self, '_wss_ambient_var', None) and self._wss_ambient_var.get()}")
+        if updating or loading:
             return
         self._sync_wss_vars_to_dict()
+        print(f"[DBG after sync] wire_sizing_settings ambient_c={self.wire_sizing_settings.get('ambient_c')} estimate_id={self.estimate_id}")
         self._mark_stale()
-        self._schedule_autosave()
+        self.save_estimate()
+        if self.current_project and self.estimate_id:
+            saved = self.current_project.quick_estimates.get(self.estimate_id, {}).get('wire_sizing_settings', {}).get('ambient_c', 'MISSING')
+            print(f"[DBG after save_estimate] project quick_estimates ambient_c={saved}")
 
     def _on_wss_changed(self):
         if getattr(self, '_updating_wss', False) or getattr(self, '_loading', False):
             return
         self._sync_wss_vars_to_dict()
         self._mark_stale()
-        self._schedule_autosave()
+        self.save_estimate()
 
     def _on_wss_insulation_changed(self, cable_key: str):
         """Update install-method and material dropdowns when insulation type changes."""
@@ -2494,7 +2506,8 @@ class QuickEstimate(ttk.Frame):
         if hasattr(self, 'main_app') and hasattr(self.main_app, 'device_configurator'):
             dc = self.main_app.device_configurator
             if dc.data_source == 'quick_estimate' and dc.combiner_configs:
-                dc.update_cable_sizes_from_qe(self.last_combiner_assignments)
+                dc.update_cable_sizes_from_qe(self.last_combiner_assignments,
+                                              qe_wire_sizing_settings=self.wire_sizing_settings)
 
         # Refresh Site Preview canvas if it is currently open
         from .site_preview import SitePreviewWindow

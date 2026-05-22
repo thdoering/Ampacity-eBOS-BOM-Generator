@@ -46,10 +46,52 @@ class Project:
     quick_estimates: Dict[str, dict] = field(default_factory=dict)
     # BOM revision number
     bom_revision: str = "0"
+    # Project-level NEC wire sizing parameters (ambient temp, insulation, install method, etc.)
+    wire_sizing_settings: dict = field(default_factory=dict)
 
+
+    @classmethod
+    def _merge_wire_sizing_settings(cls, saved: Optional[dict]) -> dict:
+        defaults = cls._default_wire_sizing_settings()
+        if not saved:
+            return defaults
+        merged = dict(defaults)
+        merged['ambient_temp_c'] = saved.get('ambient_temp_c', defaults['ambient_temp_c'])
+        merged['soil_temp_c'] = saved.get('soil_temp_c', defaults['soil_temp_c'])
+        saved_per = saved.get('per_cable_type', {})
+        merged_per = {}
+        for cable_type, cable_defaults in defaults['per_cable_type'].items():
+            saved_cable = saved_per.get(cable_type, {})
+            merged_per[cable_type] = {**cable_defaults, **saved_cable}
+        merged['per_cable_type'] = merged_per
+        return merged
+
+    @staticmethod
+    def _default_wire_sizing_settings() -> dict:
+        _cable = lambda ins, mat, method: {
+            "insulation_type": ins,
+            "termination_temp_c": 90,
+            "installation_method": method,
+            "material": mat,
+            "vd_target_pct": 2.0,
+            "circuits_sharing_raceway": 1,
+        }
+        return {
+            "ambient_temp_c": 30,
+            "soil_temp_c": 20,
+            "per_cable_type": {
+                "harness":    _cable("PV Wire",  "copper",   "free_air"),
+                "extender":   _cable("PV Wire",  "copper",   "free_air"),
+                "whip":       _cable("PV Wire",  "copper",   "free_air"),
+                "dc_feeder":  _cable("USE-2",    "aluminum", "direct_buried"),
+                "ac_homerun": _cable("XHHW-2",   "aluminum", "direct_buried"),
+            },
+        }
 
     def __post_init__(self):
         self._source_filepath: Optional[str] = None
+        if not self.wire_sizing_settings:
+            self.wire_sizing_settings = self._default_wire_sizing_settings()
     
     def update_modified_date(self):
         """Update the last modified date"""
@@ -79,7 +121,8 @@ class Project:
             'sld_diagram': self.sld_diagram,
             'nec_safety_factor': self.nec_safety_factor,
             'quick_estimates': self.quick_estimates,
-            'bom_revision': self.bom_revision
+            'bom_revision': self.bom_revision,
+            'wire_sizing_settings': self.wire_sizing_settings,
         }
     
     @classmethod
@@ -109,7 +152,8 @@ class Project:
             sld_diagram=data.get('sld_diagram', None),
             nec_safety_factor=data.get('nec_safety_factor', 1.56),
             quick_estimates=data.get('quick_estimates', {}),
-            bom_revision=data.get('bom_revision', '0')
+            bom_revision=data.get('bom_revision', '0'),
+            wire_sizing_settings=Project._merge_wire_sizing_settings(data.get('wire_sizing_settings')),
         )
     
     def save(self, projects_dir: str = 'projects') -> bool:

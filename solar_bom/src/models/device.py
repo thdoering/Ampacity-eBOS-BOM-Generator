@@ -27,33 +27,30 @@ class HarnessConnection:
     user_cable_size: Optional[str] = None
     fuse_manually_set: bool = False
     cable_manually_set: bool = False
-    
+    # Project-level NEC wire sizing parameters (optional; falls back to defaults when absent)
+    wire_sizing_settings: Optional[dict] = None
+
     def __post_init__(self):
         self.harness_current = self.num_strings * self.module_isc * self.nec_factor
         self.calculated_fuse_size = self._calculate_fuse_size()
         self.calculated_cable_size = self._calculate_cable_size()
-    
+
     def _calculate_fuse_size(self) -> int:
         """Calculate required fuse size based on harness current"""
-        # Use combiner box fuse sizes (not inline harness fuses)
         from ..utils.calculations import COMBINER_BOX_FUSE_SIZES
-        
         for size in COMBINER_BOX_FUSE_SIZES:
             if size >= self.harness_current:
                 return size
-        return 65  # Max standard combiner box fuse size
-    
+        return 65
+
     def _calculate_cable_size(self) -> str:
-        """Calculate required cable size based on harness current"""
+        """Calculate required cable size using NEC 2023 autosize when settings are available."""
+        if self.wire_sizing_settings:
+            from ..utils.cable_sizing import autosize_harness_for_block
+            return autosize_harness_for_block(
+                self.num_strings, self.module_isc, self.wire_sizing_settings, 'harness')['gauge']
         from ..utils.cable_sizing import calculate_harness_cable_size
-        
-        # Use the new cable sizing service to calculate based on actual current
-        # Note: harness_current already includes NEC factor, so we pass factor=1.0
-        return calculate_harness_cable_size(
-            self.num_strings, 
-            self.module_isc, 
-            self.nec_factor
-        )
+        return calculate_harness_cable_size(self.num_strings, self.module_isc, self.nec_factor)
     
     def get_display_fuse_size(self) -> int:
         """Get fuse size to display (user override or calculated)"""

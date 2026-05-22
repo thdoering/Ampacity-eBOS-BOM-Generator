@@ -500,13 +500,14 @@ class DeviceConfigurator(ttk.Frame):
                 combiner_count = len(self.combiner_configs)
                 self.status_var.set(f"Loaded {combiner_count} combiner box(es) from Block/Wiring Config")
     
-    def update_cable_sizes_from_qe(self, assignments):
+    def update_cable_sizes_from_qe(self, assignments, qe_wire_sizing_settings=None):
         """Update cable sizes from QE wire sizing without overwriting manual edits.
 
-        Called by QE whenever the user changes a wire size in the Wire Sizing table.
         Only updates connections where cable_manually_set is False.
+        If qe_wire_sizing_settings (QE-schema dict) is provided, it is converted and
+        stored on project.wire_sizing_settings so both paths stay in sync.
         """
-        gauge_lookup = {}  # (combiner_name, tracker_label, harness_label) -> wire_gauge
+        gauge_lookup = {}
         for cb in assignments:
             cb_name = cb['combiner_name']
             for conn in cb.get('connections', []):
@@ -519,6 +520,29 @@ class DeviceConfigurator(ttk.Frame):
                     key = (combiner_id, conn.tracker_id, conn.harness_id)
                     if key in gauge_lookup:
                         conn.actual_cable_size = gauge_lookup[key]
+
+        # Sync QE NEC parameters to project so wiring configurator uses the same settings
+        if qe_wire_sizing_settings and self.current_project:
+            _QE_INSTALL_MAP = {
+                'free_air': 'free_air', 'conduit': 'conduit', 'buried': 'direct_buried',
+            }
+            converted = {
+                'ambient_temp_c': float(qe_wire_sizing_settings.get('ambient_c', 30)),
+                'soil_temp_c': float(qe_wire_sizing_settings.get('soil_c', 20)),
+                'per_cable_type': {},
+            }
+            for ct in ('harness', 'extender', 'whip', 'dc_feeder', 'ac_homerun'):
+                qs = qe_wire_sizing_settings.get(ct, {})
+                converted['per_cable_type'][ct] = {
+                    'insulation_type': qs.get('insulation', 'PV Wire'),
+                    'termination_temp_c': int(qs.get('term_temp_c', 90)),
+                    'installation_method': _QE_INSTALL_MAP.get(
+                        qs.get('install_method', 'conduit'), 'conduit'),
+                    'material': qs.get('material', 'copper'),
+                    'vd_target_pct': float(qs.get('vd_target_pct', 2.0)),
+                    'circuits_sharing_raceway': int(qs.get('circuits_sharing', 1)),
+                }
+            self.current_project.wire_sizing_settings = converted
 
         self.refresh_display()
 

@@ -157,13 +157,11 @@ def recommend_dc_feeder_size(breaker_rating: float, material: str = "aluminum",
     return recommend_cable_size(breaker_rating, material, temp_rating)
 
 
-def recommend_block_dc_feeder_size(block, device_configurator=None) -> str:
-    """Recommend DC feeder cable size for a block.
+def get_block_dc_ocpd_rating(block, device_configurator=None) -> Optional[float]:
+    """Return the OCPD rating (A) driving the DC feeder for a block, or None if unknown.
 
-    Uses the combiner output breaker rating from device_configurator if available
-    (takes the largest breaker across all combiner configs for this block), then
-    falls back to the sum of inverter MPPT channel max_input_current × 1.25 (NEC
-    continuous load factor).  Always sizes for aluminum at 75 °C.
+    Prefers the largest combiner output breaker from device_configurator; falls back to
+    inverter MPPT channel max_input_current × 1.25 (NEC continuous load factor).
     """
     breaker = None
 
@@ -182,10 +180,18 @@ def recommend_block_dc_feeder_size(block, device_configurator=None) -> str:
             total_dc = sum(getattr(ch, 'max_input_current', 0.0) for ch in channels)
             breaker = total_dc * 1.25
 
-    if not breaker:
-        return '4/0 AWG'
+    return float(breaker) if breaker else None
 
-    return recommend_dc_feeder_size(float(breaker), material='aluminum', temp_rating='75C')
+
+def recommend_block_dc_feeder_size(block, device_configurator=None) -> str:
+    """Recommend DC feeder cable size for a block (legacy — aluminum 75 °C).
+
+    Use autosize_dc_feeder_for_block() for NEC-2023 project-aware sizing.
+    """
+    ocpd = get_block_dc_ocpd_rating(block, device_configurator)
+    if not ocpd:
+        return '4/0 AWG'
+    return recommend_dc_feeder_size(ocpd, material='aluminum', temp_rating='75C')
 
 
 def recommend_ac_homerun_size(max_ac_current: float, material: str = "aluminum",
@@ -638,7 +644,13 @@ def autosize_conductor(
     else:
         table_label = f"NEC 2023 Table 310.16, {conductor_temp_c}°C"
 
-    term_source = f"NEC 110.14(C), {termination_temp_c}°C terminals"
+    # NEC 110.14(C) termination cap: PV Wire in free air uses 90C-rated MC4 connectors,
+    # so the cap does not apply — termination and conductor are both rated 90C.
+    pv_wire_free_air = (insulation_type == 'PV Wire' and installation_method == 'free_air')
+    if pv_wire_free_air:
+        term_source = "N/A - PV Wire free air (MC4 connectors rated 90C, NEC 110.14(C) cap not applied)"
+    else:
+        term_source = f"NEC 110.14(C), {termination_temp_c}°C terminals"
     required_a, req_source = get_required_ampacity(isc_total_a, ocpd_rating_a)
 
     available = get_available_sizes(material)
@@ -650,7 +662,10 @@ def autosize_conductor(
         af = get_ambient_correction(ambient_c, conductor_temp_c)
         cf = 1.0 if installation_method == 'free_air' else get_ccc_adjustment(ccc_count)
         adj = base * af * cf
-        tc = get_termination_cap_ampacity(gauge, material, termination_temp_c)
+        if pv_wire_free_air:
+            tc = adj  # no termination cap: MC4 connectors are 90C-rated
+        else:
+            tc = get_termination_cap_ampacity(gauge, material, termination_temp_c)
         final = min(adj, tc)
         return base, af, cf, adj, tc, final
 
@@ -713,4 +728,103 @@ def autosize_conductor(
     # All gauges satisfy ampacity but VD still fails on largest
     gauge = available[-1]
     vd = _vd(gauge)
-    return _build_result(gauge, True, vd, False, "voltage_drop")
+    return _build_result(gauge, True, vd, False, "voltage_drop")
+
+
+# ---------------------------------------------------------------------------
+# Project-aware wrappers — pull per-cable-type settings from wire_sizing_settings
+# ---------------------------------------------------------------------------
+
+def autosize_harness_for_block(
+    num_strings: int,
+    module_isc: float,
+    wire_sizing_settings: dict,
+    cable_type: str = 'harness',
+    one_way_length_ft: float = 0.0,
+    source_voltage: float = 0.0,
+) -> dict:
+    """
+    Autosize a LV cable (harness/extender/whip) using project wire sizing settings.
+    Passes num_strings * module_isc as isc_total_a; NEC 690.8 factor applied internally.
+    """
+    ambient_c = wire_sizing_settings.get('ambient_temp_c', 30)
+    per = wire_sizing_settings.get('per_cable_type', {}).get(cable_type, {})
+    result = autosize_conductor(
+        isc_total_a=num_strings * module_isc,
+        ocpd_rating_a=0.0,
+        material=per.get('material', 'copper'),
+        insulation_type=per.get('insulation_type', 'PV Wire'),
+        installation_method=per.get('installation_method', 'free_air'),
+        ambient_c=ambient_c,
+        ccc_count=per.get('circuits_sharing_raceway', 1),
+        termination_temp_c=per.get('termination_temp_c', 90),
+        one_way_length_ft=one_way_length_ft,
+        source_voltage=source_voltage,
+        vd_target_pct=per.get('vd_target_pct', 2.0),
+    )
+    print(
+        f"[DBG autosize_harness] {cable_type} {num_strings}-str | "
+        f"isc={module_isc:.2f}A req={result['required_ampacity']:.1f}A | "
+        f"install={result['installation_method']} insulation={result['insulation_type']} "
+        f"mat={result['material']} term={result['termination_temp_rating_c']}C | "
+        f"base={result['base_ampacity']:.0f}A amb*{result['ambient_correction']:.3f} "
+        f"ccc*{result['ccc_adjustment']:.3f} adj={result['adjusted_ampacity']:.1f}A "
+        f"term_cap={result['termination_capped_ampacity']:.0f}A "
+        f"final={result['final_ampacity']:.0f}A -> {result['gauge']} "
+        f"({'PASS' if result['ampacity_passes'] else 'FAIL'})"
+    )
+    return result
+
+
+def autosize_dc_feeder_for_block(
+    ocpd_rating_a: float,
+    wire_sizing_settings: dict,
+    one_way_length_ft: float = 0.0,
+    source_voltage: float = 0.0,
+) -> dict:
+    """
+    Autosize a DC feeder cable using project wire sizing settings.
+    ocpd_rating_a is the combiner output breaker rating.
+    """
+    ambient_c = wire_sizing_settings.get('ambient_temp_c', 30)
+    per = wire_sizing_settings.get('per_cable_type', {}).get('dc_feeder', {})
+    return autosize_conductor(
+        isc_total_a=0.0,
+        ocpd_rating_a=ocpd_rating_a,
+        material=per.get('material', 'copper'),
+        insulation_type=per.get('insulation_type', 'PV Wire'),
+        installation_method=per.get('installation_method', 'conduit'),
+        ambient_c=ambient_c,
+        ccc_count=per.get('circuits_sharing_raceway', 1),
+        termination_temp_c=per.get('termination_temp_c', 90),
+        one_way_length_ft=one_way_length_ft,
+        source_voltage=source_voltage,
+        vd_target_pct=per.get('vd_target_pct', 2.0),
+    )
+
+
+def autosize_ac_homerun_for_block(
+    max_ac_current_a: float,
+    wire_sizing_settings: dict,
+    one_way_length_ft: float = 0.0,
+    source_voltage: float = 0.0,
+) -> dict:
+    """
+    Autosize an AC homerun cable using project wire sizing settings.
+    NEC 210.20 continuous load factor (×1.25) is applied internally via ocpd_rating_a.
+    """
+    ambient_c = wire_sizing_settings.get('ambient_temp_c', 30)
+    per = wire_sizing_settings.get('per_cable_type', {}).get('ac_homerun', {})
+    return autosize_conductor(
+        isc_total_a=0.0,
+        ocpd_rating_a=max_ac_current_a * 1.25,
+        material=per.get('material', 'aluminum'),
+        insulation_type=per.get('insulation_type', 'XHHW-2'),
+        installation_method=per.get('installation_method', 'conduit'),
+        ambient_c=ambient_c,
+        ccc_count=per.get('circuits_sharing_raceway', 1),
+        termination_temp_c=per.get('termination_temp_c', 90),
+        one_way_length_ft=one_way_length_ft,
+        source_voltage=source_voltage,
+        vd_target_pct=per.get('vd_target_pct', 2.0),
+    )

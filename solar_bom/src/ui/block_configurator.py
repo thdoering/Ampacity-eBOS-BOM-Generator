@@ -800,9 +800,16 @@ class BlockConfigurator(ttk.Frame):
         """Set dc_feeder_cable_size from auto-recommendation unless manually overridden."""
         if getattr(block, 'dc_feeder_size_manually_set', False):
             return
-        from ..utils.cable_sizing import recommend_block_dc_feeder_size
+        from ..utils.cable_sizing import get_block_dc_ocpd_rating, autosize_dc_feeder_for_block
+        from ..models.project import Project
         device_conf = getattr(self, 'device_configurator', None)
-        recommended = recommend_block_dc_feeder_size(block, device_conf)
+        ocpd = get_block_dc_ocpd_rating(block, device_conf)
+        if not ocpd:
+            return
+        wss = (self.current_project.wire_sizing_settings
+               if self.current_project and hasattr(self.current_project, 'wire_sizing_settings')
+               else Project._default_wire_sizing_settings())
+        recommended = autosize_dc_feeder_for_block(ocpd, wss)['gauge']
         block.dc_feeder_cable_size = recommended
         if self.current_block == block.block_id:
             self.updating_ui = True

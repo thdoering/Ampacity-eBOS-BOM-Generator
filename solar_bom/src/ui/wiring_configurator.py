@@ -193,6 +193,7 @@ class WiringConfigurator(tk.Toplevel):
         self.setup_harness_configuration(controls_frame)
         self.setup_routing_controls(controls_frame)
         self.setup_harness_cable_table(controls_frame)
+        self.setup_wire_sizing_settings(controls_frame)
 
     def setup_canvas_frame(self, main_container):
         """Set up the right side canvas frame"""
@@ -405,8 +406,8 @@ class WiringConfigurator(tk.Toplevel):
         self.harness_cable_tree.column('Extender Cable', width=100, minwidth=80)
         self.harness_cable_tree.column('Whip Cable', width=100, minwidth=80)
         self.harness_cable_tree.column('Fuse Size', width=80, minwidth=60)
-        self.harness_cable_tree.column('Recommended', width=100, minwidth=80)
-        
+        self.harness_cable_tree.column('Recommended', width=220, minwidth=140)
+
         # Configure column headings
         self.harness_cable_tree.heading('#0', text='Harness Type')
         self.harness_cable_tree.heading('String Cable', text='String Cable')
@@ -414,7 +415,7 @@ class WiringConfigurator(tk.Toplevel):
         self.harness_cable_tree.heading('Extender Cable', text='Extender Cable')
         self.harness_cable_tree.heading('Whip Cable', text='Whip Cable')
         self.harness_cable_tree.heading('Fuse Size', text='Fuse Size')
-        self.harness_cable_tree.heading('Recommended', text='Recommended Whip')
+        self.harness_cable_tree.heading('Recommended', text='Sizing Detail (Whip)')
         
         # Scrollbar
         scrollbar = ttk.Scrollbar(table_frame, orient='vertical', command=self.harness_cable_tree.yview)
@@ -443,95 +444,317 @@ class WiringConfigurator(tk.Toplevel):
         button_frame.grid(row=2, column=0, columnspan=2, padx=5, pady=(5, 0), sticky=(tk.W, tk.E))
         ttk.Button(button_frame, text="Delete All Harnesses", 
                 command=self.delete_all_harnesses).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Apply Recommended Sizes", 
+        ttk.Button(button_frame, text="Apply Recommended Sizes",
                 command=self.apply_recommended_sizes).pack(side=tk.LEFT, padx=5)
-        
+
+    def setup_wire_sizing_settings(self, controls_frame):
+        """Set up collapsible Wire Sizing Settings panel (NEC parameters) for the block."""
+        from ..utils.cable_sizing import _load_insulation_types
+
+        _INSTALL_TO_DISPLAY = {
+            'conduit': 'In Conduit',
+            'free_air': 'Free Air',
+            'direct_buried': 'Direct Buried',
+        }
+        _CABLE_LABELS = [
+            ('harness', 'Harness'), ('extender', 'Extender'), ('whip', 'Whip'),
+            ('dc_feeder', 'DC Feeder'), ('ac_homerun', 'AC Homerun'),
+        ]
+        self._bwc_install_map = {v: k for k, v in _INSTALL_TO_DISPLAY.items()}
+
+        wss_cf = CollapsibleFrame(controls_frame, text="Wire Sizing Settings (NEC)", start_collapsed=True)
+        wss_cf.grid(row=5, column=0, columnspan=2, padx=5, pady=5, sticky=(tk.W, tk.E))
+        self.wss_collapsible = wss_cf
+        f = wss_cf.content_frame
+
+        insulation_data = _load_insulation_types()
+        all_insulations = sorted([k for k in insulation_data if not k.startswith('_')])
+
+        # --- Global temps ---
+        env_row = ttk.Frame(f)
+        env_row.grid(row=0, column=0, columnspan=7, padx=5, pady=(2, 4), sticky=tk.W)
+        ttk.Label(env_row, text="Ambient (°C):").pack(side=tk.LEFT)
+        self._bwc_ambient_var = tk.StringVar(value='30')
+        ttk.Spinbox(env_row, from_=-20, to=80, increment=1,
+                    textvariable=self._bwc_ambient_var, width=5).pack(side=tk.LEFT, padx=(2, 12))
+        ttk.Label(env_row, text="Soil Temp (°C):").pack(side=tk.LEFT)
+        self._bwc_soil_var = tk.StringVar(value='20')
+        ttk.Spinbox(env_row, from_=0, to=50, increment=1,
+                    textvariable=self._bwc_soil_var, width=5).pack(side=tk.LEFT, padx=(2, 0))
+
+        ttk.Separator(f, orient='horizontal').grid(
+            row=1, column=0, columnspan=7, sticky=(tk.W, tk.E), pady=(0, 4))
+
+        # --- Header row ---
+        hdr_font = ('TkDefaultFont', 8, 'bold')
+        for col, txt in enumerate(['', 'Insulation', 'Term°C', 'Install', 'Material', 'VD%', 'CCC']):
+            ttk.Label(f, text=txt, font=hdr_font).grid(
+                row=2, column=col, padx=3, pady=(0, 2), sticky=tk.W)
+
+        # --- Per-cable-type rows ---
+        self._bwc_wss_vars = {}
+        wss = (self.project.wire_sizing_settings
+               if self.project and hasattr(self.project, 'wire_sizing_settings') else {})
+        per = wss.get('per_cable_type', {})
+
+        for i, (ct, label) in enumerate(_CABLE_LABELS):
+            row = 3 + i
+            s = per.get(ct, {})
+            inst_int = s.get('installation_method', 'conduit')
+            inst_disp = _INSTALL_TO_DISPLAY.get(inst_int, 'In Conduit')
+
+            ttk.Label(f, text=label, width=9).grid(row=row, column=0, padx=3, sticky=tk.W)
+
+            ins_var = tk.StringVar(value=s.get('insulation_type', 'PV Wire'))
+            ttk.Combobox(f, textvariable=ins_var, values=all_insulations,
+                         state='readonly', width=10).grid(row=row, column=1, padx=3, pady=1)
+
+            term_var = tk.StringVar(value=str(s.get('termination_temp_c', 90)))
+            ttk.Combobox(f, textvariable=term_var, values=['75', '90'],
+                         state='readonly', width=4).grid(row=row, column=2, padx=3, pady=1)
+
+            install_var = tk.StringVar(value=inst_disp)
+            ttk.Combobox(f, textvariable=install_var,
+                         values=list(_INSTALL_TO_DISPLAY.values()),
+                         state='readonly', width=12).grid(row=row, column=3, padx=3, pady=1)
+
+            mat_var = tk.StringVar(value=s.get('material', 'copper'))
+            ttk.Combobox(f, textvariable=mat_var, values=['copper', 'aluminum'],
+                         state='readonly', width=8).grid(row=row, column=4, padx=3, pady=1)
+
+            vd_var = tk.StringVar(value=str(s.get('vd_target_pct', 2.0)))
+            ttk.Spinbox(f, from_=0.5, to=10.0, increment=0.5,
+                        textvariable=vd_var, width=5).grid(row=row, column=5, padx=3, pady=1)
+
+            ccc_var = tk.StringVar(value=str(s.get('circuits_sharing_raceway', 1)))
+            ttk.Spinbox(f, from_=1, to=50, increment=1,
+                        textvariable=ccc_var, width=4).grid(row=row, column=6, padx=3, pady=1)
+
+            self._bwc_wss_vars[ct] = {
+                'insulation_type': ins_var,
+                'termination_temp_c': term_var,
+                'installation_method': install_var,
+                'material': mat_var,
+                'vd_target_pct': vd_var,
+                'circuits_sharing_raceway': ccc_var,
+            }
+
+        # Populate global temps from project
+        self._bwc_ambient_var.set(str(wss.get('ambient_temp_c', 30)))
+        self._bwc_soil_var.set(str(wss.get('soil_temp_c', 20)))
+
+        # Auto-persist: trace all vars so any change immediately writes to project
+        self._bwc_ambient_var.trace_add('write', lambda *_: self._save_wss_to_project())
+        self._bwc_soil_var.trace_add('write', lambda *_: self._save_wss_to_project())
+        for vars_dict in self._bwc_wss_vars.values():
+            for v in vars_dict.values():
+                v.trace_add('write', lambda *_: self._save_wss_to_project())
+
+        # --- Buttons ---
+        btn_frame = ttk.Frame(f)
+        btn_frame.grid(row=3 + len(_CABLE_LABELS), column=0, columnspan=7,
+                       padx=5, pady=(8, 2), sticky=tk.W)
+        ttk.Button(btn_frame, text="Re-apply Recommended Sizes",
+                   command=self._reapply_sizes_from_settings).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_frame, text="Import from QE Estimate",
+                   command=self._import_wss_from_qe).pack(side=tk.LEFT, padx=4)
+
+    def _read_wss_from_panel(self) -> dict:
+        """Read current panel values and return a project-schema wire_sizing_settings dict."""
+        result = {
+            'ambient_temp_c': float(self._bwc_ambient_var.get() or 30),
+            'soil_temp_c': float(self._bwc_soil_var.get() or 20),
+            'per_cable_type': {},
+        }
+        for ct, vars_dict in self._bwc_wss_vars.items():
+            inst_disp = vars_dict['installation_method'].get()
+            inst_int = self._bwc_install_map.get(inst_disp, 'conduit')
+            result['per_cable_type'][ct] = {
+                'insulation_type': vars_dict['insulation_type'].get(),
+                'termination_temp_c': int(vars_dict['termination_temp_c'].get() or 90),
+                'installation_method': inst_int,
+                'material': vars_dict['material'].get(),
+                'vd_target_pct': float(vars_dict['vd_target_pct'].get() or 2.0),
+                'circuits_sharing_raceway': int(vars_dict['circuits_sharing_raceway'].get() or 1),
+            }
+        return result
+
+    def _load_wss_to_panel(self, wss: dict):
+        """Populate the Wire Sizing Settings panel from a project-schema dict."""
+        _INSTALL_TO_DISPLAY = {
+            'conduit': 'In Conduit', 'free_air': 'Free Air', 'direct_buried': 'Direct Buried',
+        }
+        self._bwc_ambient_var.set(str(wss.get('ambient_temp_c', 30)))
+        self._bwc_soil_var.set(str(wss.get('soil_temp_c', 20)))
+        per = wss.get('per_cable_type', {})
+        for ct, vars_dict in self._bwc_wss_vars.items():
+            s = per.get(ct, {})
+            vars_dict['insulation_type'].set(s.get('insulation_type', 'PV Wire'))
+            vars_dict['termination_temp_c'].set(str(s.get('termination_temp_c', 90)))
+            inst_int = s.get('installation_method', 'conduit')
+            vars_dict['installation_method'].set(_INSTALL_TO_DISPLAY.get(inst_int, 'In Conduit'))
+            vars_dict['material'].set(s.get('material', 'copper'))
+            vars_dict['vd_target_pct'].set(str(s.get('vd_target_pct', 2.0)))
+            vars_dict['circuits_sharing_raceway'].set(str(s.get('circuits_sharing_raceway', 1)))
+
+    def _save_wss_to_project(self):
+        """Write the Wire Sizing Settings panel values to project.wire_sizing_settings."""
+        if not self.project:
+            return
+        self.project.wire_sizing_settings = self._read_wss_from_panel()
+        self.notify_wiring_changed()
+
+    def _reapply_sizes_from_settings(self):
+        """Re-autosize all harnesses using the current project.wire_sizing_settings."""
+        if not self.project or not self.block or not self.block.wiring_config:
+            return
+        if not self.block.tracker_template or not self.block.tracker_template.module_spec:
+            messagebox.showerror("Error", "Module information not available")
+            return
+        if (not hasattr(self.block.wiring_config, 'harness_groupings')
+                or not self.block.wiring_config.harness_groupings):
+            messagebox.showinfo("Info", "No harness groups configured")
+            return
+
+        from ..utils.cable_sizing import autosize_harness_for_block
+        module_isc = self.block.tracker_template.module_spec.isc
+        wss = self.project.wire_sizing_settings
+
+        for harness_list in self.block.wiring_config.harness_groupings.values():
+            for harness in harness_list:
+                num_strings = len(harness.string_indices)
+                harness.cable_size = autosize_harness_for_block(
+                    num_strings, module_isc, wss, 'harness')['gauge']
+                harness.extender_cable_size = autosize_harness_for_block(
+                    num_strings, module_isc, wss, 'extender')['gauge']
+                harness.whip_cable_size = autosize_harness_for_block(
+                    num_strings, module_isc, wss, 'whip')['gauge']
+
+        self.update_harness_cable_table()
+        self.draw_wiring_layout()
+        self.notify_wiring_changed()
+
+    def _import_wss_from_qe(self):
+        """Copy wire sizing settings from the most recent QE estimate, then re-apply sizes."""
+        if not self.project:
+            messagebox.showinfo("Info", "No project loaded")
+            return
+
+        # Find a QE estimate that has wire_sizing_settings saved
+        qe_wss = None
+        for est_data in self.project.quick_estimates.values():
+            if isinstance(est_data, dict) and 'wire_sizing_settings' in est_data:
+                qe_wss = est_data['wire_sizing_settings']
+                break
+
+        if not qe_wss:
+            messagebox.showinfo("Info", "No Quick Estimate wire sizing settings found in this project.\n"
+                                "Run a Quick Estimate first, then try again.")
+            return
+
+        # QE schema → project schema
+        _QE_INSTALL_MAP = {'free_air': 'free_air', 'conduit': 'conduit', 'buried': 'direct_buried'}
+        converted = {
+            'ambient_temp_c': float(qe_wss.get('ambient_c', 30)),
+            'soil_temp_c': float(qe_wss.get('soil_c', 20)),
+            'per_cable_type': {},
+        }
+        for ct in ('harness', 'extender', 'whip', 'dc_feeder', 'ac_homerun'):
+            qs = qe_wss.get(ct, {})
+            converted['per_cable_type'][ct] = {
+                'insulation_type': qs.get('insulation', 'PV Wire'),
+                'termination_temp_c': int(qs.get('term_temp_c', 90)),
+                'installation_method': _QE_INSTALL_MAP.get(
+                    qs.get('install_method', 'conduit'), 'conduit'),
+                'material': qs.get('material', 'copper'),
+                'vd_target_pct': float(qs.get('vd_target_pct', 2.0)),
+                'circuits_sharing_raceway': int(qs.get('circuits_sharing', 1)),
+            }
+
+        self.project.wire_sizing_settings = converted
+        self._load_wss_to_panel(converted)
+        self._reapply_sizes_from_settings()
+        messagebox.showinfo("Success", "Wire sizing settings imported from Quick Estimate and "
+                            "recommended sizes re-applied to all harnesses.")
+
     def apply_recommended_sizes(self):
         """Apply recommended cable sizes to all harness groups"""
         if not self.block or not self.block.wiring_config:
             return
-            
+
         if not hasattr(self.block.wiring_config, 'harness_groupings') or not self.block.wiring_config.harness_groupings:
             messagebox.showinfo("Info", "No harness groups configured")
             return
-        
-        # Get module Isc for calculations
+
         if not self.block.tracker_template or not self.block.tracker_template.module_spec:
             messagebox.showerror("Error", "Module information not available")
             return
-        
+
+        from ..utils.cable_sizing import autosize_harness_for_block
+        from ..models.project import Project
+
         module_isc = self.block.tracker_template.module_spec.isc
-        
-        # Import cable sizing utilities
-        from ..utils.cable_sizing import calculate_all_cable_sizes
-        
+        wss = (self.project.wire_sizing_settings
+               if self.project and hasattr(self.project, 'wire_sizing_settings')
+               else Project._default_wire_sizing_settings())
+
+        def _recommended(num_strings):
+            return {
+                'string': '10 AWG',  # module drop: always #10 AWG PV Wire free-air
+                'harness': autosize_harness_for_block(num_strings, module_isc, wss, 'harness')['gauge'],
+                'extender': autosize_harness_for_block(num_strings, module_isc, wss, 'extender')['gauge'],
+                'whip': autosize_harness_for_block(num_strings, module_isc, wss, 'whip')['gauge'],
+            }
+
         # Build preview of changes
         changes = []
         for string_count, harness_list in self.block.wiring_config.harness_groupings.items():
             for harness_idx, harness in enumerate(harness_list):
                 num_strings = len(harness.string_indices)
-                
-                # Get NEC factor from project (default to 1.56)
-                nec_factor = getattr(self.project, 'nec_safety_factor', 1.56) if self.project else 1.56
-                
-                # Calculate recommended sizes
-                recommended = calculate_all_cable_sizes(num_strings, module_isc, nec_factor)
-                
-                # Check what would change
+                recommended = _recommended(num_strings)
+
                 current = {
                     'string': harness.string_cable_size or self.block.wiring_config.string_cable_size,
                     'harness': harness.cable_size,
                     'extender': harness.extender_cable_size or self.block.wiring_config.extender_cable_size,
-                    'whip': harness.whip_cable_size or self.block.wiring_config.whip_cable_size
+                    'whip': harness.whip_cable_size or self.block.wiring_config.whip_cable_size,
                 }
-                
-                changed_items = []
-                for cable_type in ['string', 'harness', 'extender', 'whip']:
-                    if current[cable_type] != recommended[cable_type]:
-                        changed_items.append(f"{cable_type}: {current[cable_type]} → {recommended[cable_type]}")
-                
+
+                changed_items = [
+                    f"{ct}: {current[ct]} → {recommended[ct]}"
+                    for ct in ('string', 'harness', 'extender', 'whip')
+                    if current[ct] != recommended[ct]
+                ]
                 if changed_items:
                     changes.append(f"{num_strings}-string harnesses:\n  " + "\n  ".join(changed_items))
-        
+
         if not changes:
             messagebox.showinfo("Info", "All harnesses already have recommended sizes")
             return
-        
-        # Show preview and confirm
+
         message = "The following changes will be applied:\n\n" + "\n\n".join(changes)
         if not messagebox.askyesno("Apply Recommended Sizes", message):
             return
-        
+
         # Apply the changes
         for string_count, harness_list in self.block.wiring_config.harness_groupings.items():
             for harness_idx, harness in enumerate(harness_list):
                 num_strings = len(harness.string_indices)
-                
-                # Get NEC factor from project (default to 1.56)
-                nec_factor = getattr(self.project, 'nec_safety_factor', 1.56) if self.project else 1.56
-                
-                # Calculate recommended sizes
-                recommended = calculate_all_cable_sizes(num_strings, module_isc, nec_factor)
-                
+                recommended = _recommended(num_strings)
+
                 harness.string_cable_size = recommended['string']
                 harness.cable_size = recommended['harness']
                 harness.extender_cable_size = recommended['extender']
                 harness.whip_cable_size = recommended['whip']
-                
-                # Mark cells as edited
+
                 actual_string_count = len(harness.string_indices)
                 harness_key = f"{actual_string_count}_string_{harness_idx}"
-                
-                self.harness_cable_edited_cells.add(f"{harness_key}_string")
-                self.harness_cable_edited_cells.add(f"{harness_key}_harness")
-                self.harness_cable_edited_cells.add(f"{harness_key}_extender")
-                self.harness_cable_edited_cells.add(f"{harness_key}_whip")
-        
-        # Refresh display
+                for ct in ('string', 'harness', 'extender', 'whip'):
+                    self.harness_cable_edited_cells.add(f"{harness_key}_{ct}")
+
         self.update_harness_cable_table()
         self.draw_wiring_layout()
         self.notify_wiring_changed()
-        
         messagebox.showinfo("Success", "Recommended cable sizes applied successfully")
 
     def update_harness_cable_table(self):
@@ -603,9 +826,24 @@ class WiringConfigurator(tk.Toplevel):
                     default_fuse = self.calculate_recommended_fuse_size(list(range(string_count)))
                     fuse_size = f"{default_fuse}A ({string_count}x)"
             
-            # Calculate recommended size for whip
-            recommended = self.calculate_recommended_whip_size(string_count)
-            
+            # Autosize whip once for both the undersized check and the sizing detail column
+            if (self.block.tracker_template and self.block.tracker_template.module_spec
+                    and self.project and hasattr(self.project, 'wire_sizing_settings')):
+                from ..utils.cable_sizing import autosize_harness_for_block, CABLE_SIZE_ORDER_EXTENDED
+                _module_isc = self.block.tracker_template.module_spec.isc
+                _wss = self.project.wire_sizing_settings
+                whip_result = autosize_harness_for_block(string_count, _module_isc, _wss, 'whip')
+                rec_gauge = whip_result['gauge']
+                sizing_detail = self._format_harness_sizing_detail(whip_result)
+                try:
+                    cable_undersized = (CABLE_SIZE_ORDER_EXTENDED.index(whip_size)
+                                        < CABLE_SIZE_ORDER_EXTENDED.index(rec_gauge))
+                except ValueError:
+                    cable_undersized = self.is_cable_undersized(whip_size, string_count)
+            else:
+                sizing_detail = self.calculate_recommended_whip_size(string_count)
+                cable_undersized = self.is_cable_undersized(whip_size, string_count)
+
             # Determine tags
             tags = []
             if harness and any([
@@ -614,55 +852,61 @@ class WiringConfigurator(tk.Toplevel):
                 harness.whip_cable_size
             ]):
                 tags.append('edited')
-            
-            # Check if whip is undersized compared to recommended
-            if self.is_cable_undersized(whip_size, string_count):
+
+            if cable_undersized:
                 tags.append('undersized')
-            
+
             # Format label
             label = f"{string_count}-string harnesses ({count} total)"
-            
+
             # Insert row
             item = self.harness_cable_tree.insert('', 'end', text=label,
-                                                values=(string_size, harness_size, extender_size, whip_size, fuse_size, recommended),
+                                                values=(string_size, harness_size, extender_size,
+                                                        whip_size, fuse_size, sizing_detail),
                                                 tags=tuple(tags))
 
             # Store harness reference in dictionary
             self.harness_tree_items[item] = key
 
+    @staticmethod
+    def _format_harness_sizing_detail(result: dict) -> str:
+        """Compact NEC breakdown string for the Sizing Detail column."""
+        if not result:
+            return ""
+        mat = 'Cu' if result.get('material') == 'copper' else 'Al'
+        pass_mark = '✓' if result.get('ampacity_passes') else '✗'
+        suffix = ' (VD↑)' if result.get('binding_constraint') == 'voltage_drop' else ''
+        return (f"{result['gauge']} {mat} · "
+                f"{result['final_ampacity']:.0f}A / {result['required_ampacity']:.0f}A req "
+                f"{pass_mark}{suffix}")
+
     def calculate_recommended_whip_size(self, string_count):
-        """Calculate recommended cable size for whip based on string count"""
-        # Get module Isc from block's tracker template
+        """Recommended gauge for the whip at the given string count."""
         if not self.block or not self.block.tracker_template or not self.block.tracker_template.module_spec:
             return "8 AWG"
-        
-        # Get NEC factor from project (default to 1.56)
-        nec_factor = getattr(self.project, 'nec_safety_factor', 1.56) if self.project else 1.56
-        
-        # Calculate current: num_strings × module_Isc × NEC factor
+        from ..utils.cable_sizing import autosize_harness_for_block
+        from ..models.project import Project
         module_isc = self.block.tracker_template.module_spec.isc
-        total_current = string_count * module_isc * nec_factor
-        
-        # Use the cable sizing utility - whip carries same current as harness
-        from ..utils.cable_sizing import calculate_whip_cable_size
-        return calculate_whip_cable_size(string_count, module_isc, nec_factor)
+        wss = (self.project.wire_sizing_settings
+               if self.project and hasattr(self.project, 'wire_sizing_settings')
+               else Project._default_wire_sizing_settings())
+        return autosize_harness_for_block(string_count, module_isc, wss, 'whip')['gauge']
 
     def is_cable_undersized(self, cable_size, string_count):
-        """Check if cable size is undersized for the given string count"""
-        # Get module Isc from block's tracker template
+        """Return True if cable_size is smaller than the NEC-recommended gauge for string_count."""
         if not self.block or not self.block.tracker_template or not self.block.tracker_template.module_spec:
             return False
-        
-        # Get NEC factor from project (default to 1.56)
-        nec_factor = getattr(self.project, 'nec_safety_factor', 1.56) if self.project else 1.56
-        
-        # Calculate required current
+        from ..utils.cable_sizing import autosize_harness_for_block, CABLE_SIZE_ORDER_EXTENDED
+        from ..models.project import Project
         module_isc = self.block.tracker_template.module_spec.isc
-        required_current = string_count * module_isc
-        
-        # Use cable sizing utility to validate
-        from ..utils.cable_sizing import validate_cable_size_for_current
-        return not validate_cable_size_for_current(cable_size, required_current, nec_factor)
+        wss = (self.project.wire_sizing_settings
+               if self.project and hasattr(self.project, 'wire_sizing_settings')
+               else Project._default_wire_sizing_settings())
+        rec = autosize_harness_for_block(string_count, module_isc, wss, 'whip')['gauge']
+        try:
+            return CABLE_SIZE_ORDER_EXTENDED.index(cable_size) < CABLE_SIZE_ORDER_EXTENDED.index(rec)
+        except ValueError:
+            return False
     
     def on_harness_cable_click(self, event):
         """Handle click for inline editing - improved UX"""
@@ -4059,23 +4303,27 @@ class WiringConfigurator(tk.Toplevel):
         return self.FUSE_RATINGS[-1]  # Return largest if none found
     
     def get_recommended_cable_sizes_for_harness(self, num_strings):
-        """Get recommended cable sizes for a harness based on string count"""
-        from ..utils.cable_sizing import calculate_all_cable_sizes
-        
-        # Get module Isc
-        module_isc = 10.0  # Default fallback
-        if (self.block and 
-            hasattr(self.block, 'tracker_template') and 
-            self.block.tracker_template and 
-            hasattr(self.block.tracker_template, 'module_spec') and 
-            self.block.tracker_template.module_spec):
+        """Get recommended cable sizes for a harness based on string count."""
+        from ..utils.cable_sizing import autosize_harness_for_block
+        from ..models.project import Project
+
+        module_isc = 10.0
+        if (self.block and hasattr(self.block, 'tracker_template')
+                and self.block.tracker_template
+                and hasattr(self.block.tracker_template, 'module_spec')
+                and self.block.tracker_template.module_spec):
             module_isc = self.block.tracker_template.module_spec.isc
-        
-        # Get NEC factor from project
-        nec_factor = getattr(self.project, 'nec_safety_factor', 1.56) if self.project else 1.56
-        
-        # Calculate recommended sizes
-        return calculate_all_cable_sizes(num_strings, module_isc, nec_factor)
+
+        wss = (self.project.wire_sizing_settings
+               if self.project and hasattr(self.project, 'wire_sizing_settings')
+               else Project._default_wire_sizing_settings())
+
+        return {
+            'string': '10 AWG',
+            'harness': autosize_harness_for_block(num_strings, module_isc, wss, 'harness')['gauge'],
+            'extender': autosize_harness_for_block(num_strings, module_isc, wss, 'extender')['gauge'],
+            'whip': autosize_harness_for_block(num_strings, module_isc, wss, 'whip')['gauge'],
+        }
     
     def get_current_routes(self):
         """Get routes based on current routing mode (realistic or conceptual)"""
