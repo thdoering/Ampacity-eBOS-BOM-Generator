@@ -4593,28 +4593,20 @@ class QuickEstimate(ttk.Frame):
             self.checked_items.add(iid)
         
         # Combiner Boxes
-        if totals.get('combiners_by_breaker'):
+        if totals.get('combiner_details'):
             insert_section('COMBINER BOXES')
-            total_cbs = 0
+            for detail in sorted(totals['combiner_details'], key=lambda d: d['breaker_size']):
+                pn = detail['part_number'] if detail['part_number'] != 'NO MATCH' else 'CUSTOM'
+                insert_row(
+                    f"Combiner Box ({detail['breaker_size']}A breaker)",
+                    pn, detail['quantity'], 'ea',
+                    description=detail['description']
+                )
+        elif totals.get('combiners_by_breaker'):
+            insert_section('COMBINER BOXES')
             for breaker_size in sorted(totals['combiners_by_breaker'].keys()):
                 qty = totals['combiners_by_breaker'][breaker_size]
-                total_cbs += qty
                 insert_row(f"Combiner Box ({breaker_size}A breaker)", '', qty, 'ea')
-            if len(totals['combiners_by_breaker']) > 1:
-                insert_row('Total Combiner Boxes', '', total_cbs, 'ea')
-            
-            for detail in totals.get('combiner_details', []):
-                if detail['part_number'] != 'NO MATCH':
-                    insert_row(
-                        f"  └ Site Total: ({detail['max_inputs']}-input, {detail['fuse_holder_rating']})",
-                        detail['part_number'], detail['quantity'], 'ea',
-                        description=self._lookup_description(detail['part_number'])
-                    )
-                else:
-                    insert_row(
-                        f"  └ Site Total: ⚠ {detail['description']}",
-                        '', detail['quantity'], 'ea'
-                    )
         
         # Inverters
         if totals.get('string_inverters', 0) > 0:
@@ -6317,6 +6309,8 @@ class QuickEstimate(ttk.Frame):
             'whips_by_length': defaultdict(int),
             'extenders_pos_by_length': defaultdict(int),
             'extenders_neg_by_length': defaultdict(int),
+            'extenders_pos_by_length_per_device': {},
+            'extenders_neg_by_length_per_device': {},
             'total_whip_length': 0,
             'dc_feeder_total_ft': 0,
             'dc_feeder_count': 0,
@@ -6988,6 +6982,9 @@ class QuickEstimate(ttk.Frame):
                     key = (whip_length, gauge)
                     totals['whips_by_length'][key] += 2  # pos + neg
                     totals['total_whip_length'] += whip_length * 2
+                    totals.setdefault('whips_by_length_per_device', {})
+                    per_dev = totals['whips_by_length_per_device'].setdefault(inv_idx, {})
+                    per_dev[key] = per_dev.get(key, 0) + 2
 
         split_details = getattr(self, '_split_tracker_details', {})
         tracker_seg_map = getattr(self, '_tracker_to_segment', [])
@@ -6999,7 +6996,17 @@ class QuickEstimate(ttk.Frame):
                 info = tracker_seg_map[tidx]
                 key = (info['group_idx'], id(info['seg']))
                 split_tracker_seg_counts[key] = split_tracker_seg_counts.get(key, 0) + 1
-                
+
+        # Build tracker-to-device and seg-to-trackers maps for per-device extender tagging
+        tracker_to_device_ext = {}
+        if allocation_result:
+            for _inv_idx_ext, _inv_ext in enumerate(allocation_result.get('inverters', [])):
+                for _tidx_ext, _ in _inv_ext.get('tracker_indices', []):
+                    tracker_to_device_ext[_tidx_ext] = _inv_idx_ext
+        trackers_by_seg_id = {}
+        for _tidx_ext, _info_ext in enumerate(tracker_seg_map):
+            trackers_by_seg_id.setdefault(id(_info_ext['seg']), []).append(_tidx_ext)
+
         # Process non-split trackers in bulk (original logic minus split count)
         for group_idx, group in enumerate(self.groups):
             device_position = group.get('device_position', 'middle')
@@ -7023,7 +7030,18 @@ class QuickEstimate(ttk.Frame):
                         neg_key = (neg_rounded, gauge)
                         totals['extenders_pos_by_length'][pos_key] += non_split_qty
                         totals['extenders_neg_by_length'][neg_key] += non_split_qty
-                        
+                    for _tidx_ns in [t for t in trackers_by_seg_id.get(id(seg), []) if t not in split_details]:
+                        _dev_ns = tracker_to_device_ext.get(_tidx_ns, -1)
+                        for pair_idx, (pos_len, neg_len) in enumerate(extender_pairs):
+                            h_str_count = harness_sizes[pair_idx] if pair_idx < len(harness_sizes) else 1
+                            gauge = self.get_wire_size_for('extender', h_str_count)
+                            pos_key = (self.round_whip_length(pos_len), gauge)
+                            neg_key = (self.round_whip_length(neg_len), gauge)
+                            _pd_pos = totals['extenders_pos_by_length_per_device'].setdefault(_dev_ns, {})
+                            _pd_neg = totals['extenders_neg_by_length_per_device'].setdefault(_dev_ns, {})
+                            _pd_pos[pos_key] = _pd_pos.get(pos_key, 0) + 1
+                            _pd_neg[neg_key] = _pd_neg.get(neg_key, 0) + 1
+
         # Process split trackers individually — each portion gets its own extenders
         for tidx, details in split_details.items():
             if tidx >= len(tracker_seg_map):
@@ -7049,6 +7067,10 @@ class QuickEstimate(ttk.Frame):
                     neg_key = (neg_rounded, gauge)
                     totals['extenders_pos_by_length'][pos_key] += 1
                     totals['extenders_neg_by_length'][neg_key] += 1
+                    per_dev_pos = totals['extenders_pos_by_length_per_device'].setdefault(portion['inv_idx'], {})
+                    per_dev_neg = totals['extenders_neg_by_length_per_device'].setdefault(portion['inv_idx'], {})
+                    per_dev_pos[pos_key] = per_dev_pos.get(pos_key, 0) + 1
+                    per_dev_neg[neg_key] = per_dev_neg.get(neg_key, 0) + 1
 
         # Adjust extenders for trackers with inter-row N-S offset to their device.
         # Instead of adding offset uniformly, recompute with shifted target_y so
@@ -7099,6 +7121,12 @@ class QuickEstimate(ttk.Frame):
                             new_neg_key = (self.round_whip_length(adj_neg), gauge)
                             totals['extenders_pos_by_length'][new_pos_key] += 1
                             totals['extenders_neg_by_length'][new_neg_key] += 1
+                            per_dev_pos = totals['extenders_pos_by_length_per_device'].setdefault(inv_idx, {})
+                            per_dev_neg = totals['extenders_neg_by_length_per_device'].setdefault(inv_idx, {})
+                            per_dev_pos[old_pos_key] = per_dev_pos.get(old_pos_key, 0) - 1
+                            per_dev_neg[old_neg_key] = per_dev_neg.get(old_neg_key, 0) - 1
+                            per_dev_pos[new_pos_key] = per_dev_pos.get(new_pos_key, 0) + 1
+                            per_dev_neg[new_neg_key] = per_dev_neg.get(new_neg_key, 0) + 1
                 else:
                     # Non-split tracker
                     base_pairs = self.calculate_extender_lengths_per_segment(
@@ -7122,6 +7150,12 @@ class QuickEstimate(ttk.Frame):
                         new_neg_key = (self.round_whip_length(adj_neg), gauge)
                         totals['extenders_pos_by_length'][new_pos_key] += 1
                         totals['extenders_neg_by_length'][new_neg_key] += 1
+                        per_dev_pos = totals['extenders_pos_by_length_per_device'].setdefault(inv_idx, {})
+                        per_dev_neg = totals['extenders_neg_by_length_per_device'].setdefault(inv_idx, {})
+                        per_dev_pos[old_pos_key] = per_dev_pos.get(old_pos_key, 0) - 1
+                        per_dev_neg[old_neg_key] = per_dev_neg.get(old_neg_key, 0) - 1
+                        per_dev_pos[new_pos_key] = per_dev_pos.get(new_pos_key, 0) + 1
+                        per_dev_neg[new_neg_key] = per_dev_neg.get(new_neg_key, 0) + 1
 
             # Clean up any zero-count entries
             for key_dict in [totals['extenders_pos_by_length'], totals['extenders_neg_by_length']]:
@@ -7472,6 +7506,13 @@ class QuickEstimate(ttk.Frame):
         _split_details_bds = getattr(self, '_split_tracker_details', {})
         _tracker_seg_map_bds = getattr(self, '_tracker_to_segment', [])
 
+        # Group matched part per (breaker_size, fuse_holder_rating) for per-device CB row lookup
+        cb_group_lookup = {}
+        for entry in totals.get('combiner_details', []):
+            key = (entry['breaker_size'], entry['fuse_holder_rating'])
+            pn = entry['part_number'] if entry['part_number'] != 'NO MATCH' else 'CUSTOM'
+            cb_group_lookup[key] = (pn, entry['description'])
+
         # Accumulates {(comp_type, part_num, desc, unit): total_qty} across all devices
         _summary = {}
         # Feeder rows are consolidated separately: {(comp_type, feeder_size, parallel): {total_raw_ft, total_cable_ft, count}}
@@ -7524,28 +7565,56 @@ class QuickEstimate(ttk.Frame):
                 n_inputs = len(connections)
                 max_h = max(conn['num_strings'] for conn in connections)
                 fuse_cat = self.get_fuse_holder_category(max_h * dev['module_isc'] * dev['nec_factor'])
-                cb = self.find_combiner_box(n_inputs, dev['breaker_size'], fuse_cat)
-                if cb:
-                    _wr('Combiner Box', cb.get('part_number', ''), cb.get('description', ''), 1, 'ea')
+                breaker_size = dev['breaker_size']
+                cb_key = (breaker_size, fuse_cat)
+                cb_pn, cb_desc = cb_group_lookup.get(cb_key, (
+                    'CUSTOM',
+                    f'No CB found: {n_inputs} inputs, {breaker_size}A, {fuse_cat}'
+                ))
+                _wr(f'Combiner Box ({breaker_size}A breaker)', cb_pn, cb_desc, 1, 'ea')
 
-            # Extenders — proportional share of site totals based on string count
-            dev_fraction = total_strings / site_total_strings
-            ext_gauges = sorted(
-                set(g for (_, g) in ext_pos_totals) | set(g for (_, g) in ext_neg_totals)
-            )
-            for gauge in ext_gauges:
-                sc = self._gauge_to_string_count('extender', gauge)
-                pos_items = {length: qty for (length, g), qty in ext_pos_totals.items() if g == gauge}
-                neg_items = {length: qty for (length, g), qty in ext_neg_totals.items() if g == gauge}
-                for length in sorted(set(pos_items) | set(neg_items)):
-                    pos_qty = round((pos_items.get(length, 0)) * dev_fraction)
-                    neg_qty = round((neg_items.get(length, 0)) * dev_fraction)
-                    if pos_qty > 0:
-                        pn, _, _ = self.lookup_part_and_price('extender', polarity='positive', length_ft=length, qty=pos_qty, num_strings=sc)
-                        _wr(f"Extender {length}ft (Pos)", pn, _lib_desc(extender_library, pn), pos_qty, 'ea')
-                    if neg_qty > 0:
-                        pn, _, _ = self.lookup_part_and_price('extender', polarity='negative', length_ft=length, qty=neg_qty, num_strings=sc)
-                        _wr(f"Extender {length}ft (Neg)", pn, _lib_desc(extender_library, pn), neg_qty, 'ea')
+            # Extenders — by (length, gauge, polarity) bucket per device
+            dev_ext_pos = totals.get('extenders_pos_by_length_per_device', {}).get(dev_idx, {})
+            dev_ext_neg = totals.get('extenders_neg_by_length_per_device', {}).get(dev_idx, {})
+
+            if dev_ext_pos or dev_ext_neg:
+                for polarity, dev_buckets in (('positive', dev_ext_pos), ('negative', dev_ext_neg)):
+                    by_gauge = {}
+                    for (length, gauge), qty in dev_buckets.items():
+                        if qty > 0:
+                            by_gauge.setdefault(gauge, {})[length] = qty
+                    for gauge in sorted(by_gauge.keys()):
+                        sc = self._gauge_to_string_count('extender', gauge)
+                        for length in sorted(by_gauge[gauge].keys()):
+                            qty = by_gauge[gauge][length]
+                            if qty <= 0:
+                                continue
+                            pn, _, _ = self.lookup_part_and_price(
+                                'extender', polarity=polarity, length_ft=length,
+                                qty=qty, num_strings=sc)
+                            label_pol = 'Pos' if polarity == 'positive' else 'Neg'
+                            _wr(f'Extender {length}ft ({label_pol})', pn,
+                                _lib_desc(extender_library, pn), qty, 'ea')
+            else:
+                # Fallback: per-device data not available (legacy path).
+                # Keeps Central Inverter / legacy paths working without regression.
+                dev_fraction = total_strings / site_total_strings
+                ext_gauges = sorted(
+                    set(g for (_, g) in ext_pos_totals) | set(g for (_, g) in ext_neg_totals)
+                )
+                for gauge in ext_gauges:
+                    sc = self._gauge_to_string_count('extender', gauge)
+                    pos_items = {length: qty for (length, g), qty in ext_pos_totals.items() if g == gauge}
+                    neg_items = {length: qty for (length, g), qty in ext_neg_totals.items() if g == gauge}
+                    for length in sorted(set(pos_items) | set(neg_items)):
+                        pos_qty = round((pos_items.get(length, 0)) * dev_fraction)
+                        neg_qty = round((neg_items.get(length, 0)) * dev_fraction)
+                        if pos_qty > 0:
+                            pn, _, _ = self.lookup_part_and_price('extender', polarity='positive', length_ft=length, qty=pos_qty, num_strings=sc)
+                            _wr(f"Extender {length}ft (Pos)", pn, _lib_desc(extender_library, pn), pos_qty, 'ea')
+                        if neg_qty > 0:
+                            pn, _, _ = self.lookup_part_and_price('extender', polarity='negative', length_ft=length, qty=neg_qty, num_strings=sc)
+                            _wr(f"Extender {length}ft (Neg)", pn, _lib_desc(extender_library, pn), neg_qty, 'ea')
 
             # Harnesses — counted from actual tracker assignments (exact, handles split trackers)
             _dev_harness_count = {}
@@ -7577,8 +7646,8 @@ class QuickEstimate(ttk.Frame):
                 if dev_qty > 0:
                     pos_pn, _, _ = self.lookup_part_and_price('harness', num_strings=sz, polarity='positive', qty=dev_qty)
                     neg_pn, _, _ = self.lookup_part_and_price('harness', num_strings=sz, polarity='negative', qty=dev_qty)
-                    _wr(f"{sz}-String Harness (Pos)", pos_pn, _lib_desc(harness_library, pos_pn), dev_qty, 'ea')
-                    _wr(f"{sz}-String Harness (Neg)", neg_pn, _lib_desc(harness_library, neg_pn), dev_qty, 'ea')
+                    _wr(f"{sz}-String Harness (Pos, CU)", pos_pn, _lib_desc(harness_library, pos_pn), dev_qty, 'ea')
+                    _wr(f"{sz}-String Harness (Neg, CU)", neg_pn, _lib_desc(harness_library, neg_pn), dev_qty, 'ea')
 
             # Inline fuses — one per string, derived from exact per-device harness counts
             if has_inline_fuses:
@@ -7588,18 +7657,49 @@ class QuickEstimate(ttk.Frame):
                     pn = _fuse_pn(fuse_rating)
                     _wr(f"{fuse_rating}A Inline DC String Fuse (Pos)", pn, _lib_desc(fuse_library, pn), dev_fuse_qty, 'ea')
 
-            # Whip cables by gauge
-            whip_by_gauge = {}
-            for conn in connections:
-                g = conn.get('wire_gauge', '')
-                whip_by_gauge[g] = whip_by_gauge.get(g, 0) + 1
-            for gauge, count in sorted(whip_by_gauge.items()):
-                avg_len = whip_avg_by_gauge.get(gauge, 0.0)
-                sc = self._gauge_to_string_count('whip', gauge)
-                pos_pn, _, _ = self.lookup_part_and_price('whip', polarity='positive', length_ft=avg_len, qty=count, num_strings=sc)
-                neg_pn, _, _ = self.lookup_part_and_price('whip', polarity='negative', length_ft=avg_len, qty=count, num_strings=sc)
-                _wr('Whip Cable (Pos)', pos_pn, _lib_desc(whip_library, pos_pn), count, 'ea')
-                _wr('Whip Cable (Neg)', neg_pn, _lib_desc(whip_library, neg_pn), count, 'ea')
+            # Whip cables — by (length, gauge) bucket per device
+            dev_whip_buckets = totals.get('whips_by_length_per_device', {}).get(dev_idx, {})
+
+            if dev_whip_buckets:
+                by_gauge = {}
+                for (length, gauge), qty in dev_whip_buckets.items():
+                    by_gauge.setdefault(gauge, {})[length] = qty
+
+                for gauge in sorted(by_gauge.keys()):
+                    sc = self._gauge_to_string_count('whip', gauge)
+                    for length in sorted(by_gauge[gauge].keys()):
+                        combined_qty = by_gauge[gauge][length]
+                        per_polarity_qty = combined_qty // 2
+                        if per_polarity_qty <= 0:
+                            continue
+                        pos_pn, _, _ = self.lookup_part_and_price(
+                            'whip', polarity='positive', length_ft=length,
+                            qty=per_polarity_qty, num_strings=sc)
+                        neg_pn, _, _ = self.lookup_part_and_price(
+                            'whip', polarity='negative', length_ft=length,
+                            qty=per_polarity_qty, num_strings=sc)
+                        _wr(f'Whip {length}ft (Pos)', pos_pn, _lib_desc(whip_library, pos_pn),
+                            per_polarity_qty, 'ea')
+                        _wr(f'Whip {length}ft (Neg)', neg_pn, _lib_desc(whip_library, neg_pn),
+                            per_polarity_qty, 'ea')
+            else:
+                # Fallback: per-device data not available (legacy 2-tuple whip_distances path).
+                # Keeps Central Inverter / legacy paths working without regression.
+                whip_by_gauge = {}
+                for conn in connections:
+                    g = conn.get('wire_gauge', '')
+                    whip_by_gauge[g] = whip_by_gauge.get(g, 0) + 1
+                for gauge, count in sorted(whip_by_gauge.items()):
+                    avg_len = whip_avg_by_gauge.get(gauge, 0.0)
+                    sc = self._gauge_to_string_count('whip', gauge)
+                    pos_pn, _, _ = self.lookup_part_and_price(
+                        'whip', polarity='positive', length_ft=avg_len,
+                        qty=count, num_strings=sc)
+                    neg_pn, _, _ = self.lookup_part_and_price(
+                        'whip', polarity='negative', length_ft=avg_len,
+                        qty=count, num_strings=sc)
+                    _wr('Whip Cable (Pos)', pos_pn, _lib_desc(whip_library, pos_pn), count, 'ea')
+                    _wr('Whip Cable (Neg)', neg_pn, _lib_desc(whip_library, neg_pn), count, 'ea')
 
             # DC feeder / AC homerun — per-device rows written with skip_summary; consolidated into _feeder_summary
             if topology == 'Distributed String':
@@ -7627,7 +7727,12 @@ class QuickEstimate(ttk.Frame):
                 if topology == 'Centralized String':
                     ac_size = self.get_wire_size_for('ac_homerun') if hasattr(self, 'get_wire_size_for') else ''
                     ac_ft = round(ac_homerun_avg_ft)
-                    _wr('AC Homerun', '', f"{ac_size}, {ac_ft}ft", ac_ft, 'ft')
+                    _wr('AC Homerun', '', f"{ac_size}, {ac_ft}ft", ac_ft, 'ft', skip_summary=True)
+                    _fk = ('AC Homerun', ac_size, 1)
+                    _fd = _feeder_summary.setdefault(_fk, {'total_raw_ft': 0.0, 'total_cable_ft': 0, 'count': 0})
+                    _fd['total_raw_ft'] += ac_homerun_avg_ft
+                    _fd['total_cable_ft'] += ac_ft
+                    _fd['count'] += 1
 
             row += 1  # blank row between devices
 
@@ -7658,14 +7763,23 @@ class QuickEstimate(ttk.Frame):
                 row += 1
 
             # Consolidated feeder rows — one line per (type, size, parallel) with avg run length
+            _feeder_mat = 'AL' if self.wire_sizing.get('feeder_material', 'aluminum') == 'aluminum' else 'CU'
+            _feeder_routed = " (routed)" if totals.get('_display', {}).get('use_routed', False) else ""
             for (comp_type, feeder_size, parallel), data in sorted(_feeder_summary.items()):
                 count = data['count']
                 avg_ft = data['total_raw_ft'] / count if count > 0 else 0
                 total_cable_ft = round(data['total_cable_ft'])
-                parallel_lbl = f" × {parallel}× parallel" if parallel > 1 else ""
+                parallel_suffix = f" ×{parallel} parallel" if parallel > 1 else ""
                 runs_lbl = f" × {count} run{'s' if count != 1 else ''}"
-                desc = f"{feeder_size}, avg {avg_ft:.0f}ft{parallel_lbl}{runs_lbl}"
-                for c, v in enumerate([comp_type, '', desc, total_cable_ft, 'ft'], 1):
+                if comp_type == 'AC Homerun':
+                    new_label = f"AC Homerun {feeder_size}, {_feeder_mat} — avg {avg_ft:.0f}ft{_feeder_routed}{runs_lbl}{parallel_suffix}"
+                elif comp_type == 'DC Feeder (Pos)':
+                    new_label = f"DC Feeder {feeder_size}, {_feeder_mat} — avg {avg_ft:.0f}ft{_feeder_routed}{runs_lbl}{parallel_suffix} (pos)"
+                elif comp_type == 'DC Feeder (Neg)':
+                    new_label = f"DC Feeder {feeder_size}, {_feeder_mat} — avg {avg_ft:.0f}ft{_feeder_routed}{runs_lbl}{parallel_suffix} (neg)"
+                else:
+                    new_label = comp_type
+                for c, v in enumerate([new_label, '', '', total_cable_ft, 'ft'], 1):
                     cell = ws.cell(row=row, column=c, value=v)
                     cell.border = thin_border
                     cell.alignment = left_align if c == 1 else center_align
