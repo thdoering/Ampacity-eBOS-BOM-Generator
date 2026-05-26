@@ -549,14 +549,6 @@ class QuickEstimate(ttk.Frame):
             return
         saved_id = self._selected_group_id if preserve_selection else None
 
-        # Snapshot open/closed state of every circuit node before clearing.
-        # Circuits absent from the snapshot are brand-new and default to open.
-        existing_iids = set(self.group_tree.get_children())
-        open_circuits = {
-            iid for iid in existing_iids
-            if iid.startswith('circuit:') and self.group_tree.item(iid, 'open')
-        }
-        known_circuits = {iid for iid in existing_iids if iid.startswith('circuit:')}
 
         self._updating_listbox = True
         for item in self.group_tree.get_children():
@@ -577,12 +569,7 @@ class QuickEstimate(ttk.Frame):
             total_trackers = sum(seg['quantity'] for g in child_groups for seg in g['segments'])
             total_strings = sum(int((seg.get('quantity') or 0) * (seg.get('strings_per_tracker') or 0)) for g in child_groups for seg in g['segments'])
             label = f"{circuit['name']}  ({n} group{'s' if n != 1 else ''} / {total_trackers}T / {total_strings}S)"
-            # Restore previous open state; default open for brand-new circuits,
-            # but collapsed when loading from file.
-            if circuit_iid in known_circuits:
-                is_open = circuit_iid in open_circuits
-            else:
-                is_open = not getattr(self, '_loading', False)
+            is_open = circuit_iid in getattr(self, '_open_circuit_ids', set())
             self.group_tree.insert('', 'end', iid=circuit_iid, text=label, open=is_open)
             for g in child_groups:
                 self.group_tree.insert(circuit_iid, 'end', iid=f"group:{g['id']}", text=_group_display(g))
@@ -598,7 +585,9 @@ class QuickEstimate(ttk.Frame):
             iid = f"group:{saved_id}"
             if self.group_tree.exists(iid):
                 self.group_tree.selection_set(iid)
-                self.group_tree.see(iid)
+                parent = self.group_tree.parent(iid)
+                if not parent or self.group_tree.item(parent, 'open'):
+                    self.group_tree.see(iid)
 
     def _refresh_group_listbox(self, preserve_selection=True):
         """Backward-compat alias for _refresh_group_tree."""
@@ -715,6 +704,7 @@ class QuickEstimate(ttk.Frame):
             return
         circuit = {'id': uuid.uuid4().hex[:8], 'name': name.strip()}
         self.circuits.append(circuit)
+        self._open_circuit_ids.add(f"circuit:{circuit['id']}")
         self._refresh_group_tree()
         # Select the new circuit node
         iid = f"circuit:{circuit['id']}"
@@ -772,6 +762,7 @@ class QuickEstimate(ttk.Frame):
             return
         circuit = {'id': uuid.uuid4().hex[:8], 'name': name.strip()}
         self.circuits.append(circuit)
+        self._open_circuit_ids.add(f"circuit:{circuit['id']}")
         self._move_group_to_circuit(group_id, circuit['id'])
 
     def _move_groups_to_circuit(self, group_ids, group_iids, circuit_id):
@@ -800,9 +791,20 @@ class QuickEstimate(ttk.Frame):
             return
         circuit = {'id': uuid.uuid4().hex[:8], 'name': name.strip()}
         self.circuits.append(circuit)
+        self._open_circuit_ids.add(f"circuit:{circuit['id']}")
         self._move_groups_to_circuit(group_ids, group_iids, circuit['id'])
 
     # -------------------- Drag-and-drop into circuits --------------------
+
+    def _on_circuit_open(self, event):
+        iid = self.group_tree.focus()
+        if iid.startswith('circuit:'):
+            self._open_circuit_ids.add(iid)
+
+    def _on_circuit_close(self, event):
+        iid = self.group_tree.focus()
+        if iid.startswith('circuit:'):
+            self._open_circuit_ids.discard(iid)
 
     def _on_tree_press(self, event):
         """Record press position; suppress click-deselect when dragging a multi-selection."""
@@ -1796,16 +1798,13 @@ class QuickEstimate(ttk.Frame):
     def _on_wss_global_changed(self):
         updating = getattr(self, '_updating_wss', False)
         loading = getattr(self, '_loading', False)
-        print(f"[DBG _on_wss_global_changed] updating={updating} loading={loading} ambient_var={getattr(self, '_wss_ambient_var', None) and self._wss_ambient_var.get()}")
         if updating or loading:
             return
         self._sync_wss_vars_to_dict()
-        print(f"[DBG after sync] wire_sizing_settings ambient_c={self.wire_sizing_settings.get('ambient_c')} estimate_id={self.estimate_id}")
         self._mark_stale()
         self.save_estimate()
         if self.current_project and self.estimate_id:
             saved = self.current_project.quick_estimates.get(self.estimate_id, {}).get('wire_sizing_settings', {}).get('ambient_c', 'MISSING')
-            print(f"[DBG after save_estimate] project quick_estimates ambient_c={saved}")
 
     def _on_wss_changed(self):
         if getattr(self, '_updating_wss', False) or getattr(self, '_loading', False):
@@ -5588,7 +5587,10 @@ class QuickEstimate(ttk.Frame):
         list_scroll.pack(side='right', fill='y')
         self.group_tree.configure(yscrollcommand=list_scroll.set)
 
+        self._open_circuit_ids: set = set()
         self.group_tree.bind('<<TreeviewSelect>>', self.on_group_select)
+        self.group_tree.bind('<<TreeviewOpen>>', self._on_circuit_open)
+        self.group_tree.bind('<<TreeviewClose>>', self._on_circuit_close)
         self.group_tree.bind('<Button-3>', self._on_tree_right_click)
         self.group_tree.bind('<ButtonPress-1>', self._on_tree_press)
         self.group_tree.bind('<B1-Motion>', self._on_drag_motion)

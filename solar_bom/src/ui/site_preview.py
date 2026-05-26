@@ -832,8 +832,6 @@ class SitePreviewWindow(tk.Toplevel):
                 group_motor_y_ref = group_data.get('motor_y_ft', None)
                 group_length = group_data.get('length_ft', 0)
                 driveline_tan = group_data.get('driveline_tan', 0.0)
-                align_on_motor = getattr(self, 'align_on_motor', False)
-
                 # Find tracker closest to device's X
                 closest_local_idx = None
                 closest_dist = float('inf')
@@ -852,9 +850,15 @@ class SitePreviewWindow(tk.Toplevel):
                     _t_lx = t.get('local_x_idx', closest_local_idx)
                     t_angle_y = _t_lx * pitch * driveline_tan
 
-                    if align_on_motor and t.get('has_motor', False) and group_motor_y_ref is not None:
+                    tracker_alignment = group_data.get('tracker_alignment', 'motor')
+                    if tracker_alignment == 'top':
+                        ty = gy + t_angle_y
+                    elif tracker_alignment == 'bottom':
+                        ty = gy + (group_length - t_length) + t_angle_y
+                    elif t.get('has_motor', False) and group_motor_y_ref is not None:
                         ty = gy + (group_motor_y_ref - t.get('motor_y_ft', 0)) + t_angle_y
                     else:
+                        # Center fallback (no motor data available)
                         ty = gy + (group_length - t_length) / 2 + t_angle_y
 
                     if device_position == 'north':
@@ -870,8 +874,43 @@ class SitePreviewWindow(tk.Toplevel):
                         vis_max = group_data.get('visual_max_y', group_data['length_ft'])
                         device_y = gy + vis_max + offset_ft + angle_y_offset
             else:  # 'middle' or fallback
-                motor_y = group_data.get('motor_y_ft', group_data['length_ft'] / 2)
-                device_y = gy + motor_y - device_height_ft / 2 + angle_y_offset
+                group_motor_y_ref = group_data.get('motor_y_ft', None)
+                group_length = group_data.get('length_ft', 0)
+                driveline_tan = group_data.get('driveline_tan', 0.0)
+                tracker_alignment = group_data.get('tracker_alignment', 'motor')
+
+                # Find closest assigned tracker to device center (same as north/south)
+                m_closest_idx = None
+                m_closest_dist = float('inf')
+                for li in local_indices:
+                    if li < len(group_trackers_list):
+                        t_lx = group_trackers_list[li].get('local_x_idx', li)
+                        dist = abs(t_lx - center_local_x)
+                        if dist < m_closest_dist:
+                            m_closest_dist = dist
+                            m_closest_idx = li
+
+                if m_closest_idx is not None:
+                    t = group_trackers_list[m_closest_idx]
+                    t_length = t.get('length_ft', group_length)
+                    t_lx = t.get('local_x_idx', m_closest_idx)
+                    t_angle_y = t_lx * pitch * driveline_tan
+                    t_motor_y_ft = t.get('motor_y_ft', t_length / 2)
+
+                    if tracker_alignment == 'top':
+                        ty = gy + t_angle_y
+                    elif tracker_alignment == 'bottom':
+                        ty = gy + (group_length - t_length) + t_angle_y
+                    elif t.get('has_motor', False) and group_motor_y_ref is not None:
+                        ty = gy + (group_motor_y_ref - t.get('motor_y_ft', 0)) + t_angle_y
+                    else:
+                        ty = gy + (group_length - t_length) / 2 + t_angle_y
+
+                    device_y = ty + t_motor_y_ft - device_height_ft / 2
+                else:
+                    fallback_motor = group_motor_y_ref if group_motor_y_ref is not None else group_length / 2
+                    device_y = gy + fallback_motor - device_height_ft / 2 + angle_y_offset
+
                 if local_x_indices:
                     spt_map = {
                         group_trackers_list[li].get('local_x_idx', li):
@@ -979,7 +1018,13 @@ class SitePreviewWindow(tk.Toplevel):
                 base_device_y = gy + vis_max + offset_ft
             else:
                 motor_y = group_data.get('motor_y_ft', group_data['length_ft'] / 2)
-                base_device_y = gy + motor_y - device_height_ft / 2
+                tracker_alignment = group_data.get('tracker_alignment', 'motor')
+                ref_top_offset = 0.0
+                if group_trackers and tracker_alignment == 'bottom':
+                    ref = min(group_trackers, key=lambda t: t.get('local_x_idx', 0))
+                    ref_length = ref.get('length_ft', group_data.get('length_ft', 0))
+                    ref_top_offset = group_data.get('length_ft', ref_length) - ref_length
+                base_device_y = gy + ref_top_offset + motor_y - device_height_ft / 2
             
             driveline_tan = group_data.get('driveline_tan', 0.0)
             
@@ -2233,13 +2278,16 @@ class SitePreviewWindow(tk.Toplevel):
             motor_y = group_data.get('motor_y_ft', 0)
             if motor_y <= 0:
                 continue
-            
+
+            if group_data.get('tracker_alignment', 'motor') != 'motor':
+                continue
+
             overhang = self.max_tracker_width_ft * 0.5
             driveline_tan = group_data.get('driveline_tan', 0.0)
-            
+
             left_x = group_data['x'] - overhang
             right_x = group_data['x'] + group_data['width_ft'] + overhang
-            
+
             left_y = group_data['y'] + motor_y
             # Angle offset based on horizontal span from group origin
             right_y = left_y + (right_x - group_data['x']) * driveline_tan

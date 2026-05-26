@@ -625,6 +625,9 @@ def _draw_motor_alignment_lines(ax, group_layout):
         if not trackers:
             continue
 
+        if group.get('tracker_alignment', 'motor') != 'motor':
+            continue
+
         pitch = group.get('row_spacing_ft', 20)
         angle = group.get('driveline_angle', 0)
         n_trackers = len(trackers)
@@ -635,7 +638,7 @@ def _draw_motor_alignment_lines(ax, group_layout):
 
         # Y positions at start and end (following driveline angle)
         y_start = gy + motor_y_ft
-        y_end = gy + motor_y_ft + (x_end - x_start) * math.tan(math.radians(angle))
+        y_end = y_start + (x_end - x_start) * math.tan(math.radians(angle))
 
         # Apply group azimuth rotation
         rcx, rcy, rd = _group_rotation_info(group)
