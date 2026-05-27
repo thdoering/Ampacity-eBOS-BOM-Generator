@@ -824,55 +824,91 @@ class SitePreviewWindow(tk.Toplevel):
             angle_y_offset = center_local_x * pitch * group_data.get('driveline_tan', 0.0)
 
             # Compute Y based on position setting.
-            # For 'north' and 'south', find the tracker among THIS device's own trackers
-            # whose X position is closest to the device's X, and anchor to that tracker's
-            # edge. This places the combiner just off the tracker nearest to it, even
-            # when the device's trackers have varying lengths.
+            # For north/south we first find the most extreme GROUP the CB has trackers in
+            # (southernmost group for 'south', northernmost for 'north'), then apply the
+            # original closest-tracker-to-device-X logic within that group.
+            # This handles CBs that span two stacked rows (e.g., Group 14 + Group 16)
+            # without the driveline-angle regression that comes from picking the global
+            # minimum/maximum tracker Y across all groups.
             if device_position in ('north', 'south'):
-                group_motor_y_ref = group_data.get('motor_y_ft', None)
-                group_length = group_data.get('length_ft', 0)
-                driveline_tan = group_data.get('driveline_tan', 0.0)
-                # Find tracker closest to device's X
+                # Step 1: find the most extreme group by visual extent.
+                anchor_grp_idx = primary_grp_idx
+                anchor_val = None
+                for grp_idx_s, grp_data_s in enumerate(self.group_layout):
+                    has_any = any(
+                        tidx in tracker_to_group and tracker_to_group[tidx][0] == grp_idx_s
+                        for tidx in inv_tracker_indices
+                    )
+                    if not has_any:
+                        continue
+                    grp_gy_s = grp_data_s['y']
+                    if device_position == 'south':
+                        vis_max = grp_data_s.get('visual_max_y', grp_data_s.get('length_ft', 0))
+                        val = grp_gy_s + vis_max
+                        if anchor_val is None or val > anchor_val:
+                            anchor_val = val
+                            anchor_grp_idx = grp_idx_s
+                    else:  # 'north'
+                        vis_min = grp_data_s.get('visual_min_y', 0)
+                        val = grp_gy_s + vis_min
+                        if anchor_val is None or val < anchor_val:
+                            anchor_val = val
+                            anchor_grp_idx = grp_idx_s
+
+                # Step 2: within the anchor group, use the closest-to-device-X tracker.
+                anchor_grp_data = self.group_layout[anchor_grp_idx]
+                anchor_gy = anchor_grp_data['y']
+                anchor_trackers = anchor_grp_data.get('trackers', [])
+                anchor_length = anchor_grp_data.get('length_ft', 0)
+                anchor_motor_y_ref = anchor_grp_data.get('motor_y_ft', None)
+                anchor_dtan = anchor_grp_data.get('driveline_tan', 0.0)
+                anchor_pitch = anchor_grp_data.get('row_spacing_ft', self.tracker_pitch_ft)
+                anchor_alignment = anchor_grp_data.get('tracker_alignment', 'motor')
+
+                anchor_local = [
+                    tracker_to_group[tidx][1]
+                    for tidx in inv_tracker_indices
+                    if tidx in tracker_to_group and tracker_to_group[tidx][0] == anchor_grp_idx
+                ]
+
                 closest_local_idx = None
                 closest_dist = float('inf')
-                for local_idx in local_indices:
-                    if local_idx >= len(group_trackers_list):
+                for li in anchor_local:
+                    if li >= len(anchor_trackers):
                         continue
-                    t_lx = group_trackers_list[local_idx].get('local_x_idx', local_idx)
+                    t_lx = anchor_trackers[li].get('local_x_idx', li)
                     dist = abs(t_lx - center_local_x)
                     if dist < closest_dist:
                         closest_dist = dist
-                        closest_local_idx = local_idx
+                        closest_local_idx = li
 
                 if closest_local_idx is not None:
-                    t = group_trackers_list[closest_local_idx]
-                    t_length = t.get('length_ft', group_length)
+                    t = anchor_trackers[closest_local_idx]
+                    t_length = t.get('length_ft', anchor_length)
                     _t_lx = t.get('local_x_idx', closest_local_idx)
-                    t_angle_y = _t_lx * pitch * driveline_tan
+                    t_angle_y = _t_lx * anchor_pitch * anchor_dtan
 
-                    tracker_alignment = group_data.get('tracker_alignment', 'motor')
-                    if tracker_alignment == 'top':
-                        ty = gy + t_angle_y
-                    elif tracker_alignment == 'bottom':
-                        ty = gy + (group_length - t_length) + t_angle_y
-                    elif t.get('has_motor', False) and group_motor_y_ref is not None:
-                        ty = gy + (group_motor_y_ref - t.get('motor_y_ft', 0)) + t_angle_y
+                    if anchor_alignment == 'top':
+                        ty = anchor_gy + t_angle_y
+                    elif anchor_alignment == 'bottom':
+                        ty = anchor_gy + (anchor_length - t_length) + t_angle_y
+                    elif t.get('has_motor', False) and anchor_motor_y_ref is not None:
+                        ty = anchor_gy + (anchor_motor_y_ref - t.get('motor_y_ft', 0)) + t_angle_y
                     else:
-                        # Center fallback (no motor data available)
-                        ty = gy + (group_length - t_length) / 2 + t_angle_y
+                        ty = anchor_gy + (anchor_length - t_length) / 2 + t_angle_y
 
                     if device_position == 'north':
                         device_y = ty - offset_ft - device_height_ft
-                    else:  # 'south'
+                    else:
                         device_y = ty + t_length + offset_ft
                 else:
-                    # Fallback to group bounds if no trackers found
+                    # Fallback to anchor group bounds
                     if device_position == 'north':
-                        vis_min = group_data.get('visual_min_y', 0)
-                        device_y = gy + vis_min - offset_ft - device_height_ft + angle_y_offset
+                        vis_min = anchor_grp_data.get('visual_min_y', 0)
+                        device_y = anchor_gy + vis_min - offset_ft - device_height_ft
                     else:
-                        vis_max = group_data.get('visual_max_y', group_data['length_ft'])
-                        device_y = gy + vis_max + offset_ft + angle_y_offset
+                        vis_max = anchor_grp_data.get('visual_max_y', anchor_grp_data.get('length_ft', 0))
+                        device_y = anchor_gy + vis_max + offset_ft
             else:  # 'middle' or fallback
                 group_motor_y_ref = group_data.get('motor_y_ft', None)
                 group_length = group_data.get('length_ft', 0)
@@ -2645,9 +2681,59 @@ class SitePreviewWindow(tk.Toplevel):
 
         self.fit_and_redraw()
 
+    def refresh_from_parent(self):
+        """Update preview in place after Calculate Estimate runs in the parent QuickEstimate.
+
+        Pulls fresh allocation/topology state from the parent and re-renders.
+        Preview-local user edits (pads, device_names, feeder sizes, x offsets,
+        measurements, corridors) are intentionally preserved — they live on this
+        window until close and are synced back to the parent via _on_preview_close.
+        Stale index keys in those dicts caused by a device-count decrease are left
+        in place; downstream rendering tolerates missing-index lookups via .get(),
+        matching existing _refresh_allocation behavior.
+        """
+        parent = self.master
+
+        inv_summary = getattr(parent, 'last_totals', {}).get('inverter_summary', {})
+        if not inv_summary or not inv_summary.get('allocation_result'):
+            return
+
+        self.inv_summary = inv_summary
+        self.topology = parent.topology_var.get()
+        self.row_spacing_ft = (
+            parent.groups[0].get('row_spacing_ft', 20.0)
+            if parent.groups else self.row_spacing_ft
+        )
+        self.allocation_locked = parent.allocation_locked
+        self.num_devices, self.device_label = parent._compute_preview_device_params()
+        self.groups = parent.groups
+        self.enabled_templates = parent.enabled_templates
+
+        self._tracker_physical_order = None
+        self._invalidate_device_data()
+
+        self.build_layout_data()
+        self._recolor_from_cb_assignments()
+        self._build_legend()
+
+        alloc = inv_summary.get('allocation_result', {})
+        num_inv = inv_summary.get('total_inverters', 0)
+        total_str = inv_summary.get('total_strings', 0)
+        actual_ratio = inv_summary.get('actual_dc_ac', 0)
+        split = inv_summary.get('total_split_trackers', 0)
+        spatial_runs = alloc.get('spatial_runs', 1)
+        self.summary_label.config(
+            text=self._format_summary(num_inv, total_str, actual_ratio, split,
+                                      spatial_runs=spatial_runs,
+                                      locked=self.allocation_locked)
+        )
+
+        self._invalidate_world_layer()
+        self.draw()
+
     def _refresh_allocation(self):
         """Re-run string allocation using current group positions, then refresh preview.
-        
+
         If allocation is locked, skips string reallocation and only updates
         device (CB/inverter) positions based on the current group layout.
         """
@@ -5228,25 +5314,47 @@ class SitePreviewWindow(tk.Toplevel):
             for pos_order, (data_idx, _) in enumerate(real_devs):
                 if pos_order < len(pos_list):
                     dev_pos = pos_list[pos_order]
-                    entries.append((data_idx, dev_pos['x'], dev_pos['y'], dev_pos['height_ft']))
+                    entries.append((
+                        data_idx,
+                        dev_pos['x'], dev_pos['y'],
+                        dev_pos['height_ft'],
+                        dev_pos.get('group_idx', 0),
+                    ))
 
             if not entries:
                 return
 
-            # Row tolerance = half the device height
+            # Spatial ordering: row-based, top-left → bottom-right
             tol = _median(e[3] for e in entries) / 2
-
-            # Sort into rows: group by Y within tol, then sort each row by X
-            entries.sort(key=lambda e: (e[2], e[1]))
+            _sorted = sorted(entries, key=lambda e: (e[2], e[1]))
             rows = []
-            for entry in entries:
+            for entry in _sorted:
                 if rows and abs(entry[2] - rows[-1][0][2]) <= tol:
                     rows[-1].append(entry)
                 else:
                     rows.append([entry])
             for row in rows:
                 row.sort(key=lambda e: e[1])
-            sorted_data_indices = [e[0] for row in rows for e in row]
+            spatial_indices = [e[0] for row in rows for e in row]
+
+            # Block-sequence ordering: group index first, then spatial within each group
+            block_indices = [e[0] for e in sorted(entries, key=lambda e: (e[4], e[2], e[1]))]
+
+            # Circuit · Device ordering: sort by circuit position in parent.circuits, then spatially
+            # Groups with no circuit_id sort after all named circuits (by group_idx).
+            _parent_groups = getattr(self.master, 'groups', [])
+            _parent_circuits = getattr(self.master, 'circuits', [])
+            _circuit_pos = {c['id']: i for i, c in enumerate(_parent_circuits)}
+
+            def _circuit_key(e):
+                grp_idx = e[4]
+                if grp_idx < len(_parent_groups):
+                    cid = _parent_groups[grp_idx].get('circuit_id')
+                    if cid and cid in _circuit_pos:
+                        return (_circuit_pos[cid], e[2], e[1])
+                return (len(_parent_circuits) + grp_idx, e[2], e[1])
+
+            circuit_sorted = sorted(entries, key=_circuit_key)
 
             # Guess most common existing prefix (strip trailing digits, take mode)
             default_prefix = 'INV-' if self.topology == 'Distributed String' else 'CB-'
@@ -5267,19 +5375,52 @@ class SitePreviewWindow(tk.Toplevel):
             frm = ttk.Frame(num_dlg, padding=12)
             frm.pack(fill='both', expand=True)
 
-            ttk.Label(frm, text=f"Number {len(sorted_data_indices)} devices top-left → bottom-right:").grid(
-                row=0, column=0, columnspan=2, sticky='w', pady=(0, 8))
+            ttk.Label(frm, text=f"Number {len(entries)} devices:").grid(
+                row=0, column=0, columnspan=2, sticky='w', pady=(0, 6))
 
-            ttk.Label(frm, text="Prefix:").grid(row=1, column=0, sticky='w', padx=(0, 8), pady=4)
+            fmt_var = tk.StringVar(value='flat')
+            fmt_frm = ttk.Frame(frm)
+            fmt_frm.grid(row=1, column=0, columnspan=2, sticky='w', pady=(0, 4))
+            ttk.Label(fmt_frm, text="Format:").pack(side='left', padx=(0, 8))
+            ttk.Radiobutton(fmt_frm, text='Sequential  (CB-01, CB-02…)',
+                            variable=fmt_var, value='flat').pack(side='left', padx=(0, 12))
+            ttk.Radiobutton(fmt_frm, text='Circuit · Device  (CB-01.01, CB-02.01…)',
+                            variable=fmt_var, value='block_device').pack(side='left')
+
+            order_var = tk.StringVar(value='spatial')
+            order_frm = ttk.Frame(frm)
+            order_frm.grid(row=2, column=0, columnspan=2, sticky='w', pady=(0, 8))
+            ttk.Label(order_frm, text="Order:").pack(side='left', padx=(0, 8))
+            rb_spatial = ttk.Radiobutton(order_frm, text='Top-left → bottom-right',
+                                         variable=order_var, value='spatial')
+            rb_spatial.pack(side='left', padx=(0, 12))
+            rb_block = ttk.Radiobutton(order_frm, text='Block sequence',
+                                       variable=order_var, value='block')
+            rb_block.pack(side='left')
+
+            ttk.Label(frm, text="Prefix:").grid(row=3, column=0, sticky='w', padx=(0, 8), pady=4)
             prefix_var = tk.StringVar(value=default_prefix)
-            ttk.Entry(frm, textvariable=prefix_var, width=12).grid(row=1, column=1, sticky='w')
+            ttk.Entry(frm, textvariable=prefix_var, width=12).grid(row=3, column=1, sticky='w')
 
-            ttk.Label(frm, text="Start #:").grid(row=2, column=0, sticky='w', padx=(0, 8), pady=4)
+            start_lbl = ttk.Label(frm, text="Start #:")
+            start_lbl.grid(row=4, column=0, sticky='w', padx=(0, 8), pady=4)
             start_var = tk.IntVar(value=1)
-            ttk.Spinbox(frm, from_=1, to=999, textvariable=start_var, width=6).grid(row=2, column=1, sticky='w')
+            ttk.Spinbox(frm, from_=1, to=999, textvariable=start_var, width=6).grid(row=4, column=1, sticky='w')
+
+            def _on_fmt_change(*_):
+                if fmt_var.get() == 'block_device':
+                    order_var.set('block')
+                    rb_spatial.config(state='disabled')
+                    rb_block.config(state='disabled')
+                    start_lbl.config(text="Device start #:")
+                else:
+                    rb_spatial.config(state='normal')
+                    rb_block.config(state='normal')
+                    start_lbl.config(text="Start #:")
+            fmt_var.trace_add('write', _on_fmt_change)
 
             btn_frame = ttk.Frame(frm)
-            btn_frame.grid(row=3, column=0, columnspan=2, pady=(10, 0))
+            btn_frame.grid(row=5, column=0, columnspan=2, pady=(10, 0))
 
             def _do_autonumber():
                 try:
@@ -5296,8 +5437,28 @@ class SitePreviewWindow(tk.Toplevel):
                         if pos_idx < len(real_devs_before):
                             obj_to_pad[id(real_devs_before[pos_idx])] = pad_idx
 
-                for n, data_idx in enumerate(sorted_data_indices):
-                    device_data[data_idx]['name'] = f'{prefix}{start + n:02d}'
+                if fmt_var.get() == 'block_device':
+                    circuit_num = 1
+                    dev_num = 0
+                    prev_circuit_key = None
+                    for entry in circuit_sorted:
+                        grp_idx = entry[4]
+                        if grp_idx < len(_parent_groups):
+                            cid = _parent_groups[grp_idx].get('circuit_id')
+                            circuit_key = cid if cid else f'__root_{grp_idx}'
+                        else:
+                            circuit_key = f'__root_{grp_idx}'
+                        if circuit_key != prev_circuit_key:
+                            if prev_circuit_key is not None:
+                                circuit_num += 1
+                            dev_num = 0
+                            prev_circuit_key = circuit_key
+                        device_data[entry[0]]['name'] = f'{prefix}{circuit_num:02d}.{start + dev_num:02d}'
+                        dev_num += 1
+                else:
+                    sorted_data_indices = spatial_indices if order_var.get() == 'spatial' else block_indices
+                    for n, data_idx in enumerate(sorted_data_indices):
+                        device_data[data_idx]['name'] = f'{prefix}{start + n:02d}'
                 _sort_device_data()
 
                 # Rebuild pad assignments using object identity after sort

@@ -2101,6 +2101,28 @@
       "bifaciality_factor": null,
       "default_orientation": "Portrait",
       "cells_per_module": 72
+    },
+    "CS7N-710TB-AG": {
+      "manufacturer": "CANADIAN SOLAR",
+      "model": "CS7N-710TB-AG",
+      "type": "Bifacial",
+      "length_mm": 2384.0,
+      "width_mm": 1303.0,
+      "depth_mm": 40,
+      "weight_kg": 25,
+      "wattage": 710.0,
+      "vmp": 40.4,
+      "imp": 17.59,
+      "voc": 48.3,
+      "isc": 18.59,
+      "max_system_voltage": 1500,
+      "efficiency": null,
+      "temperature_coefficient_pmax": -0.29,
+      "temperature_coefficient_voc": -0.25,
+      "temperature_coefficient_isc": 0.05,
+      "bifaciality_factor": null,
+      "default_orientation": "Portrait",
+      "cells_per_module": 72
     }
   },
   "Silfab": {

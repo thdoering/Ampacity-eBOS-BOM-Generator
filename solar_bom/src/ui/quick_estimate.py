@@ -4039,6 +4039,25 @@ class QuickEstimate(ttk.Frame):
         '#78909C',  # Steel
     ]
 
+    def _compute_preview_device_params(self):
+        """Return (num_devices, device_label) for the current topology and LV collection method."""
+        topology = self.topology_var.get()
+        lv_method = self.lv_collection_var.get() if hasattr(self, 'lv_collection_var') else 'Wire Harness'
+        totals = getattr(self, 'last_totals', {})
+        total_combiners = sum(totals.get('combiners_by_breaker', {}).values())
+
+        if topology == 'Distributed String':
+            num_devices = totals.get('string_inverters', 0)
+            device_label = 'SI'
+        elif topology == 'Central Inverter':
+            alloc = totals.get('inverter_summary', {}).get('allocation_result', {})
+            num_devices = alloc.get('summary', {}).get('total_inverters', total_combiners)
+            device_label = 'LBD' if lv_method == 'Trunk Bus' else 'CB'
+        else:
+            num_devices = total_combiners
+            device_label = 'LBD' if lv_method == 'Trunk Bus' else 'CB'
+        return num_devices, device_label
+
     def show_site_preview(self):
         """Open the site preview in a pop-out window"""
         # Raise existing window instead of stacking another one
@@ -4061,23 +4080,7 @@ class QuickEstimate(ttk.Frame):
 
         topology = self.topology_var.get()
         row_spacing_ft = self.groups[0].get('row_spacing_ft', 20.0) if self.groups else 20.0
-
-        # Compute device info for preview
-        totals = getattr(self, 'last_totals', {})
-        total_combiners = sum(totals.get('combiners_by_breaker', {}).values())
-
-        lv_method = self.lv_collection_var.get() if hasattr(self, 'lv_collection_var') else 'Wire Harness'
-        if topology == 'Distributed String':
-            num_devices = totals.get('string_inverters', 0)
-            device_label = 'SI'
-        elif topology == 'Central Inverter':
-            # For Central Inverter, allocation groups = CBs
-            alloc = totals.get('inverter_summary', {}).get('allocation_result', {})
-            num_devices = alloc.get('summary', {}).get('total_inverters', total_combiners)
-            device_label = 'LBD' if lv_method == 'Trunk Bus' else 'CB'
-        else:
-            num_devices = total_combiners
-            device_label = 'LBD' if lv_method == 'Trunk Bus' else 'CB'
+        num_devices, device_label = self._compute_preview_device_params()
 
         # Restore inspect mode from previous session
         initial_inspect = getattr(self, '_last_inspect_mode', False)
@@ -5837,6 +5840,37 @@ class QuickEstimate(ttk.Frame):
         gcr_entry = ttk.Entry(form_frame, textvariable=gcr_var, width=8)
         gcr_entry.grid(row=5, column=3, sticky='w', pady=5, padx=(5, 0))
 
+        def _apply_row_spacing_to_all_groups():
+            raw = row_spacing_var.get().strip()
+            try:
+                rs_ft = float(raw)
+                if rs_ft <= 0:
+                    raise ValueError
+            except ValueError:
+                messagebox.showinfo(
+                    "Apply to All",
+                    "Set a valid row spacing on this group before applying to all.",
+                    parent=self,
+                )
+                return
+            others = [g for g in self.groups if g is not group]
+            if not others:
+                return
+            if not messagebox.askyesno(
+                "Apply to All Groups",
+                f"Apply row spacing {rs_ft:.3f} ft to {len(others)} other group(s)?",
+                parent=self,
+            ):
+                return
+            for g in others:
+                g['row_spacing_ft'] = rs_ft
+            self._mark_stale()
+            self._schedule_autosave()
+
+        ttk.Button(form_frame, text="Apply to All",
+                   command=_apply_row_spacing_to_all_groups).grid(
+            row=5, column=4, sticky='w', pady=5, padx=(10, 0))
+
         def _update_gcr_from_row_spacing(*args, _is_init=False):
             raw = row_spacing_var.get().strip()
             if not raw:
@@ -6277,6 +6311,15 @@ class QuickEstimate(ttk.Frame):
             print(f"[QuickEstimate] calculate_estimate error:\n{err}")
             if not silent:
                 messagebox.showerror("Calculation Error", f"An unexpected error occurred:\n\n{e}\n\nSee console for details.")
+            return
+
+        if self._site_preview_window is not None:
+            try:
+                if self._site_preview_window.winfo_exists():
+                    self._site_preview_window.refresh_from_parent()
+            except Exception:
+                import traceback
+                print(f"[QuickEstimate] site preview refresh error:\n{traceback.format_exc()}")
 
     def _calculate_estimate_impl(self, silent=False):
         """Internal implementation of calculate_estimate."""
@@ -8626,26 +8669,11 @@ class QuickEstimate(ttk.Frame):
         from src.utils.site_pdf_generator import generate_site_pdf
         from .site_preview import SitePreviewWindow
 
-        inv_summary = getattr(self, 'last_totals', {}).get('inverter_summary', {})
+        totals = getattr(self, 'last_totals', {})
+        inv_summary = totals.get('inverter_summary', {})
         topology = self.topology_var.get()
         row_spacing_ft = self.groups[0].get('row_spacing_ft', 20.0) if self.groups else 20.0
-
-        # We need layout data. Create a temporary (hidden) SitePreviewWindow to build it,
-        # then extract group_layout and device_positions.
-        totals = getattr(self, 'last_totals', {})
-        total_combiners = sum(totals.get('combiners_by_breaker', {}).values())
-
-        lv_method = self.lv_collection_var.get() if hasattr(self, 'lv_collection_var') else 'Wire Harness'
-        if topology == 'Distributed String':
-            num_devices = totals.get('string_inverters', 0)
-            device_label = 'SI'
-        elif topology == 'Central Inverter':
-            alloc = totals.get('inverter_summary', {}).get('allocation_result', {})
-            num_devices = alloc.get('summary', {}).get('total_inverters', total_combiners)
-            device_label = 'LBD' if lv_method == 'Trunk Bus' else 'CB'
-        else:
-            num_devices = total_combiners
-            device_label = 'LBD' if lv_method == 'Trunk Bus' else 'CB'
+        num_devices, device_label = self._compute_preview_device_params()
 
         # Build layout via a temporary hidden preview window
         temp_preview = SitePreviewWindow(
