@@ -51,7 +51,7 @@
       "max_dc_voltage": 1500.0,
       "startup_voltage": 900.0,
       "nominal_ac_voltage": 600.0,
-      "max_ac_current": 241.0,
+      "max_ac_current": 254.0,
       "power_factor": 0.99,
       "dimensions_mm": [
         840,
@@ -82,7 +82,7 @@
       "max_dc_voltage": 1500.0,
       "startup_voltage": 900.0,
       "nominal_ac_voltage": 600.0,
-      "max_ac_current": 241.0,
+      "max_ac_current": 254.0,
       "power_factor": 0.99,
       "dimensions_mm": [
         840,
@@ -308,6 +308,141 @@
       "weight_kg": 119.0,
       "ip_rating": "NEMA 4X",
       "max_short_circuit_current": 600.0
+    },
+    "SCH350KTL-DO/US-800": {
+      "manufacturer": "CPS",
+      "model": "SCH350KTL-DO/US-800",
+      "inverter_type": "String",
+      "rated_power_kw": 350.0,
+      "max_dc_power_kw": 720.0,
+      "max_efficiency": 99.0,
+      "mppt_channels": [
+        {
+          "max_input_current": 40.0,
+          "min_voltage": 880.0,
+          "max_voltage": 1300.0,
+          "max_power": 48000.0,
+          "num_string_inputs": 2
+        },
+        {
+          "max_input_current": 40.0,
+          "min_voltage": 880.0,
+          "max_voltage": 1300.0,
+          "max_power": 48000.0,
+          "num_string_inputs": 2
+        },
+        {
+          "max_input_current": 40.0,
+          "min_voltage": 880.0,
+          "max_voltage": 1300.0,
+          "max_power": 48000.0,
+          "num_string_inputs": 2
+        },
+        {
+          "max_input_current": 40.0,
+          "min_voltage": 880.0,
+          "max_voltage": 1300.0,
+          "max_power": 48000.0,
+          "num_string_inputs": 2
+        },
+        {
+          "max_input_current": 40.0,
+          "min_voltage": 880.0,
+          "max_voltage": 1300.0,
+          "max_power": 48000.0,
+          "num_string_inputs": 2
+        },
+        {
+          "max_input_current": 40.0,
+          "min_voltage": 880.0,
+          "max_voltage": 1300.0,
+          "max_power": 48000.0,
+          "num_string_inputs": 2
+        },
+        {
+          "max_input_current": 40.0,
+          "min_voltage": 880.0,
+          "max_voltage": 1300.0,
+          "max_power": 48000.0,
+          "num_string_inputs": 2
+        },
+        {
+          "max_input_current": 40.0,
+          "min_voltage": 880.0,
+          "max_voltage": 1300.0,
+          "max_power": 48000.0,
+          "num_string_inputs": 2
+        },
+        {
+          "max_input_current": 40.0,
+          "min_voltage": 880.0,
+          "max_voltage": 1300.0,
+          "max_power": 48000.0,
+          "num_string_inputs": 2
+        },
+        {
+          "max_input_current": 40.0,
+          "min_voltage": 880.0,
+          "max_voltage": 1300.0,
+          "max_power": 48000.0,
+          "num_string_inputs": 2
+        },
+        {
+          "max_input_current": 40.0,
+          "min_voltage": 880.0,
+          "max_voltage": 1300.0,
+          "max_power": 48000.0,
+          "num_string_inputs": 2
+        },
+        {
+          "max_input_current": 40.0,
+          "min_voltage": 880.0,
+          "max_voltage": 1300.0,
+          "max_power": 48000.0,
+          "num_string_inputs": 2
+        },
+        {
+          "max_input_current": 40.0,
+          "min_voltage": 880.0,
+          "max_voltage": 1300.0,
+          "max_power": 48000.0,
+          "num_string_inputs": 2
+        },
+        {
+          "max_input_current": 40.0,
+          "min_voltage": 880.0,
+          "max_voltage": 1300.0,
+          "max_power": 48000.0,
+          "num_string_inputs": 2
+        },
+        {
+          "max_input_current": 40.0,
+          "min_voltage": 880.0,
+          "max_voltage": 1300.0,
+          "max_power": 48000.0,
+          "num_string_inputs": 2
+        }
+      ],
+      "mppt_configuration": "Independent",
+      "max_dc_voltage": 1500.0,
+      "startup_voltage": 550.0,
+      "nominal_ac_voltage": 800.0,
+      "max_ac_current": 253.0,
+      "power_factor": 0.99,
+      "dimensions_mm": [
+        810,
+        1057,
+        400
+      ],
+      "weight_kg": 143.0,
+      "ip_rating": "NEMA 4X",
+      "max_short_circuit_current": 975.0,
+      "temperature_range": [
+        -30.0,
+        60.0
+      ],
+      "altitude_limit_m": 4000.0,
+      "communication_protocol": "Modbus RTU"
     }
   },
   "SMA": {

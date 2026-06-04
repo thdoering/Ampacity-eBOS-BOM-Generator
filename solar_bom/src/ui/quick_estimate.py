@@ -5987,26 +5987,12 @@ class QuickEstimate(ttk.Frame):
             group['link_id'] = None
             return '(standalone)'
 
-        def _pool_status_text():
-            """Return a summary of all groups sharing this pool, for the status label."""
-            lid = group.get('link_id')
-            if not lid:
-                return ''
-            peers = [g['name'] for gi, g in enumerate(self.groups)
-                     if gi != group_idx and g.get('link_id') == lid]
-            if not peers:
-                return ''
-            return f"Pool with: {', '.join(peers)}"
-
         cb_pool_var = tk.StringVar(value=_current_pool_display())
         cb_pool_combo = ttk.Combobox(cb_pool_frame, textvariable=cb_pool_var,
                                      values=_pool_options(),
                                      state='readonly', width=18)
         cb_pool_combo.pack(side='left')
         self.disable_combobox_scroll(cb_pool_combo)
-
-        cb_pool_status = ttk.Label(cb_pool_frame, text=_pool_status_text(), foreground='gray')
-        cb_pool_status.pack(side='left', padx=(8, 0))
 
         def _on_pool_change(event=None):
             selected = cb_pool_var.get()
@@ -6023,8 +6009,6 @@ class QuickEstimate(ttk.Frame):
                     shared_id = str(uuid.uuid4())
                     target_grp['link_id'] = shared_id
                     group['link_id'] = shared_id
-            # Refresh the pool status label and listbox
-            cb_pool_status.config(text=_pool_status_text())
             self._refresh_group_listbox()
             self._mark_stale()
             self._schedule_autosave()
@@ -6788,7 +6772,30 @@ class QuickEstimate(ttk.Frame):
             # Use site-level DC:AC (total DC power / total AC capacity)
             total_alloc_strings = allocation_result['summary']['total_strings']
             total_alloc_invs = allocation_result['summary']['total_inverters']
-            total_dc_kw = (total_alloc_strings * modules_per_string * module_wattage) / 1000
+
+            # Sum modules and DC capacity per-module-type so multi-module projects
+            # don't apply a single mps/wattage across strings of different module types.
+            _total_modules_sum = 0
+            _total_dc_w = 0.0
+            for _grp in self.groups:
+                for _seg in _grp.get('segments', []):
+                    _ref = _seg.get('template_ref')
+                    _qty = _seg.get('quantity', 0)
+                    _spt = _seg.get('strings_per_tracker', 1)
+                    if not (_ref and _ref in self.enabled_templates and _qty > 0):
+                        continue
+                    _td = self.enabled_templates[_ref]
+                    _mps = _td.get('modules_per_string', 28)
+                    _w = _td.get('module_spec', {}).get('wattage', module_wattage)
+                    _full_spt = int(_spt)
+                    if _spt != _full_spt:
+                        _ss = _full_spt * _qty + (_qty // 2)
+                    else:
+                        _ss = _qty * _full_spt
+                    _seg_modules = _ss * _mps
+                    _total_modules_sum += _seg_modules
+                    _total_dc_w += _seg_modules * _w
+            total_dc_kw = _total_dc_w / 1000
             total_ac_kw = 0.0
 
             if topology == 'Central Inverter':
@@ -6828,7 +6835,7 @@ class QuickEstimate(ttk.Frame):
             }
             totals['total_dc_kw'] = round(total_dc_kw, 2)
             totals['total_ac_kw'] = round(total_ac_kw, 2)
-            totals['total_modules'] = total_alloc_strings * modules_per_string
+            totals['total_modules'] = _total_modules_sum
 
             # For Central Inverter, update device/combiner count from allocation
             # (allocation respects group boundaries, may differ from library estimate)

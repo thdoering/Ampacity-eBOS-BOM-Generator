@@ -227,17 +227,24 @@ class InverterManager(ttk.Frame):
         inverter = self.create_inverter_spec()
         if inverter:
             name = f"{inverter.manufacturer} {inverter.model}"
+            if name in self.factory_keys:
+                messagebox.showwarning(
+                    "Factory Entry",
+                    f"'{name}' is part of the built-in factory library and cannot be modified.\n\n"
+                    "To use a custom version, change the manufacturer or model name before saving."
+                )
+                return
             if name in self.inverters:
                 if not messagebox.askyesno("Confirm", f"Inverter '{name}' already exists. Overwrite?"):
                     return
-                    
+
             self.inverters[name] = inverter
             self.save_inverters()
             self.update_inverter_list()
-            
+
             if self.on_inverter_selected:
                 self.on_inverter_selected(inverter)
-                
+
             messagebox.showinfo("Success", f"Inverter '{name}' saved successfully")
             
     def load_inverters(self):

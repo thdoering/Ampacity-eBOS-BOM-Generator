@@ -280,151 +280,6 @@
     "altitude_limit_m": null,
     "communication_protocol": null
   },
-  "CPS SCH275KTL-DO/US-800-24 V2": {
-    "manufacturer": "CPS",
-    "model": "SCH275KTL-DO/US-800-24 V2",
-    "inverter_type": "String",
-    "rated_power_kw": 275.0,
-    "max_dc_power_kw": 253.8,
-    "max_efficiency": 98.0,
-    "mppt_channels": [
-      {
-        "max_input_current": 30.0,
-        "min_voltage": 900.0,
-        "max_voltage": 1300.0,
-        "max_power": 21150.0,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 30.0,
-        "min_voltage": 900.0,
-        "max_voltage": 1300.0,
-        "max_power": 21150.0,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 30.0,
-        "min_voltage": 900.0,
-        "max_voltage": 1300.0,
-        "max_power": 21150.0,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 30.0,
-        "min_voltage": 900.0,
-        "max_voltage": 1300.0,
-        "max_power": 21150.0,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 30.0,
-        "min_voltage": 900.0,
-        "max_voltage": 1300.0,
-        "max_power": 21150.0,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 30.0,
-        "min_voltage": 900.0,
-        "max_voltage": 1300.0,
-        "max_power": 21150.0,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 30.0,
-        "min_voltage": 900.0,
-        "max_voltage": 1300.0,
-        "max_power": 21150.0,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 30.0,
-        "min_voltage": 900.0,
-        "max_voltage": 1300.0,
-        "max_power": 21150.0,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 30.0,
-        "min_voltage": 900.0,
-        "max_voltage": 1300.0,
-        "max_power": 21150.0,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 30.0,
-        "min_voltage": 900.0,
-        "max_voltage": 1300.0,
-        "max_power": 21150.0,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 30.0,
-        "min_voltage": 900.0,
-        "max_voltage": 1300.0,
-        "max_power": 21150.0,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 30.0,
-        "min_voltage": 900.0,
-        "max_voltage": 1300.0,
-        "max_power": 21150.0,
-        "num_string_inputs": 2
-      }
-    ],
-    "mppt_configuration": "Independent",
-    "max_dc_voltage": 1500.0,
-    "startup_voltage": 900.0,
-    "nominal_ac_voltage": 800.0,
-    "max_ac_current": 198.5,
-    "power_factor": 0.99,
-    "dimensions_mm": [
-      1000,
-      600,
-      300
-    ],
-    "weight_kg": 75.0,
-    "ip_rating": "IP65",
-    "max_short_circuit_current": 600.0,
-    "temperature_range": null,
-    "altitude_limit_m": null,
-    "communication_protocol": null
-  },
-  "Sungrow SG3150U": {
-    "manufacturer": "Sungrow",
-    "model": "SG3150U",
-    "inverter_type": "Central",
-    "rated_power_kw": 3150.0,
-    "max_dc_power_kw": 3150.0,
-    "max_efficiency": 98.0,
-    "mppt_channels": [
-      {
-        "max_input_current": 3510.0,
-        "min_voltage": 915.0,
-        "max_voltage": 1300.0,
-        "max_power": 3150000.0,
-        "num_string_inputs": 24
-      }
-    ],
-    "mppt_configuration": "Independent",
-    "max_dc_voltage": 1500.0,
-    "startup_voltage": 915.0,
-    "nominal_ac_voltage": 630.0,
-    "max_ac_current": 2886.0,
-    "power_factor": 0.99,
-    "dimensions_mm": [
-      1000,
-      600,
-      300
-    ],
-    "weight_kg": 75.0,
-    "ip_rating": "IP65",
-    "max_short_circuit_current": 4800.0,
-    "temperature_range": null,
-    "altitude_limit_m": null,
-    "communication_protocol": null
-  },
   "SMA Highpower PEAK3 125kW": {
     "manufacturer": "SMA",
     "model": "Highpower PEAK3 125kW",
@@ -455,40 +310,6 @@
     "weight_kg": 75.0,
     "ip_rating": "IP65",
     "max_short_circuit_current": 325.0,
-    "temperature_range": null,
-    "altitude_limit_m": null,
-    "communication_protocol": null
-  },
-  "CPS SCH250K-T-US-600 Distributed": {
-    "manufacturer": "CPS",
-    "model": "SCH250K-T-US-600 Distributed",
-    "inverter_type": "String",
-    "rated_power_kw": 250.0,
-    "max_dc_power_kw": 425.0,
-    "max_efficiency": 98.0,
-    "mppt_channels": [
-      {
-        "max_input_current": 300.0,
-        "min_voltage": 860.0,
-        "max_voltage": 1450.0,
-        "max_power": 425000.0,
-        "num_string_inputs": 30
-      }
-    ],
-    "mppt_configuration": "Independent",
-    "max_dc_voltage": 1500.0,
-    "startup_voltage": 860.0,
-    "nominal_ac_voltage": 600.0,
-    "max_ac_current": 241.0,
-    "power_factor": 0.99,
-    "dimensions_mm": [
-      1000,
-      600,
-      300
-    ],
-    "weight_kg": 75.0,
-    "ip_rating": "IP65",
-    "max_short_circuit_current": 450.0,
     "temperature_range": null,
     "altitude_limit_m": null,
     "communication_protocol": null
@@ -602,235 +423,6 @@
     "altitude_limit_m": null,
     "communication_protocol": null
   },
-  "Solectria XGI 1500-1MW-600": {
-    "manufacturer": "Solectria",
-    "model": "XGI 1500-1MW-600",
-    "inverter_type": "String",
-    "rated_power_kw": 1000.0,
-    "max_dc_power_kw": 2500.0,
-    "max_efficiency": 98.0,
-    "mppt_channels": [
-      {
-        "max_input_current": 800.0,
-        "min_voltage": 860.0,
-        "max_voltage": 1450.0,
-        "max_power": 2500000.0,
-        "num_string_inputs": 4
-      }
-    ],
-    "mppt_configuration": "Independent",
-    "max_dc_voltage": 1500.0,
-    "startup_voltage": 860.0,
-    "nominal_ac_voltage": 600.0,
-    "max_ac_current": 960.0,
-    "power_factor": 0.99,
-    "dimensions_mm": [
-      1000,
-      600,
-      300
-    ],
-    "weight_kg": 75.0,
-    "ip_rating": "IP65",
-    "max_short_circuit_current": 2400.0,
-    "temperature_range": null,
-    "altitude_limit_m": null,
-    "communication_protocol": null
-  },
-  "SMA Sunny Central 2660 UP-US": {
-    "manufacturer": "SMA",
-    "model": "Sunny Central 2660 UP-US",
-    "inverter_type": "Central",
-    "rated_power_kw": 2267.0,
-    "max_dc_power_kw": 2134.0,
-    "max_efficiency": 98.0,
-    "mppt_channels": [
-      {
-        "max_input_current": 3200.0,
-        "min_voltage": 880.0,
-        "max_voltage": 1325.0,
-        "max_power": 88916.66666666667,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 3200.0,
-        "min_voltage": 880.0,
-        "max_voltage": 1325.0,
-        "max_power": 88916.66666666667,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 3200.0,
-        "min_voltage": 880.0,
-        "max_voltage": 1325.0,
-        "max_power": 88916.66666666667,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 3200.0,
-        "min_voltage": 880.0,
-        "max_voltage": 1325.0,
-        "max_power": 88916.66666666667,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 3200.0,
-        "min_voltage": 880.0,
-        "max_voltage": 1325.0,
-        "max_power": 88916.66666666667,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 3200.0,
-        "min_voltage": 880.0,
-        "max_voltage": 1325.0,
-        "max_power": 88916.66666666667,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 3200.0,
-        "min_voltage": 880.0,
-        "max_voltage": 1325.0,
-        "max_power": 88916.66666666667,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 3200.0,
-        "min_voltage": 880.0,
-        "max_voltage": 1325.0,
-        "max_power": 88916.66666666667,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 3200.0,
-        "min_voltage": 880.0,
-        "max_voltage": 1325.0,
-        "max_power": 88916.66666666667,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 3200.0,
-        "min_voltage": 880.0,
-        "max_voltage": 1325.0,
-        "max_power": 88916.66666666667,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 3200.0,
-        "min_voltage": 880.0,
-        "max_voltage": 1325.0,
-        "max_power": 88916.66666666667,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 3200.0,
-        "min_voltage": 880.0,
-        "max_voltage": 1325.0,
-        "max_power": 88916.66666666667,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 3200.0,
-        "min_voltage": 880.0,
-        "max_voltage": 1325.0,
-        "max_power": 88916.66666666667,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 3200.0,
-        "min_voltage": 880.0,
-        "max_voltage": 1325.0,
-        "max_power": 88916.66666666667,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 3200.0,
-        "min_voltage": 880.0,
-        "max_voltage": 1325.0,
-        "max_power": 88916.66666666667,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 3200.0,
-        "min_voltage": 880.0,
-        "max_voltage": 1325.0,
-        "max_power": 88916.66666666667,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 3200.0,
-        "min_voltage": 880.0,
-        "max_voltage": 1325.0,
-        "max_power": 88916.66666666667,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 3200.0,
-        "min_voltage": 880.0,
-        "max_voltage": 1325.0,
-        "max_power": 88916.66666666667,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 3200.0,
-        "min_voltage": 880.0,
-        "max_voltage": 1325.0,
-        "max_power": 88916.66666666667,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 3200.0,
-        "min_voltage": 880.0,
-        "max_voltage": 1325.0,
-        "max_power": 88916.66666666667,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 3200.0,
-        "min_voltage": 880.0,
-        "max_voltage": 1325.0,
-        "max_power": 88916.66666666667,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 3200.0,
-        "min_voltage": 880.0,
-        "max_voltage": 1325.0,
-        "max_power": 88916.66666666667,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 3200.0,
-        "min_voltage": 880.0,
-        "max_voltage": 1325.0,
-        "max_power": 88916.66666666667,
-        "num_string_inputs": 2
-      },
-      {
-        "max_input_current": 3200.0,
-        "min_voltage": 880.0,
-        "max_voltage": 1325.0,
-        "max_power": 88916.66666666667,
-        "num_string_inputs": 2
-      }
-    ],
-    "mppt_configuration": "Independent",
-    "max_dc_voltage": 1500.0,
-    "startup_voltage": 880.0,
-    "nominal_ac_voltage": 720.0,
-    "max_ac_current": 2566.0,
-    "power_factor": 0.99,
-    "dimensions_mm": [
-      1000,
-      600,
-      300
-    ],
-    "weight_kg": 75.0,
-    "ip_rating": "IP65",
-    "max_short_circuit_current": 4800.0,
-    "temperature_range": null,
-    "altitude_limit_m": null,
-    "communication_protocol": null
-  },
   "CPS (Chint Power Systems) CPS SCH250K-T-US-600": {
     "manufacturer": "CPS (Chint Power Systems)",
     "model": "CPS SCH250K-T-US-600",
@@ -850,40 +442,6 @@
     "mppt_configuration": "Independent",
     "max_dc_voltage": 1500.0,
     "startup_voltage": 900.0,
-    "nominal_ac_voltage": 600.0,
-    "max_ac_current": 241.0,
-    "power_factor": 0.99,
-    "dimensions_mm": [
-      1000,
-      600,
-      300
-    ],
-    "weight_kg": 75.0,
-    "ip_rating": "IP65",
-    "max_short_circuit_current": 450.0,
-    "temperature_range": null,
-    "altitude_limit_m": null,
-    "communication_protocol": null
-  },
-  "CPS SCH250K-T-US-600 Centralized": {
-    "manufacturer": "CPS",
-    "model": "SCH250K-T-US-600 Centralized",
-    "inverter_type": "String",
-    "rated_power_kw": 250.0,
-    "max_dc_power_kw": 425.0,
-    "max_efficiency": 98.0,
-    "mppt_channels": [
-      {
-        "max_input_current": 300.0,
-        "min_voltage": 860.0,
-        "max_voltage": 1450.0,
-        "max_power": 425000.0,
-        "num_string_inputs": 2
-      }
-    ],
-    "mppt_configuration": "Independent",
-    "max_dc_voltage": 1500.0,
-    "startup_voltage": 860.0,
     "nominal_ac_voltage": 600.0,
     "max_ac_current": 241.0,
     "power_factor": 0.99,
@@ -929,40 +487,6 @@
     "weight_kg": 75.0,
     "ip_rating": "IP65",
     "max_short_circuit_current": 450.0,
-    "temperature_range": null,
-    "altitude_limit_m": null,
-    "communication_protocol": null
-  },
-  "Yaskawa Solectria Solar XGI 1500-250/250-600": {
-    "manufacturer": "Yaskawa Solectria Solar",
-    "model": "XGI 1500-250/250-600",
-    "inverter_type": "String",
-    "rated_power_kw": 249.5,
-    "max_dc_power_kw": 255.0,
-    "max_efficiency": 98.0,
-    "mppt_channels": [
-      {
-        "max_input_current": 296.7,
-        "min_voltage": 860.0,
-        "max_voltage": 1450.0,
-        "max_power": 255000.0,
-        "num_string_inputs": 2
-      }
-    ],
-    "mppt_configuration": "Independent",
-    "max_dc_voltage": 1500.0,
-    "startup_voltage": 860.0,
-    "nominal_ac_voltage": 600.0,
-    "max_ac_current": 240.6,
-    "power_factor": 0.99,
-    "dimensions_mm": [
-      1000,
-      600,
-      300
-    ],
-    "weight_kg": 75.0,
-    "ip_rating": "IP65",
-    "max_short_circuit_current": 800.0,
     "temperature_range": null,
     "altitude_limit_m": null,
     "communication_protocol": null
@@ -1124,37 +648,6 @@
     "altitude_limit_m": null,
     "communication_protocol": null
   },
-  "SMA Sunny Highpower\nPEAK3 150-US": {
-    "manufacturer": "SMA",
-    "model": "Sunny Highpower\nPEAK3 150-US",
-    "inverter_type": "String",
-    "rated_power_kw": 150.0,
-    "max_dc_power_kw": 300.0,
-    "max_efficiency": 98.0,
-    "mppt_channels": [
-      {
-        "max_input_current": 180.0,
-        "min_voltage": 855.0,
-        "max_voltage": 1450.0,
-        "max_power": 300000.0,
-        "num_string_inputs": 1
-      }
-    ],
-    "mppt_configuration": "Independent",
-    "max_dc_voltage": 1500.0,
-    "startup_voltage": 855.0,
-    "nominal_ac_voltage": 480.0,
-    "max_ac_current": 151.0,
-    "power_factor": 0.99,
-    "dimensions_mm": [
-      1000,
-      600,
-      300
-    ],
-    "weight_kg": 75.0,
-    "ip_rating": "IP65",
-    "max_short_circuit_current": 325.0
-  },
   "SMA STP 50-US-41": {
     "manufacturer": "SMA",
     "model": "STP 50-US-41",
@@ -1219,7 +712,10 @@
     ],
     "weight_kg": 75.0,
     "ip_rating": "IP65",
-    "max_short_circuit_current": 180.0
+    "max_short_circuit_current": 180.0,
+    "temperature_range": null,
+    "altitude_limit_m": null,
+    "communication_protocol": null
   },
   "CPS SCH580K-T-US-600": {
     "manufacturer": "CPS",
@@ -1250,7 +746,10 @@
     ],
     "weight_kg": 75.0,
     "ip_rating": "IP65",
-    "max_short_circuit_current": 450.0
+    "max_short_circuit_current": 450.0,
+    "temperature_range": null,
+    "altitude_limit_m": null,
+    "communication_protocol": null
   },
   "CPS SCH100K-T-US-480": {
     "manufacturer": "CPS",
@@ -1281,7 +780,10 @@
     ],
     "weight_kg": 75.0,
     "ip_rating": "IP65",
-    "max_short_circuit_current": 220.0
+    "max_short_circuit_current": 220.0,
+    "temperature_range": null,
+    "altitude_limit_m": null,
+    "communication_protocol": null
   },
   "Sol-Ark 18k 2P-N": {
     "manufacturer": "Sol-Ark",
@@ -1326,7 +828,10 @@
     ],
     "weight_kg": 75.0,
     "ip_rating": "IP65",
-    "max_short_circuit_current": 162.0
+    "max_short_circuit_current": 162.0,
+    "temperature_range": null,
+    "altitude_limit_m": null,
+    "communication_protocol": null
   },
   "CPS  SCH100KTL-DO/US-480": {
     "manufacturer": "CPS",
@@ -1357,6 +862,9 @@
     ],
     "weight_kg": 75.0,
     "ip_rating": "IP65",
-    "max_short_circuit_current": 220.0
+    "max_short_circuit_current": 220.0,
+    "temperature_range": null,
+    "altitude_limit_m": null,
+    "communication_protocol": null
   }
 }
