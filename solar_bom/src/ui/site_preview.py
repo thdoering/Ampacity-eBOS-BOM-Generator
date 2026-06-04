@@ -1864,7 +1864,7 @@ class SitePreviewWindow(tk.Toplevel):
         if not pitch:
             return
 
-        delta = sign * pitch
+        delta = sign * pitch / 2.0
         self.device_x_offsets[dev_idx] = self.device_x_offsets.get(dev_idx, 0.0) + delta
         parent_offsets = getattr(self.master, 'device_x_offsets', None)
         if parent_offsets is not None:

@@ -1168,11 +1168,12 @@ def _draw_sidebar(fig, project_info, sheet_name='STRING ALLOCATION'):
     # =====================================================================
     # 5. DESCRIPTION content row
     # =====================================================================
-    rev = project_info.get('revision', '0')
+    version = project_info.get('version', '0')
+    revision = project_info.get('revision', '0')
     date_str = datetime.now().strftime('%m/%d/%Y')
 
     ax.text(col_rev_w / 2, y_desc_bot + DESC_H / 2,
-            str(rev), fontsize=5, color='black',
+            f"v{version} rev{revision}", fontsize=5, color='black',
             ha='center', va='center', fontfamily='sans-serif')
     ax.text(col_rev_w + col_issued_w / 2, y_desc_bot + DESC_H / 2,
             date_str, fontsize=4.5, color='black',

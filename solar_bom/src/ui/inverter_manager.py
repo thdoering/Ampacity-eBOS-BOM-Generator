@@ -304,6 +304,8 @@ class InverterManager(ttk.Frame):
 
             for inv_key, inverter in sorted(visible, key=lambda x: x[1].model):
                 label = f"{inverter.model} ({inverter.rated_power_kw} kW)"
+                if inv_key in self.factory_keys:
+                    label += " (factory)"
                 assigned = inv_to_estimates.get(inv_key)
                 if assigned:
                     label += f"  — selected ({', '.join(assigned)})"

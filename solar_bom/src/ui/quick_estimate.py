@@ -3307,7 +3307,9 @@ class QuickEstimate(ttk.Frame):
             self.lv_collection_var.set(estimate_data.get('lv_collection_method', 'Wire Harness'))
         if hasattr(self, 'ac_homerun_distance_var'):
             self.ac_homerun_distance_var.set(str(estimate_data.get('ac_homerun_distance', 50)))
-        
+        if hasattr(self, 'est_revision_var'):
+            self.est_revision_var.set(estimate_data.get('revision', '0'))
+
         # Load circuits (new; absent in older files — backward compat: treat as empty)
         self.circuits = copy.deepcopy(estimate_data.get('circuits', []))
 
@@ -3469,7 +3471,8 @@ class QuickEstimate(ttk.Frame):
         estimate_data['inspect_mode'] = getattr(self, '_last_inspect_mode', False)
         estimate_data['polarity_convention'] = self.polarity_convention_var.get()
         estimate_data['lv_collection_method'] = self.lv_collection_var.get()
-        estimate_data['ac_homerun_distance'] = self._get_float_var(self.ac_homerun_distance_var, estimate_data.get('ac_homerun_distance', 500.0))
+        estimate_data['ac_homerun_distance'] = self._get_float_var(self.ac_homerun_distance_var, estimate_data.get('ac_homerun_distance', 50.0))
+        estimate_data['revision'] = self.est_revision_var.get() if hasattr(self, 'est_revision_var') else '0'
         estimate_data['dc_ac_ratio'] = self._get_float_var(self.dc_ac_ratio_var, 1.25)
         spi_val = self.strings_per_inverter_var.get() if hasattr(self, 'strings_per_inverter_var') else ''
         estimate_data['strings_per_device'] = spi_val if spi_val not in ('', '--') else None
@@ -4872,7 +4875,7 @@ class QuickEstimate(ttk.Frame):
         total_feeder_ft = sum(v['total_ft'] for v in feeders_by_size.values())
         total_feeder_count = sum(v['count'] for v in feeders_by_size.values())
         total_inverters = totals.get('inverter_summary', {}).get('total_inverters', 0)
-        ac_homerun_avg_ft = display.get('ac_homerun_avg_ft', 500.0)
+        ac_homerun_avg_ft = display.get('ac_homerun_avg_ft', 50.0)
 
         if topology == 'Distributed String':
             totals['dc_feeder_count'] = 0
@@ -5491,7 +5494,7 @@ class QuickEstimate(ttk.Frame):
         distance_row.pack(fill='x', pady=(5, 0))
         
         ttk.Label(distance_row, text="Avg AC Homerun (ft):").pack(side='left', padx=(0, 5))
-        self.ac_homerun_distance_var = tk.StringVar(value='500')
+        self.ac_homerun_distance_var = tk.StringVar(value='50')
         ttk.Spinbox(distance_row, from_=0, to=5000, increment=50,
                      textvariable=self.ac_homerun_distance_var, width=8).pack(side='left', padx=(0, 15))
         self.ac_homerun_distance_var.trace_add('write', lambda *args: (self._mark_stale(), self._schedule_autosave()))
@@ -5522,7 +5525,12 @@ class QuickEstimate(ttk.Frame):
 
         self._export_pdf_btn = ttk.Button(button_row, text="Export PDF", command=self.export_pdf_only)
         self._export_pdf_btn.pack(side='left', padx=(5, 0))
-        
+
+        ttk.Label(button_row, text="Revision:").pack(side='left', padx=(15, 4))
+        self.est_revision_var = tk.StringVar(value='0')
+        ttk.Entry(button_row, textvariable=self.est_revision_var, width=4).pack(side='left', padx=(0, 0))
+        self.est_revision_var.trace_add('write', lambda *args: (self._mark_stale(), self._schedule_autosave()))
+
         preview_btn = ttk.Button(button_row, text="Site Preview", command=self.show_site_preview)
         preview_btn.pack(side='left', padx=(10, 0))
 
@@ -6374,6 +6382,16 @@ class QuickEstimate(ttk.Frame):
                 )
             return
 
+        # Validate — inverter must be assigned
+        if not self.selected_inverter:
+            if not silent:
+                messagebox.showwarning(
+                    "No Inverter Selected",
+                    "No inverter is assigned to this estimate.\n\n"
+                    "Go to Equipment → Inverters, right-click an inverter, and assign it to this estimate."
+                )
+            return
+
         # Validate — need at least one linked template or a legacy fallback module
         self._derive_module_from_templates()
         lv_method = self.lv_collection_var.get() if hasattr(self, 'lv_collection_var') else 'Wire Harness'
@@ -7218,7 +7236,7 @@ class QuickEstimate(ttk.Frame):
         # ==================== DC Feeder and AC Homerun ====================
         # DC feeder avg is 0 when no pads exist (routed distances will be used when pads present)
         dc_feeder_avg_ft = 0.0
-        ac_homerun_avg_ft = self._get_float_var(self.ac_homerun_distance_var, 500.0)
+        ac_homerun_avg_ft = self._get_float_var(self.ac_homerun_distance_var, 50.0)
 
         total_inverters = totals.get('inverter_summary', {}).get('total_inverters', 0)
         total_combiners = sum(totals['combiners_by_breaker'].values())
@@ -7503,7 +7521,7 @@ class QuickEstimate(ttk.Frame):
         _routed_details = totals.get('routed_feeder_details', [])
         _per_device_ft = {int(dev_idx): ft for dev_idx, _label, ft in _routed_details}
         dc_feeder_avg_ft = _display.get('dc_feeder_avg_ft', 0.0)
-        ac_homerun_avg_ft = self._get_float_var(self.ac_homerun_distance_var, 500.0) if hasattr(self, 'ac_homerun_distance_var') else 500.0
+        ac_homerun_avg_ft = self._get_float_var(self.ac_homerun_distance_var, 50.0) if hasattr(self, 'ac_homerun_distance_var') else 50.0
 
         # Site-level extender totals for proportional per-device allocation
         ext_pos_totals = totals.get('extenders_pos_by_length', {})
@@ -8647,7 +8665,11 @@ class QuickEstimate(ttk.Frame):
             est_data = self.current_project.quick_estimates.get(self.estimate_id, {})
             estimate_name = clean_fn(est_data.get('name', 'Estimate'))
 
-        suggested_name = f"{client}_{project_name}_Site PDF_{estimate_name}.pdf"
+        lv_token = clean_fn(self.lv_collection_var.get()) if hasattr(self, 'lv_collection_var') else ''
+        version = getattr(self.current_project, 'bom_revision', '0') if self.current_project else '0'
+        revision = self.est_revision_var.get() if hasattr(self, 'est_revision_var') else '0'
+        date_str = datetime.now().strftime('%Y-%m-%d')
+        suggested_name = f"{client}_{project_name}_Site PDF_{estimate_name}_{lv_token}_v{version}_rev{revision}_{date_str}.pdf"
 
         filepath = filedialog.asksaveasfilename(
             defaultextension=".pdf",
@@ -8711,7 +8733,8 @@ class QuickEstimate(ttk.Frame):
                 'total_devices': '',
                 'dc_ac_ratio': '',
                 'split_trackers': '',
-                'revision': '0',
+                'version': getattr(self.current_project, 'bom_revision', '0') if self.current_project else '0',
+                'revision': self.est_revision_var.get() if hasattr(self, 'est_revision_var') else '0',
             }
 
             if self.current_project and self.current_project.metadata:
@@ -9025,7 +9048,11 @@ class QuickEstimate(ttk.Frame):
             est_data = self.current_project.quick_estimates.get(self.estimate_id, {})
             estimate_name = clean_fn(est_data.get('name', 'Estimate'))
 
-        suggested_name = f"{client}_{project_name}_String Allocation_{estimate_name}.pdf"
+        lv_token = clean_fn(self.lv_collection_var.get()) if hasattr(self, 'lv_collection_var') else ''
+        version = getattr(self.current_project, 'bom_revision', '0') if self.current_project else '0'
+        revision = self.est_revision_var.get() if hasattr(self, 'est_revision_var') else '0'
+        date_str = datetime.now().strftime('%Y-%m-%d')
+        suggested_name = f"{client}_{project_name}_String Allocation_{estimate_name}_{lv_token}_v{version}_rev{revision}_{date_str}.pdf"
 
         filepath = filedialog.asksaveasfilename(
             defaultextension=".pdf",

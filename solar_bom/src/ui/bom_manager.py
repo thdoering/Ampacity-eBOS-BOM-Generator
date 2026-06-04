@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from typing import Dict, List, Any, Optional, Callable
+from datetime import datetime
 import pandas as pd
 import os
 from ..models.block import BlockConfig
@@ -111,7 +112,7 @@ class BOMManager(ttk.Frame):
         # Revision input
         rev_frame = ttk.Frame(bom_frame)
         rev_frame.grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
-        ttk.Label(rev_frame, text="BOM Rev:").pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Label(rev_frame, text="Version:").pack(side=tk.LEFT, padx=(0, 5))
         self.revision_var = tk.StringVar(value=self._saved_revision)
         self.revision_var.trace_add('write', self._on_revision_changed)
         rev_entry = ttk.Entry(rev_frame, textvariable=self.revision_var, width=5)
@@ -632,7 +633,8 @@ class BOMManager(ttk.Frame):
                 
                 # Build filename
                 rev = self.revision_var.get() or '0'
-                suggested_filename = f"{client}_{project_name}_Ampacity eBOM_{dc_collection}_Rev{rev}.xlsx"
+                date_str = datetime.now().strftime('%Y-%m-%d')
+                suggested_filename = f"{client}_{project_name}_Ampacity eBOM_{dc_collection}_v{rev}_{date_str}.xlsx"
         except Exception as e:
             print(f"Error generating suggested filename: {str(e)}")
         
