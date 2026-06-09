@@ -314,7 +314,11 @@ class SitePreviewWindow(tk.Toplevel):
 
         self.corridor_btn = ttk.Button(top_bar2, text="Add Corridor", command=self._toggle_corridor_mode)
         self.corridor_btn.pack(side='left', padx=2)
-        
+
+        # Skid placement hint (right-aligned; shown for Central Inverter and Centralized String with a target set)
+        self.skid_hint_label = ttk.Label(top_bar2, text="")
+        self.skid_hint_label.pack(side='right', padx=(0, 10))
+
         # Canvas
         canvas_frame = ttk.Frame(self)
         canvas_frame.pack(fill='both', expand=True)
@@ -350,7 +354,8 @@ class SitePreviewWindow(tk.Toplevel):
         self.legend_frame = ttk.Frame(self, padding="5")
         self.legend_frame.pack(fill='x')
         self._build_legend()
-    
+        self._refresh_skid_hint()
+
     def _build_legend(self):
         """Build or rebuild the bottom legend with color swatches and allocation summary."""
         # Clear existing legend contents
@@ -3655,12 +3660,58 @@ class SitePreviewWindow(tk.Toplevel):
         if self.current_measure_pts:
             _draw_polyline(self.current_measure_pts, in_progress=True)
 
+    def _refresh_skid_hint(self):
+        """Update the skid placement hint label in the toolbar."""
+        if not hasattr(self, 'skid_hint_label'):
+            return
+        topology = getattr(self.master, 'topology_var', None)
+        topology = topology.get() if topology else self.topology
+
+        if topology == 'Distributed String':
+            self.skid_hint_label.config(text="")
+            return
+
+        skids_str = ''
+        if hasattr(self.master, 'skids_var'):
+            skids_str = self.master.skids_var.get().strip()
+
+        if not skids_str:
+            self.skid_hint_label.config(text="")
+            return
+
+        try:
+            target = int(skids_str)
+        except (ValueError, TypeError):
+            self.skid_hint_label.config(text="")
+            return
+
+        if target <= 0:
+            self.skid_hint_label.config(text="")
+            return
+
+        count = len(self.pads)
+        if count == target:
+            self.skid_hint_label.config(
+                text=f"✓ {count} of {target} skid{'s' if target != 1 else ''} placed",
+                foreground='green'
+            )
+        elif count > target:
+            self.skid_hint_label.config(
+                text=f"⚠ {count} of {target} skid{'s' if target != 1 else ''} placed (too many)",
+                foreground='orange'
+            )
+        else:
+            self.skid_hint_label.config(
+                text=f"{count} of {target} skid{'s' if target != 1 else ''} placed",
+                foreground='#cc6600'
+            )
+
     def _add_pad(self):
         """Enter pad placement mode — next click on canvas places a new pad."""
         self.placing_pad = True
         self.canvas.config(cursor='crosshair')
         self.add_pad_btn.config(state='disabled')
-    
+
     def _place_pad_at(self, wx, wy):
         """Create a new pad at the given world coordinates."""
         pad_num = len(self.pads) + 1
@@ -3669,7 +3720,7 @@ class SitePreviewWindow(tk.Toplevel):
             all_device_indices = list(range(len(self.device_positions)))
         else:
             all_device_indices = []
-        
+
         self.pads.append({
             'label': f"Pad {pad_num}",
             'x': wx - 5,  # Center the 10ft-wide pad on click
@@ -3678,12 +3729,13 @@ class SitePreviewWindow(tk.Toplevel):
             'height_ft': 8.0,
             'assigned_devices': all_device_indices,
         })
-        
+
         self.placing_pad = False
         self.canvas.config(cursor='')
         self.add_pad_btn.config(state='normal')
         self._invalidate_world_layer()
         self.draw()
+        self._refresh_skid_hint()
     
     def _draw_pads(self):
         """Draw inverter pad rectangles on the canvas."""
@@ -5672,7 +5724,8 @@ class SitePreviewWindow(tk.Toplevel):
             self.selected_pad_idx = None
             self._invalidate_world_layer()
             self.draw()
-        
+            self._refresh_skid_hint()
+
         def _renumber_all():
             for i, pad in enumerate(self.pads):
                 pad['label'] = f"Pad {i + 1}"

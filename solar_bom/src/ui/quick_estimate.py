@@ -3487,6 +3487,14 @@ class QuickEstimate(ttk.Frame):
             self.topology_var.set(estimate_data.get('topology', 'Distributed String'))
         if hasattr(self, 'central_inv_count_var'):
             self.central_inv_count_var.set(str(estimate_data.get('central_inverter_count', '1')))
+        if hasattr(self, 'skids_var'):
+            raw_skids = estimate_data.get('skids')
+            if raw_skids is None:
+                # Migration: Central Inverter defaults to central_inv_count so AC homerun is unchanged;
+                # Centralized String stays blank (gate disabled for pre-existing estimates).
+                if estimate_data.get('topology', 'Distributed String') == 'Central Inverter':
+                    raw_skids = estimate_data.get('central_inverter_count', '1')
+            self.skids_var.set(str(raw_skids) if raw_skids is not None else '')
         if hasattr(self, 'dc_ac_ratio_var'):
             self.dc_ac_ratio_var.set(str(estimate_data.get('dc_ac_ratio', 1.25)))
         # Restore the explicit strings/device override, if one was saved.
@@ -3663,6 +3671,7 @@ class QuickEstimate(ttk.Frame):
         # Save topology and DC:AC ratio
         estimate_data['topology'] = self.topology_var.get()
         estimate_data['central_inverter_count'] = self.central_inv_count_var.get() if hasattr(self, 'central_inv_count_var') else '1'
+        estimate_data['skids'] = self.skids_var.get() if hasattr(self, 'skids_var') else ''
         estimate_data['inspect_mode'] = getattr(self, '_last_inspect_mode', False)
         estimate_data['polarity_convention'] = self.polarity_convention_var.get()
         estimate_data['lv_collection_method'] = self.lv_collection_var.get()
@@ -5096,8 +5105,9 @@ class QuickEstimate(ttk.Frame):
             totals['dc_feeder_count'] = total_feeder_count
             totals['dc_feeder_total_ft'] = total_feeder_ft
             central_inv_count = totals.get('central_inverter_count', 1)
-            totals['ac_homerun_count'] = central_inv_count
-            totals['ac_homerun_total_ft'] = central_inv_count * ac_homerun_avg_ft
+            skids = self._get_int_var(self.skids_var, central_inv_count)
+            totals['ac_homerun_count'] = skids
+            totals['ac_homerun_total_ft'] = skids * ac_homerun_avg_ft
 
         totals['_display']['use_routed'] = True
 
@@ -5416,6 +5426,15 @@ class QuickEstimate(ttk.Frame):
                 self.central_inv_count_label.pack_forget()
                 self.central_inv_count_spinbox.pack_forget()
 
+        # Show/hide skids field (Central Inverter and Centralized String)
+        if hasattr(self, 'skids_label'):
+            if topology in ('Central Inverter', 'Centralized String'):
+                self.skids_label.pack(side='left', padx=(10, 5))
+                self.skids_spinbox.pack(side='left', padx=(0, 15))
+            else:
+                self.skids_label.pack_forget()
+                self.skids_spinbox.pack_forget()
+
     def _update_strings_per_inverter(self):
         """Auto-calculate strings per inverter from DC:AC ratio and show Isc warning if needed"""
         if self._updating_spi:
@@ -5648,6 +5667,16 @@ class QuickEstimate(ttk.Frame):
         )
         self.central_inv_count_var.trace_add('write', lambda *args: (self._mark_stale(), self._schedule_autosave()))
         # Hidden by default — shown when topology is Central Inverter
+
+        # Skids count (AC-output units; visible for Central Inverter and Centralized String)
+        self.skids_label = ttk.Label(topology_row, text="Skids:")
+        self.skids_var = tk.StringVar(value='')
+        self.skids_spinbox = ttk.Spinbox(
+            topology_row, from_=1, to=200,
+            textvariable=self.skids_var, width=4
+        )
+        self.skids_var.trace_add('write', lambda *args: (self._mark_stale(), self._schedule_autosave()))
+        # Hidden by default — shown when topology is Central Inverter or Centralized String
 
         # Isc warning label (hidden by default)
         self.isc_warning_label = ttk.Label(topology_row, text="", foreground='red')
@@ -7518,8 +7547,9 @@ class QuickEstimate(ttk.Frame):
             totals['dc_feeder_total_ft'] = total_feeder_ft
             central_inv_count = self._get_int_var(self.central_inv_count_var, 1)
             totals['central_inverter_count'] = central_inv_count
-            totals['ac_homerun_count'] = central_inv_count
-            totals['ac_homerun_total_ft'] = central_inv_count * ac_homerun_avg_ft
+            skids = self._get_int_var(self.skids_var, central_inv_count)
+            totals['ac_homerun_count'] = skids
+            totals['ac_homerun_total_ft'] = skids * ac_homerun_avg_ft
 
         # ==================== Display Results ====================
         
@@ -8267,9 +8297,45 @@ class QuickEstimate(ttk.Frame):
                     max_length = max(max_length, len(str(cell.value)))
             ws.column_dimensions[col_letter].width = min(max_length + 3, 30)
 
+    def _check_skid_pads(self):
+        """Return (ok, message) — blocks export when placed pads don't match the skid target.
+
+        Central Inverter: target = skids (falls back to central_inv_count when blank).
+        Centralized String: target = skids only when set; blank skids → gate disabled.
+        Distributed String: always passes (no gate).
+        """
+        topology = self.topology_var.get()
+        if topology == 'Distributed String':
+            return True, ""
+
+        if topology == 'Central Inverter':
+            central_inv_count = self._get_int_var(self.central_inv_count_var, 1)
+            target = self._get_int_var(self.skids_var, central_inv_count)
+        elif topology == 'Centralized String':
+            skids_str = self.skids_var.get().strip() if hasattr(self, 'skids_var') else ''
+            if not skids_str:
+                return True, ""
+            try:
+                target = int(skids_str)
+            except ValueError:
+                return True, ""
+            if target <= 0:
+                return True, ""
+        else:
+            return True, ""
+
+        pad_count = len(self.pads)
+        if pad_count != target:
+            return False, (
+                f"Pad/skid count mismatch: {pad_count} pad{'s' if pad_count != 1 else ''} placed "
+                f"but {target} skid{'s' if target != 1 else ''} entered.\n\n"
+                "Place exactly the right number of pads in the Site Preview before exporting."
+            )
+        return True, ""
+
     def export_to_excel(self, target_filepath=None, silent=False):
         """Export the quick estimate BOM to Excel
-        
+
         Args:
             target_filepath: If provided, skip file dialog and write directly to this path.
             silent: If True, skip os.startfile and success messagebox.
@@ -8292,6 +8358,11 @@ class QuickEstimate(ttk.Frame):
                 "to a device before exporting.",
                 parent=self,
             )
+            return
+
+        ok, msg = self._check_skid_pads()
+        if not ok:
+            messagebox.showerror("Skid/Pad Mismatch", msg, parent=self)
             return
 
         if not self.selected_module:
@@ -8858,6 +8929,11 @@ class QuickEstimate(ttk.Frame):
             messagebox.showinfo("No Data", "Run Calculate Estimate first to generate preview data.")
             return
 
+        ok, msg = self._check_skid_pads()
+        if not ok:
+            messagebox.showerror("Skid/Pad Mismatch", msg, parent=self)
+            return
+
         def clean_fn(s):
             return "".join(c for c in s if c.isalnum() or c in (' ', '-', '_')).strip()
 
@@ -9229,6 +9305,11 @@ class QuickEstimate(ttk.Frame):
                 "to a device before exporting.",
                 parent=self,
             )
+            return
+
+        ok, msg = self._check_skid_pads()
+        if not ok:
+            messagebox.showerror("Skid/Pad Mismatch", msg, parent=self)
             return
 
         if not self.selected_module:
