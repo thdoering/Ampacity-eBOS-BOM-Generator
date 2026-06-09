@@ -1533,6 +1533,7 @@ class QuickEstimate(ttk.Frame):
         
         # Storage for combo vars and override tracking
         self._ws_lv_combos = {}    # {(string_count, cable_type): tk.StringVar}
+        self._ws_spacing_combos = {}    # {string_count: tk.StringVar}
         self._ws_feeder_var = tk.StringVar(value=self.wire_sizing.get('dc_feeder', ''))
         self._ws_homerun_var = tk.StringVar(value=self.wire_sizing.get('ac_homerun', ''))
         self._ws_dc_feeder_blanket_var = tk.BooleanVar(value=self.wire_sizing.get('dc_feeder_blanket_enabled', False))
@@ -2054,10 +2055,15 @@ class QuickEstimate(ttk.Frame):
 
         for sc in active_counts:
             isc_total = sc * module_isc
+            # Resolve entry using int-or-str lookup to avoid creating a duplicate
+            # int-keyed entry that would shadow the string-keyed one from a JSON load.
+            entry = by_sc.get(sc) or by_sc.get(str(sc))
+            if entry is None:
+                entry = {}
+                by_sc[sc] = entry
             for cable_type in ('harness', 'extender', 'whip'):
                 new_gauge = self._autosize_for_cable(cable_type, isc_total, 0, sc)
                 if not overrides.get(f"{sc}_{cable_type}"):
-                    entry = by_sc.setdefault(sc, {})
                     entry[cable_type] = new_gauge
 
         if topology in ('Centralized String', 'Central Inverter'):
@@ -2184,19 +2190,21 @@ class QuickEstimate(ttk.Frame):
         for widget in self._ws_rows_frame.winfo_children():
             widget.destroy()
         self._ws_lv_combos.clear()
+        self._ws_spacing_combos.clear()
 
         active_counts = self._collect_active_string_counts()
         topology = self.topology_var.get() if hasattr(self, 'topology_var') else 'Distributed String'
         by_sc = self.wire_sizing.get('by_string_count', {})
         overrides = self.wire_sizing.get('user_overrides', {})
+        spacing_overrides = self.wire_sizing.get('harness_spacing_override', {})
 
-        # Build LV rows (harness/extender/whip per string count)
+        # Build LV rows (harness/extender/whip + spacing per string count)
         for sc in active_counts:
             row_frame = ttk.Frame(self._ws_rows_frame)
             row_frame.pack(fill='x', pady=1)
 
             any_overridden = any(
-                overrides.get(f"{sc}_{ct}") for ct in ('harness', 'extender', 'whip')
+                overrides.get(f"{sc}_{ct}") for ct in ('harness', 'extender', 'whip', 'spacing')
             )
             sc_lbl = (
                 tk.Label(row_frame, text=f"{sc}-str", width=7, background='#ffffaa')
@@ -2204,10 +2212,10 @@ class QuickEstimate(ttk.Frame):
                 else ttk.Label(row_frame, text=f"{sc}-str", width=7)
             )
             sc_lbl.pack(side='left')
-            
+
             # Get current sizes from wire_sizing dict (int or str key)
             entry = by_sc.get(sc) or by_sc.get(str(sc)) or {}
-            
+
             for cable_type in ('harness', 'extender', 'whip'):
                 current_val = entry.get(cable_type, '10 AWG')
                 var = tk.StringVar(value=current_val)
@@ -2217,12 +2225,33 @@ class QuickEstimate(ttk.Frame):
                 )
                 combo.pack(side='left', padx=2)
                 self.disable_combobox_scroll(combo)
-                
+
                 # Store reference
                 self._ws_lv_combos[(sc, cable_type)] = var
-                
+
                 # Bind change handler with closure
                 var.trace_add('write', lambda *a, s=sc, ct=cable_type: self._on_lv_size_changed(s, ct))
+
+            # Spacing override combo — sorted spacings from the harness library
+            avail_sp = self._get_available_harness_spacings(sc)
+            sp_values = [f"{int(sp)}'" for sp in avail_sp]
+            cur_sp_raw = spacing_overrides.get(sc) or spacing_overrides.get(str(sc))
+            if cur_sp_raw is None and avail_sp:
+                cur_sp_raw = avail_sp[0]
+            cur_sp_str = f"{int(cur_sp_raw)}'" if cur_sp_raw is not None else ''
+            sp_var = tk.StringVar(value=cur_sp_str)
+            if len(sp_values) > 1:
+                sp_combo = ttk.Combobox(
+                    row_frame, textvariable=sp_var,
+                    values=sp_values, state='readonly', width=5
+                )
+                sp_combo.pack(side='left', padx=2)
+                self.disable_combobox_scroll(sp_combo)
+                sp_var.trace_add('write', lambda *a, s=sc: self._on_harness_spacing_changed(s))
+            elif sp_values:
+                ttk.Label(row_frame, textvariable=sp_var, foreground='gray',
+                          width=5).pack(side='left', padx=2)
+            self._ws_spacing_combos[sc] = sp_var
 
             # Sizing detail label (uses harness result as representative for the row)
             result = self._wss_autosize_results.get((sc, 'harness'))
@@ -2361,6 +2390,7 @@ class QuickEstimate(ttk.Frame):
         self.wire_sizing['temp_rating'] = temp
         self.wire_sizing['feeder_material'] = material
         self.wire_sizing['user_overrides'] = {}  # Clear all overrides
+        self.wire_sizing.pop('harness_spacing_override', None)  # Clear spacing overrides
 
         module_isc = self.selected_module.isc if self.selected_module else 13.0
 
@@ -2395,6 +2425,51 @@ class QuickEstimate(ttk.Frame):
         # Rebuild the table UI with new values
         self.refresh_wire_sizing_table()
         self._mark_dirty()
+
+    def _get_available_harness_spacings(self, string_count):
+        """Return sorted list of string_spacing_ft values from the harness library
+        that have at least one real part for string_count, filtered to those >=
+        the length-derived snap so the dropdown never offers an undersized option.
+        """
+        import os as _os, json as _json
+        cur = _os.path.dirname(_os.path.abspath(__file__))
+        root = _os.path.dirname(_os.path.dirname(cur))
+        lib_path = _os.path.join(root, 'data', 'harness_library.json')
+        try:
+            with open(lib_path) as _f:
+                lib = _json.load(_f)
+        except Exception:
+            return []
+
+        spacings = set()
+        for pn, spec in lib.items():
+            if pn.startswith('_comment_'):
+                continue
+            if spec.get('num_strings') == string_count:
+                sp = spec.get('string_spacing_ft')
+                if sp is not None:
+                    spacings.add(float(sp))
+
+        _, length_snap, _ = self._compute_harness_spacing()
+        return sorted(sp for sp in spacings if sp >= length_snap)
+
+    def _on_harness_spacing_changed(self, string_count):
+        """Handle user changing the spacing override for a harness string count."""
+        if getattr(self, '_refreshing_ws_table', False):
+            return
+        if string_count not in self._ws_spacing_combos:
+            return
+        raw = self._ws_spacing_combos[string_count].get()
+        try:
+            new_spacing = float(raw.rstrip("'′ "))
+        except (ValueError, AttributeError):
+            return
+        spacing_ov = self.wire_sizing.setdefault('harness_spacing_override', {})
+        spacing_ov[string_count] = new_spacing
+        overrides = self.wire_sizing.setdefault('user_overrides', {})
+        overrides[f"{string_count}_spacing"] = True
+        self._mark_dirty()
+        self.refresh_wire_sizing_table()
 
     def _on_lv_size_changed(self, string_count, cable_type):
         """Handle user changing a harness/extender/whip size in the wire sizing table."""
@@ -2730,6 +2805,131 @@ class QuickEstimate(ttk.Frame):
         result = best or '10 AWG'
         return result
 
+    def _compute_harness_spacing(self):
+        """Return (string_spacing_ft, target_spacing, slack_ft) for the current module selection.
+
+        target_spacing is the harness catalogue bucket this spacing snaps up to.
+        slack_ft is target_spacing minus the raw calculated spacing (may be negative if the
+        string is longer than the largest available bucket).
+        """
+        available_spacings = [26.0, 32.0, 102.0, 113.0, 122.0, 133.0]
+        mps = self._get_int_var(self.modules_per_string_var, 28)
+        module_width_mm = self.selected_module.width_mm if self.selected_module else 1134
+        # 20 mm default inter-module gap
+        string_spacing_ft = (mps * module_width_mm + (mps - 1) * 20) / 1000 * 3.28084
+        target_spacing = max(available_spacings)
+        for sp in sorted(available_spacings):
+            if sp >= string_spacing_ft:
+                target_spacing = sp
+                break
+        slack_ft = round(target_spacing - string_spacing_ft, 1)
+        return string_spacing_ft, target_spacing, slack_ft
+
+    def _compute_harness_slack_ranges(self):
+        """Return {harness_size: (min_slack_ft, max_slack_ft)} for each harness size in use.
+
+        Accounts for the motor-spanning segment: the trunk segment that crosses the motor
+        gap is shorter by motor_gap_ft, yielding less slack (possibly negative).
+
+        min == max means all segments have uniform slack (no motor-crossing segment).
+        Multi-template edge case: ranges span all contributing template geometries.
+        """
+        lv_method = self.lv_collection_var.get() if hasattr(self, 'lv_collection_var') else 'Wire Harness'
+        if lv_method == 'Trunk Bus':
+            return {}
+
+        available_spacings = [26.0, 32.0, 102.0, 113.0, 122.0, 133.0]
+        m_to_ft = 3.28084
+        slack_ranges = {}  # size → (min_slack, max_slack)
+
+        for group in getattr(self, 'groups', []):
+            for seg in group.get('segments', []):
+                if seg.get('quantity', 0) <= 0:
+                    continue
+
+                harness_sizes = self._get_harness_sizes(seg)
+                if not harness_sizes:
+                    continue
+
+                # Per-template module geometry (fall back to selected module)
+                seg_mps = self._get_int_var(self.modules_per_string_var, 28)
+                seg_width_mm = self.selected_module.width_mm if self.selected_module else 1134
+                motor_after_string = None
+                motor_gap_ft = 0.0
+
+                ref = seg.get('template_ref')
+                if ref and ref in self.enabled_templates:
+                    tdata = self.enabled_templates[ref]
+
+                    seg_mod = tdata.get('module_spec', {})
+                    if seg_mod:
+                        w = seg_mod.get('width_mm')
+                        if w:
+                            seg_width_mm = w
+                    mps_t = tdata.get('modules_per_string')
+                    if mps_t:
+                        seg_mps = mps_t
+
+                    has_motor = tdata.get('has_motor', True)
+                    if has_motor:
+                        mgm = tdata.get('motor_gap_m', 1.0)
+                        motor_gap_ft = mgm * m_to_ft
+                        placement = tdata.get('motor_placement_type', 'between_strings')
+                        if placement == 'between_strings':
+                            pos_after = tdata.get('motor_position_after_string', None)
+                            if pos_after:  # non-zero = explicit 1-based position
+                                motor_after_string = pos_after - 1
+                            else:
+                                motor_after_string = 0  # default: motor at top
+                        elif placement == 'middle_of_string':
+                            idx = tdata.get('motor_string_index', 1)
+                            motor_after_string = max(0, idx - 1)
+
+                # String length — same formula as _compute_harness_spacing
+                seg_str_len_ft = (seg_mps * seg_width_mm + (seg_mps - 1) * 20) / 1000 * m_to_ft
+
+                # Rated (snapped) spacing for this template's geometry
+                seg_rated = max(available_spacings)
+                for sp in sorted(available_spacings):
+                    if sp >= seg_str_len_ft:
+                        seg_rated = sp
+                        break
+
+                # Walk harness positions; check each for motor-spanning segment
+                _sp_ov = self.wire_sizing.get('harness_spacing_override', {})
+                p_cursor = 0
+                for h_size in harness_sizes:
+                    p_start = p_cursor
+
+                    spans_motor = (
+                        h_size >= 2
+                        and motor_after_string is not None
+                        and p_start <= motor_after_string <= p_start + h_size - 2
+                    )
+
+                    # Effective spacing: user override wins over length-snap
+                    _ov_val = _sp_ov.get(h_size) or _sp_ov.get(str(h_size))
+                    effective_rated = float(_ov_val) if _ov_val is not None else seg_rated
+
+                    normal_slack = round(effective_rated - seg_str_len_ft, 1)
+                    if spans_motor:
+                        motor_slack = round(effective_rated - (seg_str_len_ft + motor_gap_ft), 1)
+                        seg_min = min(motor_slack, normal_slack)
+                        seg_max = max(motor_slack, normal_slack)
+                    else:
+                        seg_min = normal_slack
+                        seg_max = normal_slack
+
+                    if h_size in slack_ranges:
+                        ex_min, ex_max = slack_ranges[h_size]
+                        slack_ranges[h_size] = (min(ex_min, seg_min), max(ex_max, seg_max))
+                    else:
+                        slack_ranges[h_size] = (seg_min, seg_max)
+
+                    p_cursor += h_size
+
+        return slack_ranges
+
     def lookup_part_and_price(self, item_type, **kwargs):
         """Look up part number and unit price for a BOM item.
         item_type: 'harness', 'whip', 'extender'
@@ -2751,12 +2951,6 @@ class QuickEstimate(ttk.Frame):
                 polarity = kwargs.get('polarity', 'positive')
                 qty = kwargs.get('qty', 1)
 
-                # Calculate string spacing from module width and modules per string
-                mps = self._get_int_var(self.modules_per_string_var, 28)
-                module_width_mm = self.selected_module.width_mm if self.selected_module else 1134
-                # Use 0.02m (20mm) as default module gap spacing
-                string_spacing_ft = (mps * module_width_mm + (mps - 1) * 20) / 1000 * 3.28084
-
                 # Load harness library
                 current_dir = os.path.dirname(os.path.abspath(__file__))
                 project_root = os.path.dirname(os.path.dirname(current_dir))
@@ -2764,12 +2958,13 @@ class QuickEstimate(ttk.Frame):
                 with open(lib_path, 'r') as f:
                     harness_library = json.load(f)
 
-                available_spacings = [26.0, 102.0, 113.0, 122.0, 133.0]
-                target_spacing = max(available_spacings)
-                for sp in sorted(available_spacings):
-                    if sp >= string_spacing_ft:
-                        target_spacing = sp
-                        break
+                string_spacing_ft, target_spacing, _ = self._compute_harness_spacing()
+
+                # Apply per-string-count spacing override if the user has bumped this size up
+                _sp_ov = self.wire_sizing.get('harness_spacing_override', {})
+                _sp_val = _sp_ov.get(num_strings) or _sp_ov.get(str(num_strings))
+                if _sp_val is not None:
+                    target_spacing = float(_sp_val)
 
                 matches = []
                 for pn, spec in harness_library.items():
@@ -3609,9 +3804,9 @@ class QuickEstimate(ttk.Frame):
         estimate_id = f"estimate_{uuid.uuid4().hex[:8]}"
         existing_names = {e.get('name', '') for e in self.current_project.quick_estimates.values()}
         rev_num = 0
-        while f"rev{rev_num}" in existing_names:
+        while f"v{rev_num}" in existing_names:
             rev_num += 1
-        estimate_name = f"rev{rev_num}"
+        estimate_name = f"v{rev_num}"
         
         new_estimate = {
             'name': estimate_name,
@@ -4626,6 +4821,7 @@ class QuickEstimate(ttk.Frame):
         # Harnesses
         if totals.get('harnesses_by_size'):
             insert_section('HARNESSES')
+            _harness_slack_ranges = self._compute_harness_slack_ranges()
             for size in sorted(totals['harnesses_by_size'].keys(), reverse=True):
                 qty = totals['harnesses_by_size'][size]
                 pos_pn, pos_unit, pos_ext = self.lookup_part_and_price('harness', num_strings=size, polarity='positive', qty=qty)
@@ -4636,8 +4832,17 @@ class QuickEstimate(ttk.Frame):
                     iid = self.results_tree.insert('', 'end', values=('☐', f"{size}-String Harness (Pos, CU)", pos_pn, pos_desc, qty, 'ea', pos_unit, pos_ext), tags=('unchecked',))
                     iid2 = self.results_tree.insert('', 'end', values=('☐', f"{size}-String Harness (Neg, CU)", neg_pn, neg_desc, qty, 'ea', neg_unit, neg_ext), tags=('unchecked',))
                 else:
-                    insert_row(f"{size}-String Harness (Pos, CU)", pos_pn, qty, 'ea', pos_unit, pos_ext, description=pos_desc)
-                    insert_row(f"{size}-String Harness (Neg, CU)", neg_pn, qty, 'ea', neg_unit, neg_ext, description=neg_desc)
+                    _sr = _harness_slack_ranges.get(size)
+                    if _sr:
+                        _smin, _smax = _sr
+                        if _smin == _smax:
+                            slack_suffix = f" (≈{_smin}′ slack/seg)"
+                        else:
+                            slack_suffix = f" (≈{_smin}–{_smax}′ slack/seg)"
+                    else:
+                        slack_suffix = ""
+                    insert_row(f"{size}-String Harness (Pos, CU){slack_suffix}", pos_pn, qty, 'ea', pos_unit, pos_ext, description=pos_desc)
+                    insert_row(f"{size}-String Harness (Neg, CU){slack_suffix}", neg_pn, qty, 'ea', neg_unit, neg_ext, description=neg_desc)
         
         # Inline DC string fuses (Wire Harness only)
         if totals.get('inline_fuses_by_rating'):
@@ -8118,7 +8323,9 @@ class QuickEstimate(ttk.Frame):
             estimate_name = clean_filename(est_data.get('name', 'Estimate'))
         
         lv_method_tag = clean_filename(self.lv_collection_var.get() if hasattr(self, 'lv_collection_var') else 'Wire Harness')
-        suggested_filename = f"{client}_{project_name}_Ampacity Quick eBOM_{estimate_name}_{lv_method_tag}.xlsx"
+        revision = self.est_revision_var.get() if hasattr(self, 'est_revision_var') else '0'
+        date_str = datetime.now().strftime('%Y-%m-%d')
+        suggested_filename = f"{client}_{project_name}_Ampacity Quick eBOM_{estimate_name}_{lv_method_tag}_rev{revision}_{date_str}.xlsx"
         
         if target_filepath:
             filepath = target_filepath
@@ -8666,10 +8873,9 @@ class QuickEstimate(ttk.Frame):
             estimate_name = clean_fn(est_data.get('name', 'Estimate'))
 
         lv_token = clean_fn(self.lv_collection_var.get()) if hasattr(self, 'lv_collection_var') else ''
-        version = getattr(self.current_project, 'bom_revision', '0') if self.current_project else '0'
         revision = self.est_revision_var.get() if hasattr(self, 'est_revision_var') else '0'
         date_str = datetime.now().strftime('%Y-%m-%d')
-        suggested_name = f"{client}_{project_name}_Site PDF_{estimate_name}_{lv_token}_v{version}_rev{revision}_{date_str}.pdf"
+        suggested_name = f"{client}_{project_name}_Site PDF_{estimate_name}_{lv_token}_rev{revision}_{date_str}.pdf"
 
         filepath = filedialog.asksaveasfilename(
             defaultextension=".pdf",
@@ -9049,10 +9255,9 @@ class QuickEstimate(ttk.Frame):
             estimate_name = clean_fn(est_data.get('name', 'Estimate'))
 
         lv_token = clean_fn(self.lv_collection_var.get()) if hasattr(self, 'lv_collection_var') else ''
-        version = getattr(self.current_project, 'bom_revision', '0') if self.current_project else '0'
         revision = self.est_revision_var.get() if hasattr(self, 'est_revision_var') else '0'
         date_str = datetime.now().strftime('%Y-%m-%d')
-        suggested_name = f"{client}_{project_name}_String Allocation_{estimate_name}_{lv_token}_v{version}_rev{revision}_{date_str}.pdf"
+        suggested_name = f"{client}_{project_name}_String Allocation_{estimate_name}_{lv_token}_rev{revision}_{date_str}.pdf"
 
         filepath = filedialog.asksaveasfilename(
             defaultextension=".pdf",

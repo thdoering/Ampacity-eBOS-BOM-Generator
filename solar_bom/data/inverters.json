@@ -866,5 +866,36 @@
     "temperature_range": null,
     "altitude_limit_m": null,
     "communication_protocol": null
+  },
+  "TMEIC- Solar Ware Ninja PVU-L0840URN": {
+    "manufacturer": "TMEIC- Solar Ware Ninja",
+    "model": "PVU-L0840URN",
+    "inverter_type": "Central",
+    "rated_power_kw": 840.0,
+    "max_dc_power_kw": 1008.0,
+    "max_efficiency": 98.0,
+    "mppt_channels": [
+      {
+        "max_input_current": 1900.0,
+        "min_voltage": 915.0,
+        "max_voltage": 1300.0,
+        "max_power": 1008000.0,
+        "num_string_inputs": 1
+      }
+    ],
+    "mppt_configuration": "Independent",
+    "max_dc_voltage": 1500.0,
+    "startup_voltage": 915.0,
+    "nominal_ac_voltage": 630.0,
+    "max_ac_current": 770.0,
+    "power_factor": 0.99,
+    "dimensions_mm": [
+      1000,
+      600,
+      300
+    ],
+    "weight_kg": 75.0,
+    "ip_rating": "IP65",
+    "max_short_circuit_current": 500.0
   }
 }

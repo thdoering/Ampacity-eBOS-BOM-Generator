@@ -1974,7 +1974,8 @@ class BOMGenerator:
                     fuse_text = "Fused, "
             
             # Use target spacing (next largest available) instead of raw calculated value
-            available_spacings = [26.0, 102.0, 113.0, 122.0, 133.0]
+            # First Solar uses 26'/32', Standard uses 102/113/122/133
+            available_spacings = [26.0, 32.0, 102.0, 113.0, 122.0, 133.0]
             target_spacing = string_spacing_ft  # fallback to raw
             for spacing in sorted(available_spacings):
                 if spacing >= string_spacing_ft:
@@ -2025,24 +2026,34 @@ class BOMGenerator:
             print(f"Error calculating string spacing: {e}")
             return 0
 
-    def find_matching_harness_part_number(self, num_strings, polarity, calculated_spacing_ft, trunk_cable_size=None):
-        """Find matching harness part number from library"""
+    def find_matching_harness_part_number(self, num_strings, polarity, calculated_spacing_ft,
+                                           trunk_cable_size=None, spacing_override_by_string_count=None):
+        """Find matching harness part number from library.
+
+        spacing_override_by_string_count: optional {str_count: spacing_ft} map; when an entry
+        exists for num_strings the override value is used directly instead of the length snap.
+        """
         try:
             matches = []
-            
+
             # Available harness spacing options based on your library
-            # First Solar uses 26', Standard uses 102, 113, 122, 133
-            available_spacings = [26.0, 102.0, 113.0, 122.0, 133.0]
-            
-            # Find the next largest available spacing
-            target_spacing = None
-            for spacing in sorted(available_spacings):
-                if spacing >= calculated_spacing_ft:
-                    target_spacing = spacing
-                    break
-            
-            if target_spacing is None:
-                target_spacing = max(available_spacings)  # Use largest if calculated is bigger than all
+            # First Solar uses 26'/32', Standard uses 102/113/122/133
+            available_spacings = [26.0, 32.0, 102.0, 113.0, 122.0, 133.0]
+
+            # Resolve target spacing: override wins over length snap
+            ov_map = spacing_override_by_string_count or {}
+            ov_val = ov_map.get(num_strings) or ov_map.get(str(num_strings))
+            if ov_val is not None:
+                target_spacing = float(ov_val)
+            else:
+                # Length-only snap (original behavior)
+                target_spacing = None
+                for spacing in sorted(available_spacings):
+                    if spacing >= calculated_spacing_ft:
+                        target_spacing = spacing
+                        break
+                if target_spacing is None:
+                    target_spacing = max(available_spacings)  # Use largest if calculated is bigger than all
             
             # Search for matching harnesses
             for part_number, spec in self.harness_library.items():
