@@ -36,6 +36,8 @@ class QuickEstimate(ttk.Frame):
         self.device_feeder_sizes = {}  # {device_idx: "cable_size"} per-device feeder/homerun size
         self.device_feeder_parallel_counts = {}  # {device_idx: int} per-device parallel sets per pole
         self.device_x_offsets = {}  # {device_idx: float} cumulative E-W nudge in feet
+        self.device_y_offsets = {}  # {device_idx: float} cumulative N-S nudge in feet
+        self.device_position_overrides = {}  # {device_idx: 'north'|'middle'|'south'} effective zone after N-S nudging
         self.last_combiner_assignments = []  # Structured CB data for Device Configurator
         self.last_si_assignments = []        # Structured SI data for Device Configurator
         self._harness_combos = []  # Track harness combo widgets for LV collection disabling
@@ -1125,9 +1127,11 @@ class QuickEstimate(ttk.Frame):
             grp_row_spacing = group.get('row_spacing_ft', 20.0)
             local_idx = 0
             for seg in group['segments']:
+                dims = self._get_estimate_tracker_dims_ft(seg.get('template_ref'))
+                t_half_width = dims[0] / 2 if dims else 0.0
                 for _ in range(seg['quantity']):
                     local_x_offset = local_idx * grp_row_spacing
-                    tracker_world_x.append(group_x + local_x_offset)
+                    tracker_world_x.append(group_x + local_x_offset + t_half_width)
                     tracker_world_y.append(group_y + local_x_offset * driveline_tan)
                     tracker_group.append(grp_idx)
                     local_idx += 1
@@ -1185,6 +1189,9 @@ class QuickEstimate(ttk.Frame):
                     if frac < 0.01:  # integer multiple = on a tracker, not in a gap
                         device_x += grp_pitch / 2
 
+            # Apply E-W nudge offset to device X
+            device_x += self.device_x_offsets.get(inv_idx, 0.0)
+
             # Compute device Y from average of its trackers' Y positions + device_position offset
             inv_tracker_ys = []
             for entry in harness_map:
@@ -1192,7 +1199,10 @@ class QuickEstimate(ttk.Frame):
                 if tidx < len(tracker_world_y) and tracker_group[tidx] == primary_grp:
                     inv_tracker_ys.append(tracker_world_y[tidx])
             device_y = (min(inv_tracker_ys) + max(inv_tracker_ys)) / 2.0 if inv_tracker_ys else 0.0
-            
+
+            # Apply N-S nudge offset to device Y
+            device_y += self.device_y_offsets.get(inv_idx, 0.0)
+
             device_info.append((device_x, device_y, device_position))
         
         def get_ns_base_offset(device_position):
@@ -1299,8 +1309,10 @@ class QuickEstimate(ttk.Frame):
 
             local_idx = 0
             for seg in group['segments']:
+                dims = self._get_estimate_tracker_dims_ft(seg.get('template_ref'))
+                t_half_width = dims[0] / 2 if dims else 0.0
                 for _ in range(seg['quantity']):
-                    tracker_world_x.append(group_x + local_idx * row_spacing_ft)
+                    tracker_world_x.append(group_x + local_idx * row_spacing_ft + t_half_width)
                     tracker_grp.append(grp_idx)
                     local_idx += 1
 
@@ -1370,7 +1382,9 @@ class QuickEstimate(ttk.Frame):
                 dev_y = group_y + tracker_length_ft + 5.0
             else:
                 dev_y = group_y + tracker_length_ft / 2.0
-            
+
+            dev_y += self.device_y_offsets.get(inv_idx, 0.0)
+
             device_positions.append((dev_x, dev_y, primary_grp))
         
         # Build device -> pad lookup
@@ -1491,28 +1505,10 @@ class QuickEstimate(ttk.Frame):
         ws_frame.pack(side='left', fill='y', padx=(10, 0))
         self._ws_frame = ws_frame
         
-        # Row 0: Temp rating, Material toggle, Reset button
+        # Row 0: Reset button
         controls_row = ttk.Frame(ws_frame)
         controls_row.pack(fill='x', pady=(0, 5))
-        
-        ttk.Label(controls_row, text="Temp:").pack(side='left', padx=(0, 2))
-        self._ws_temp_var = tk.StringVar(value=self.wire_sizing.get('temp_rating', '90C'))
-        temp_combo = ttk.Combobox(
-            controls_row, textvariable=self._ws_temp_var,
-            values=['60C', '75C', '90C'], state='readonly', width=4
-        )
-        temp_combo.pack(side='left', padx=(0, 8))
-        self.disable_combobox_scroll(temp_combo)
-        
-        ttk.Label(controls_row, text="Feeder:").pack(side='left', padx=(0, 2))
-        self._ws_material_var = tk.StringVar(value=self.wire_sizing.get('feeder_material', 'aluminum'))
-        material_combo = ttk.Combobox(
-            controls_row, textvariable=self._ws_material_var,
-            values=['aluminum', 'copper'], state='readonly', width=9
-        )
-        material_combo.pack(side='left', padx=(0, 8))
-        self.disable_combobox_scroll(material_combo)
-        
+
         ttk.Button(controls_row, text="Reset", width=5,
                     command=self._reset_wire_sizing_to_recommended).pack(side='left')
         
@@ -1544,9 +1540,6 @@ class QuickEstimate(ttk.Frame):
         # Available LV cable sizes (copper AWG only — pre-made assemblies)
         self._ws_lv_sizes = CABLE_SIZE_ORDER  # ['10 AWG' through '4/0 AWG']
         
-        # Traces for temp and material changes
-        self._ws_temp_var.trace_add('write', lambda *a: self._on_wire_sizing_setting_changed())
-        self._ws_material_var.trace_add('write', lambda *a: self._on_wire_sizing_setting_changed())
         self._ws_dc_feeder_parallel_var.trace_add('write', lambda *a: self._on_feeder_parallel_changed('dc'))
         self._ws_ac_homerun_parallel_var.trace_add('write', lambda *a: self._on_feeder_parallel_changed('ac'))
 
@@ -2138,13 +2131,6 @@ class QuickEstimate(ttk.Frame):
             f"Required: {result['required_ampacity']:.1f} A  ({req_label})\n"
             f"Ampacity: {amp_pass}   VD: {vd_str}"
         )
-
-    def _on_wire_sizing_setting_changed(self):
-        """Handle change to temp rating or feeder material — recalc recommendations."""
-        self.wire_sizing['temp_rating'] = self._ws_temp_var.get()
-        self.wire_sizing['feeder_material'] = self._ws_material_var.get()
-        self._reset_wire_sizing_to_recommended()
-        self._mark_dirty()
 
     def _on_feeder_parallel_changed(self, feeder_type):
         """Handle change to DC feeder or AC homerun parallel set count."""
@@ -3295,7 +3281,7 @@ class QuickEstimate(ttk.Frame):
         elif device_position == 'south':
             target_y = tracker_length_ft + device_offset_ft
         else:  # middle
-            target_y = motor_y_ft
+            target_y = motor_y_ft + motor_gap_ft / 2
 
         # Shift target for far-away trackers (signed: positive = CB south)
         target_y += target_y_offset
@@ -3608,6 +3594,14 @@ class QuickEstimate(ttk.Frame):
         saved_x_offsets = estimate_data.get('device_x_offsets', {})
         self.device_x_offsets = {int(k): float(v) for k, v in saved_x_offsets.items()}
 
+        # Load per-device N-S nudge offsets (convert str keys back to int)
+        saved_y_offsets = estimate_data.get('device_y_offsets', {})
+        self.device_y_offsets = {int(k): float(v) for k, v in saved_y_offsets.items()}
+
+        # Load per-device effective device_position overrides
+        saved_pos_overrides = estimate_data.get('device_position_overrides', {})
+        self.device_position_overrides = {int(k): v for k, v in saved_pos_overrides.items()}
+
         # Load allocation lock state
         self.allocation_locked = estimate_data.get('allocation_locked', False)
         self.locked_allocation_result = estimate_data.get('locked_allocation_result', None)
@@ -3705,6 +3699,12 @@ class QuickEstimate(ttk.Frame):
 
         # Save per-device E-W nudge offsets (convert int keys to str for JSON)
         estimate_data['device_x_offsets'] = {str(k): v for k, v in self.device_x_offsets.items()}
+
+        # Save per-device N-S nudge offsets (convert int keys to str for JSON)
+        estimate_data['device_y_offsets'] = {str(k): v for k, v in self.device_y_offsets.items()}
+
+        # Save per-device effective device_position overrides
+        estimate_data['device_position_overrides'] = {str(k): v for k, v in self.device_position_overrides.items()}
 
         # Save allocation lock state
         estimate_data['allocation_locked'] = self.allocation_locked
@@ -3900,22 +3900,33 @@ class QuickEstimate(ttk.Frame):
 
     def _auto_unlock_allocation(self):
         """Unlock allocation if locked, with a user notification.
-        
+
         Called when structural changes (inverter, topology, segments, groups)
-        invalidate a locked allocation.
+        invalidate a locked allocation.  The state change is immediate; the
+        messagebox is deferred via after_idle so it never pops from inside a
+        Tkinter variable-write trace (which would pump the event loop mid-
+        interaction and cause spinbox value creep).
         """
         if not self.allocation_locked:
             return
-        
+
         self.allocation_locked = False
         self.locked_allocation_result = None
-        
-        messagebox.showinfo(
-            "Allocation Unlocked",
-            "The allocation lock has been released because the estimate structure changed.\n\n"
-            "Re-run Calculate Estimate and lock again from the Site Preview if needed.",
-            parent=self
-        )
+
+        if getattr(self, '_unlock_notice_pending', False):
+            return
+        self._unlock_notice_pending = True
+
+        def _show_notice():
+            self._unlock_notice_pending = False
+            messagebox.showinfo(
+                "Allocation Unlocked",
+                "The allocation lock has been released because the estimate structure changed.\n\n"
+                "Re-run Calculate Estimate and lock again from the Site Preview if needed.",
+                parent=self
+            )
+
+        self.after_idle(_show_notice)
 
     def _reconcile_locked_allocation(self):
         """Drop connections for tracker indices that no longer exist.
@@ -4050,6 +4061,9 @@ class QuickEstimate(ttk.Frame):
         self.pads.clear()
         self.device_names.clear()
         self.device_feeder_sizes.clear()
+        self.device_x_offsets.clear()
+        self.device_y_offsets.clear()
+        self.device_position_overrides.clear()
         self.last_combiner_assignments = []
         self.last_si_assignments = []
         self.allocation_locked = False
@@ -4301,6 +4315,8 @@ class QuickEstimate(ttk.Frame):
             device_feeder_sizes=self.device_feeder_sizes,
             device_feeder_parallel_counts=self.device_feeder_parallel_counts,
             device_x_offsets=self.device_x_offsets,
+            device_y_offsets=self.device_y_offsets,
+            device_position_overrides=self.device_position_overrides,
             measurements=self.measurements,
             corridors=self.corridors
         )
@@ -4313,7 +4329,9 @@ class QuickEstimate(ttk.Frame):
             self.device_names = dict(preview.device_names)  # Save renamed devices back
             self.device_feeder_sizes = dict(preview.device_feeder_sizes)  # Save feeder sizes back
             self.device_feeder_parallel_counts = dict(preview.device_feeder_parallel_counts)  # Save parallel counts back
-            self.device_x_offsets = dict(preview.device_x_offsets)  # Save nudge offsets back
+            self.device_x_offsets = dict(preview.device_x_offsets)  # Save E-W nudge offsets back
+            self.device_y_offsets = dict(preview.device_y_offsets)  # Save N-S nudge offsets back
+            self.device_position_overrides = dict(preview.device_position_overrides)  # Save effective zone overrides back
             self.measurements = list(preview.measurements)  # Save measurements back
             self.corridors = list(preview.corridors)  # Save corridors back
 
@@ -4321,6 +4339,7 @@ class QuickEstimate(ttk.Frame):
             if hasattr(self, 'last_combiner_assignments') and self.last_combiner_assignments:
                 self._refresh_combiner_results_from_assignments()
 
+            self._update_distance_hints()
             self._schedule_autosave()
             self._site_preview_window = None
             preview.destroy()
@@ -4390,6 +4409,7 @@ class QuickEstimate(ttk.Frame):
                 text=f"✓ Using routed distances from {num_pads} pad{'s' if num_pads > 1 else ''} (DC feeder avg ignored)",
                 foreground='green'
             )
+            self._update_ac_homerun_visibility()
             return
 
         topology = self.topology_var.get() if hasattr(self, 'topology_var') else ''
@@ -4401,6 +4421,28 @@ class QuickEstimate(ttk.Frame):
             self.distance_hint_label.config(text="(No pads placed — DC feeder distance set to 0; add pads for routed calc)", foreground='gray')
         else:
             self.distance_hint_label.config(text="", foreground='gray')
+        self._update_ac_homerun_visibility()
+
+    def _update_ac_homerun_visibility(self):
+        """Show/hide the Avg AC Homerun input for Distributed String topology with pads.
+
+        When Distributed String pads exist, routed distances supersede the manual
+        value, so the field is hidden to avoid confusion.  All other cases leave it
+        visible and editable.
+        """
+        if not hasattr(self, '_ac_homerun_label'):
+            return
+        topology = self.topology_var.get() if hasattr(self, 'topology_var') else ''
+        hide = (topology == 'Distributed String' and bool(self.pads))
+        if hide:
+            self._ac_homerun_label.pack_forget()
+            self._ac_homerun_spin.pack_forget()
+        else:
+            # Re-pack before the hint label (which was packed after the spinbox)
+            self._ac_homerun_label.pack(side='left', padx=(0, 5),
+                                        before=self.distance_hint_label)
+            self._ac_homerun_spin.pack(side='left', padx=(0, 15),
+                                       before=self.distance_hint_label)
 
     def _get_estimate_tracker_dims_ft(self, template_ref):
         """Get (width_ft, length_ft) for a tracker from its template reference.
@@ -5727,10 +5769,12 @@ class QuickEstimate(ttk.Frame):
         distance_row = ttk.Frame(settings_frame)
         distance_row.pack(fill='x', pady=(5, 0))
         
-        ttk.Label(distance_row, text="Avg AC Homerun (ft):").pack(side='left', padx=(0, 5))
+        self._ac_homerun_label = ttk.Label(distance_row, text="Avg AC Homerun (ft):")
+        self._ac_homerun_label.pack(side='left', padx=(0, 5))
         self.ac_homerun_distance_var = tk.StringVar(value='50')
-        ttk.Spinbox(distance_row, from_=0, to=5000, increment=50,
-                     textvariable=self.ac_homerun_distance_var, width=8).pack(side='left', padx=(0, 15))
+        self._ac_homerun_spin = ttk.Spinbox(distance_row, from_=0, to=5000, increment=50,
+                                             textvariable=self.ac_homerun_distance_var, width=8)
+        self._ac_homerun_spin.pack(side='left', padx=(0, 15))
         self.ac_homerun_distance_var.trace_add('write', lambda *args: (self._mark_stale(), self._schedule_autosave()))
 
         # Topology hint label
@@ -7391,6 +7435,11 @@ class QuickEstimate(ttk.Frame):
                 seg_info = tracker_seg_map[tidx]
                 seg = seg_info['seg']
                 device_position = seg_info['device_position']
+                # Use per-device zone override (set by N-S nudging) for the adjusted
+                # extenders so device-side string selection flips when the CB crosses
+                # a zone boundary.  base_pairs must still use the original device_position
+                # to correctly cancel what the bulk loop added.
+                eff_device_position = self.device_position_overrides.get(inv_idx, device_position)
 
                 if tidx in split_details:
                     for portion in split_details[tidx]['portions']:
@@ -7399,13 +7448,13 @@ class QuickEstimate(ttk.Frame):
                         string_offset = portion.get('start_pos', 0)
                         h_override = portion['harnesses']
 
-                        # Base extenders (no offset)
+                        # Base extenders (no offset) — must use original device_position
                         base_pairs = self.calculate_extender_lengths_per_segment(
                             seg, device_position, string_offset,
                             harness_sizes_override=h_override)
-                        # Recomputed extenders with signed N-S shift
+                        # Recomputed extenders with signed N-S shift and effective zone
                         adjusted_pairs = self.calculate_extender_lengths_per_segment(
-                            seg, device_position, string_offset,
+                            seg, eff_device_position, string_offset,
                             target_y_offset=signed_ns,
                             harness_sizes_override=h_override)
                         portion_harness_sizes = portion['harnesses']
@@ -7436,7 +7485,7 @@ class QuickEstimate(ttk.Frame):
                     base_pairs = self.calculate_extender_lengths_per_segment(
                         seg, device_position)
                     adjusted_pairs = self.calculate_extender_lengths_per_segment(
-                        seg, device_position, target_y_offset=signed_ns)
+                        seg, eff_device_position, target_y_offset=signed_ns)
                     harness_sizes = self._get_harness_sizes(seg)
 
                     for pair_idx in range(len(base_pairs)):
@@ -8995,7 +9044,9 @@ class QuickEstimate(ttk.Frame):
             device_names=self.device_names,
             device_feeder_sizes=self.device_feeder_sizes,
             device_feeder_parallel_counts=self.device_feeder_parallel_counts,
-            device_x_offsets=self.device_x_offsets
+            device_x_offsets=self.device_x_offsets,
+            device_y_offsets=self.device_y_offsets,
+            device_position_overrides=self.device_position_overrides
         )
         temp_preview.withdraw()  # Keep it hidden
 

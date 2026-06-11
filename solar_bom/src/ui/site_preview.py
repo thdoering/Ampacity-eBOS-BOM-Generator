@@ -11,12 +11,13 @@ class SitePreviewWindow(tk.Toplevel):
     def __init__(self, parent, inv_summary, topology, colors, groups, enabled_templates, row_spacing_ft,
                  num_devices=0, device_label='CB', initial_inspect=False, pads=None, device_names=None,
                  device_feeder_sizes=None, device_feeder_parallel_counts=None, measurements=None,
-                 device_x_offsets=None, corridors=None):
+                 device_x_offsets=None, device_y_offsets=None, device_position_overrides=None,
+                 corridors=None):
         super().__init__(parent)
         self.title("Site Preview — Inverter Allocation")
         self.geometry("1100x750")
         self.minsize(600, 400)
-        
+
         self.inv_summary = inv_summary
         self.topology = topology
         self.colors = colors
@@ -33,6 +34,8 @@ class SitePreviewWindow(tk.Toplevel):
         self.device_feeder_sizes = dict(device_feeder_sizes) if device_feeder_sizes else {}  # {device_idx: "cable_size"}
         self.device_feeder_parallel_counts = dict(device_feeder_parallel_counts) if device_feeder_parallel_counts else {}  # {device_idx: int parallel sets per pole}
         self.device_x_offsets = dict(device_x_offsets) if device_x_offsets else {}  # {device_idx: float} cumulative E-W nudge in feet
+        self.device_y_offsets = dict(device_y_offsets) if device_y_offsets else {}  # {device_idx: float} cumulative N-S nudge in feet
+        self.device_position_overrides = dict(device_position_overrides) if device_position_overrides else {}  # {device_idx: 'north'|'middle'|'south'} effective zone after nudging
         self.device_color_offsets = {}  # {device_idx: int} how many steps forward in the color palette
         self.selected_pad_idx = None
         self.placing_pad = False  # True when in "click to place" mode
@@ -349,6 +352,10 @@ class SitePreviewWindow(tk.Toplevel):
         self.bind('<Right>',   self._on_arrow_nudge_right)
         self.bind('<KP_Left>', self._on_arrow_nudge_left)
         self.bind('<KP_Right>', self._on_arrow_nudge_right)
+        self.bind('<Up>',      self._on_arrow_nudge_up)
+        self.bind('<Down>',    self._on_arrow_nudge_down)
+        self.bind('<KP_Up>',   self._on_arrow_nudge_up)
+        self.bind('<KP_Down>', self._on_arrow_nudge_down)
 
         # Bottom legend (rebuildable)
         self.legend_frame = ttk.Frame(self, padding="5")
@@ -719,6 +726,7 @@ class SitePreviewWindow(tk.Toplevel):
 
         for i, dev in enumerate(self.device_positions):
             dev['x'] += self.device_x_offsets.get(i, 0.0)
+            dev['y'] += self.device_y_offsets.get(i, 0.0)
 
     def _apply_middle_x_bias(self, device_x, device_y, center_local, local_indices,
                               strings_per_tracker_map, pitch, group_x, group_num_trackers):
@@ -947,10 +955,12 @@ class SitePreviewWindow(tk.Toplevel):
                     else:
                         ty = gy + (group_length - t_length) / 2 + t_angle_y
 
-                    device_y = ty + t_motor_y_ft - device_height_ft / 2
+                    motor_gap_ft = t.get('motor_gap_ft', 0.0)
+                    device_y = ty + t_motor_y_ft + motor_gap_ft / 2 - device_height_ft / 2
                 else:
                     fallback_motor = group_motor_y_ref if group_motor_y_ref is not None else group_length / 2
-                    device_y = gy + fallback_motor - device_height_ft / 2 + angle_y_offset
+                    fallback_gap = group_trackers_list[0].get('motor_gap_ft', 0.0) if group_trackers_list else 0.0
+                    device_y = gy + fallback_motor + fallback_gap / 2 - device_height_ft / 2 + angle_y_offset
 
                 if local_x_indices:
                     spt_map = {
@@ -1006,9 +1016,45 @@ class SitePreviewWindow(tk.Toplevel):
                         for s in range(existing, existing + strings_taken):
                             assigned_strings[tidx].add(s)
             
+            # Compute N-S snap anchors (north/middle/south device Y for every connected tracker).
+            # Each anchor is a (y_ft, zone_type) tuple so the nudge code knows which
+            # device_position to activate when it snaps to that anchor.
+            ns_typed_set = set()
+            for _tidx in inv_tracker_indices:
+                if _tidx not in tracker_to_group:
+                    continue
+                _g_idx, _l_idx = tracker_to_group[_tidx]
+                _gd = self.group_layout[_g_idx]
+                _g_trackers = _gd.get('trackers', [])
+                if _l_idx >= len(_g_trackers):
+                    continue
+                _t = _g_trackers[_l_idx]
+                _t_len = _t.get('length_ft', _gd.get('length_ft', 0))
+                _t_lx = _t.get('local_x_idx', _l_idx)
+                _pitch = _gd.get('row_spacing_ft', self.tracker_pitch_ft)
+                _dtan = _gd.get('driveline_tan', 0.0)
+                _ang = _t_lx * _pitch * _dtan
+                _align = _gd.get('tracker_alignment', 'motor')
+                _motor_ref = _gd.get('motor_y_ft', None)
+                _t_motor = _t.get('motor_y_ft', _t_len / 2)
+                _gy = _gd['y']
+                if _align == 'top':
+                    _ty = _gy + _ang
+                elif _align == 'bottom':
+                    _ty = _gy + (_gd.get('length_ft', _t_len) - _t_len) + _ang
+                elif _t.get('has_motor', False) and _motor_ref is not None:
+                    _ty = _gy + (_motor_ref - _t_motor) + _ang
+                else:
+                    _ty = _gy + (_gd.get('length_ft', _t_len) - _t_len) / 2 + _ang
+                ns_typed_set.add((round(_ty - offset_ft - device_height_ft, 4),      'north'))
+                _t_motor_gap = _t.get('motor_gap_ft', 0.0)
+                ns_typed_set.add((round(_ty + _t_motor + _t_motor_gap / 2 - device_height_ft / 2, 4), 'middle'))
+                ns_typed_set.add((round(_ty + _t_len + offset_ft, 4),              'south'))
+            ns_anchors = sorted(ns_typed_set, key=lambda a: a[0])
+
             dev_idx = len(self.device_positions)
             label = self.device_names.get(dev_idx, f"{self.device_label}-{inv_idx + 1:02d}")
-            
+
             self.device_positions.append({
                 'x': device_x,
                 'y': device_y,
@@ -1018,6 +1064,7 @@ class SitePreviewWindow(tk.Toplevel):
                 'group_idx': primary_grp_idx,
                 'device_position': device_position,
                 'assigned_strings': assigned_strings,
+                'ns_anchors': ns_anchors,
             })
     
     def _compute_devices_proportional(self, device_width_ft, device_height_ft, offset_ft):
@@ -1059,13 +1106,14 @@ class SitePreviewWindow(tk.Toplevel):
                 base_device_y = gy + vis_max + offset_ft
             else:
                 motor_y = group_data.get('motor_y_ft', group_data['length_ft'] / 2)
+                motor_gap = group_trackers[0].get('motor_gap_ft', 0.0) if group_trackers else 0.0
                 tracker_alignment = group_data.get('tracker_alignment', 'motor')
                 ref_top_offset = 0.0
                 if group_trackers and tracker_alignment == 'bottom':
                     ref = min(group_trackers, key=lambda t: t.get('local_x_idx', 0))
                     ref_length = ref.get('length_ft', group_data.get('length_ft', 0))
                     ref_top_offset = group_data.get('length_ft', ref_length) - ref_length
-                base_device_y = gy + ref_top_offset + motor_y - device_height_ft / 2
+                base_device_y = gy + ref_top_offset + motor_y + motor_gap / 2 - device_height_ft / 2
             
             driveline_tan = group_data.get('driveline_tan', 0.0)
             
@@ -1844,6 +1892,12 @@ class SitePreviewWindow(tk.Toplevel):
     def _on_arrow_nudge_right(self, event):
         return self._nudge_selected_device(1)
 
+    def _on_arrow_nudge_up(self, event):
+        return self._nudge_selected_device_ns(-1)
+
+    def _on_arrow_nudge_down(self, event):
+        return self._nudge_selected_device_ns(1)
+
     def _nudge_selected_device(self, sign):
         """Move the selected device E (sign=+1) or W (sign=-1) by one row-spacing step."""
         focus = self.focus_get()
@@ -1876,6 +1930,80 @@ class SitePreviewWindow(tk.Toplevel):
             parent_offsets[dev_idx] = self.device_x_offsets[dev_idx]
 
         self.device_positions[dev_idx]['x'] += delta
+        self._update_world_bounds()
+        self._invalidate_world_layer()
+        self.draw()
+
+        if hasattr(self.master, '_schedule_feeder_refresh'):
+            self.master._schedule_feeder_refresh()
+
+        return "break"
+
+    def _device_ns_anchors(self, dev_idx):
+        """Return sorted list of (world_y_ft, zone_type) snap positions for a device (north→south).
+
+        zone_type ∈ {'north', 'middle', 'south'} — the effective device_position that
+        should be active when the device is snapped to that anchor.
+        Includes three anchors per connected tracker (north-edge, motor, south-edge).
+        Falls back to empty list if unavailable.
+        """
+        if dev_idx >= len(self.device_positions):
+            return []
+        return self.device_positions[dev_idx].get('ns_anchors', [])
+
+    def _nudge_selected_device_ns(self, sign):
+        """Move the selected device N (sign=-1) or S (sign=+1) by one snap anchor.
+
+        Snaps through the north-edge / motor-driveline / south-edge positions of
+        every tracker the device connects to, clamping at the ends.
+        """
+        focus = self.focus_get()
+        if isinstance(focus, (tk.Entry, ttk.Entry, tk.Text, ttk.Combobox, ttk.Spinbox)):
+            return
+        if self.selected_device_idx is None:
+            return
+        if (self.placing_pad or self.measure_mode
+                or getattr(self, 'dragging_group', False)
+                or getattr(self, '_dragging_pad', False)
+                or getattr(self, '_dragging_strings', False)
+                or getattr(self, '_dragging_panel', False)
+                or getattr(self, 'assigning_devices', False)):
+            return
+
+        dev_idx = self.selected_device_idx
+        if dev_idx >= len(self.device_positions):
+            return
+
+        anchors = self._device_ns_anchors(dev_idx)
+        if not anchors:
+            return
+
+        current_y = self.device_positions[dev_idx]['y']
+        # Base Y is the computed Y before any cumulative y_offset was applied
+        base_y = current_y - self.device_y_offsets.get(dev_idx, 0.0)
+
+        # Find anchor nearest to current position (anchors are (y, zone_type) tuples)
+        nearest_idx = min(range(len(anchors)), key=lambda i: abs(anchors[i][0] - current_y))
+
+        target_idx = nearest_idx + sign
+        if target_idx < 0 or target_idx >= len(anchors):
+            return  # Already at the end — clamp silently
+
+        target_y, target_type = anchors[target_idx]
+        new_offset = target_y - base_y
+        self.device_y_offsets[dev_idx] = new_offset
+        parent_offsets = getattr(self.master, 'device_y_offsets', None)
+        if parent_offsets is not None:
+            parent_offsets[dev_idx] = new_offset
+
+        # Record the effective device_position for this zone so extender calculations
+        # use the correct device-side string orientation (not the group's static setting).
+        self.device_position_overrides[dev_idx] = target_type
+        parent_overrides = getattr(self.master, 'device_position_overrides', None)
+        if parent_overrides is not None:
+            parent_overrides[dev_idx] = target_type
+
+        self.device_positions[dev_idx]['y'] = target_y
         self._update_world_bounds()
         self._invalidate_world_layer()
         self.draw()
@@ -2131,12 +2259,12 @@ class SitePreviewWindow(tk.Toplevel):
                         color = string_colors[color_idx] if 0 <= color_idx < len(string_colors) else '#D0D0D0'
 
                     if highlighting:
-                        if s_idx in selected_strings:
-                            outline_color = '#FF6600'
-                            outline_width = 2
-                        else:
+                        if s_idx not in selected_strings:
                             color = '#E0E0E0'
                             outline_color = '#CCCCCC'
+                            outline_width = 1
+                        else:
+                            outline_color = '#555555'
                             outline_width = 1
                     elif self.assigning_devices:
                         color = '#E0E0E0'
@@ -2253,6 +2381,7 @@ class SitePreviewWindow(tk.Toplevel):
         
         # Draw devices (CB/SI)
         self._draw_devices()
+        self._draw_device_wiring_overlay()
         self._draw_device_info_panel()
 
         # Draw routes (behind pads)
@@ -2664,7 +2793,7 @@ class SitePreviewWindow(tk.Toplevel):
     def _reset_positions(self):
         """Reset all group positions to auto-layout and clear saved positions."""
         if not messagebox.askyesno("Reset Positions",
-                                    "This will reset all group positions to the default layout AND clear any combiner-box position nudges. Continue?"):
+                                    "This will reset all group positions to the default layout AND clear any combiner-box E-W and N-S position nudges. Continue?"):
             return
 
         for grp_idx, layout in enumerate(self.group_layout):
@@ -2673,9 +2802,19 @@ class SitePreviewWindow(tk.Toplevel):
             layout['y'] = 0
 
         self.device_x_offsets.clear()
-        parent_offsets = getattr(self.master, 'device_x_offsets', None)
-        if parent_offsets is not None:
-            parent_offsets.clear()
+        parent_x_offsets = getattr(self.master, 'device_x_offsets', None)
+        if parent_x_offsets is not None:
+            parent_x_offsets.clear()
+
+        self.device_y_offsets.clear()
+        parent_y_offsets = getattr(self.master, 'device_y_offsets', None)
+        if parent_y_offsets is not None:
+            parent_y_offsets.clear()
+
+        self.device_position_overrides.clear()
+        parent_pos_overrides = getattr(self.master, 'device_position_overrides', None)
+        if parent_pos_overrides is not None:
+            parent_pos_overrides.clear()
 
         self._compute_device_positions()
         self._update_world_bounds()
@@ -3069,16 +3208,15 @@ class SitePreviewWindow(tk.Toplevel):
                 fill='#333333', anchor='s'
             )
 
-    def _draw_device_info_panel(self):
-        """Draw a draggable info panel near the selected device with a connector tail."""
-        if not self.inspect_mode or self.selected_device_idx is None:
-            return
-        if not hasattr(self, 'device_positions') or self.selected_device_idx >= len(self.device_positions):
-            return
+    def _collect_device_wiring_detail(self, device_idx):
+        """Return per-tracker wiring detail for a device, or None if unavailable.
+        Single source of truth for the info panel and the CB schematic window."""
+        if not hasattr(self, 'device_positions') or device_idx >= len(self.device_positions):
+            return None
 
         parent_qe = self.master
-        dev = self.device_positions[self.selected_device_idx]
-        dev_label = dev.get('label', f'{self.device_label}-{self.selected_device_idx + 1}')
+        dev = self.device_positions[device_idx]
+        dev_label = dev.get('label', f'{self.device_label}-{device_idx + 1}')
 
         # Gather data from parent QE
         ns_offsets = getattr(parent_qe, '_tracker_ns_to_device', {})
@@ -3089,18 +3227,18 @@ class SitePreviewWindow(tk.Toplevel):
         # Find CB assignment for this device
         cb_data = None
         for cb in assignments:
-            if cb.get('device_idx') == self.selected_device_idx:
+            if cb.get('device_idx') == device_idx:
                 cb_data = cb
                 break
-        if cb_data is None and self.selected_device_idx < len(assignments):
-            cb_data = assignments[self.selected_device_idx]
+        if cb_data is None and device_idx < len(assignments):
+            cb_data = assignments[device_idx]
         if cb_data is None:
             if self.topology == 'Distributed String':
                 inv_summary = getattr(parent_qe, 'last_totals', {}).get('inverter_summary', {})
                 alloc = inv_summary.get('allocation_result')
-                if not alloc or self.selected_device_idx >= len(alloc.get('inverters', [])):
-                    return
-                inv = alloc['inverters'][self.selected_device_idx]
+                if not alloc or device_idx >= len(alloc.get('inverters', [])):
+                    return None
+                inv = alloc['inverters'][device_idx]
                 module_isc = 0.0
                 nec_factor = 1.56
                 if hasattr(parent_qe, 'selected_module') and parent_qe.selected_module:
@@ -3124,19 +3262,19 @@ class SitePreviewWindow(tk.Toplevel):
                     })
                 cb_data = {
                     'combiner_name': dev_label,
-                    'device_idx': self.selected_device_idx,
+                    'device_idx': device_idx,
                     'breaker_size': None,
                     'module_isc': module_isc,
                     'nec_factor': nec_factor,
                     'connections': connections,
                 }
             else:
-                return
+                return None
 
-        inv_idx = cb_data.get('device_idx', self.selected_device_idx)
+        inv_idx = cb_data.get('device_idx', device_idx)
 
         # Build per-tracker detail
-        tracker_info = {}  # tidx -> {strings, harnesses, whip_ew, ns_offset, ext_pos, ext_neg}
+        tracker_info = {}  # tidx -> {strings, harness_labels, whip_ew, ns_offset, ext_pos, ext_neg}
         for conn in cb_data.get('connections', []):
             tidx = conn['tracker_idx']
             if tidx not in tracker_info:
@@ -3149,34 +3287,68 @@ class SitePreviewWindow(tk.Toplevel):
             info['strings'] += conn['num_strings']
             info['harness_labels'].append(f"{conn.get('harness_label', '?')}({conn['num_strings']}S)")
 
-        # Compute whip E-W per tracker from device position data
+        # Compute whip E-W and signed N-S per tracker.
+        #
+        # signed_ns must match how calculate_whip_distances_from_positions computes it:
+        #   signed_ns = device_y - tracker_world_y[tidx]
+        # where both device_y and tracker_world_y use the SAME simplified Y coordinate
+        # (group_y + local_x * pitch * dtan, no tracker-alignment offset).
+        #
+        # Using the visual dev['y'] (alignment-aware) against the simplified tracker Y
+        # would mix two different coordinate systems and give wrong extender lengths.
         dev_cx = dev['x'] + dev['width_ft'] / 2
+
+        # Step 1: for each connected tracker, compute simplified world X and Y
+        tracker_simplified = {}  # {tidx: (grp_idx, simplified_y, world_x)}
         for tidx in tracker_info:
-            # Find tracker world X
             global_idx = 0
-            t_x = None
-            for grp in self.group_layout:
+            for grp_idx, grp in enumerate(self.group_layout):
                 for t_i, t in enumerate(grp['trackers']):
                     if global_idx == tidx:
-                        t_x = grp['x'] + t.get('local_x_idx', t_i) * grp.get('row_spacing_ft', self.tracker_pitch_ft)
+                        lx = t.get('local_x_idx', t_i)
+                        pitch = grp.get('row_spacing_ft', self.tracker_pitch_ft)
+                        dtan = grp.get('driveline_tan', 0.0)
+                        tracker_simplified[tidx] = (
+                            grp_idx,
+                            grp['y'] + lx * pitch * dtan,                    # simplified Y, no alignment offset
+                            grp['x'] + lx * pitch + t.get('width_ft', 0) / 2,  # world X — tracker center
+                        )
                         break
                     global_idx += 1
-                if t_x is not None:
+                if tidx in tracker_simplified:
                     break
-            if t_x is not None:
-                tracker_info[tidx]['whip_ew'] = abs(t_x - dev_cx)
 
-            # N-S inter-row offset
-            tracker_info[tidx]['ns_offset'] = ns_offsets.get((tidx, inv_idx), 0)
+        # Step 2: primary group = group with the most connected trackers
+        grp_counts = {}
+        for tidx, (gi, ty, tx) in tracker_simplified.items():
+            grp_counts[gi] = grp_counts.get(gi, 0) + 1
+        primary_grp_idx = max(grp_counts, key=grp_counts.get) if grp_counts else 0
+
+        # Step 3: device Y = (min+max)/2 of primary-group tracker Ys + nudge offset
+        primary_ys = [ty for (gi, ty, tx) in tracker_simplified.values() if gi == primary_grp_idx]
+        if primary_ys:
+            device_y_simplified = (min(primary_ys) + max(primary_ys)) / 2.0
+        else:
+            device_y_simplified = 0.0
+        device_y_simplified += parent_qe.device_y_offsets.get(inv_idx, 0.0)
+
+        # Step 4: per-tracker whip E-W, signed N-S, extenders, and pre-rounded whip
+        for tidx in tracker_info:
+            if tidx in tracker_simplified:
+                gi, t_y_simplified, t_x = tracker_simplified[tidx]
+                tracker_info[tidx]['whip_ew'] = abs(t_x - dev_cx)
+                signed_ns = device_y_simplified - t_y_simplified
+            else:
+                signed_ns = ns_offsets.get((tidx, inv_idx), 0)
+            tracker_info[tidx]['ns_offset'] = signed_ns
 
             # Extender lengths
             if tidx < len(tracker_seg_map):
                 seg_info = tracker_seg_map[tidx]
                 seg = seg_info['seg']
-                device_position = seg_info['device_position']
-                ns_off = tracker_info[tidx]['ns_offset']
+                device_position = parent_qe.device_position_overrides.get(
+                    inv_idx, seg_info['device_position'])
 
-                signed_ns = ns_offsets.get((tidx, inv_idx), 0)
                 if tidx in split_details:
                     for portion in split_details[tidx]['portions']:
                         if portion['inv_idx'] == inv_idx:
@@ -3198,12 +3370,162 @@ class SitePreviewWindow(tk.Toplevel):
                         tracker_info[tidx]['ext_neg'].append(
                             parent_qe.round_whip_length(n_len))
 
+            # Pre-round whip so downstream consumers don't need parent_qe
+            wew = tracker_info[tidx]['whip_ew']
+            tracker_info[tidx]['whip_rounded'] = (
+                parent_qe.round_whip_length(wew) if wew > 0 else 10)
+
+        return {
+            'device_idx': device_idx,
+            'device_label': dev_label,
+            'breaker_size': cb_data.get('breaker_size'),
+            'connections_count': len(cb_data.get('connections', [])),
+            'trackers': tracker_info,
+        }
+
+    def _draw_device_wiring_overlay(self):
+        """Draw harness / extender / whip runs on the world layer for the selected CB.
+        Three cable-type segments per tracker, color-coded to match the wiring configurator:
+          red = harness + drops (on-tracker), purple = extender (N-S off-tracker),
+          orange = whip (E-W to CB)."""
+        if not self.inspect_mode or self.selected_device_idx is None:
+            return
+        if not hasattr(self, 'device_positions') or self.selected_device_idx >= len(self.device_positions):
+            return
+
+        detail = self._collect_device_wiring_detail(self.selected_device_idx)
+        if detail is None:
+            return
+
+        trackers = detail['trackers']
+        if not trackers:
+            return
+
+        dev = self.device_positions[self.selected_device_idx]
+        dev_cx = dev['x'] + dev['width_ft'] / 2
+        dev_cy = dev['y'] + dev.get('height_ft', 3.0) / 2
+        rcx, rcy, rd = self._device_rotation_info(dev)
+
+        def _wc(wx, wy):
+            if rd:
+                wx, wy = self._rotate_point(rcx, rcy, wx, wy, rd)
+            return self.world_to_canvas(wx, wy)
+
+        C_HARNESS  = '#FF4444'   # harness + drops (on-tracker)
+        C_EXTENDER = '#CC66FF'   # extender (off-tracker N-S)
+        C_WHIP     = '#FFA500'   # whip (E-W to CB)
+
+        # ── Build world positions for each connected tracker ─────────────────
+        tracker_world = {}   # tidx -> (t_cx, t_top, t_bot, spt) alignment-aware world ft
+        for tidx in trackers:
+            global_idx = 0
+            for grp in self.group_layout:
+                for t_i, t in enumerate(grp['trackers']):
+                    if global_idx == tidx:
+                        lx       = t.get('local_x_idx', t_i)
+                        pitch    = grp.get('row_spacing_ft', self.tracker_pitch_ft)
+                        dtan     = grp.get('driveline_tan', 0.0)
+                        t_width  = t.get('width_ft', 0)
+                        t_length = t.get('length_ft', 0)
+                        t_cx     = grp['x'] + lx * pitch + t_width / 2
+                        angle_y  = lx * pitch * dtan
+                        g_len    = grp.get('length_ft', t_length)
+                        talign   = grp.get('tracker_alignment', 'motor')
+                        if talign == 'top':
+                            t_top = grp['y'] + angle_y
+                        elif talign == 'bottom':
+                            t_top = grp['y'] + (g_len - t_length) + angle_y
+                        elif t.get('has_motor', False) and grp.get('motor_y_ft') is not None:
+                            t_top = grp['y'] + (grp['motor_y_ft'] - t['motor_y_ft']) + angle_y
+                        else:
+                            t_top = grp['y'] + (g_len - t_length) / 2 + angle_y
+                        t_bot = t_top + t_length
+                        spt   = int(t.get('strings_per_tracker', 0))
+                        tracker_world[tidx] = (t_cx, t_top, t_bot, spt)
+                        break
+                    global_idx += 1
+                if tidx in tracker_world:
+                    break
+
+        # ── CB canvas position ───────────────────────────────────────────────
+        cb_cx, cb_cy = _wc(dev_cx, dev_cy)
+
+        # ── Draw three-segment run per tracker ───────────────────────────────
+        for tidx in sorted(trackers.keys()):
+            if tidx not in tracker_world:
+                continue
+            info = trackers[tidx]
+            t_cx, t_top, t_bot, spt = tracker_world[tidx]
+
+            # Clamp harness to the assigned-string sub-range for split trackers
+            assigned_set = dev.get('assigned_strings', {}).get(tidx, set())
+            if assigned_set and spt > 0 and len(assigned_set) < spt:
+                sh = (t_bot - t_top) / spt
+                t_top_h = t_top + min(assigned_set) * sh
+                t_bot_h = t_top + (max(assigned_set) + 1) * sh
+            else:
+                t_top_h = t_top
+                t_bot_h = t_bot
+
+            # 1. Harness + drop: line along the assigned N-S extent
+            h0 = _wc(t_cx, t_top_h)
+            h1 = _wc(t_cx, t_bot_h)
+            self.canvas.create_line(
+                h0[0], h0[1], h1[0], h1[1],
+                fill=C_HARNESS, width=2, tags='world',
+            )
+
+            # Harness connection end: assigned edge nearest the CB (alignment-aware comparison)
+            conn_y = t_bot_h if dev_cy >= (t_top_h + t_bot_h) / 2 else t_top_h
+            conn_pt = _wc(t_cx, conn_y)
+
+            # 2. Extender: N-S from tracker edge to CB N-S level (skip if trivial)
+            knee_pt = _wc(t_cx, dev_cy)
+            if abs(dev_cy - conn_y) > 0.5:
+                self.canvas.create_line(
+                    conn_pt[0], conn_pt[1],
+                    knee_pt[0], knee_pt[1],
+                    fill=C_EXTENDER, width=2, tags='world',
+                )
+
+            # 3. Whip: E-W from tracker column to CB
+            self.canvas.create_line(
+                knee_pt[0], knee_pt[1],
+                cb_cx, cb_cy,
+                fill=C_WHIP, width=2, tags='world',
+            )
+
+            # Junction dots at segment transitions
+            r = 3
+            for px, py, fc in (
+                (conn_pt[0], conn_pt[1], C_HARNESS),    # harness-extender join
+                (knee_pt[0], knee_pt[1], C_EXTENDER),   # extender-whip knee
+            ):
+                self.canvas.create_oval(
+                    px - r, py - r, px + r, py + r,
+                    fill=fc, outline='', tags='world',
+                )
+
+
+    def _draw_device_info_panel(self):
+        """Draw a draggable info panel near the selected device with a connector tail."""
+        if not self.inspect_mode or self.selected_device_idx is None:
+            return
+
+        detail = self._collect_device_wiring_detail(self.selected_device_idx)
+        if detail is None:
+            return
+
+        dev = self.device_positions[self.selected_device_idx]
+        dev_label = detail['device_label']
+        tracker_info = detail['trackers']
+
         # Build row data for tabular layout
         headers = ['Trkr', 'Str', 'Whip', 'Ext+', 'Ext-']
         rows = []
         for tidx in sorted(tracker_info.keys()):
             info = tracker_info[tidx]
-            whip_r = str(parent_qe.round_whip_length(info['whip_ew']) if info['whip_ew'] > 0 else 10)
+            whip_r = str(info['whip_rounded'])
             ext_p = '/'.join(str(v) for v in info['ext_pos']) if info['ext_pos'] else '--'
             ext_n = '/'.join(str(v) for v in info['ext_neg']) if info['ext_neg'] else '--'
             rows.append([f"T{tidx+1}", str(info['strings']), whip_r, ext_p, ext_n])
@@ -3225,7 +3547,7 @@ class SitePreviewWindow(tk.Toplevel):
             return '  '.join(parts)
 
         lines = []
-        lines.append(('header', f"{dev_label}  ({len(cb_data.get('connections', []))} inputs, {cb_data.get('breaker_size', '?')}A)"))
+        lines.append(('header', f"{dev_label}  ({detail['connections_count']} inputs, {detail['breaker_size'] or '?'}A)"))
         lines.append(('spacer', ''))
         lines.append(('subheader', fmt_row(headers, col_widths)))
 
@@ -3233,7 +3555,7 @@ class SitePreviewWindow(tk.Toplevel):
             lines.append(('row', fmt_row(row, col_widths)))
 
         # Totals
-        total_whip = sum(parent_qe.round_whip_length(info['whip_ew'])
+        total_whip = sum(info['whip_rounded']
                          for info in tracker_info.values() if info['whip_ew'] > 0)
         lines.append(('spacer', ''))
         lines.append(('summary', f"Whips total: {total_whip}ft"))
@@ -4853,7 +5175,7 @@ class SitePreviewWindow(tk.Toplevel):
         # Holds a reference to any open inline-rename Entry widget so refresh_tree can clean it up
         inline_entry_ref = [None]
 
-        def refresh_tree(select_device=None):
+        def refresh_tree(select_device=None, preserve_order=False):
             # Destroy any open inline-rename entry before rebuilding
             if inline_entry_ref[0] is not None:
                 try:
@@ -4862,22 +5184,23 @@ class SitePreviewWindow(tk.Toplevel):
                     pass
                 inline_entry_ref[0] = None
 
-            # Sort device_data in-place by natural name order before every rebuild
             import re as _sort_re
-            # Resolve select_device to a name BEFORE sorting (indices shift after sort)
+            # Resolve select_device to a name BEFORE any potential sort
             select_name = None
             if select_device is not None and select_device < len(device_data):
                 select_name = device_data[select_device]['name']
 
-            _has_ua = device_data and device_data[0].get('is_unallocated')
-            _sort_key = lambda d: [int(c) if c.isdigit() else c.lower()
-                                   for c in _sort_re.split(r'(\d+)', d['name'])]
-            if _has_ua:
-                _rest = device_data[1:]
-                _rest.sort(key=_sort_key)
-                device_data[1:] = _rest
-            else:
-                device_data.sort(key=_sort_key)
+            if not preserve_order:
+                # Sort device_data in-place by natural name order before rebuild
+                _has_ua = device_data and device_data[0].get('is_unallocated')
+                _sort_key = lambda d: [int(c) if c.isdigit() else c.lower()
+                                       for c in _sort_re.split(r'(\d+)', d['name'])]
+                if _has_ua:
+                    _rest = device_data[1:]
+                    _rest.sort(key=_sort_key)
+                    device_data[1:] = _rest
+                else:
+                    device_data.sort(key=_sort_key)
 
             # If we had a name to select, find its new index
             if select_name is not None:
@@ -5448,7 +5771,10 @@ class SitePreviewWindow(tk.Toplevel):
             rb_spatial.pack(side='left', padx=(0, 12))
             rb_block = ttk.Radiobutton(order_frm, text='Block sequence',
                                        variable=order_var, value='block')
-            rb_block.pack(side='left')
+            rb_block.pack(side='left', padx=(0, 12))
+            rb_tree = ttk.Radiobutton(order_frm, text='Tree order (manual)',
+                                      variable=order_var, value='tree')
+            rb_tree.pack(side='left')
 
             ttk.Label(frm, text="Prefix:").grid(row=3, column=0, sticky='w', padx=(0, 8), pady=4)
             prefix_var = tk.StringVar(value=default_prefix)
@@ -5464,10 +5790,12 @@ class SitePreviewWindow(tk.Toplevel):
                     order_var.set('block')
                     rb_spatial.config(state='disabled')
                     rb_block.config(state='disabled')
+                    rb_tree.config(state='disabled')
                     start_lbl.config(text="Device start #:")
                 else:
                     rb_spatial.config(state='normal')
                     rb_block.config(state='normal')
+                    rb_tree.config(state='normal')
                     start_lbl.config(text="Start #:")
             fmt_var.trace_add('write', _on_fmt_change)
 
@@ -5507,11 +5835,19 @@ class SitePreviewWindow(tk.Toplevel):
                             prev_circuit_key = circuit_key
                         device_data[entry[0]]['name'] = f'{prefix}{circuit_num:02d}.{start + dev_num:02d}'
                         dev_num += 1
+                elif order_var.get() == 'tree':
+                    # Number in current tree (manual) order — skip Unallocated
+                    tree_indices = [i for i, d in enumerate(device_data) if not d.get('is_unallocated')]
+                    for n, data_idx in enumerate(tree_indices):
+                        device_data[data_idx]['name'] = f'{prefix}{start + n:02d}'
+                    # Sequential names sort identically to the manual order, so sorting
+                    # here both preserves arrangement and keeps the data consistent.
+                    _sort_device_data()
                 else:
                     sorted_data_indices = spatial_indices if order_var.get() == 'spatial' else block_indices
                     for n, data_idx in enumerate(sorted_data_indices):
                         device_data[data_idx]['name'] = f'{prefix}{start + n:02d}'
-                _sort_device_data()
+                    _sort_device_data()
 
                 # Rebuild pad assignments using object identity after sort
                 if obj_to_pad and hasattr(self, 'pads'):
@@ -5616,12 +5952,65 @@ class SitePreviewWindow(tk.Toplevel):
 
         dialog.protocol("WM_DELETE_WINDOW", _on_dialog_close)
 
+        def _get_selected_real_device_idx():
+            """Return device_data index of the selected top-level device, or None."""
+            sel = tree.selection()
+            if not sel:
+                return None
+            iid = sel[0]
+            # Top-level device items are named 'dev_N'
+            if not iid.startswith('dev_') or '_s_' in iid:
+                # String child — find its parent
+                parent = tree.parent(iid)
+                if not parent or not parent.startswith('dev_'):
+                    return None
+                iid = parent
+            try:
+                idx = int(iid.split('dev_')[1])
+            except (IndexError, ValueError):
+                return None
+            if idx >= len(device_data):
+                return None
+            return idx
+
+        def move_device_up():
+            idx = _get_selected_real_device_idx()
+            if idx is None:
+                return
+            if device_data[idx].get('is_unallocated'):
+                return
+            # Find the previous real (non-unallocated) entry
+            prev = idx - 1
+            while prev >= 0 and device_data[prev].get('is_unallocated'):
+                prev -= 1
+            if prev < 0:
+                return
+            device_data[idx], device_data[prev] = device_data[prev], device_data[idx]
+            refresh_tree(select_device=prev, preserve_order=True)
+
+        def move_device_down():
+            idx = _get_selected_real_device_idx()
+            if idx is None:
+                return
+            if device_data[idx].get('is_unallocated'):
+                return
+            # Find the next real (non-unallocated) entry
+            nxt = idx + 1
+            while nxt < len(device_data) and device_data[nxt].get('is_unallocated'):
+                nxt += 1
+            if nxt >= len(device_data):
+                return
+            device_data[idx], device_data[nxt] = device_data[nxt], device_data[idx]
+            refresh_tree(select_device=nxt, preserve_order=True)
+
         ttk.Button(bottom_frame, text="Undo All Changes", command=undo_changes).pack(side='right', padx=2)
         ttk.Button(bottom_frame, text="Collapse All",
                    command=lambda: [tree.item(c, open=False) for c in tree.get_children()]).pack(side='left', padx=2)
         ttk.Button(bottom_frame, text="Expand All",
                    command=lambda: [tree.item(c, open=True) for c in tree.get_children()]).pack(side='left', padx=2)
         ttk.Button(bottom_frame, text="Auto-Number", command=auto_number).pack(side='left', padx=2)
+        ttk.Button(bottom_frame, text="▲", width=3, command=move_device_up).pack(side='left', padx=(8, 2))
+        ttk.Button(bottom_frame, text="▼", width=3, command=move_device_down).pack(side='left', padx=2)
 
         # Initial tree
         refresh_tree()
