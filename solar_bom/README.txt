@@ -1,65 +1,71 @@
 ================================================================================
-Solar eBOS BOM Generator v3.5.0
+Solar eBOS BOM Generator v3.6.0
 ================================================================================
 
 INSTALLATION INSTRUCTIONS
 -------------------------
 
 1. Download the executable from SharePoint
-   - Click on "Solar eBOS BOM Generator v3.5.0.exe"
+   - Click on "Solar eBOS BOM Generator v3.6.0.exe"
    - When you see the warning "isn't commonly downloaded", click the three dots (...)
    - Click "Keep"
    - Confirm again if prompted
 
 2. Run the Application
    - Navigate to your Downloads folder
-   - Double-click "Solar eBOS BOM Generator v3.5.0.exe"
+   - Double-click "Solar eBOS BOM Generator v3.6.0.exe"
    - If Windows SmartScreen appears, click "More info" then "Run anyway"
 
 This is our internal tool - these warnings are normal for unsigned applications.
 
-WHAT'S NEW IN VERSION 3.5.0 (May 15, 2026)
+WHAT'S NEW IN VERSION 3.6.0 (June 23, 2026)
 --------------------------------------------
 
 MAJOR NEW FEATURES:
-- Factory Module & Inverter Libraries: Read-only factory libraries now ship with
-  the app and merge at load time — user entries are never overwritten
-- Cable Corridors: Draw polyline cable corridors in Site Preview with axis-snap,
-  vertex editing, and device assignment; rendered in PDF exports; parallel-sets
-  spinboxes multiply DC feeder and AC homerun footage per set in the BOM
-- LV Collection Detail Drawings: PDF wiring diagrams now include full LV collection
-  detail layouts
-- Circuit Containers: Groups can be organized into named circuits in the group tree
-  (visual/organizational only, no BOM impact)
-- Device Sequencing Controls: Set the order/sequence of devices in Site Preview
-  and Device Configurator
-- Device E-W Nudge: Nudge individual devices east-west with arrow keys in
-  Site Preview; persisted to project and resettable via Reset Positions
+- NEC 2023 Ampacity Engine: Wire sizing in Quick Estimate (and the block/wiring
+  configurator workflow) now runs through a NEC 2023-based ampacity engine that
+  selects the minimum gauge satisfying both ampacity (ambient + CCC derating,
+  termination cap, 690.8 source-circuit factor) and a configurable voltage-drop
+  target, across all five cable types
+- Wire Sizing Settings Panel: New collapsible panel for per-cable control over
+  insulation type, termination temp, install method, conductor material, VD%
+  target, and circuits-sharing count; table now shows a Sizing Detail column
+  with a per-row NEC breakdown, yellow highlighting for manual overrides, and a
+  (VD↑) marker when voltage drop drove the gauge up
+- Skids Field: Decouples AC-homerun quantity from inverter count (Central Inverter
+  and Centralized String topologies); export is gated until placed pads match the
+  skid target, with a live "N of M skids placed" hint in Site Preview
+- Per-Estimate Revision Field: Quick Estimate gained a Revision field; PDF and Excel
+  filenames and the titleblock REV cell now carry version + revision + date
 
 IMPROVEMENTS:
-- Module and Inverter search bars for faster library navigation
-- Sortable columns in the Site Preview device assignment table
-- Unlink All Tracker Templates button for faster group editing
-- Enabled template ● indicator on manufacturer/model nodes in Tracker Creator
-- Group list replaced with hierarchical tree view supporting circuit containers
-- New estimates default to Centralized String topology
-- Inverter selection for Quick Estimate moved to the Inverter equipment page
-- Row spacing enforcement: Add Group and Calculate Estimate blocked until all
-  groups have a spacing value
-- Copied groups append to end of list instead of inserting after source
-- Strings/CB input cap removed; library max is now default only
-- Removed global breaker size and avg DC feeder length inputs
-- System Summary Total Strings correctly counts paired half-strings
-- Pricing data updated (copper rate and harness library)
+- 32' FS harnesses added to the harness library
+- Harness slack is now visible in the wiring workflow
+- User-editable string-to-string length for harnesses
+- Factory module and inverter libraries are clearly labeled (factory) with Edit/Delete
+  disabled and an alert explaining factory inverters can't be modified
+- AC homerun default length changed from 500 ft to 50 ft
+- Combiner box east-west nudge step is now half the row spacing
+- "Apply to all" button added for row spacing
+- Calculate Estimate is blocked with a warning when no inverter is assigned
+- Wiring geometry now references tracker physical center and the true driveline
+- Pricing data updated
 
 BUG FIXES:
-- Fixed auto-numbering dropping string assignments
-- Fixed overlap detection bug for new block placement in site preview
-- Fixed Block Details DC feeder display bug
-- Fixed Calculate Estimate always-stale bug (cached result now reused correctly)
-- Fixed string coloring in Site Preview
-- Fixed strings_per_device override being overwritten on project load
-- Fixed rounding bug in estimate calculations
+- Extender lengths are now independent of combiner box north-south position
+- Fixed split-tracker overlay harness bleeding onto strings of another combiner box
+- Fixed the Block Details tab in the Excel BOM
+- Fixed device alignment bugs
+- Fixed a combiner box placement bug
+- Fixed the Calculate button falsely turning red again after a successful run
+
+PREVIOUS VERSION HIGHLIGHTS (v3.5.0):
+- Factory Module & Inverter Libraries that ship with the app and merge at load time
+- Cable Corridors in Site Preview with PDF rendering and parallel-sets footage
+- LV Collection Detail drawings in PDF wiring diagrams
+- Circuit Containers for organizing groups in the group tree
+- Device Sequencing controls and Device E-W nudge in Site Preview
+- Module and Inverter search bars
 
 PREVIOUS VERSION HIGHLIGHTS (v3.4.0):
 - Block Details Sheet in Quick Estimate Excel export
@@ -78,14 +84,6 @@ PREVIOUS VERSION HIGHLIGHTS (v3.1.0):
 - PDF Export of Site Preview with professional titleblock
 - Background labels in site preview
 - Updated default values
-
-PREVIOUS VERSION HIGHLIGHTS (v3.0.0):
-- Quick Estimate Overhaul with site preview, tracker templates, inverter pads
-- Central Inverter Topology support
-- Diagnostics file for calculation verification
-- Per-device cable sizing (DC feeder, AC homerun)
-- Row spacing/GCR moved to group level
-- 20+ bug fixes
 
 
 SUPPORT

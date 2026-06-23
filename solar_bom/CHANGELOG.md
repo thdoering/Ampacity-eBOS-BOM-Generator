@@ -7,8 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.6.0] - 2026-06-23
+
 ### Added
-- **Factory Module Library**: A read-only `data/module_library_factory.json` ships with the app alongside the existing user-editable `module_templates.json`. Factory modules appear in Module Manager, Block Configurator, and Quick Estimate alongside user modules. Factory entries are labelled `(factory)` in the Module Manager tree; their Edit and Delete actions are disabled. On conflict (same manufacturer + model), factory wins — the user entry is silently shadowed but not deleted. Users can add a custom variant by using a distinct model name (e.g. a `CUSTOM` suffix). Factory modules can be embedded into exported `.ebom` projects the same way user modules can.
+- **NEC 2023 Ampacity Engine**: Quick Estimate (and the block/wiring configurator workflow) wire sizing now runs through a NEC 2023-based ampacity engine. New data files cover Table 310.17 (free-air), ambient temperature correction (Table 310.15(B)(1)(a)), CCC adjustment (Table 310.15(C)(1)), insulation type catalog, and DC resistance (Chapter 9 Table 8). `cable_sizing.autosize_conductor()` is a two-pass algorithm selecting the minimum gauge that satisfies both NEC ampacity (with ambient and CCC derating, termination cap per 110.14(C), and 690.8 source-circuit factor) and a configurable voltage-drop target. All five cable types (harness, extender, whip, DC feeder, AC homerun) route through the engine, and actual cable lengths derived from BOM totals are fed back in for real voltage-drop numbers.
+- **Wire Sizing Settings Panel**: A collapsible panel below the wire sizing table gives per-cable control over insulation type, termination temperature, installation method, conductor material, VD% target, and circuits-sharing count. Settings persist in `.ebom` with backward-compatible loading. The wire sizing table gained a Sizing Detail column with a per-row NEC breakdown and full hover tooltip; rows with manual gauge overrides are highlighted in yellow; a (VD↑) marker appears when voltage drop escalated the gauge above the ampacity minimum.
+- **Skids Field**: A Skids field (Central Inverter and Centralized String topologies) decouples AC-homerun quantity from total inverter-unit count — AC-homerun quantity is now driven by the number of AC-output skids. An export gate blocks Excel/PDF/Packet export when placed pad count doesn't match the skid target (Distributed String is exempt), and Site Preview shows a live "N of M skids placed" hint near the Add Pad button.
+- **Per-Estimate Revision Field**: Quick Estimate gained a per-estimate Revision field (UI + save/load). PDF and Excel filenames now append version/revision/date, and the titleblock REV cell renders "v{version} rev{revision}".
+- **32' FS Harnesses**: Added 32' FS harnesses to the harness library.
+- **Harness Slack Visibility**: Harness slack is now visible in the wiring workflow.
+- **User-Editable Harness String-to-String Length**: Users can change the string-to-string length for harnesses.
+- **Factory Library Read-Only Guard**: Read-only factory module and inverter libraries are labelled `(factory)` in the manager trees, with Edit/Delete disabled; an alert explains that factory inverters can't be modified. On conflict (same manufacturer + model), factory wins — the user entry is silently shadowed but not deleted. Users can add a custom variant under a distinct model name. Factory modules can be embedded into exported `.ebom` projects the same way user modules can.
+
+### Changed
+- **AC Homerun Default**: AC homerun default/fallback length changed from 500 ft to 50 ft.
+- **CB E-W Nudge Step**: The combiner box east-west nudge step is now half the row spacing, so two presses equal one full row.
+- **Apply to All Row Spacing**: Added an "apply to all" button for row spacing.
+- **No-Inverter Guard**: Calculate Estimate is now hard-blocked with a warning when no inverter is assigned.
+- **Wiring Geometry Reference Centers**: Whip and routed-feeder distances now measure from the tracker physical center; the combiner box device box sits on the true driveline (motor gap center); and the 'middle' extender target uses motor center, removing a ~1.6 ft measurement error that could push extender lengths across a BOM rounding boundary.
+- **Version Field Relabel**: The BOM Generator field is relabeled "Version" (underlying `Project.bom_revision` unchanged).
+- **CB Sharing Label Removed**: Removed the combiner-box sharing label.
+- **Pricing Data**: Updated pricing data.
+
+### Fixed
+- **Extender Lengths Independent of CB N-S Position**: Extenders now run to a fixed whip point determined solely by `device_position` (north end, south end, or motor row). Moving a combiner box north or south only changes whip lengths — extender lengths stay constant unless the user explicitly moves a whip point.
+- **Split-Tracker Overlay Harness Bleed**: The site-preview inspect-mode harness line is now clamped to the assigned-string sub-range on split trackers, so a full-tracker harness no longer bleeds onto strings allocated to a different combiner box.
+- **Block Details Excel Tab**: Fixed the Block Details tab in the Excel BOM.
+- **Device Alignment**: Fixed device alignment bugs.
+- **Combiner Box Placement**: Fixed a combiner box placement bug.
+- **Calculate Button False-Stale Regression**: Fixed a regression where the Calculate button would immediately turn red again after a successful run, caused by programmatic `.set()` calls on reused Tkinter vars during the post-calculate table rebuild firing accumulated dirty traces.
 
 ## [3.5.0] - 2026-05-15
 
