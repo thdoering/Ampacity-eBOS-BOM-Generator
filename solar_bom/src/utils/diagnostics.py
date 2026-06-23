@@ -627,79 +627,11 @@ def validate_whip_extender_relationship(totals, qe_widget, verbose=False):
                 f"{max_ew_span:.0f}ft — whips should be E-W only"
             )
 
-    # ── 2. Far-away tracker extender checks ──
-    split_details = getattr(qe_widget, '_split_tracker_details', {})
-    tracker_seg_map = getattr(qe_widget, '_tracker_to_segment', [])
-    assignments = getattr(qe_widget, 'last_combiner_assignments', [])
-
-    for (tidx, inv_idx), signed_ns in ns_offsets.items():
-        if abs(signed_ns) < 10:
-            continue  # Only check trackers with meaningful inter-row offset
-
-        if tidx >= len(tracker_seg_map):
-            continue
-
-        seg_info = tracker_seg_map[tidx]
-        seg = seg_info['seg']
-        device_position = seg_info['device_position']
-
-        # Get the extender pairs for this tracker with offset
-        if tidx in split_details:
-            for portion in split_details[tidx]['portions']:
-                if portion['inv_idx'] != inv_idx:
-                    continue
-                pairs = qe_widget.calculate_extender_lengths_per_segment(
-                    seg, device_position, portion.get('start_pos', 0),
-                    target_y_offset=signed_ns,
-                    harness_sizes_override=portion['harnesses'])
-
-                for pair_idx, (pos_len, neg_len) in enumerate(pairs):
-                    pos_r = qe_widget.round_whip_length(pos_len)
-                    neg_r = qe_widget.round_whip_length(neg_len)
-                    longer = max(pos_r, neg_r)
-                    ns_abs = abs(signed_ns)
-
-                    # Check 2a: asymmetry — pos and neg should differ
-                    if abs(pos_r - neg_r) < 10:
-                        issues.append(
-                            f"EXT_SYMMETRIC: T{tidx+1:02d} portion(inv={inv_idx}) H{pair_idx+1} "
-                            f"has pos={pos_r}ft neg={neg_r}ft but N-S offset={ns_abs:.0f}ft — "
-                            f"expected asymmetric extenders"
-                        )
-
-                    # Check 2b: longer extender must cover the inter-row gap
-                    if longer < ns_abs * 0.8:  # 20% tolerance
-                        issues.append(
-                            f"EXT_TOO_SHORT: T{tidx+1:02d} portion(inv={inv_idx}) H{pair_idx+1} "
-                            f"longer ext={longer}ft but N-S offset={ns_abs:.0f}ft — "
-                            f"extender should cover inter-row distance"
-                        )
-        else:
-            # Non-split tracker
-            pairs = qe_widget.calculate_extender_lengths_per_segment(
-                seg, device_position,
-                target_y_offset=signed_ns,
-                harness_sizes_override=None)
-
-            for pair_idx, (pos_len, neg_len) in enumerate(pairs):
-                pos_r = qe_widget.round_whip_length(pos_len)
-                neg_r = qe_widget.round_whip_length(neg_len)
-                longer = max(pos_r, neg_r)
-                ns_abs = abs(signed_ns)
-
-                if abs(pos_r - neg_r) < 10:
-                    issues.append(
-                        f"EXT_SYMMETRIC: T{tidx+1:02d} (inv={inv_idx}) H{pair_idx+1} "
-                        f"has pos={pos_r}ft neg={neg_r}ft but N-S offset={ns_abs:.0f}ft — "
-                        f"expected asymmetric extenders"
-                    )
-
-                if longer < ns_abs * 0.8:
-                    issues.append(
-                        f"EXT_TOO_SHORT: T{tidx+1:02d} (inv={inv_idx}) H{pair_idx+1} "
-                        f"longer ext={longer}ft but N-S offset={ns_abs:.0f}ft — "
-                        f"extender should cover inter-row distance"
-                    )
+    # ── 2. Far-away tracker extender checks removed ──
+    # Extenders are no longer affected by CB N-S position.  The whip now covers
+    # the inter-row gap; extenders are fixed by device_position default or a
+    # user-set whip_point_override.  The old EXT_SYMMETRIC / EXT_TOO_SHORT
+    # checks were based on the old model and are no longer valid.
 
     if verbose or issues:
         print("\n[WHIP/EXT RELATIONSHIP] === Validation ===")

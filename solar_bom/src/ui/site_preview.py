@@ -4,6 +4,10 @@ import math
 import copy
 import re
 
+# Set True to print per-tracker extender debug info to stdout whenever
+# the info panel is refreshed (e.g. after nudging a combiner box).
+_EXTENDER_DEBUG = False
+
 
 class SitePreviewWindow(tk.Toplevel):
     """Pop-out window for site layout preview with zoom and pan"""
@@ -79,6 +83,14 @@ class SitePreviewWindow(tk.Toplevel):
         self._edit_dialog_refresh_tree = None
         self._canvas_syncing_tree = False  # guard flag — prevents <<TreeviewSelect>> bounce
 
+        # Whip point drag state
+        self._dragging_wp = None              # None or {tidx, inv_idx} while dragging
+        self._last_tracker_world = {}         # populated by _draw_device_wiring_layers
+        self._last_tracker_motor_wy = {}      # populated by _draw_device_wiring_layers
+        self._last_wiring_dev_cx = 0.0
+        self._last_wiring_dev_cy = 0.0
+        self._last_wiring_inv_idx = None
+
         # String drag state (inspect mode only)
         self._pending_string_drag = False     # press on string, waiting to see if drag starts
         self._dragging_strings = False        # drag threshold exceeded, drag is active
@@ -98,6 +110,16 @@ class SitePreviewWindow(tk.Toplevel):
         self.current_corridor_pts = []  # world-coord vertices for the in-progress corridor
         self.corridor_mouse_pos = None  # canvas coords of cursor (for rubber-band)
         self.selected_corridor_idx = None
+
+        # Per-layer visibility for the 8 wiring layers (session-only, not persisted)
+        self._wiring_layer_visible = {
+            ('drops',    'pos'): False, ('drops',    'neg'): False,
+            ('harness',  'pos'): False, ('harness',  'neg'): False,
+            ('extender', 'pos'): False, ('extender', 'neg'): False,
+            ('whip',     'pos'): False, ('whip',     'neg'): False,
+        }
+        # BooleanVars for the toggle panel checkbuttons (built in _build_wiring_layer_panel)
+        self._wiring_layer_vars = {}
 
         self._world_dirty = True  # True → rebuild world layer on next draw()
 
@@ -325,6 +347,7 @@ class SitePreviewWindow(tk.Toplevel):
         # Canvas
         canvas_frame = ttk.Frame(self)
         canvas_frame.pack(fill='both', expand=True)
+        self._canvas_frame = canvas_frame
         
         self.canvas = tk.Canvas(canvas_frame, bg='white', highlightthickness=0)
         self.canvas.pack(fill='both', expand=True)
@@ -356,6 +379,11 @@ class SitePreviewWindow(tk.Toplevel):
         self.bind('<Down>',    self._on_arrow_nudge_down)
         self.bind('<KP_Up>',   self._on_arrow_nudge_up)
         self.bind('<KP_Down>', self._on_arrow_nudge_down)
+
+        # Wiring layer toggle panel — floats over the bottom-left of the canvas.
+        # Shown/hidden via place()/place_forget() in _sync_wiring_panel_visibility().
+        self.wiring_layer_panel = ttk.LabelFrame(canvas_frame, text="Wiring Layers", padding="4")
+        self._build_wiring_layer_panel()
 
         # Bottom legend (rebuildable)
         self.legend_frame = ttk.Frame(self, padding="5")
@@ -402,6 +430,91 @@ class SitePreviewWindow(tk.Toplevel):
             runs_str = f"  |  {spatial_runs} spatial run(s)" if spatial_runs > 1 else ""
             ttk.Label(self.legend_frame, text=f"{size_str}  |  {split_count} split tracker(s){runs_str}",
                      font=('Helvetica', 9), foreground='#555555').pack(anchor='w')
+
+    def _build_wiring_layer_panel(self):
+        """Populate the wiring layer toggle panel with an 4×2 checkbutton grid."""
+        parent = self.wiring_layer_panel
+
+        parts = ['drops', 'harness', 'extender', 'whip']
+        part_labels = {'drops': 'Drops', 'harness': 'Harness', 'extender': 'Extender', 'whip': 'Whip'}
+
+        # Top control row: All Off  |  All +  |  All −
+        ctrl = ttk.Frame(parent)
+        ctrl.pack(fill='x', pady=(0, 4))
+        ttk.Button(ctrl, text="All Off",
+                   command=self._wiring_layers_all_off).pack(side='left', padx=(0, 8))
+        ttk.Button(ctrl, text="All +",
+                   command=lambda: self._wiring_col_toggle('pos')).pack(side='left', padx=2)
+        ttk.Button(ctrl, text="All −",
+                   command=lambda: self._wiring_col_toggle('neg')).pack(side='left', padx=2)
+
+        # Grid: header row + 4 part rows
+        grid = ttk.Frame(parent)
+        grid.pack(fill='x')
+        ttk.Label(grid, text='Layer', width=9, anchor='w').grid(row=0, column=0, padx=4, pady=1, sticky='w')
+        ttk.Label(grid, text='Positive', width=9, anchor='center').grid(row=0, column=1, padx=4, pady=1)
+        ttk.Label(grid, text='Negative', width=9, anchor='center').grid(row=0, column=2, padx=4, pady=1)
+        ttk.Label(grid, text='Both',     width=6, anchor='center').grid(row=0, column=3, padx=4, pady=1)
+
+        for row_i, part in enumerate(parts):
+            r = row_i + 1
+            ttk.Label(grid, text=part_labels[part], width=9, anchor='w').grid(
+                row=r, column=0, padx=4, pady=2, sticky='w')
+
+            for col_i, pol in enumerate(['pos', 'neg'], 1):
+                var = tk.BooleanVar(value=self._wiring_layer_visible[(part, pol)])
+                self._wiring_layer_vars[(part, pol)] = var
+
+                def _on_toggle(_part=part, _pol=pol, _var=var):
+                    self._wiring_layer_visible[(_part, _pol)] = _var.get()
+                    self._invalidate_world_layer()
+                    self.draw()
+
+                ttk.Checkbutton(grid, variable=var, command=_on_toggle).grid(
+                    row=r, column=col_i, padx=4, pady=2)
+
+            def _both(_part=part):
+                all_on = (self._wiring_layer_visible[(_part, 'pos')]
+                          and self._wiring_layer_visible[(_part, 'neg')])
+                new_val = not all_on
+                for _pol in ('pos', 'neg'):
+                    self._wiring_layer_visible[(_part, _pol)] = new_val
+                    self._wiring_layer_vars[(_part, _pol)].set(new_val)
+                self._invalidate_world_layer()
+                self.draw()
+
+            ttk.Button(grid, text='Both', width=5, command=_both).grid(
+                row=r, column=3, padx=4, pady=2)
+
+    def _wiring_layers_all_off(self):
+        for key in list(self._wiring_layer_visible):
+            self._wiring_layer_visible[key] = False
+            if key in self._wiring_layer_vars:
+                self._wiring_layer_vars[key].set(False)
+        self._invalidate_world_layer()
+        self.draw()
+
+    def _wiring_col_toggle(self, polarity):
+        all_on = all(self._wiring_layer_visible[(p, polarity)]
+                     for p in ('drops', 'harness', 'extender', 'whip'))
+        new_val = not all_on
+        for part in ('drops', 'harness', 'extender', 'whip'):
+            self._wiring_layer_visible[(part, polarity)] = new_val
+            if (part, polarity) in self._wiring_layer_vars:
+                self._wiring_layer_vars[(part, polarity)].set(new_val)
+        self._invalidate_world_layer()
+        self.draw()
+
+    def _sync_wiring_panel_visibility(self):
+        """Show the wiring layer panel iff a CB is selected in Inspect mode."""
+        should_show = self.inspect_mode and self.selected_device_idx is not None
+        is_shown = self.wiring_layer_panel.winfo_ismapped()
+        if should_show and not is_shown:
+            # Float over the bottom-left corner of the canvas frame
+            self.wiring_layer_panel.place(anchor='sw', x=8, rely=1.0, y=-8)
+            self.wiring_layer_panel.lift()
+        elif not should_show and is_shown:
+            self.wiring_layer_panel.place_forget()
 
     def _format_summary(self, num_inv, total_str, actual_ratio, split,
                         spatial_runs=1, locked=False):
@@ -1354,6 +1467,8 @@ class SitePreviewWindow(tk.Toplevel):
     
     def on_press(self, event):
         """Handle left mouse press — place pad, select/drag group or pad, or select device."""
+        if getattr(self, '_dragging_wp', None) is not None:
+            return
         self.drag_start_x = event.x
         self.drag_start_y = event.y
         self._drag_moved = False
@@ -1569,6 +1684,8 @@ class SitePreviewWindow(tk.Toplevel):
         """Handle mouse drag — move group, move pad, or pan canvas."""
         if self.measure_mode:
             return
+        if getattr(self, '_dragging_wp', None) is not None:
+            return
 
         # Panel drag
         if getattr(self, '_dragging_panel', False) and self._panel_drag_start:
@@ -1703,6 +1820,9 @@ class SitePreviewWindow(tk.Toplevel):
     
     def on_release(self, event):
         """Handle mouse release — finalize group or pad position."""
+        if getattr(self, '_dragging_wp', None) is not None:
+            # whip point release is handled by _on_wp_release; skip normal release logic
+            return
         if getattr(self, '_dragging_panel', False):
             self._dragging_panel = False
             self._panel_drag_start = None
@@ -2015,13 +2135,15 @@ class SitePreviewWindow(tk.Toplevel):
 
     def draw(self):
         """Draw the site layout with to-scale trackers at their group positions.
-        
+
         X = E-W (tracker width + row spacing gaps)
         Y = N-S (tracker length, north at top)
         World units = feet.
         """
         if not self.group_layout:
             return
+
+        self._sync_wiring_panel_visibility()
 
         if not self._world_dirty:
             self.canvas.delete('screen_fixed')
@@ -2381,7 +2503,8 @@ class SitePreviewWindow(tk.Toplevel):
         
         # Draw devices (CB/SI)
         self._draw_devices()
-        self._draw_device_wiring_overlay()
+        self._draw_device_wiring_layers()
+        self._draw_whip_point_markers()
         self._draw_device_info_panel()
 
         # Draw routes (behind pads)
@@ -3289,73 +3412,92 @@ class SitePreviewWindow(tk.Toplevel):
 
         # Compute whip E-W and signed N-S per tracker.
         #
-        # signed_ns must match how calculate_whip_distances_from_positions computes it:
-        #   signed_ns = device_y - tracker_world_y[tidx]
-        # where both device_y and tracker_world_y use the SAME simplified Y coordinate
-        # (group_y + local_x * pitch * dtan, no tracker-alignment offset).
-        #
-        # Using the visual dev['y'] (alignment-aware) against the simplified tracker Y
-        # would mix two different coordinate systems and give wrong extender lengths.
+        # signed_ns = dev_cy − tracker_motor_world_y, where both use alignment-aware
+        # world coordinates.  This correctly handles combiners that span groups whose
+        # origins (grp['y']) differ because of tracker-length / motor-alignment offsets:
+        # if the two groups' motor rows align in world space, signed_ns ≈ 0 regardless
+        # of the raw grp['y'] difference.
         dev_cx = dev['x'] + dev['width_ft'] / 2
+        dev_cy = dev['y'] + dev.get('height_ft', 3.0) / 2
 
-        # Step 1: for each connected tracker, compute simplified world X and Y
-        tracker_simplified = {}  # {tidx: (grp_idx, simplified_y, world_x)}
+        if _EXTENDER_DEBUG:
+            print(f"\n=== Extender debug: {dev_label} [idx={device_idx}] ===")
+            print(f"  CB world:  cx={dev_cx:.1f}ft  cy={dev_cy:.1f}ft")
+
+        # For each connected tracker compute:
+        #   world_x  — tracker E-W center (for whip_ew)
+        #   motor_world_y — alignment-aware motor-row Y (for signed_ns)
+        tracker_world_x = {}    # {tidx: world_x}
+        tracker_motor_wy = {}   # {tidx: motor_world_y}
+        tracker_top_wy = {}     # {tidx: world Y of tracker north end}
+        tracker_bottom_wy = {}  # {tidx: world Y of tracker south end}
         for tidx in tracker_info:
             global_idx = 0
-            for grp_idx, grp in enumerate(self.group_layout):
+            for grp in self.group_layout:
                 for t_i, t in enumerate(grp['trackers']):
                     if global_idx == tidx:
-                        lx = t.get('local_x_idx', t_i)
-                        pitch = grp.get('row_spacing_ft', self.tracker_pitch_ft)
-                        dtan = grp.get('driveline_tan', 0.0)
-                        tracker_simplified[tidx] = (
-                            grp_idx,
-                            grp['y'] + lx * pitch * dtan,                    # simplified Y, no alignment offset
-                            grp['x'] + lx * pitch + t.get('width_ft', 0) / 2,  # world X — tracker center
-                        )
+                        lx       = t.get('local_x_idx', t_i)
+                        pitch    = grp.get('row_spacing_ft', self.tracker_pitch_ft)
+                        dtan     = grp.get('driveline_tan', 0.0)
+                        angle_y  = lx * pitch * dtan
+                        t_len    = t.get('length_ft', 0)
+                        g_len    = grp.get('length_ft', t_len)
+                        talign   = grp.get('tracker_alignment', 'motor')
+                        mref     = grp.get('motor_y_ft')
+                        t_motor  = t.get('motor_y_ft', t_len / 2)
+                        t_gap    = t.get('motor_gap_ft', 0.0)
+
+                        if talign == 'top':
+                            t_top = grp['y'] + angle_y
+                        elif talign == 'bottom':
+                            t_top = grp['y'] + (g_len - t_len) + angle_y
+                        elif t.get('has_motor', False) and mref is not None:
+                            t_top = grp['y'] + (mref - t_motor) + angle_y
+                        else:
+                            t_top = grp['y'] + (g_len - t_len) / 2 + angle_y
+
+                        tracker_world_x[tidx] = grp['x'] + lx * pitch + t.get('width_ft', 0) / 2
+                        tracker_motor_wy[tidx] = t_top + t_motor + t_gap / 2
+                        tracker_top_wy[tidx] = t_top
+                        tracker_bottom_wy[tidx] = t_top + t_len
                         break
                     global_idx += 1
-                if tidx in tracker_simplified:
+                if tidx in tracker_world_x:
                     break
 
-        # Step 2: primary group = group with the most connected trackers
-        grp_counts = {}
-        for tidx, (gi, ty, tx) in tracker_simplified.items():
-            grp_counts[gi] = grp_counts.get(gi, 0) + 1
-        primary_grp_idx = max(grp_counts, key=grp_counts.get) if grp_counts else 0
-
-        # Step 3: device Y = (min+max)/2 of primary-group tracker Ys + nudge offset
-        primary_ys = [ty for (gi, ty, tx) in tracker_simplified.values() if gi == primary_grp_idx]
-        if primary_ys:
-            device_y_simplified = (min(primary_ys) + max(primary_ys)) / 2.0
-        else:
-            device_y_simplified = 0.0
-        device_y_simplified += parent_qe.device_y_offsets.get(inv_idx, 0.0)
-
-        # Step 4: per-tracker whip E-W, signed N-S, extenders, and pre-rounded whip
+        # Per-tracker whip E-W, extenders, and pre-rounded whip
         for tidx in tracker_info:
-            if tidx in tracker_simplified:
-                gi, t_y_simplified, t_x = tracker_simplified[tidx]
-                tracker_info[tidx]['whip_ew'] = abs(t_x - dev_cx)
-                signed_ns = device_y_simplified - t_y_simplified
-            else:
-                signed_ns = ns_offsets.get((tidx, inv_idx), 0)
-            tracker_info[tidx]['ns_offset'] = signed_ns
+            if tidx in tracker_world_x:
+                tracker_info[tidx]['whip_ew'] = abs(tracker_world_x[tidx] - dev_cx)
+            override_key = f"{tidx}:{inv_idx}"
+            wp_override = getattr(parent_qe, '_whip_point_overrides', {}).get(override_key)
+            tracker_info[tidx]['ns_offset'] = wp_override if wp_override is not None else 0
 
-            # Extender lengths
+            if _EXTENDER_DEBUG:
+                mwy = tracker_motor_wy.get(tidx, None)
+                mwy_str = f"{mwy:.1f}ft" if mwy is not None else "N/A"
+                override_str = f"OVERRIDE→{wp_override:.1f}ft" if wp_override is not None else "no override"
+                if tidx in tracker_motor_wy:
+                    signed_ns_auto = dev_cy - tracker_motor_wy[tidx]
+                    print(f"  T{tidx+1:03d} (idx={tidx}):  motor_wy={mwy_str}"
+                          f"  signed_ns_auto={signed_ns_auto:+.1f}ft  ({override_str})"
+                          f"  whip_ew={tracker_info[tidx]['whip_ew']:.1f}ft")
+
+            # Extender lengths — determined by device_position default or whip_point_override only
             if tidx < len(tracker_seg_map):
                 seg_info = tracker_seg_map[tidx]
                 seg = seg_info['seg']
-                device_position = parent_qe.device_position_overrides.get(
-                    inv_idx, seg_info['device_position'])
+                device_position = seg_info['device_position']  # layout-assigned, not CB-position-derived
+                _dlabel = f"T{tidx+1}({device_position})" if _EXTENDER_DEBUG else None
 
                 if tidx in split_details:
                     for portion in split_details[tidx]['portions']:
                         if portion['inv_idx'] == inv_idx:
                             pairs = parent_qe.calculate_extender_lengths_per_segment(
                                 seg, device_position, portion.get('start_pos', 0),
-                                target_y_offset=signed_ns,
-                                harness_sizes_override=portion['harnesses'])
+                                whip_point_override=wp_override,
+                                harness_sizes_override=portion['harnesses'],
+                                debug_label=_dlabel)
                             for p_len, n_len in pairs:
                                 tracker_info[tidx]['ext_pos'].append(
                                     parent_qe.round_whip_length(p_len))
@@ -3363,17 +3505,43 @@ class SitePreviewWindow(tk.Toplevel):
                                     parent_qe.round_whip_length(n_len))
                 else:
                     pairs = parent_qe.calculate_extender_lengths_per_segment(
-                        seg, device_position, target_y_offset=signed_ns)
+                        seg, device_position, whip_point_override=wp_override,
+                        debug_label=_dlabel)
                     for p_len, n_len in pairs:
                         tracker_info[tidx]['ext_pos'].append(
                             parent_qe.round_whip_length(p_len))
                         tracker_info[tidx]['ext_neg'].append(
                             parent_qe.round_whip_length(n_len))
 
-            # Pre-round whip so downstream consumers don't need parent_qe
+                if _EXTENDER_DEBUG:
+                    print(f"    panel ext+={tracker_info[tidx]['ext_pos']}"
+                          f"  ext-={tracker_info[tidx]['ext_neg']}")
+
+            # Pre-round whip (EW + NS Manhattan legs) so downstream consumers don't need parent_qe
             wew = tracker_info[tidx]['whip_ew']
+            if tidx in tracker_motor_wy:
+                # Whip point world Y: default by device_position, or override relative to motor row
+                if wp_override is not None:
+                    whip_point_wy = tracker_motor_wy[tidx] + wp_override
+                elif tidx < len(tracker_seg_map):
+                    _dp = tracker_seg_map[tidx]['device_position']  # layout-assigned
+                    if _dp == 'north':
+                        whip_point_wy = tracker_top_wy.get(tidx, tracker_motor_wy[tidx])
+                    elif _dp == 'south':
+                        whip_point_wy = tracker_bottom_wy.get(tidx, tracker_motor_wy[tidx])
+                    else:
+                        whip_point_wy = tracker_motor_wy[tidx]
+                else:
+                    whip_point_wy = tracker_motor_wy[tidx]
+                whip_ns = abs(dev_cy - whip_point_wy)
+            else:
+                whip_ns = 0.0
             tracker_info[tidx]['whip_rounded'] = (
-                parent_qe.round_whip_length(wew) if wew > 0 else 10)
+                parent_qe.round_whip_length(wew + whip_ns) if wew > 0 else 10)
+
+            if _EXTENDER_DEBUG:
+                print(f"    whip: ew={wew:.1f}ft  ns_leg={whip_ns:.1f}ft"
+                      f"  → rounded={tracker_info[tidx]['whip_rounded']}ft")
 
         return {
             'device_idx': device_idx,
@@ -3381,6 +3549,7 @@ class SitePreviewWindow(tk.Toplevel):
             'breaker_size': cb_data.get('breaker_size'),
             'connections_count': len(cb_data.get('connections', [])),
             'trackers': tracker_info,
+            'connections': cb_data.get('connections', []),
         }
 
     def _draw_device_wiring_overlay(self):
@@ -3506,6 +3675,378 @@ class SitePreviewWindow(tk.Toplevel):
                     fill=fc, outline='', tags='world',
                 )
 
+
+    def _draw_device_wiring_layers(self):
+        """Draw per-polarity wiring layers for the selected CB (drops/harness/extender/whip)."""
+        if not self.inspect_mode or self.selected_device_idx is None:
+            return
+        if not any(self._wiring_layer_visible.values()):
+            return
+        if not hasattr(self, 'device_positions') or self.selected_device_idx >= len(self.device_positions):
+            return
+
+        detail = self._collect_device_wiring_detail(self.selected_device_idx)
+        if detail is None:
+            return
+        trackers = detail['trackers']
+        if not trackers:
+            return
+
+        dev = self.device_positions[self.selected_device_idx]
+        dev_cx = dev['x'] + dev['width_ft'] / 2
+        dev_cy = dev['y'] + dev.get('height_ft', 3.0) / 2
+        rcx, rcy, rd = self._device_rotation_info(dev)
+
+        def _wc(wx, wy):
+            if rd:
+                wx, wy = self._rotate_point(rcx, rcy, wx, wy, rd)
+            return self.world_to_canvas(wx, wy)
+
+        # E-W separation in world feet between pos and neg parallel lines
+        OFFSET = 0.5
+
+        COLORS = {
+            ('drops',    'pos'): '#FFB6C1',
+            ('drops',    'neg'): '#B0FFFF',
+            ('harness',  'pos'): '#FF0000',
+            ('harness',  'neg'): '#0000FF',
+            ('extender', 'pos'): '#8B0000',
+            ('extender', 'neg'): '#800080',
+            ('whip',     'pos'): '#FFA500',
+            ('whip',     'neg'): '#40E0D0',
+        }
+
+        # Build alignment-aware tracker world positions (mirrors _draw_device_wiring_overlay)
+        tracker_world = {}
+        tracker_motor_wy = {}
+        for tidx in trackers:
+            global_idx = 0
+            for grp in self.group_layout:
+                for t_i, t in enumerate(grp['trackers']):
+                    if global_idx == tidx:
+                        lx      = t.get('local_x_idx', t_i)
+                        pitch   = grp.get('row_spacing_ft', self.tracker_pitch_ft)
+                        dtan    = grp.get('driveline_tan', 0.0)
+                        t_width = t.get('width_ft', 0)
+                        t_len   = t.get('length_ft', 0)
+                        t_cx    = grp['x'] + lx * pitch + t_width / 2
+                        angle_y = lx * pitch * dtan
+                        g_len   = grp.get('length_ft', t_len)
+                        talign  = grp.get('tracker_alignment', 'motor')
+                        if talign == 'top':
+                            t_top = grp['y'] + angle_y
+                        elif talign == 'bottom':
+                            t_top = grp['y'] + (g_len - t_len) + angle_y
+                        elif t.get('has_motor', False) and grp.get('motor_y_ft') is not None:
+                            t_top = grp['y'] + (grp['motor_y_ft'] - t['motor_y_ft']) + angle_y
+                        else:
+                            t_top = grp['y'] + (g_len - t_len) / 2 + angle_y
+                        spt = int(t.get('strings_per_tracker', 0))
+                        tracker_world[tidx] = (t_cx, t_top, t_top + t_len, spt)
+                        t_motor = t.get('motor_y_ft', t_len / 2)
+                        t_gap   = t.get('motor_gap_ft', 0.0)
+                        tracker_motor_wy[tidx] = t_top + t_motor + t_gap / 2
+                        break
+                    global_idx += 1
+                if tidx in tracker_world:
+                    break
+        # Store for use by whip point marker drawing and drag handlers
+        self._last_tracker_world = tracker_world
+        self._last_tracker_motor_wy = tracker_motor_wy
+        self._last_wiring_dev_cx = dev_cx
+        self._last_wiring_dev_cy = dev_cy
+        self._last_wiring_inv_idx = self.selected_device_idx
+
+        cb_cx, cb_cy = _wc(dev_cx, dev_cy)
+
+        # Read polarity convention from the parent QuickEstimate
+        _pol_var = getattr(self.master, 'polarity_convention_var', None)
+        polarity_str = _pol_var.get() if _pol_var else 'Negative Always South'
+
+        # Group connections by tracker, resolving effective start positions.
+        # Handles the case where start_string_pos is 0 for all harnesses on a tracker
+        # by falling back to cumulative accumulation.
+        tracker_connections = {}
+        for conn in detail.get('connections', []):
+            tracker_connections.setdefault(conn['tracker_idx'], []).append(conn)
+        for tidx_c, conns in tracker_connections.items():
+            conns.sort(key=lambda c: c.get('start_string_pos', 0))
+            cursor = 0
+            for conn in conns:
+                sp = conn.get('start_string_pos', cursor)
+                if sp < cursor:          # duplicate-zero fallback
+                    sp = cursor
+                conn['_eff_start'] = sp
+                cursor = sp + conn['num_strings']
+
+        for tidx in sorted(trackers.keys()):
+            if tidx not in tracker_world:
+                continue
+            t_cx, t_top, t_bot, spt = tracker_world[tidx]
+            sh = (t_bot - t_top) / spt if spt > 0 else 0
+
+            # Whip point Y: where extender ends and whip begins on this tracker column.
+            # Override is signed_ns (ft from motor row); default falls through to dev_cy.
+            override_key = f"{tidx}:{self.selected_device_idx}"
+            parent_qe = self.master
+            wp_override = getattr(parent_qe, '_whip_point_overrides', {}).get(override_key)
+            if wp_override is not None and tidx in tracker_motor_wy:
+                whip_point_y = tracker_motor_wy[tidx] + wp_override
+            else:
+                whip_point_y = dev_cy
+
+            # Assigned-set bounds — used for the fallback harness list.
+            assigned_set = dev.get('assigned_strings', {}).get(tidx, set())
+            if assigned_set and spt > 0 and len(assigned_set) < spt:
+                t_top_h = t_top + min(assigned_set) * sh
+                t_bot_h = t_top + (max(assigned_set) + 1) * sh
+            else:
+                t_top_h = t_top
+                t_bot_h = t_bot
+
+            # Per-harness list; fall back to a single synthetic entry when connection
+            # data is absent (e.g. Distributed String with no explicit harness map).
+            harness_list = tracker_connections.get(tidx, [])
+            if not harness_list:
+                eff_start = min(assigned_set) if assigned_set else 0
+                eff_count = len(assigned_set) if assigned_set else spt
+                harness_list = [{'_eff_start': eff_start, 'num_strings': eff_count}]
+
+            # ── Trunk + Drops + Extender — drawn per harness ─────────────────────
+            for hconn in harness_list:
+                h_start = hconn['_eff_start']
+                h_count = hconn['num_strings']
+                h_indices = list(range(h_start, h_start + h_count))
+
+                # Per-string polarity orientation for this harness
+                pos_at_north = {}
+                for s_idx in h_indices:
+                    ctr = t_top + (s_idx + 0.5) * sh
+                    if polarity_str == 'Negative Always North':
+                        pos_at_north[s_idx] = False
+                    elif polarity_str == 'Negative Toward Device':
+                        pos_at_north[s_idx] = ctr <= dev_cy
+                    elif polarity_str == 'Positive Toward Device':
+                        pos_at_north[s_idx] = ctr > dev_cy
+                    else:
+                        pos_at_north[s_idx] = True
+
+                for pol, sign in (('pos', +1), ('neg', -1)):
+                    x_trunk = t_cx + sign * OFFSET
+
+                    # Compute actual drop Y positions for this polarity — the trunk
+                    # spans exactly first-drop to last-drop, not the slot boundaries.
+                    drop_ys = []
+                    for s_idx in h_indices:
+                        pan = pos_at_north[s_idx]
+                        if pol == 'pos':
+                            drop_ys.append(t_top + s_idx * sh if pan else t_top + (s_idx + 1) * sh)
+                        else:
+                            drop_ys.append(t_top + (s_idx + 1) * sh if pan else t_top + s_idx * sh)
+                    trunk_north = min(drop_ys) if drop_ys else t_top
+                    trunk_south = max(drop_ys) if drop_ys else t_top
+                    h_conn_y = trunk_south if dev_cy >= (trunk_north + trunk_south) / 2 else trunk_north
+
+                    # ── Drops ──────────────────────────────────────────────────
+                    if self._wiring_layer_visible[('drops', pol)] and sh > 0:
+                        color = COLORS[('drops', pol)]
+                        for terminal_y in drop_ys:
+                            p0 = _wc(t_cx, terminal_y)
+                            p1 = _wc(x_trunk, terminal_y)
+                            self.canvas.create_line(
+                                p0[0], p0[1], p1[0], p1[1],
+                                fill=color, width=2, tags='world')
+
+                    # ── Harness trunk: first drop to last drop ───────────────────
+                    if self._wiring_layer_visible[('harness', pol)]:
+                        color = COLORS[('harness', pol)]
+                        p0 = _wc(x_trunk, trunk_north)
+                        p1 = _wc(x_trunk, trunk_south)
+                        self.canvas.create_line(
+                            p0[0], p0[1], p1[0], p1[1],
+                            fill=color, width=2, tags='world')
+
+                    # ── Extender: harness exit to whip point ─────────────────────
+                    if self._wiring_layer_visible[('extender', pol)]:
+                        if abs(whip_point_y - h_conn_y) > 0.5:
+                            color = COLORS[('extender', pol)]
+                            p0 = _wc(x_trunk, h_conn_y)
+                            p1 = _wc(x_trunk, whip_point_y)
+                            self.canvas.create_line(
+                                p0[0], p0[1], p1[0], p1[1],
+                                fill=color, width=2, tags='world')
+
+            # ── Whip: Manhattan route — EW to CB column, then NS to CB ─────────────
+            for pol, sign in (('pos', +1), ('neg', -1)):
+                if self._wiring_layer_visible[('whip', pol)]:
+                    color = COLORS[('whip', pol)]
+                    x_trunk = t_cx + sign * OFFSET
+                    p0 = _wc(x_trunk, whip_point_y)
+                    pk = _wc(dev_cx, whip_point_y)   # elbow: EW leg ends here
+                    self.canvas.create_line(
+                        p0[0], p0[1], pk[0], pk[1], cb_cx, cb_cy,
+                        fill=color, width=2, tags='world')
+
+    def _draw_whip_point_markers(self):
+        """Draw draggable whip point handles on each connected tracker's trunk lines."""
+        self.canvas.delete('wp_marker')  # always clear stale markers first
+        if not self.inspect_mode or self.selected_device_idx is None:
+            return
+        tracker_world   = getattr(self, '_last_tracker_world', {})
+        tracker_motor_wy = getattr(self, '_last_tracker_motor_wy', {})
+        dev_cy          = getattr(self, '_last_wiring_dev_cy', None)
+        if not tracker_world or dev_cy is None:
+            return
+
+        dev = self.device_positions[self.selected_device_idx]
+        dev_cx = dev['x'] + dev['width_ft'] / 2
+        rcx, rcy, rd = self._device_rotation_info(dev)
+
+        def _wc(wx, wy):
+            if rd:
+                wx, wy = self._rotate_point(rcx, rcy, wx, wy, rd)
+            return self.world_to_canvas(wx, wy)
+
+        OFFSET = 0.5
+        HALF = 5  # half-size of marker square in pixels
+        MARKER_COLORS = {
+            'pos': ('#FF0000', '#FFAAAA'),   # (outline, fill)
+            'neg': ('#0000FF', '#AAAAFF'),
+        }
+
+        parent_qe = self.master
+        wp_overrides = getattr(parent_qe, '_whip_point_overrides', {})
+
+        self.canvas.delete('wp_marker')
+
+        for tidx, (t_cx, t_top, t_bot, spt) in tracker_world.items():
+            override_key = f"{tidx}:{self.selected_device_idx}"
+            wp_override = wp_overrides.get(override_key)
+            if wp_override is not None and tidx in tracker_motor_wy:
+                wp_world_y = tracker_motor_wy[tidx] + wp_override
+            else:
+                wp_world_y = dev_cy
+
+            for pol, sign in (('pos', +1), ('neg', -1)):
+                outline, fill = MARKER_COLORS[pol]
+                x_trunk = t_cx + sign * OFFSET
+                cx, cy = _wc(x_trunk, wp_world_y)
+                tag = f"wp_{tidx}_{pol}"
+                self.canvas.create_rectangle(
+                    cx - HALF, cy - HALF, cx + HALF, cy + HALF,
+                    outline=outline, fill=fill, width=2,
+                    tags=('wp_marker', tag))
+
+        # Bind drag events (safe to rebind on each draw)
+        self.canvas.tag_bind('wp_marker', '<ButtonPress-1>',   self._on_wp_press)
+        self.canvas.tag_bind('wp_marker', '<B1-Motion>',       self._on_wp_drag)
+        self.canvas.tag_bind('wp_marker', '<ButtonRelease-1>', self._on_wp_release)
+        self.canvas.tag_bind('wp_marker', '<Button-3>',        self._on_wp_right_click)
+
+    def _on_wp_press(self, event):
+        """Record which whip point handle was pressed."""
+        tags = self.canvas.gettags('current')
+        wp_tag = next((t for t in tags if t.startswith('wp_') and t != 'wp_marker'), None)
+        if wp_tag is None:
+            return
+        parts = wp_tag.split('_')  # wp_{tidx}_{pol}
+        if len(parts) < 3:
+            return
+        tidx = int(parts[1])
+        self._dragging_wp = {
+            'tidx':    tidx,
+            'inv_idx': self.selected_device_idx,
+        }
+        return 'break'  # stop propagation to canvas on_press
+
+    def _on_wp_drag(self, event):
+        """Update whip point override as user drags the marker.
+
+        Deliberately avoids a full draw() during the drag so that the wp_marker
+        canvas items are never deleted while Tkinter still holds a drag reference
+        to them.  Instead we move the squares directly with canvas.coords() and
+        do the full redraw only on ButtonRelease.
+        """
+        wp = getattr(self, '_dragging_wp', None)
+        if wp is None:
+            return 'break'
+        tidx    = wp['tidx']
+        inv_idx = wp['inv_idx']
+        tracker_motor_wy = getattr(self, '_last_tracker_motor_wy', {})
+        tracker_world    = getattr(self, '_last_tracker_world', {})
+        if tidx not in tracker_motor_wy or tidx not in tracker_world:
+            return 'break'
+
+        _, t_top, t_bot, _ = tracker_world[tidx]
+        wx, wy = self.canvas_to_world(event.x, event.y)
+        wy = max(t_top, min(t_bot, wy))  # clamp to tracker bounds
+
+        signed_ns   = wy - tracker_motor_wy[tidx]
+        dev_cy      = getattr(self, '_last_wiring_dev_cy', wy)
+        whip_ns_leg = abs(dev_cy - wy)
+
+        parent_qe = self.master
+        if not hasattr(parent_qe, '_whip_point_overrides'):
+            return 'break'
+        key = f"{tidx}:{inv_idx}"
+        parent_qe._whip_point_overrides[key] = signed_ns
+        if hasattr(parent_qe, '_whip_point_ns_legs'):
+            parent_qe._whip_point_ns_legs[key] = whip_ns_leg
+
+        # Move just the marker squares — no full redraw, items stay alive
+        self._reposition_wp_markers(tidx, wy)
+        return 'break'
+
+    def _reposition_wp_markers(self, tidx, wp_world_y):
+        """Move the pos/neg wp_marker squares for one tracker to a new world Y."""
+        tracker_world = getattr(self, '_last_tracker_world', {})
+        if tidx not in tracker_world:
+            return
+        t_cx = tracker_world[tidx][0]
+        dev  = self.device_positions[self.selected_device_idx]
+        rcx, rcy, rd = self._device_rotation_info(dev)
+        OFFSET = 0.5
+        HALF   = 5
+        for pol, sign in (('pos', +1), ('neg', -1)):
+            x_trunk = t_cx + sign * OFFSET
+            if rd:
+                cx_w, cy_w = self._rotate_point(rcx, rcy, x_trunk, wp_world_y, rd)
+            else:
+                cx_w, cy_w = x_trunk, wp_world_y
+            cx, cy = self.world_to_canvas(cx_w, cy_w)
+            tag = f"wp_{tidx}_{pol}"
+            for item in self.canvas.find_withtag(tag):
+                self.canvas.coords(item, cx - HALF, cy - HALF, cx + HALF, cy + HALF)
+
+    def _on_wp_release(self, event):
+        """Commit whip point position: clear drag state then do a full redraw."""
+        self._dragging_wp = None
+        self._world_dirty = True
+        self.draw()
+        return 'break'  # stop propagation to canvas on_release
+
+    def _on_wp_right_click(self, event):
+        """Reset whip point override for this tracker (right-click to clear)."""
+        tags = self.canvas.gettags('current')
+        wp_tag = next((t for t in tags if t.startswith('wp_') and t != 'wp_marker'), None)
+        if wp_tag is None:
+            return
+        parts = wp_tag.split('_')
+        if len(parts) < 3:
+            return
+        tidx    = int(parts[1])
+        inv_idx = self.selected_device_idx
+        parent_qe = self.master
+        if not hasattr(parent_qe, '_whip_point_overrides'):
+            return
+        key = f"{tidx}:{inv_idx}"
+        if key in parent_qe._whip_point_overrides:
+            del parent_qe._whip_point_overrides[key]
+            ns_legs = getattr(parent_qe, '_whip_point_ns_legs', {})
+            ns_legs.pop(key, None)
+            self._world_dirty = True
+            self.draw()
+        return 'break'
 
     def _draw_device_info_panel(self):
         """Draw a draggable info panel near the selected device with a connector tail."""

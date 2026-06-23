@@ -38,6 +38,8 @@ class QuickEstimate(ttk.Frame):
         self.device_x_offsets = {}  # {device_idx: float} cumulative E-W nudge in feet
         self.device_y_offsets = {}  # {device_idx: float} cumulative N-S nudge in feet
         self.device_position_overrides = {}  # {device_idx: 'north'|'middle'|'south'} effective zone after N-S nudging
+        self._whip_point_overrides = {}  # {f"{tidx}:{inv_idx}": float} signed_ns override (ft, + = CB south of motor)
+        self._whip_point_ns_legs = {}   # {f"{tidx}:{inv_idx}": float} NS leg of whip in ft (abs, alignment-aware)
         self.last_combiner_assignments = []  # Structured CB data for Device Configurator
         self.last_si_assignments = []        # Structured SI data for Device Configurator
         self._harness_combos = []  # Track harness combo widgets for LV collection disabling
@@ -3164,7 +3166,7 @@ class QuickEstimate(ttk.Frame):
             return '+'.join(['1'] * int(spt))
         return seg.get('harness_config', str(seg.get('strings_per_tracker', 1)))
         
-    def calculate_extender_lengths_per_segment(self, seg, device_position, string_offset=0, target_y_offset=0, harness_sizes_override=None):
+    def calculate_extender_lengths_per_segment(self, seg, device_position, string_offset=0, whip_point_override=None, harness_sizes_override=None, debug_label=None):
         """Calculate per-harness positive and negative extender lengths for a segment.
         
         Returns a list of (pos_length_ft, neg_length_ft) tuples, one per harness in the config.
@@ -3274,17 +3276,18 @@ class QuickEstimate(ttk.Frame):
             motor_y_ft = tracker_length_ft / 2
             has_motor = True
         
-        # Determine extender target Y based on device position
-        device_offset_ft = 5.0
+        # Whip point in tracker-local Y coords — default determined by device_position
         if device_position == 'north':
-            target_y = -device_offset_ft
+            target_y = 0.0
         elif device_position == 'south':
-            target_y = tracker_length_ft + device_offset_ft
+            target_y = tracker_length_ft
         else:  # middle
             target_y = motor_y_ft + motor_gap_ft / 2
 
-        # Shift target for far-away trackers (signed: positive = CB south)
-        target_y += target_y_offset
+        # Manual whip point override shifts relative to motor row, clamped to tracker bounds
+        if whip_point_override is not None:
+            target_y = max(0.0, min(tracker_length_ft,
+                                    motor_y_ft + motor_gap_ft / 2 + whip_point_override))
         
         # Resolve polarity convention
         polarity = self.polarity_convention_var.get()
@@ -3343,19 +3346,17 @@ class QuickEstimate(ttk.Frame):
                 result.append((10.0, 10.0))
                 continue
             
-            # Find the device-side string (closest to target_y)
-            # The extender only runs from the harness's device-side terminal
-            # to the whip point — the harness cable covers the internal span.
+            # Find the device-side string (the harness end closest to the whip point)
+            harness_center = (harness_strings[0][0] + harness_strings[-1][1]) / 2
             if device_position == 'north':
                 device_side = harness_strings[0]    # northernmost string
             elif device_position == 'south':
                 device_side = harness_strings[-1]   # southernmost string
-            else:  # middle
-                harness_center = (harness_strings[0][0] + harness_strings[-1][1]) / 2
+            else:  # middle (or override) — compare harness center to whip point
                 if harness_center <= target_y:
-                    device_side = harness_strings[-1]   # harness north of device
+                    device_side = harness_strings[-1]   # harness is north of whip point → exit south end
                 else:
-                    device_side = harness_strings[0]    # harness south of device
+                    device_side = harness_strings[0]    # harness is south of whip point → exit north end
             
             ds_north = device_side[0]  # north edge of device-side string
             ds_south = device_side[1]  # south edge of device-side string
@@ -3401,7 +3402,15 @@ class QuickEstimate(ttk.Frame):
             
             pos_extender = max(abs(pos_y - target_y), 5.0)
             neg_extender = max(abs(neg_y - target_y), 5.0)
-            
+
+            if debug_label:
+                wp_str = f"  whip_pt_override={whip_point_override:.1f}" if whip_point_override is not None else ""
+                print(f"    H{h_idx}: tracker_len={tracker_length_ft:.1f}ft"
+                      f"  target_y={target_y:.1f}{wp_str}"
+                      f"  device_side=[{device_side[0]:.1f},{device_side[1]:.1f}]"
+                      f"  pos_y={pos_y:.1f}  neg_y={neg_y:.1f}"
+                      f"  → ext+={pos_extender:.1f}  ext-={neg_extender:.1f}")
+
             result.append((pos_extender, neg_extender))
 
         return result
@@ -3602,6 +3611,10 @@ class QuickEstimate(ttk.Frame):
         saved_pos_overrides = estimate_data.get('device_position_overrides', {})
         self.device_position_overrides = {int(k): v for k, v in saved_pos_overrides.items()}
 
+        # Load per-tracker whip point overrides (keys are "{tidx}:{inv_idx}" strings)
+        self._whip_point_overrides = {k: float(v) for k, v in estimate_data.get('whip_point_overrides', {}).items()}
+        self._whip_point_ns_legs   = {k: float(v) for k, v in estimate_data.get('whip_point_ns_legs', {}).items()}
+
         # Load allocation lock state
         self.allocation_locked = estimate_data.get('allocation_locked', False)
         self.locked_allocation_result = estimate_data.get('locked_allocation_result', None)
@@ -3705,6 +3718,10 @@ class QuickEstimate(ttk.Frame):
 
         # Save per-device effective device_position overrides
         estimate_data['device_position_overrides'] = {str(k): v for k, v in self.device_position_overrides.items()}
+
+        # Save per-tracker whip point overrides (keys are already strings)
+        estimate_data['whip_point_overrides'] = dict(self._whip_point_overrides)
+        estimate_data['whip_point_ns_legs']   = dict(self._whip_point_ns_legs)
 
         # Save allocation lock state
         estimate_data['allocation_locked'] = self.allocation_locked
@@ -4064,6 +4081,8 @@ class QuickEstimate(ttk.Frame):
         self.device_x_offsets.clear()
         self.device_y_offsets.clear()
         self.device_position_overrides.clear()
+        self._whip_point_overrides.clear()
+        self._whip_point_ns_legs.clear()
         self.last_combiner_assignments = []
         self.last_si_assignments = []
         self.allocation_locked = False
@@ -7287,6 +7306,10 @@ class QuickEstimate(ttk.Frame):
                 else:
                     distance_ft, spt = entry[0], entry[1]
                     tidx, inv_idx = -1, -1
+                # Add NS leg of Manhattan whip when whip point has been manually positioned
+                if tidx >= 0 and inv_idx >= 0:
+                    ns_leg = self._whip_point_ns_legs.get(f"{tidx}:{inv_idx}", 0.0)
+                    distance_ft += ns_leg
                 whip_length = self.round_whip_length(distance_ft)
                 
                 if tidx in split_details:
@@ -7420,26 +7443,24 @@ class QuickEstimate(ttk.Frame):
                     per_dev_pos[pos_key] = per_dev_pos.get(pos_key, 0) + 1
                     per_dev_neg[neg_key] = per_dev_neg.get(neg_key, 0) + 1
 
-        # Adjust extenders for trackers with inter-row N-S offset to their device.
-        # Instead of adding offset uniformly, recompute with shifted target_y so
-        # each extender naturally lengthens toward the CB direction.
+        # Adjust extenders for trackers that have a user-set whip point override.
+        # Extenders are not affected by CB N-S position or device_position_overrides —
+        # only explicit _whip_point_overrides change extender lengths.
         ns_offsets = getattr(self, '_tracker_ns_to_device', {})
         if ns_offsets:
-            for (tidx, inv_idx), signed_ns in ns_offsets.items():
-                if abs(signed_ns) < 1.0:
-                    continue  # Skip negligible offsets
+            for (tidx, inv_idx), _signed_ns in ns_offsets.items():
+                wp_override = self._whip_point_overrides.get(f"{tidx}:{inv_idx}")
+
+                # Skip if no whip point override — base extenders are already correct
+                if wp_override is None:
+                    continue
 
                 if tidx >= len(tracker_seg_map):
                     continue
 
                 seg_info = tracker_seg_map[tidx]
                 seg = seg_info['seg']
-                device_position = seg_info['device_position']
-                # Use per-device zone override (set by N-S nudging) for the adjusted
-                # extenders so device-side string selection flips when the CB crosses
-                # a zone boundary.  base_pairs must still use the original device_position
-                # to correctly cancel what the bulk loop added.
-                eff_device_position = self.device_position_overrides.get(inv_idx, device_position)
+                device_position = seg_info['device_position']  # layout-assigned, not CB-position-derived
 
                 if tidx in split_details:
                     for portion in split_details[tidx]['portions']:
@@ -7448,14 +7469,14 @@ class QuickEstimate(ttk.Frame):
                         string_offset = portion.get('start_pos', 0)
                         h_override = portion['harnesses']
 
-                        # Base extenders (no offset) — must use original device_position
+                        # Base extenders — original device_position, no whip point override
                         base_pairs = self.calculate_extender_lengths_per_segment(
                             seg, device_position, string_offset,
                             harness_sizes_override=h_override)
-                        # Recomputed extenders with signed N-S shift and effective zone
+                        # Adjusted extenders — same device_position, with whip point override applied
                         adjusted_pairs = self.calculate_extender_lengths_per_segment(
-                            seg, eff_device_position, string_offset,
-                            target_y_offset=signed_ns,
+                            seg, device_position, string_offset,
+                            whip_point_override=wp_override,
                             harness_sizes_override=h_override)
                         portion_harness_sizes = portion['harnesses']
 
@@ -7485,7 +7506,7 @@ class QuickEstimate(ttk.Frame):
                     base_pairs = self.calculate_extender_lengths_per_segment(
                         seg, device_position)
                     adjusted_pairs = self.calculate_extender_lengths_per_segment(
-                        seg, eff_device_position, target_y_offset=signed_ns)
+                        seg, device_position, whip_point_override=wp_override)
                     harness_sizes = self._get_harness_sizes(seg)
 
                     for pair_idx in range(len(base_pairs)):
