@@ -8,6 +8,7 @@ from .inverter_manager import InverterManager
 from pathlib import Path
 import json
 from ..models.module import ModuleSpec, ModuleType, ModuleOrientation
+from ..utils.file_handlers import get_user_data_path
 from copy import deepcopy
 from .dc_feeder_dialog import DCFeederDialog
 
@@ -1936,7 +1937,7 @@ class BlockConfigurator(ttk.Frame):
 
     def load_templates(self):
         """Load tracker templates from file, filtered by enabled templates"""
-        template_path = Path('data/tracker_templates.json')
+        template_path = Path(get_user_data_path('tracker_templates.json'))
         if template_path.exists():
             try:
                 with open(template_path, 'r') as f:

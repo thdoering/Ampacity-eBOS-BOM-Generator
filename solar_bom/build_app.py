@@ -1,8 +1,8 @@
 import os
 import sys
-import shutil
 from pathlib import Path
 from version import get_version
+from src.utils.file_handlers import get_app_base_path, initialize_user_data
 
 # Add necessary directories to path
 def setup_environment():
@@ -13,20 +13,17 @@ def setup_environment():
     else:
         # Running as script
         base_dir = Path(__file__).parent
-    
-    # Ensure data directories exist
-    os.makedirs(os.path.join(base_dir, 'data'), exist_ok=True)
-    os.makedirs(os.path.join(base_dir, 'projects'), exist_ok=True)
-    
-    # Copy template files if they don't exist yet
-    template_files = ['module_templates.json', 'tracker_templates.json']
-    for file in template_files:
-        source = os.path.join(base_dir, 'data', file)
-        dest = os.path.join(os.getcwd(), 'data', file) 
-        if os.path.exists(source) and not os.path.exists(dest):
-            os.makedirs(os.path.dirname(dest), exist_ok=True)
-            shutil.copy(source, dest)
-    
+
+    # Anchor the working directory to the app's own folder. Without this, a
+    # taskbar-pinned (or otherwise launched) exe can run with cwd = C:\Windows\
+    # System32, where the app's relative data/ and projects/ access is denied.
+    app_dir = get_app_base_path()
+    os.chdir(app_dir)
+
+    # Ensure the per-user data/projects locations exist, migrating any existing
+    # work next to the exe and seeding templates from the bundle on first run.
+    initialize_user_data()
+
     return base_dir
 
 # Print version info at startup

@@ -7,8 +7,11 @@ from pathlib import Path
 class HarnessDrawingGenerator:
     """Generator for harness technical drawings"""
     
-    def __init__(self, harness_library_path: str = 'data/harness_library.json'):
+    def __init__(self, harness_library_path: Optional[str] = None):
         """Initialize the generator with harness library"""
+        if harness_library_path is None:
+            from .file_handlers import get_bundled_data_path
+            harness_library_path = get_bundled_data_path('harness_library.json')
         self.harness_library_path = harness_library_path
         self.harness_library = self.load_harness_library()
         

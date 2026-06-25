@@ -9,6 +9,7 @@ import copy
 from datetime import datetime
 from collections import defaultdict
 from src.utils.string_allocation import allocate_strings, allocate_strings_sequential, allocate_strings_spatial
+from src.utils.file_handlers import get_user_data_path, get_bundled_data_path
 from .site_preview import SitePreviewWindow, QuickEstimateDialog
 
 
@@ -85,7 +86,7 @@ class QuickEstimate(ttk.Frame):
     def load_pricing_data(self):
         """Load pricing data from JSON file"""
         try:
-            pricing_path = Path('data/pricing_data.json')
+            pricing_path = Path(get_bundled_data_path('pricing_data.json'))
             if pricing_path.exists():
                 with open(pricing_path, 'r') as f:
                     return json.load(f)
@@ -150,7 +151,7 @@ class QuickEstimate(ttk.Frame):
         Returns {template_key: template_data_dict} for enabled templates only."""
         templates = {}
         try:
-            template_path = Path('data/tracker_templates.json')
+            template_path = Path(get_user_data_path('tracker_templates.json'))
             if not template_path.exists():
                 return templates
             
@@ -996,7 +997,7 @@ class QuickEstimate(ttk.Frame):
     def load_combiner_library(self):
         """Load combiner box library from JSON file"""
         try:
-            lib_path = Path('data/combiner_box_library.json')
+            lib_path = Path(get_bundled_data_path('combiner_box_library.json'))
             if lib_path.exists():
                 with open(lib_path, 'r') as f:
                     return json.load(f)

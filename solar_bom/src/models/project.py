@@ -156,9 +156,12 @@ class Project:
             wire_sizing_settings=Project._merge_wire_sizing_settings(data.get('wire_sizing_settings')),
         )
     
-    def save(self, projects_dir: str = 'projects') -> bool:
+    def save(self, projects_dir: Optional[str] = None) -> bool:
         """Save project to file"""
         try:
+            if projects_dir is None:
+                from ..utils.file_handlers import get_user_projects_dir
+                projects_dir = get_user_projects_dir()
             # Create projects directory if it doesn't exist
             os.makedirs(projects_dir, exist_ok=True)
             

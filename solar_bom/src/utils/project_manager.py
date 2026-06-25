@@ -8,14 +8,18 @@ from ..models.project import Project, ProjectMetadata
 class ProjectManager:
     """Utility class for managing solar project files"""
     
-    def __init__(self, projects_dir: str = 'projects', max_recent: int = 5):
+    def __init__(self, projects_dir: Optional[str] = None, max_recent: int = 5):
         """
         Initialize the project manager
-        
+
         Args:
-            projects_dir: Directory where projects are stored
+            projects_dir: Directory where projects are stored. Defaults to the
+                per-user projects directory (persists across app versions).
             max_recent: Maximum number of recent projects to track
         """
+        if projects_dir is None:
+            from .file_handlers import get_user_projects_dir
+            projects_dir = get_user_projects_dir()
         self.projects_dir = projects_dir
         self.max_recent = max_recent
         self.recent_projects_file = os.path.join(projects_dir, '.recent_projects')

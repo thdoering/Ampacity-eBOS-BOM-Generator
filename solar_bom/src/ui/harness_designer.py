@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Optional, Dict, Any
 from ..utils.harness_drawing_generator import HarnessDrawingGenerator
+from ..utils.file_handlers import get_bundled_data_path
 
 class HarnessDesigner(tk.Toplevel):
     """Harness design tool for creating custom harness templates"""
@@ -12,8 +13,9 @@ class HarnessDesigner(tk.Toplevel):
         super().__init__(parent)
         self.parent = parent
         
-        # Initialize harness library path
-        self.harness_library_path = 'data/harness_library.json'
+        # Initialize harness library path (shipped reference data; tracks the
+        # installed version in a frozen build, repo/data in dev)
+        self.harness_library_path = get_bundled_data_path('harness_library.json')
         self.harness_library = self.load_harness_library()
         
         # Set up window properties

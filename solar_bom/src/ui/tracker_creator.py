@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Optional, Callable
 from ..models.tracker import TrackerTemplate, ModuleOrientation
 from ..models.module import ModuleSpec, ModuleType
+from ..utils.file_handlers import get_user_data_path
 
 class TrackerTemplateCreator(ttk.Frame):
     def __init__(self, parent, module_spec: Optional[ModuleSpec] = None, 
@@ -682,7 +683,7 @@ class TrackerTemplateCreator(ttk.Frame):
             
     def load_templates(self) -> dict:
         """Load saved templates from JSON file"""
-        template_path = Path('data/tracker_templates.json')
+        template_path = Path(get_user_data_path('tracker_templates.json'))
         try:
             template_path.parent.mkdir(parents=True, exist_ok=True)
             if not template_path.exists():
@@ -717,7 +718,7 @@ class TrackerTemplateCreator(ttk.Frame):
             
     def save_templates(self):
         """Save templates to JSON file in hierarchical format"""
-        template_path = Path('data/tracker_templates.json')
+        template_path = Path(get_user_data_path('tracker_templates.json'))
         template_path.parent.mkdir(exist_ok=True)
         
         # Organize templates by manufacturer

@@ -29,7 +29,10 @@
       "Bash(python -m py_compile src/utils/site_pdf_generator.py)",
       "Bash(python -c \"from src.utils.corridor_routing import three_leg_distance, pick_entry, polyline_arc_length; pts=[\\(0,0\\),\\(0,100\\)]; d, g = three_leg_distance\\(\\(20,50\\),\\(80,50\\),pts\\); print\\(f'dist={d:.1f}, path={g}'\\)\")",
       "Bash(python -m py_compile src/ui/site_preview.py src/ui/quick_estimate.py src/utils/corridor_routing.py src/utils/site_pdf_generator.py)",
-      "Bash(timeout 10 python main.py)"
+      "Bash(timeout 10 python main.py)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('build_app.py'\\).read\\(\\)\\); print\\('build_app.py: syntax OK'\\)\")",
+      "Bash(python -c \"from src.utils.file_handlers import get_app_base_path; print\\('import OK ->', get_app_base_path\\(\\)\\)\")",
+      "Bash(python -c \"import ast; [ast.parse\\(open\\(f, encoding='utf-8'\\).read\\(\\)\\) for f in ['main.py','src/utils/file_handlers.py','src/utils/module_library.py','src/utils/inverter_library.py','src/ui/tracker_creator.py','src/ui/block_configurator.py','src/ui/quick_estimate.py']]; print\\('all parse OK'\\)\")"
     ]
   }
 }

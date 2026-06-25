@@ -12,8 +12,9 @@ def get_factory_path() -> Path:
 
 
 def get_user_path() -> Path:
-    """Return path to the user inverter library."""
-    return Path('data/inverters.json')
+    """Return path to the user inverter library (per-user writable location)."""
+    from .file_handlers import get_user_data_path
+    return Path(get_user_data_path('inverters.json'))
 
 
 def _parse_hierarchical(data: dict) -> Dict[str, dict]:

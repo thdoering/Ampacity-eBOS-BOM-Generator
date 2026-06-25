@@ -191,3 +191,116 @@ def get_app_base_path():
     else:
         # Running as script
         return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def get_user_data_dir():
+    """Get the per-user writable base directory for user data and projects.
+
+    Frozen (shipped exe): %APPDATA%\\Solar eBOS BOM Generator, so a user's data
+    and projects persist across versions regardless of where the exe lives.
+    Dev (script): the repo root, so the existing dev workflow and gitignored dev
+    files are unchanged. The directory is created if it doesn't exist.
+    """
+    import sys
+    if getattr(sys, 'frozen', False):
+        appdata = os.environ.get('APPDATA') or os.path.expanduser('~')
+        base = os.path.join(appdata, 'Solar eBOS BOM Generator')
+    else:
+        base = get_app_base_path()
+    os.makedirs(base, exist_ok=True)
+    return base
+
+
+def get_user_data_path(filename):
+    """Full path to a user-writable data file under <user_data_dir>/data/.
+
+    Use for runtime-editable libraries/templates/pricing (NOT read-only factory
+    or NEC reference files, which stay bundled). The data/ dir is created if needed.
+    """
+    data_dir = os.path.join(get_user_data_dir(), 'data')
+    os.makedirs(data_dir, exist_ok=True)
+    return os.path.join(data_dir, filename)
+
+
+def get_user_projects_dir():
+    """Per-user writable projects directory under <user_data_dir>/projects/.
+
+    Created if it doesn't exist.
+    """
+    projects_dir = os.path.join(get_user_data_dir(), 'projects')
+    os.makedirs(projects_dir, exist_ok=True)
+    return projects_dir
+
+
+def get_bundled_data_path(filename):
+    """Full path to shipped reference data under the bundle's data/ folder.
+
+    Frozen: <_MEIPASS>/data/<filename> — so the file reflects the *installed
+    version* and updates each time a new build is shipped. Dev: <repo>/data/.
+    Use for centrally-maintained reference data (pricing, part catalogs) that
+    should track the installed version, NOT per-user edits.
+    """
+    import sys
+    if getattr(sys, 'frozen', False):
+        base = os.path.join(sys._MEIPASS, 'data')
+    else:
+        base = os.path.join(get_app_base_path(), 'data')
+    return os.path.join(base, filename)
+
+
+# User-writable data files that live in the per-user data/ dir (templates the
+# user edits/adds at runtime). Catalogs/pricing/NEC/factory are NOT here — those
+# read from the bundle so shipped updates win.
+_USER_DATA_FILES = [
+    'module_templates.json',
+    'tracker_templates.json',
+    'inverters.json',
+]
+
+
+def initialize_user_data():
+    """Populate the per-user data/projects locations on first run.
+
+    On a shipped build the user data dir (%APPDATA%) starts empty. This (1)
+    migrates any projects and user templates the user already had next to the
+    exe so existing work is preserved, then (2) seeds still-missing templates
+    from the bundle. Existing destination files are never overwritten. No-op in
+    dev mode, where the user data dir is the repo itself.
+    """
+    import sys
+    import shutil
+
+    user_data_dir = get_user_data_dir()
+    app_base = get_app_base_path()
+
+    # Dev mode (user data dir == repo): nothing to migrate or seed.
+    if os.path.normcase(os.path.abspath(user_data_dir)) == os.path.normcase(os.path.abspath(app_base)):
+        return
+
+    user_data_subdir = os.path.join(user_data_dir, 'data')
+    os.makedirs(user_data_subdir, exist_ok=True)
+    user_projects_dir = get_user_projects_dir()
+
+    def _copy_if_missing(src, dst):
+        try:
+            if os.path.isfile(src) and not os.path.exists(dst):
+                shutil.copy2(src, dst)
+        except Exception as e:
+            print(f"initialize_user_data: could not copy {src} -> {dst}: {e}")
+
+    # (1) Migrate existing work from the folder next to the exe (the prior cwd).
+    legacy_data = os.path.join(app_base, 'data')
+    for name in _USER_DATA_FILES:
+        _copy_if_missing(os.path.join(legacy_data, name), os.path.join(user_data_subdir, name))
+
+    legacy_projects = os.path.join(app_base, 'projects')
+    if os.path.isdir(legacy_projects):
+        for entry in os.listdir(legacy_projects):
+            if entry.endswith('.json'):  # project files; skip .recent_projects (rebuilds itself)
+                _copy_if_missing(os.path.join(legacy_projects, entry),
+                                 os.path.join(user_projects_dir, entry))
+
+    # (2) Seed any still-missing templates from the bundle.
+    bundle_data = os.path.join(sys._MEIPASS, 'data') if getattr(sys, 'frozen', False) else legacy_data
+    for name in _USER_DATA_FILES:
+        _copy_if_missing(os.path.join(bundle_data, name), os.path.join(user_data_subdir, name))

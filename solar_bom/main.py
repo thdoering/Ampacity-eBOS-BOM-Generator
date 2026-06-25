@@ -8,6 +8,7 @@ from src.ui.block_configurator import BlockConfigurator
 from src.ui.inverter_manager import InverterManager
 from src.ui.bom_manager import BOMManager
 from src.ui.project_dashboard import ProjectDashboard
+from src.utils.file_handlers import get_user_data_path
 from version import get_version, get_version_info
 
 class SolarBOMApplication:
@@ -274,7 +275,7 @@ class SolarBOMApplication:
             # Load tracker templates
             tracker_templates = {}
             try:
-                templates_data = load_json_file('data/tracker_templates.json')
+                templates_data = load_json_file(get_user_data_path('tracker_templates.json'))
                 
                 if templates_data:
                     # Check if this is the new hierarchical format
@@ -622,7 +623,7 @@ class SolarBOMApplication:
             # --- Embed tracker templates ---
             embedded_tracker_templates = {}
             try:
-                tracker_path = Path('data/tracker_templates.json')
+                tracker_path = Path(get_user_data_path('tracker_templates.json'))
                 if tracker_path.exists():
                     with open(tracker_path, 'r') as f:
                         all_tracker_data = json.load(f)
@@ -689,7 +690,7 @@ class SolarBOMApplication:
             # --- Embed inverters ---
             embedded_inverters = {}
             try:
-                inverter_path = Path('data/inverters.json')
+                inverter_path = Path(get_user_data_path('inverters.json'))
                 if inverter_path.exists():
                     with open(inverter_path, 'r') as f:
                         all_inverter_data = json.load(f)
@@ -784,7 +785,7 @@ class SolarBOMApplication:
         embedded_trackers = data.pop('embedded_tracker_templates', None)
         if embedded_trackers:
             try:
-                tracker_path = Path('data/tracker_templates.json')
+                tracker_path = Path(get_user_data_path('tracker_templates.json'))
                 tracker_path.parent.mkdir(parents=True, exist_ok=True)
                 
                 # Load existing local file (hierarchical format)
@@ -845,7 +846,7 @@ class SolarBOMApplication:
         embedded_modules = data.pop('embedded_module_templates', None)
         if embedded_modules:
             try:
-                module_path = Path('data/module_templates.json')
+                module_path = Path(get_user_data_path('module_templates.json'))
                 module_path.parent.mkdir(parents=True, exist_ok=True)
                 
                 local_modules = {}
@@ -895,7 +896,7 @@ class SolarBOMApplication:
         embedded_inverters = data.pop('embedded_inverters', None)
         if embedded_inverters:
             try:
-                inverter_path = Path('data/inverters.json')
+                inverter_path = Path(get_user_data_path('inverters.json'))
                 inverter_path.parent.mkdir(parents=True, exist_ok=True)
                 
                 local_inverters = {}

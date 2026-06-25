@@ -12,8 +12,9 @@ def get_factory_path() -> Path:
 
 
 def get_user_path() -> Path:
-    """Return path to the user module library."""
-    return Path('data/module_templates.json')
+    """Return path to the user module library (per-user writable location)."""
+    from .file_handlers import get_user_data_path
+    return Path(get_user_data_path('module_templates.json'))
 
 
 def _parse_hierarchical(data: dict) -> Dict[str, dict]:
