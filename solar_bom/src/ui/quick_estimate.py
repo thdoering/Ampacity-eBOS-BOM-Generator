@@ -1572,6 +1572,11 @@ class QuickEstimate(ttk.Frame):
         'dc_feeder': 'buried', 'ac_homerun': 'buried',
     }
 
+    _WSS_DEFAULT_TERM_TEMP = {
+        'harness': 90, 'extender': 90, 'whip': 90,
+        'dc_feeder': 75, 'ac_homerun': 75,
+    }
+
     @classmethod
     def _make_default_wss(cls) -> dict:
         """Return a fresh wire_sizing_settings dict populated with defaults."""
@@ -1579,7 +1584,7 @@ class QuickEstimate(ttk.Frame):
         for key, _, insulation, material in cls._WSS_CABLE_TYPES:
             d[key] = {
                 'insulation': insulation,
-                'term_temp_c': 90,
+                'term_temp_c': cls._WSS_DEFAULT_TERM_TEMP.get(key, 90),
                 'install_method': cls._WSS_DEFAULT_INSTALL.get(key, 'free_air'),
                 'material': material,
                 'vd_target_pct': 2.0,
@@ -5706,7 +5711,11 @@ class QuickEstimate(ttk.Frame):
         )
         lv_collection_combo.pack(side='left', padx=(0, 15))
         self.disable_combobox_scroll(lv_collection_combo)
-        self.lv_collection_var.trace_add('write', lambda *args: (self._auto_unlock_allocation(), self._on_lv_collection_changed(), self._mark_stale(), self._schedule_autosave()))
+        # LV collection method changes how strings are physically collected (harness vs
+        # string home run vs trunk bus) and which BOM parts are selected — it does NOT
+        # change string→device allocation. So it must not unlock a locked allocation;
+        # calculate_estimate reuses locked_allocation_result verbatim regardless of LV method.
+        self.lv_collection_var.trace_add('write', lambda *args: (self._on_lv_collection_changed(), self._mark_stale(), self._schedule_autosave()))
 
         self.spi_label = ttk.Label(topology_row, text="Strings/Device:")
         self.spi_label.pack(side='left', padx=(0, 5))

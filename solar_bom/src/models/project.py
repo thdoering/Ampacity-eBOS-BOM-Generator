@@ -68,9 +68,9 @@ class Project:
 
     @staticmethod
     def _default_wire_sizing_settings() -> dict:
-        _cable = lambda ins, mat, method: {
+        _cable = lambda ins, mat, method, term=90: {
             "insulation_type": ins,
-            "termination_temp_c": 90,
+            "termination_temp_c": term,
             "installation_method": method,
             "material": mat,
             "vd_target_pct": 2.0,
@@ -83,8 +83,8 @@ class Project:
                 "harness":    _cable("PV Wire",  "copper",   "free_air"),
                 "extender":   _cable("PV Wire",  "copper",   "free_air"),
                 "whip":       _cable("PV Wire",  "copper",   "free_air"),
-                "dc_feeder":  _cable("USE-2",    "aluminum", "direct_buried"),
-                "ac_homerun": _cable("XHHW-2",   "aluminum", "direct_buried"),
+                "dc_feeder":  _cable("USE-2",    "aluminum", "direct_buried", term=75),
+                "ac_homerun": _cable("XHHW-2",   "aluminum", "direct_buried", term=75),
             },
         }
 

@@ -309,6 +309,34 @@
     "fused": false,
     "fuse_rating": null
   },
+  "3P-10D8T-122": {
+    "part_number": "3P-10D8T-122",
+    "atpi_part_number": "PR-3STP10D8T122",
+    "description": "3 String, Positive, Unfused, 10AWG Drops w/8AWG Trunk, 122' string length, MC4 connectors",
+    "num_strings": 3,
+    "polarity": "positive",
+    "string_spacing_ft": 122.0,
+    "category": "Standard",
+    "drop_wire_gauge": "10 AWG",
+    "trunk_wire_gauge": "8 AWG",
+    "connector_type": "MC4",
+    "fused": false,
+    "fuse_rating": null
+  },
+  "3N-10D8T-122": {
+    "part_number": "3N-10D8T-122",
+    "atpi_part_number": "PR-3STN10D8T122",
+    "description": "3 String, Negative, 10AWG Drops w/8AWG Trunk, 122' string length, MC4 connectors",
+    "num_strings": 3,
+    "polarity": "negative",
+    "string_spacing_ft": 122.0,
+    "category": "Standard",
+    "drop_wire_gauge": "10 AWG",
+    "trunk_wire_gauge": "8 AWG",
+    "connector_type": "MC4",
+    "fused": false,
+    "fuse_rating": null
+  },
   "_comment_10awg_trunk": "========== STANDARD HARNESSES - 10AWG TRUNK (10AWG Drops, 10AWG Trunk) ==========",
   "2P-10D10T-102": {
     "part_number": "2P-10D10T-102",
