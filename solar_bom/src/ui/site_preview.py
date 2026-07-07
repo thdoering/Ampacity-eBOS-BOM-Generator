@@ -405,10 +405,15 @@ class SitePreviewWindow(tk.Toplevel):
         max_show = min(num_inv, 15)
         for i in range(max_show):
             color = self.colors[i % len(self.colors)]
-            swatch = tk.Canvas(swatch_frame, width=12, height=12, highlightthickness=0)
+            swatch = tk.Canvas(swatch_frame, width=12, height=12, highlightthickness=0,
+                               cursor='hand2')
             swatch.create_rectangle(0, 0, 12, 12, fill=color, outline='#333333')
             swatch.pack(side='left', padx=(0, 2))
-            ttk.Label(swatch_frame, text=f"Inv {i+1}", font=('Helvetica', 8)).pack(side='left', padx=(0, 8))
+            lbl = ttk.Label(swatch_frame, text=f"{self.device_label} {i+1}",
+                           font=('Helvetica', 8), cursor='hand2')
+            lbl.pack(side='left', padx=(0, 8))
+            swatch.bind('<Button-1>', lambda e, idx=i: self._on_legend_device_click(idx))
+            lbl.bind('<Button-1>', lambda e, idx=i: self._on_legend_device_click(idx))
         if num_inv > max_show:
             ttk.Label(swatch_frame, text=f"... +{num_inv - max_show} more",
                      font=('Helvetica', 8, 'italic'), foreground='gray').pack(side='left', padx=(5, 0))
@@ -430,6 +435,35 @@ class SitePreviewWindow(tk.Toplevel):
             runs_str = f"  |  {spatial_runs} spatial run(s)" if spatial_runs > 1 else ""
             ttk.Label(self.legend_frame, text=f"{size_str}  |  {split_count} split tracker(s){runs_str}",
                      font=('Helvetica', 9), foreground='#555555').pack(anchor='w')
+
+    def _on_legend_device_click(self, device_idx):
+        """Select the device matching a legend entry.
+
+        Switches to Inspect mode if needed (no confirm — confirm only applies when
+        leaving Inspect), selects the device, and gives the Toplevel focus so the
+        arrow keys nudge it E-W. Provides a way to reach a device whose canvas
+        footprint is obscured by an overlapping string.
+        """
+        if not self.device_positions or device_idx >= len(self.device_positions):
+            return
+
+        # Force Inspect mode on (mirror the "turn on" half of _on_toggle_click)
+        if not self.inspect_mode:
+            self.inspect_mode = True
+            self.inspect_mode_var.set(self.inspect_mode)
+            self._draw_toggle()
+            self.toggle_label.config(text="Inspect", foreground='#4CAF50')
+
+        # Clear competing selections (as _on_inspect_toggle does for groups)
+        self.selected_pad_inspect_idx = None
+        self.selected_pad_idx = None
+        self.selected_group_indices = set()
+
+        self.selected_device_idx = device_idx
+
+        self._invalidate_world_layer()
+        self.draw()
+        self.focus_force()
 
     def _build_wiring_layer_panel(self):
         """Populate the wiring layer toggle panel with an 4×2 checkbutton grid."""
