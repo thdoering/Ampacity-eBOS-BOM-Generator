@@ -102,6 +102,47 @@ def save_user_modules(modules: dict, factory_keys: Set[str]) -> None:
         json.dump(hierarchical_data, f, indent=2)
 
 
+def deserialize_module_spec(module_key: str, module_data: dict) -> 'Optional[ModuleSpec]':
+    """Convert a raw module dict to a ModuleSpec. Returns None on failure.
+
+    Mirrors the construction used by ModuleManager.load_modules so callers that
+    need ModuleSpec objects don't have to duplicate it.
+    """
+    from ..models.module import ModuleSpec, ModuleType, ModuleOrientation
+    try:
+        module_params = {
+            k: v for k, v in module_data.items()
+            if k not in ('type', 'default_orientation', 'temperature_coefficient')
+        }
+        if 'temperature_coefficient' in module_data and 'temperature_coefficient_pmax' not in module_data:
+            module_params['temperature_coefficient_pmax'] = module_data['temperature_coefficient']
+        return ModuleSpec(
+            **module_params,
+            type=ModuleType(module_data.get('type', ModuleType.MONO_PERC.value)),
+            default_orientation=ModuleOrientation(
+                module_data.get('default_orientation', ModuleOrientation.PORTRAIT.value)
+            ),
+        )
+    except Exception as e:
+        print(f"Warning: Failed to deserialize module '{module_key}': {e}")
+        return None
+
+
+def load_merged_module_specs() -> 'Tuple[Dict[str, ModuleSpec], Set[str]]':
+    """
+    Merge factory and user libraries and deserialize to ModuleSpec objects.
+    Returns (modules_dict, factory_keys) where modules_dict is {module_key: ModuleSpec}.
+    Factory wins on conflict. Parallel to inverter_library.load_merged_inverter_specs.
+    """
+    merged_raw, factory_keys = load_merged_modules()
+    modules = {}
+    for key, data in merged_raw.items():
+        spec = deserialize_module_spec(key, data)
+        if spec:
+            modules[key] = spec
+    return modules, factory_keys
+
+
 def is_module_in_factory(manufacturer: str, model: str) -> bool:
     """Return True if a module with the given manufacturer and model exists in the factory library."""
     factory = load_factory_modules()

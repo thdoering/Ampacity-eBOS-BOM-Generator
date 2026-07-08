@@ -53,6 +53,7 @@ class SolarBOMApplication:
         file_menu.add_separator()
         file_menu.add_command(label="Export Project...", command=self.export_project)
         file_menu.add_command(label="Import Project...", command=self.import_project)
+        file_menu.add_command(label="Import Drawing Extraction...", command=self.import_extraction)
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.root.quit)
         
@@ -206,7 +207,8 @@ class SolarBOMApplication:
             on_template_enabled_changed=on_template_enabled_changed
         )
         tracker_creator.pack(fill='both', expand=True, padx=5, pady=5)
-        
+        self.tracker_creator = tracker_creator  # Store reference for refresh after import
+
         # Define module selection callback
         def on_module_selected(module):
             # Update tracker creator
@@ -928,6 +930,154 @@ class SolarBOMApplication:
                 print(f"Warning: Error merging inverters: {e}")
         
         return summary
+
+    def import_extraction(self):
+        """Import a drawing-extraction JSON (ExtractionResult from the ampacity-rfp
+        plugin): review/resolve it in a dialog, then populate the tracker-template
+        library, enable those templates for the current project, apply empty
+        project-meta fields, and select the matched inverter.
+
+        If no project is open, a new project is created from the extraction's
+        metadata (name/customer/location).
+
+        Stops at populated libraries + enabled templates + selected inverter — it
+        does not create groups, place trackers, or allocate strings (that stays in
+        Quick Estimate)."""
+        filepath = filedialog.askopenfilename(
+            filetypes=[("Extraction JSON", "*.json"), ("All Files", "*.*")],
+            title="Import Drawing Extraction"
+        )
+        if not filepath:
+            return  # User cancelled
+
+        import json
+        from src.utils.extraction_import import build_import_plan, ExtractionImportError
+        from src.ui.extraction_import_dialog import ExtractionImportDialog
+
+        # Parse + adapt.
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            plan = build_import_plan(data)
+        except (json.JSONDecodeError, OSError) as e:
+            messagebox.showerror("Import Error", f"Could not read the extraction file:\n{e}")
+            return
+        except ExtractionImportError as e:
+            messagebox.showerror("Invalid Extraction", str(e))
+            return
+
+        # Review/resolve.
+        dialog = ExtractionImportDialog(self.root, plan, current_project=self.current_project)
+        self.root.wait_window(dialog)
+        decisions = dialog.result
+        if decisions is None:
+            return  # User cancelled the dialog
+
+        # If no project is open, create one from the resolved metadata. The dialog
+        # offered all meta fields as fillable (current_project was None), so the
+        # user's kept fills drive the new project's name/client/location.
+        created_new_project = None
+        if not self.current_project:
+            from src.utils.project_manager import ProjectManager
+            project_manager = ProjectManager()
+            fills = decisions.project_meta_fills
+            name = fills.get('name') or plan.project_meta.name or "Imported Project"
+            # Avoid clobbering an existing project file with the same name.
+            unique_name = name
+            suffix = 2
+            while project_manager.project_name_exists(unique_name):
+                unique_name = f"{name} ({suffix})"
+                suffix += 1
+            new_project = project_manager.create_project(
+                name=unique_name,
+                client=fills.get('client', '') or '',
+                location=fills.get('location', '') or '',
+            )
+            project_manager.save_project(new_project)
+            self.load_project(new_project)  # builds tabs; sets tracker_creator/quick_estimate_widget
+            created_new_project = unique_name
+
+        # Embed each resolved ModuleSpec into its template and build the merge payload
+        # keyed by the existing "{module_manufacturer} - {name}" convention.
+        embedded_tracker_templates = {}
+        enabled_keys = []
+        for t in decisions.templates:
+            spec = decisions.resolved_modules.get(t['module_ref'])
+            if spec is None:
+                continue  # dialog blocks this, but guard anyway
+            td = dict(t['template_data'])
+            td['module_spec'] = {
+                'manufacturer': spec.manufacturer,
+                'model': spec.model,
+                'type': spec.type.value,
+                'length_mm': spec.length_mm,
+                'width_mm': spec.width_mm,
+                'depth_mm': spec.depth_mm,
+                'weight_kg': spec.weight_kg,
+                'wattage': spec.wattage,
+                'vmp': spec.vmp,
+                'imp': spec.imp,
+                'voc': spec.voc,
+                'isc': spec.isc,
+                'max_system_voltage': spec.max_system_voltage,
+            }
+            key = f"{spec.manufacturer} - {t['name']}"
+            embedded_tracker_templates[key] = td
+            enabled_keys.append(key)
+
+        # Merge into the tracker-template library through the existing embedded-
+        # equipment path (reuses its add/skip/overwrite conflict prompts). Only
+        # tracker templates are passed — modules are already embedded and inverters
+        # are match-only.
+        summary = self._merge_embedded_equipment(
+            {'embedded_tracker_templates': embedded_tracker_templates}
+        )
+
+        # Enable imported templates for the project (the merge path does not do this).
+        for key in enabled_keys:
+            if key not in self.current_project.enabled_templates:
+                self.current_project.enabled_templates.append(key)
+
+        # Apply project-meta fills (only fields the dialog confirmed were empty).
+        md = self.current_project.metadata
+        applied_meta = []
+        for attr, value in decisions.project_meta_fills.items():
+            if not getattr(md, attr, None):
+                setattr(md, attr, value)
+                applied_meta.append(attr)
+
+        # Select the matched inverter for the project (match-only; never created).
+        inverter_applied = None
+        if decisions.inverter_name:
+            if decisions.inverter_name not in self.current_project.selected_inverters:
+                self.current_project.selected_inverters.append(decisions.inverter_name)
+            inverter_applied = decisions.inverter_name
+
+        # Refresh views so imported templates appear without a restart.
+        if getattr(self, 'tracker_creator', None):
+            self.tracker_creator.templates = self.tracker_creator.load_templates()
+            self.tracker_creator.update_template_list()
+        if getattr(self, 'quick_estimate_widget', None):
+            self.quick_estimate_widget.refresh_templates()
+
+        # Persist the project-level changes (enabled templates, meta, inverter).
+        self.autosave_project()
+
+        # Summary.
+        lines = []
+        if created_new_project:
+            lines.append(f"Created new project: {created_new_project}.")
+        lines += [
+            f"Tracker templates: {summary['tracker_added']} added, "
+            f"{summary['tracker_overwritten']} overwritten, {summary['tracker_skipped']} skipped.",
+            f"Enabled {len(enabled_keys)} template(s) for this project.",
+        ]
+        if applied_meta:
+            lines.append("Filled project fields: " + ", ".join(applied_meta) + ".")
+        if inverter_applied:
+            lines.append(f"Selected inverter: {inverter_applied}.")
+        lines.append("\nGo to Quick Estimate to lay out the design.")
+        messagebox.showinfo("Extraction Imported", "\n".join(lines))
 
     def import_project(self):
         """Import a .ebom project file and copy it to local projects folder"""

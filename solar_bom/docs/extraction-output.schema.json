@@ -1,0 +1,685 @@
+{
+  "$defs": {
+    "AdditionalInfo": {
+      "properties": {
+        "damper_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Damper Type"
+        },
+        "hd_bearings": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hd Bearings"
+        },
+        "center_cab_gap": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Center Cab Gap"
+        },
+        "clamp_types_ab": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Clamp Types Ab"
+        },
+        "clamp_types_cd": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Clamp Types Cd"
+        },
+        "bearing_gaps": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bearing Gaps"
+        },
+        "motor_qty": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Motor Qty"
+        }
+      },
+      "title": "AdditionalInfo",
+      "type": "object"
+    },
+    "ModuleInfo": {
+      "properties": {
+        "brand": {
+          "title": "Brand",
+          "type": "string"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
+        },
+        "size_watts": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Size Watts"
+        },
+        "quantity": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quantity"
+        },
+        "string_size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "String Size"
+        },
+        "string_quantity": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "String Quantity"
+        },
+        "row_spacing_ft": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Row Spacing Ft"
+        },
+        "driveline_angle": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Driveline Angle"
+        }
+      },
+      "required": [
+        "brand"
+      ],
+      "title": "ModuleInfo",
+      "type": "object"
+    },
+    "ProjectMeta": {
+      "properties": {
+        "customer": {
+          "default": "",
+          "title": "Customer",
+          "type": "string"
+        },
+        "name": {
+          "default": "",
+          "title": "Name",
+          "type": "string"
+        },
+        "address": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Address"
+        },
+        "coordinates": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Coordinates"
+        },
+        "city_state_zip": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "City State Zip"
+        },
+        "asce_wind": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Asce Wind"
+        },
+        "asce_snow": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Asce Snow"
+        },
+        "risk_category": {
+          "anyOf": [
+            {
+              "enum": [
+                "I",
+                "II",
+                "III",
+                "IV"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Risk Category"
+        },
+        "tracker_manufacturer": {
+          "anyOf": [
+            {
+              "enum": [
+                "ATI",
+                "Nextracker"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tracker Manufacturer"
+        },
+        "dc_capacity_kw": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dc Capacity Kw"
+        },
+        "ac_capacity_kw": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ac Capacity Kw"
+        },
+        "dc_ac_ratio": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dc Ac Ratio"
+        },
+        "total_modules": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total Modules"
+        },
+        "total_strings": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total Strings"
+        },
+        "inverter_qty": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Inverter Qty"
+        },
+        "inverter": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Inverter"
+        }
+      },
+      "title": "ProjectMeta",
+      "type": "object"
+    },
+    "RowSummaryEntry": {
+      "properties": {
+        "module_index": {
+          "default": 0,
+          "title": "Module Index",
+          "type": "integer"
+        },
+        "quantity": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quantity"
+        },
+        "row_length": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Row Length"
+        },
+        "row_type": {
+          "anyOf": [
+            {
+              "enum": [
+                "Ext",
+                "Int"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Row Type"
+        },
+        "bearing_posts": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bearing Posts"
+        },
+        "split": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Split"
+        },
+        "dampers": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dampers"
+        },
+        "post_qty": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Post Qty"
+        }
+      },
+      "title": "RowSummaryEntry",
+      "type": "object"
+    },
+    "TrackerTemplate": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "module_ref": {
+          "title": "Module Ref",
+          "type": "string"
+        },
+        "modules_per_string": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Modules Per String"
+        },
+        "strings_per_tracker": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Strings Per Tracker"
+        },
+        "modules_per_tracker": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Modules Per Tracker"
+        },
+        "modules_high": {
+          "default": 1,
+          "title": "Modules High",
+          "type": "integer"
+        },
+        "orientation": {
+          "default": "Portrait",
+          "enum": [
+            "Portrait",
+            "Landscape"
+          ],
+          "title": "Orientation",
+          "type": "string"
+        },
+        "motor_placement": {
+          "anyOf": [
+            {
+              "enum": [
+                "between_strings",
+                "middle_of_string"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Motor Placement"
+        },
+        "motor_after_string": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Motor After String"
+        },
+        "motor_in_string": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Motor In String"
+        },
+        "split_north": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Split North"
+        },
+        "split_south": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Split South"
+        },
+        "module_spacing_m": {
+          "default": 0.01,
+          "title": "Module Spacing M",
+          "type": "number"
+        },
+        "quantity": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quantity"
+        }
+      },
+      "required": [
+        "name",
+        "module_ref"
+      ],
+      "title": "TrackerTemplate",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "version": {
+      "default": "1.0.0",
+      "title": "Version",
+      "type": "string"
+    },
+    "project": {
+      "$ref": "#/$defs/ProjectMeta"
+    },
+    "modules": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ModuleInfo"
+      },
+      "title": "Modules",
+      "type": "array"
+    },
+    "tracker_templates": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/TrackerTemplate"
+      },
+      "title": "Tracker Templates",
+      "type": "array"
+    },
+    "row_summary": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/RowSummaryEntry"
+      },
+      "title": "Row Summary",
+      "type": "array"
+    },
+    "additional_info": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AdditionalInfo"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "project"
+  ],
+  "title": "ExtractionResult",
+  "type": "object",
+  "$id": "https://ampacity.example/schemas/extraction-output.schema.json",
+  "description": "Structured extraction output from a solar PV project PDF. Produced by the ampacity-rfp Claude Code plugin."
+}

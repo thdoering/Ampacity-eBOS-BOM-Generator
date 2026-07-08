@@ -33,7 +33,8 @@
       "Bash(python -c \"import ast; ast.parse\\(open\\('build_app.py'\\).read\\(\\)\\); print\\('build_app.py: syntax OK'\\)\")",
       "Bash(python -c \"from src.utils.file_handlers import get_app_base_path; print\\('import OK ->', get_app_base_path\\(\\)\\)\")",
       "Bash(python -c \"import ast; [ast.parse\\(open\\(f, encoding='utf-8'\\).read\\(\\)\\) for f in ['main.py','src/utils/file_handlers.py','src/utils/module_library.py','src/utils/inverter_library.py','src/ui/tracker_creator.py','src/ui/block_configurator.py','src/ui/quick_estimate.py']]; print\\('all parse OK'\\)\")",
-      "Bash(python -c \"import ast; [ast.parse\\(open\\(f, encoding='utf-8'\\).read\\(\\)\\) for f in ['src/models/project.py','src/ui/quick_estimate.py','src/utils/cable_sizing.py']]; print\\('OK'\\)\")"
+      "Bash(python -c \"import ast; [ast.parse\\(open\\(f, encoding='utf-8'\\).read\\(\\)\\) for f in ['src/models/project.py','src/ui/quick_estimate.py','src/utils/cable_sizing.py']]; print\\('OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('main.py',encoding='utf-8'\\).read\\(\\)\\); print\\('main.py parse OK'\\)\")"
     ]
   }
 }

@@ -1,0 +1,140 @@
+{
+  "project": {
+    "customer": "SunTribe",
+    "name": "Calendon",
+    "address": null,
+    "coordinates": null,
+    "city_state_zip": null,
+    "asce_wind": null,
+    "asce_snow": null,
+    "risk_category": null,
+    "tracker_manufacturer": "ATI"
+  },
+  "modules": [
+    {
+      "brand": "Module Type 1",
+      "size_watts": 590,
+      "quantity": 1000,
+      "string_size": 25,
+      "string_quantity": 40,
+      "row_spacing_ft": null
+    },
+    {
+      "brand": "Module Type 2",
+      "size_watts": 660,
+      "quantity": 800,
+      "string_size": 30,
+      "string_quantity": 27,
+      "row_spacing_ft": null
+    }
+  ],
+  "tracker_templates": [
+    {
+      "name": "ATI-75-590W-37/M/38-1P",
+      "module_ref": "Module Type 1",
+      "modules_per_string": 25,
+      "strings_per_tracker": 3,
+      "modules_per_tracker": 75,
+      "modules_high": 1,
+      "orientation": "Portrait",
+      "motor_placement": "middle_of_string",
+      "motor_after_string": null,
+      "motor_in_string": 2,
+      "split_north": 37,
+      "split_south": 38,
+      "module_spacing_m": 0.01
+    },
+    {
+      "name": "ATI-50-590W-12/M/38-1P",
+      "module_ref": "Module Type 1",
+      "modules_per_string": 25,
+      "strings_per_tracker": 2,
+      "modules_per_tracker": 50,
+      "modules_high": 1,
+      "orientation": "Portrait",
+      "motor_placement": "middle_of_string",
+      "motor_after_string": null,
+      "motor_in_string": 1,
+      "split_north": 12,
+      "split_south": 38,
+      "module_spacing_m": 0.01
+    },
+    {
+      "name": "ATI-50-590W-37/M/13-1P",
+      "module_ref": "Module Type 1",
+      "modules_per_string": 25,
+      "strings_per_tracker": 2,
+      "modules_per_tracker": 50,
+      "modules_high": 1,
+      "orientation": "Portrait",
+      "motor_placement": "middle_of_string",
+      "motor_after_string": null,
+      "motor_in_string": 2,
+      "split_north": 37,
+      "split_south": 13,
+      "module_spacing_m": 0.01
+    },
+    {
+      "name": "ATI-90-660W-45/M/45-1P",
+      "module_ref": "Module Type 2",
+      "modules_per_string": 30,
+      "strings_per_tracker": 3,
+      "modules_per_tracker": 90,
+      "modules_high": 1,
+      "orientation": "Portrait",
+      "motor_placement": "between_strings",
+      "motor_after_string": 1,
+      "motor_in_string": null,
+      "split_north": 45,
+      "split_south": 45,
+      "module_spacing_m": 0.01
+    },
+    {
+      "name": "ATI-60-660W-15/M/45-1P",
+      "module_ref": "Module Type 2",
+      "modules_per_string": 30,
+      "strings_per_tracker": 2,
+      "modules_per_tracker": 60,
+      "modules_high": 1,
+      "orientation": "Portrait",
+      "motor_placement": "middle_of_string",
+      "motor_after_string": null,
+      "motor_in_string": 1,
+      "split_north": 15,
+      "split_south": 45,
+      "module_spacing_m": 0.01
+    },
+    {
+      "name": "ATI-60-660W-45/M/15-1P",
+      "module_ref": "Module Type 2",
+      "modules_per_string": 30,
+      "strings_per_tracker": 2,
+      "modules_per_tracker": 60,
+      "modules_high": 1,
+      "orientation": "Portrait",
+      "motor_placement": "middle_of_string",
+      "motor_after_string": null,
+      "motor_in_string": 2,
+      "split_north": 45,
+      "split_south": 15,
+      "module_spacing_m": 0.01
+    }
+  ],
+  "row_summary": [
+    {
+      "module_index": 0,
+      "quantity": 10,
+      "row_length": 75,
+      "row_type": "Ext",
+      "bearing_posts": 4,
+      "split": "37-38",
+      "dampers": 2,
+      "post_qty": 6
+    }
+  ],
+  "additional_info": {
+    "damper_type": "standard",
+    "hd_bearings": null,
+    "motor_qty": 100
+  }
+}
