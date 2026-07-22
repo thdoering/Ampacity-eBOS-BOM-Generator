@@ -34,7 +34,16 @@
       "Bash(python -c \"from src.utils.file_handlers import get_app_base_path; print\\('import OK ->', get_app_base_path\\(\\)\\)\")",
       "Bash(python -c \"import ast; [ast.parse\\(open\\(f, encoding='utf-8'\\).read\\(\\)\\) for f in ['main.py','src/utils/file_handlers.py','src/utils/module_library.py','src/utils/inverter_library.py','src/ui/tracker_creator.py','src/ui/block_configurator.py','src/ui/quick_estimate.py']]; print\\('all parse OK'\\)\")",
       "Bash(python -c \"import ast; [ast.parse\\(open\\(f, encoding='utf-8'\\).read\\(\\)\\) for f in ['src/models/project.py','src/ui/quick_estimate.py','src/utils/cable_sizing.py']]; print\\('OK'\\)\")",
-      "Bash(python -c \"import ast; ast.parse\\(open\\('main.py',encoding='utf-8'\\).read\\(\\)\\); print\\('main.py parse OK'\\)\")"
+      "Bash(python -c \"import ast; ast.parse\\(open\\('main.py',encoding='utf-8'\\).read\\(\\)\\); print\\('main.py parse OK'\\)\")",
+      "Bash(uv run *)",
+      "Bash(cd \"C:/Users/tyler.doering/dev/ampacity-claude-plugins/plugins/ampacity-rfp/tests/fixtures\" && find . -maxdepth 2 -iname \"*.pdf\" | sort)",
+      "Read(//c/Users/tyler.doering/dev/ampacity-claude-plugins/plugins/ampacity-rfp/tests/fixtures/**)",
+      "Bash(uv run --project C:/Users/tyler.doering/dev/ampacity-claude-plugins/plugins/ampacity-rfp python -c ' *)",
+      "Bash(git diff *)",
+      "Bash(cd \"C:/Users/tyler.doering/dev/ampacity-claude-plugins/plugins/ampacity-rfp\" && echo \"=== tests/ tree ===\" && find tests -type f | sort && echo && echo \"=== any ground_truth dirs anywhere ===\" && find . -type d -name \"*ground*\" -not -path \"*/.venv/*\" 2>/dev/null)",
+      "Read(//c/Users/tyler.doering/dev/ampacity-claude-plugins/plugins/ampacity-rfp/**)",
+      "Bash(echo \"--- exit: $? ---\")",
+      "Bash(cd \"C:/Users/tyler.doering/dev/ampacity-claude-plugins/plugins/ampacity-rfp\" && ls scripts && ls src 2>/dev/null || find . -name \"*.py\" -not -path \"*/.venv/*\" | head -50)"
     ]
   }
 }

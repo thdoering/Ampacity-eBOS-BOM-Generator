@@ -1,0 +1,100 @@
+{
+  "source_pdf": "C:\\Users\\tyler.doering\\OneDrive - Quanta Services Management Partnership, L.P\\Desktop\\Python_Projects\\solar_bom\\runs\\20260710163623\\sources\\02-pine-hill-layout-summary.pdf",
+  "total_pages_in_pdf": 10,
+  "pages_rendered": 10,
+  "pages": [
+    {
+      "page_index": 0,
+      "page_number": 1,
+      "png": "page-001.png",
+      "text": "page-001.txt",
+      "dpi": 200,
+      "png_bytes": 2757320,
+      "text_chars": 4442
+    },
+    {
+      "page_index": 1,
+      "page_number": 2,
+      "png": "page-002.png",
+      "text": "page-002.txt",
+      "dpi": 200,
+      "png_bytes": 3479806,
+      "text_chars": 27624
+    },
+    {
+      "page_index": 2,
+      "page_number": 3,
+      "png": "page-003.png",
+      "text": "page-003.txt",
+      "dpi": 72,
+      "png_bytes": 5177925,
+      "text_chars": 3233
+    },
+    {
+      "page_index": 3,
+      "page_number": 4,
+      "png": "page-004.png",
+      "text": "page-004.txt",
+      "dpi": 100,
+      "png_bytes": 2169926,
+      "text_chars": 3233
+    },
+    {
+      "page_index": 4,
+      "page_number": 5,
+      "png": "page-005.png",
+      "text": "page-005.txt",
+      "dpi": 100,
+      "png_bytes": 2489492,
+      "text_chars": 4182
+    },
+    {
+      "page_index": 5,
+      "page_number": 6,
+      "png": "page-006.png",
+      "text": "page-006.txt",
+      "dpi": 200,
+      "png_bytes": 2675127,
+      "text_chars": 6741
+    },
+    {
+      "page_index": 6,
+      "page_number": 7,
+      "png": "page-007.png",
+      "text": "page-007.txt",
+      "dpi": 200,
+      "png_bytes": 2388789,
+      "text_chars": 8450
+    },
+    {
+      "page_index": 7,
+      "page_number": 8,
+      "png": "page-008.png",
+      "text": "page-008.txt",
+      "dpi": 200,
+      "png_bytes": 2579753,
+      "text_chars": 7224
+    },
+    {
+      "page_index": 8,
+      "page_number": 9,
+      "png": "page-009.png",
+      "text": "page-009.txt",
+      "dpi": 200,
+      "png_bytes": 2272998,
+      "text_chars": 4042
+    },
+    {
+      "page_index": 9,
+      "page_number": 10,
+      "png": "page-010.png",
+      "text": "page-010.txt",
+      "dpi": 200,
+      "png_bytes": 2455875,
+      "text_chars": 4036
+    }
+  ],
+  "skipped_indices": [],
+  "truncated": false,
+  "max_pages_limit": 10
+}

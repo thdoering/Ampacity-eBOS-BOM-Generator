@@ -1,0 +1,19 @@
+{
+  "source_pdf": "C:\\Users\\tyler.doering\\OneDrive - Quanta Services Management Partnership, L.P\\Desktop\\Python_Projects\\solar_bom\\runs\\20260709002815\\sources\\01-caledon.pdf",
+  "total_pages_in_pdf": 1,
+  "pages_rendered": 1,
+  "pages": [
+    {
+      "page_index": 0,
+      "page_number": 1,
+      "png": "page-001.png",
+      "text": "page-001.txt",
+      "dpi": 200,
+      "png_bytes": 3263840,
+      "text_chars": 1666
+    }
+  ],
+  "skipped_indices": [],
+  "truncated": false,
+  "max_pages_limit": 10
+}

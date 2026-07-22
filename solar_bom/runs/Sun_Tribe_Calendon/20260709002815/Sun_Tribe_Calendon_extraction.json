@@ -1,0 +1,265 @@
+{
+  "version": "1.0.0",
+  "project": {
+    "coordinates": "38.346475, -77.130623",
+    "name": "Calendon",
+    "dc_capacity_kw": 26500.5,
+    "customer": "Sun Tribe",
+    "asce_snow": 0.0,
+    "city_state_zip": "King george, VA 22485",
+    "asce_wind": 105.0,
+    "tracker_manufacturer": "ATI",
+    "address": "Calendon Rd, King george, VA 22485"
+  },
+  "modules": [
+    {
+      "brand": "Qcells",
+      "model": "Qpeak Duo XL-G11S.3/BFG",
+      "size_watts": 590.0,
+      "quantity": 20250,
+      "string_size": 25,
+      "string_quantity": 810,
+      "row_spacing_ft": 20.0,
+      "driveline_angle": 0.0
+    },
+    {
+      "brand": "Qcells",
+      "model": "QPeak Duo ML-G12S.3-BFG",
+      "size_watts": 660.0,
+      "quantity": 22050,
+      "string_size": 30,
+      "string_quantity": 735,
+      "row_spacing_ft": 20.0,
+      "driveline_angle": 0.0
+    }
+  ],
+  "tracker_templates": [
+    {
+      "name": "ATI-75-590W-37/M/38-1P",
+      "module_ref": "Qcells Qpeak Duo XL-G11S.3/BFG",
+      "modules_per_string": 25,
+      "strings_per_tracker": 3,
+      "modules_per_tracker": 75,
+      "modules_high": 1,
+      "orientation": "Portrait",
+      "motor_placement": "middle_of_string",
+      "motor_after_string": null,
+      "motor_in_string": 2,
+      "split_north": 37,
+      "split_south": 38,
+      "module_spacing_m": 0.01,
+      "quantity": null
+    },
+    {
+      "name": "ATI-50-590W-12/M/38-1P",
+      "module_ref": "Qcells Qpeak Duo XL-G11S.3/BFG",
+      "modules_per_string": 25,
+      "strings_per_tracker": 2,
+      "modules_per_tracker": 50,
+      "modules_high": 1,
+      "orientation": "Portrait",
+      "motor_placement": "middle_of_string",
+      "motor_after_string": null,
+      "motor_in_string": 1,
+      "split_north": 12,
+      "split_south": 38,
+      "module_spacing_m": 0.01,
+      "quantity": null
+    },
+    {
+      "name": "ATI-50-590W-37/M/13-1P",
+      "module_ref": "Qcells Qpeak Duo XL-G11S.3/BFG",
+      "modules_per_string": 25,
+      "strings_per_tracker": 2,
+      "modules_per_tracker": 50,
+      "modules_high": 1,
+      "orientation": "Portrait",
+      "motor_placement": "middle_of_string",
+      "motor_after_string": null,
+      "motor_in_string": 2,
+      "split_north": 37,
+      "split_south": 13,
+      "module_spacing_m": 0.01,
+      "quantity": null
+    },
+    {
+      "name": "ATI-90-660W-45/M/45-1P",
+      "module_ref": "Qcells QPeak Duo ML-G12S.3-BFG",
+      "modules_per_string": 30,
+      "strings_per_tracker": 3,
+      "modules_per_tracker": 90,
+      "modules_high": 1,
+      "orientation": "Portrait",
+      "motor_placement": "middle_of_string",
+      "motor_after_string": null,
+      "motor_in_string": 2,
+      "split_north": 45,
+      "split_south": 45,
+      "module_spacing_m": 0.01,
+      "quantity": null
+    },
+    {
+      "name": "ATI-60-660W-15/M/45-1P",
+      "module_ref": "Qcells QPeak Duo ML-G12S.3-BFG",
+      "modules_per_string": 30,
+      "strings_per_tracker": 2,
+      "modules_per_tracker": 60,
+      "modules_high": 1,
+      "orientation": "Portrait",
+      "motor_placement": "middle_of_string",
+      "motor_after_string": null,
+      "motor_in_string": 1,
+      "split_north": 15,
+      "split_south": 45,
+      "module_spacing_m": 0.01,
+      "quantity": null
+    },
+    {
+      "name": "ATI-60-660W-45/M/15-1P",
+      "module_ref": "Qcells QPeak Duo ML-G12S.3-BFG",
+      "modules_per_string": 30,
+      "strings_per_tracker": 2,
+      "modules_per_tracker": 60,
+      "modules_high": 1,
+      "orientation": "Portrait",
+      "motor_placement": "middle_of_string",
+      "motor_after_string": null,
+      "motor_in_string": 2,
+      "split_north": 45,
+      "split_south": 15,
+      "module_spacing_m": 0.01,
+      "quantity": null
+    }
+  ],
+  "row_summary": [
+    {
+      "module_index": 0,
+      "quantity": 48,
+      "row_length": 75.0,
+      "row_type": "Ext",
+      "bearing_posts": 14,
+      "split": "37/38",
+      "dampers": 4,
+      "post_qty": 672
+    },
+    {
+      "module_index": 0,
+      "quantity": 200,
+      "row_length": 75.0,
+      "row_type": "Int",
+      "bearing_posts": 12,
+      "split": "37/38",
+      "dampers": 4,
+      "post_qty": 2400
+    },
+    {
+      "module_index": 0,
+      "quantity": 2,
+      "row_length": 50.0,
+      "row_type": "Ext",
+      "bearing_posts": 10,
+      "split": "12/38",
+      "dampers": 4,
+      "post_qty": 20
+    },
+    {
+      "module_index": 0,
+      "quantity": 10,
+      "row_length": 50.0,
+      "row_type": "Int",
+      "bearing_posts": 9,
+      "split": "12/38",
+      "dampers": 4,
+      "post_qty": 90
+    },
+    {
+      "module_index": 0,
+      "quantity": 10,
+      "row_length": 50.0,
+      "row_type": "Ext",
+      "bearing_posts": 10,
+      "split": "37/13",
+      "dampers": 4,
+      "post_qty": 100
+    },
+    {
+      "module_index": 0,
+      "quantity": 11,
+      "row_length": 50.0,
+      "row_type": "Int",
+      "bearing_posts": 9,
+      "split": "37/13",
+      "dampers": 4,
+      "post_qty": 99
+    },
+    {
+      "module_index": 1,
+      "quantity": 32,
+      "row_length": 90.0,
+      "row_type": "Ext",
+      "bearing_posts": 20,
+      "split": "45/45",
+      "dampers": 4,
+      "post_qty": 640
+    },
+    {
+      "module_index": 1,
+      "quantity": 187,
+      "row_length": 90.0,
+      "row_type": "Int",
+      "bearing_posts": 16,
+      "split": "45/45",
+      "dampers": 4,
+      "post_qty": 2992
+    },
+    {
+      "module_index": 1,
+      "quantity": 5,
+      "row_length": 60.0,
+      "row_type": "Ext",
+      "bearing_posts": 14,
+      "split": "15/45",
+      "dampers": 4,
+      "post_qty": 70
+    },
+    {
+      "module_index": 1,
+      "quantity": 26,
+      "row_length": 60.0,
+      "row_type": "Int",
+      "bearing_posts": 11,
+      "split": "15/45",
+      "dampers": 4,
+      "post_qty": 286
+    },
+    {
+      "module_index": 1,
+      "quantity": 3,
+      "row_length": 60.0,
+      "row_type": "Ext",
+      "bearing_posts": 14,
+      "split": "45/15",
+      "dampers": 4,
+      "post_qty": 42
+    },
+    {
+      "module_index": 1,
+      "quantity": 5,
+      "row_length": 60.0,
+      "row_type": "Int",
+      "bearing_posts": 11,
+      "split": "45/15",
+      "dampers": 4,
+      "post_qty": 55
+    }
+  ],
+  "additional_info": {
+    "damper_type": "Coil Over Damper",
+    "hd_bearings": true,
+    "center_cab_gap": "30\" Centered",
+    "clamp_types_ab": "1400mm TB",
+    "clamp_types_cd": "400mm TB",
+    "bearing_gaps": false,
+    "motor_qty": 26
+  }
+}

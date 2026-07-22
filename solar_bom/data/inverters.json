@@ -1036,5 +1036,73 @@
     "temperature_range": null,
     "altitude_limit_m": null,
     "communication_protocol": null
+  },
+  "Sunny Highpower Peak3 150-US": {
+    "manufacturer": "Sunny Highpower",
+    "model": "Peak3 150-US",
+    "inverter_type": "String",
+    "rated_power_kw": 150.0,
+    "max_dc_power_kw": 300.0,
+    "max_efficiency": 98.0,
+    "mppt_channels": [
+      {
+        "max_input_current": 180.0,
+        "min_voltage": 855.0,
+        "max_voltage": 1500.0,
+        "max_power": 300000.0,
+        "num_string_inputs": 1
+      }
+    ],
+    "mppt_configuration": "Independent",
+    "max_dc_voltage": 1500.0,
+    "startup_voltage": 855.0,
+    "nominal_ac_voltage": 600.0,
+    "max_ac_current": 151.0,
+    "power_factor": 0.99,
+    "dimensions_mm": [
+      1000,
+      600,
+      300
+    ],
+    "weight_kg": 75.0,
+    "ip_rating": "IP65",
+    "max_short_circuit_current": 325.0,
+    "temperature_range": null,
+    "altitude_limit_m": null,
+    "communication_protocol": null
+  },
+  "CPS SCH100KTL-DO/US-480": {
+    "manufacturer": "CPS",
+    "model": "SCH100KTL-DO/US-480",
+    "inverter_type": "String",
+    "rated_power_kw": 100.0,
+    "max_dc_power_kw": 120.0,
+    "max_efficiency": 98.0,
+    "mppt_channels": [
+      {
+        "max_input_current": 220.0,
+        "min_voltage": 760.0,
+        "max_voltage": 1300.0,
+        "max_power": 120000.0,
+        "num_string_inputs": 1
+      }
+    ],
+    "mppt_configuration": "Independent",
+    "max_dc_voltage": 1500.0,
+    "startup_voltage": 760.0,
+    "nominal_ac_voltage": 480.0,
+    "max_ac_current": 120.3,
+    "power_factor": 0.99,
+    "dimensions_mm": [
+      1000,
+      600,
+      300
+    ],
+    "weight_kg": 75.0,
+    "ip_rating": "IP65",
+    "max_short_circuit_current": 220.0,
+    "temperature_range": null,
+    "altitude_limit_m": null,
+    "communication_protocol": null
   }
 }

@@ -1,0 +1,34 @@
+{
+  "page_index": 0,
+  "page_class": "cover_title",
+  "parsed": {
+    "project": {
+      "customer": "OneEnergy Renewables",
+      "name": "Pine Hill Solar",
+      "address": "Pine Hill Rd, Cross Plains, WI 53528",
+      "coordinates": "43.06999°, -89.645200°",
+      "city_state_zip": "Cross Plains, WI 53528",
+      "asce_wind": 100,
+      "asce_snow": 30,
+      "risk_category": "I",
+      "tracker_manufacturer": "ATI",
+      "dc_capacity_kw": 7319,
+      "ac_capacity_kw": 6000,
+      "dc_ac_ratio": 1.22,
+      "total_modules": 12300,
+      "total_strings": 492,
+      "inverter_qty": 24,
+      "inverter": "CPS SCH250K-T-US-600"
+    },
+    "modules": [
+      {
+        "brand": "SEG Solar",
+        "model": "SEG-595-BTA-BG",
+        "size_watts": 595,
+        "quantity": 12300,
+        "string_size": 25,
+        "string_quantity": 492
+      }
+    ]
+  }
+}

@@ -996,6 +996,160 @@
       "default_orientation": "Portrait",
       "cells_per_module": 144
     },
+    "CS6W-565TB-AG": {
+      "manufacturer": "Canadian Solar",
+      "model": "CS6W-565TB-AG",
+      "type": "Bifacial",
+      "length_mm": 2278,
+      "width_mm": 1134,
+      "depth_mm": 30,
+      "weight_kg": 32.3,
+      "wattage": 565,
+      "vmp": 42.5,
+      "imp": 13.3,
+      "voc": 51.6,
+      "isc": 13.75,
+      "max_system_voltage": 1500,
+      "efficiency": 21.9,
+      "temperature_coefficient_pmax": -0.29,
+      "temperature_coefficient_voc": -0.25,
+      "temperature_coefficient_isc": 0.05,
+      "bifaciality_factor": 0.8,
+      "default_orientation": "Portrait",
+      "cells_per_module": 144
+    },
+    "CS6W-570TB-AG": {
+      "manufacturer": "Canadian Solar",
+      "model": "CS6W-570TB-AG",
+      "type": "Bifacial",
+      "length_mm": 2278,
+      "width_mm": 1134,
+      "depth_mm": 30,
+      "weight_kg": 32.3,
+      "wattage": 570,
+      "vmp": 42.7,
+      "imp": 13.35,
+      "voc": 51.8,
+      "isc": 13.81,
+      "max_system_voltage": 1500,
+      "efficiency": 22.1,
+      "temperature_coefficient_pmax": -0.29,
+      "temperature_coefficient_voc": -0.25,
+      "temperature_coefficient_isc": 0.05,
+      "bifaciality_factor": 0.8,
+      "default_orientation": "Portrait",
+      "cells_per_module": 144
+    },
+    "CS6W-575TB-AG": {
+      "manufacturer": "Canadian Solar",
+      "model": "CS6W-575TB-AG",
+      "type": "Bifacial",
+      "length_mm": 2278,
+      "width_mm": 1134,
+      "depth_mm": 30,
+      "weight_kg": 32.3,
+      "wattage": 575,
+      "vmp": 42.9,
+      "imp": 13.41,
+      "voc": 52.0,
+      "isc": 13.88,
+      "max_system_voltage": 1500,
+      "efficiency": 22.3,
+      "temperature_coefficient_pmax": -0.29,
+      "temperature_coefficient_voc": -0.25,
+      "temperature_coefficient_isc": 0.05,
+      "bifaciality_factor": 0.8,
+      "default_orientation": "Portrait",
+      "cells_per_module": 144
+    },
+    "CS6W-580TB-AG": {
+      "manufacturer": "Canadian Solar",
+      "model": "CS6W-580TB-AG",
+      "type": "Bifacial",
+      "length_mm": 2278,
+      "width_mm": 1134,
+      "depth_mm": 30,
+      "weight_kg": 32.3,
+      "wattage": 580,
+      "vmp": 43.1,
+      "imp": 13.46,
+      "voc": 52.2,
+      "isc": 13.93,
+      "max_system_voltage": 1500,
+      "efficiency": 22.5,
+      "temperature_coefficient_pmax": -0.29,
+      "temperature_coefficient_voc": -0.25,
+      "temperature_coefficient_isc": 0.05,
+      "bifaciality_factor": 0.8,
+      "default_orientation": "Portrait",
+      "cells_per_module": 144
+    },
+    "CS6W-585TB-AG": {
+      "manufacturer": "Canadian Solar",
+      "model": "CS6W-585TB-AG",
+      "type": "Bifacial",
+      "length_mm": 2278,
+      "width_mm": 1134,
+      "depth_mm": 30,
+      "weight_kg": 32.3,
+      "wattage": 585,
+      "vmp": 43.3,
+      "imp": 13.52,
+      "voc": 52.4,
+      "isc": 14.0,
+      "max_system_voltage": 1500,
+      "efficiency": 22.6,
+      "temperature_coefficient_pmax": -0.29,
+      "temperature_coefficient_voc": -0.25,
+      "temperature_coefficient_isc": 0.05,
+      "bifaciality_factor": 0.8,
+      "default_orientation": "Portrait",
+      "cells_per_module": 144
+    },
+    "CS6W-590TB-AG": {
+      "manufacturer": "Canadian Solar",
+      "model": "CS6W-590TB-AG",
+      "type": "Bifacial",
+      "length_mm": 2278,
+      "width_mm": 1134,
+      "depth_mm": 30,
+      "weight_kg": 32.3,
+      "wattage": 590,
+      "vmp": 43.5,
+      "imp": 13.57,
+      "voc": 52.6,
+      "isc": 14.06,
+      "max_system_voltage": 1500,
+      "efficiency": 22.8,
+      "temperature_coefficient_pmax": -0.29,
+      "temperature_coefficient_voc": -0.25,
+      "temperature_coefficient_isc": 0.05,
+      "bifaciality_factor": 0.8,
+      "default_orientation": "Portrait",
+      "cells_per_module": 144
+    },
+    "CS6W-595TB-AG": {
+      "manufacturer": "Canadian Solar",
+      "model": "CS6W-595TB-AG",
+      "type": "Bifacial",
+      "length_mm": 2278,
+      "width_mm": 1134,
+      "depth_mm": 30,
+      "weight_kg": 32.3,
+      "wattage": 595,
+      "vmp": 43.7,
+      "imp": 13.62,
+      "voc": 52.8,
+      "isc": 14.12,
+      "max_system_voltage": 1500,
+      "efficiency": 23.0,
+      "temperature_coefficient_pmax": -0.29,
+      "temperature_coefficient_voc": -0.25,
+      "temperature_coefficient_isc": 0.05,
+      "bifaciality_factor": 0.8,
+      "default_orientation": "Portrait",
+      "cells_per_module": 144
+    },
     "CS6.2-66TB-600HP": {
       "manufacturer": "Canadian Solar",
       "model": "CS6.2-66TB-600HP",
@@ -2684,9 +2838,9 @@
       "cells_per_module": 144
     }
   },
-  "QCells": {
+  "HANWHA QCells": {
     "Q.PEAK DUO BLK-G10+ 350W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO BLK-G10+ 350W",
       "type": "Mono PERC",
       "length_mm": 1717,
@@ -2707,7 +2861,7 @@
       "cells_per_module": 120
     },
     "Q.PEAK DUO BLK-G10+ 355W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO BLK-G10+ 355W",
       "type": "Mono PERC",
       "length_mm": 1717,
@@ -2728,7 +2882,7 @@
       "cells_per_module": 120
     },
     "Q.PEAK DUO BLK-G10+ 360W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO BLK-G10+ 360W",
       "type": "Mono PERC",
       "length_mm": 1717,
@@ -2749,7 +2903,7 @@
       "cells_per_module": 120
     },
     "Q.PEAK DUO BLK-G10+ 365W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO BLK-G10+ 365W",
       "type": "Mono PERC",
       "length_mm": 1717,
@@ -2770,7 +2924,7 @@
       "cells_per_module": 120
     },
     "Q.PEAK DUO BLK-G10+ 370W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO BLK-G10+ 370W",
       "type": "Mono PERC",
       "length_mm": 1717,
@@ -2791,7 +2945,7 @@
       "cells_per_module": 120
     },
     "Q.PEAK DUO BLK ML-G10+ 395W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO BLK ML-G10+ 395W",
       "type": "Mono PERC",
       "length_mm": 1879,
@@ -2812,7 +2966,7 @@
       "cells_per_module": 132
     },
     "Q.PEAK DUO BLK ML-G10+/AC 395W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO BLK ML-G10+/AC 395W",
       "type": "Mono PERC",
       "length_mm": 1879,
@@ -2833,7 +2987,7 @@
       "cells_per_module": 132
     },
     "Q.PEAK DUO BLK ML-G10+ 400W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO BLK ML-G10+ 400W",
       "type": "Mono PERC",
       "length_mm": 1879,
@@ -2854,7 +3008,7 @@
       "cells_per_module": 132
     },
     "Q.PEAK DUO BLK ML-G10+/AC 400W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO BLK ML-G10+/AC 400W",
       "type": "Mono PERC",
       "length_mm": 1879,
@@ -2875,7 +3029,7 @@
       "cells_per_module": 132
     },
     "Q.PEAK DUO BLK ML-G10+ 405W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO BLK ML-G10+ 405W",
       "type": "Mono PERC",
       "length_mm": 1879,
@@ -2896,7 +3050,7 @@
       "cells_per_module": 132
     },
     "Q.PEAK DUO BLK ML-G10+/AC 405W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO BLK ML-G10+/AC 405W",
       "type": "Mono PERC",
       "length_mm": 1879,
@@ -2917,7 +3071,7 @@
       "cells_per_module": 132
     },
     "Q.PEAK DUO BLK ML-G10+ 410W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO BLK ML-G10+ 410W",
       "type": "Mono PERC",
       "length_mm": 1879,
@@ -2938,7 +3092,7 @@
       "cells_per_module": 132
     },
     "Q.PEAK DUO BLK ML-G10+/AC 410W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO BLK ML-G10+/AC 410W",
       "type": "Mono PERC",
       "length_mm": 1879,
@@ -2959,7 +3113,7 @@
       "cells_per_module": 132
     },
     "Q.PEAK DUO BLK ML-G10+ 415W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO BLK ML-G10+ 415W",
       "type": "Mono PERC",
       "length_mm": 1879,
@@ -2980,7 +3134,7 @@
       "cells_per_module": 132
     },
     "Q.PEAK DUO BLK ML-G10+/AC 415W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO BLK ML-G10+/AC 415W",
       "type": "Mono PERC",
       "length_mm": 1879,
@@ -3001,7 +3155,7 @@
       "cells_per_module": 132
     },
     "Q.TRON BLK M-G2+ (EnFin) 420W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.TRON BLK M-G2+ (EnFin) 420W",
       "type": "Mono PERC",
       "length_mm": 1722,
@@ -3022,7 +3176,7 @@
       "cells_per_module": 108
     },
     "Q.TRON BLK M-G2+ 420W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.TRON BLK M-G2+ 420W",
       "type": "Mono PERC",
       "length_mm": 1722,
@@ -3043,7 +3197,7 @@
       "cells_per_module": 108
     },
     "Q.TRON BLK M-G2+/AC 420W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.TRON BLK M-G2+/AC 420W",
       "type": "Mono PERC",
       "length_mm": 1722,
@@ -3064,7 +3218,7 @@
       "cells_per_module": 108
     },
     "Q.TRON BLK M-G2+ (EnFin) 425W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.TRON BLK M-G2+ (EnFin) 425W",
       "type": "Mono PERC",
       "length_mm": 1722,
@@ -3085,7 +3239,7 @@
       "cells_per_module": 108
     },
     "Q.TRON BLK M-G2+ 425W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.TRON BLK M-G2+ 425W",
       "type": "Mono PERC",
       "length_mm": 1722,
@@ -3106,7 +3260,7 @@
       "cells_per_module": 108
     },
     "Q.TRON BLK M-G2+/AC 425W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.TRON BLK M-G2+/AC 425W",
       "type": "Mono PERC",
       "length_mm": 1722,
@@ -3127,7 +3281,7 @@
       "cells_per_module": 108
     },
     "Q.TRON BLK M-G2+ (EnFin) 430W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.TRON BLK M-G2+ (EnFin) 430W",
       "type": "Mono PERC",
       "length_mm": 1722,
@@ -3148,7 +3302,7 @@
       "cells_per_module": 108
     },
     "Q.TRON BLK M-G2+ 430W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.TRON BLK M-G2+ 430W",
       "type": "Mono PERC",
       "length_mm": 1722,
@@ -3169,7 +3323,7 @@
       "cells_per_module": 108
     },
     "Q.TRON BLK M-G2+/AC 430W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.TRON BLK M-G2+/AC 430W",
       "type": "Mono PERC",
       "length_mm": 1722,
@@ -3190,7 +3344,7 @@
       "cells_per_module": 108
     },
     "Q.TRON BLK M-G2+ (EnFin) 435W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.TRON BLK M-G2+ (EnFin) 435W",
       "type": "Mono PERC",
       "length_mm": 1722,
@@ -3211,7 +3365,7 @@
       "cells_per_module": 108
     },
     "Q.TRON BLK M-G2+ 435W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.TRON BLK M-G2+ 435W",
       "type": "Mono PERC",
       "length_mm": 1722,
@@ -3232,7 +3386,7 @@
       "cells_per_module": 108
     },
     "Q.TRON BLK M-G2+/AC 435W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.TRON BLK M-G2+/AC 435W",
       "type": "Mono PERC",
       "length_mm": 1722,
@@ -3253,7 +3407,7 @@
       "cells_per_module": 108
     },
     "Q.TRON BLK M-G2+ (EnFin) 440W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.TRON BLK M-G2+ (EnFin) 440W",
       "type": "Mono PERC",
       "length_mm": 1722,
@@ -3274,7 +3428,7 @@
       "cells_per_module": 108
     },
     "Q.TRON BLK M-G2+ 440W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.TRON BLK M-G2+ 440W",
       "type": "Mono PERC",
       "length_mm": 1722,
@@ -3295,7 +3449,7 @@
       "cells_per_module": 108
     },
     "Q.TRON BLK M-G2+/AC 440W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.TRON BLK M-G2+/AC 440W",
       "type": "Mono PERC",
       "length_mm": 1722,
@@ -3316,7 +3470,7 @@
       "cells_per_module": 108
     },
     "Q.PEAK DUO XL-G11S.3/BFG 570W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO XL-G11S.3/BFG 570W",
       "type": "Bifacial",
       "length_mm": 2462,
@@ -3338,7 +3492,7 @@
       "cells_per_module": 156
     },
     "Q.PEAK DUO XL-G11S.3/BFG 575W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO XL-G11S.3/BFG 575W",
       "type": "Bifacial",
       "length_mm": 2462,
@@ -3360,7 +3514,7 @@
       "cells_per_module": 156
     },
     "Q.PEAK DUO XL-G11S.3/BFG 580W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO XL-G11S.3/BFG 580W",
       "type": "Bifacial",
       "length_mm": 2462,
@@ -3382,7 +3536,7 @@
       "cells_per_module": 156
     },
     "Q.PEAK DUO XL-G11S.Y3/BFG 580W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO XL-G11S.Y3/BFG 580W",
       "type": "Bifacial",
       "length_mm": 2462,
@@ -3404,7 +3558,7 @@
       "cells_per_module": 156
     },
     "Q.PEAK DUO XL-G11S.3/BFG 585W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO XL-G11S.3/BFG 585W",
       "type": "Bifacial",
       "length_mm": 2462,
@@ -3426,7 +3580,7 @@
       "cells_per_module": 156
     },
     "Q.PEAK DUO XL-G11S.Y3/BFG 585W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO XL-G11S.Y3/BFG 585W",
       "type": "Bifacial",
       "length_mm": 2462,
@@ -3447,8 +3601,30 @@
       "default_orientation": "Portrait",
       "cells_per_module": 156
     },
+    "Q.PEAK DUO XL-G11S.3/BFG 590W": {
+      "manufacturer": "HANWHA QCells",
+      "model": "Q.PEAK DUO XL-G11S.3/BFG 590W",
+      "type": "Bifacial",
+      "length_mm": 2462,
+      "width_mm": 1134,
+      "depth_mm": 35,
+      "weight_kg": 34.9,
+      "wattage": 590,
+      "vmp": 44.96,
+      "imp": 13.12,
+      "voc": 53.6,
+      "isc": 13.74,
+      "max_system_voltage": 1500,
+      "efficiency": 21.1,
+      "temperature_coefficient_pmax": -0.34,
+      "temperature_coefficient_voc": -0.27,
+      "temperature_coefficient_isc": 0.04,
+      "bifaciality_factor": 0.7,
+      "default_orientation": "Portrait",
+      "cells_per_module": 156
+    },
     "Q.PEAK DUO XL-G11S.Y3/BFG 590W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO XL-G11S.Y3/BFG 590W",
       "type": "Bifacial",
       "length_mm": 2462,
@@ -3469,8 +3645,30 @@
       "default_orientation": "Portrait",
       "cells_per_module": 156
     },
+    "Q.PEAK DUO XL-G11S.3/BFG 595W": {
+      "manufacturer": "HANWHA QCells",
+      "model": "Q.PEAK DUO XL-G11S.3/BFG 595W",
+      "type": "Bifacial",
+      "length_mm": 2462,
+      "width_mm": 1134,
+      "depth_mm": 35,
+      "weight_kg": 34.9,
+      "wattage": 595,
+      "vmp": 45.18,
+      "imp": 13.17,
+      "voc": 53.63,
+      "isc": 13.77,
+      "max_system_voltage": 1500,
+      "efficiency": 21.3,
+      "temperature_coefficient_pmax": -0.34,
+      "temperature_coefficient_voc": -0.27,
+      "temperature_coefficient_isc": 0.04,
+      "bifaciality_factor": 0.7,
+      "default_orientation": "Portrait",
+      "cells_per_module": 156
+    },
     "Q.PEAK DUO XL-G11S.Y3/BFG 595W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO XL-G11S.Y3/BFG 595W",
       "type": "Bifacial",
       "length_mm": 2462,
@@ -3491,8 +3689,30 @@
       "default_orientation": "Portrait",
       "cells_per_module": 156
     },
+    "Q.PEAK DUO XL-G11S.3/BFG 600W": {
+      "manufacturer": "HANWHA QCells",
+      "model": "Q.PEAK DUO XL-G11S.3/BFG 600W",
+      "type": "Bifacial",
+      "length_mm": 2462,
+      "width_mm": 1134,
+      "depth_mm": 35,
+      "weight_kg": 34.9,
+      "wattage": 600,
+      "vmp": 45.3,
+      "imp": 13.25,
+      "voc": 53.66,
+      "isc": 13.8,
+      "max_system_voltage": 1500,
+      "efficiency": 21.5,
+      "temperature_coefficient_pmax": -0.34,
+      "temperature_coefficient_voc": -0.27,
+      "temperature_coefficient_isc": 0.04,
+      "bifaciality_factor": 0.7,
+      "default_orientation": "Portrait",
+      "cells_per_module": 156
+    },
     "Q.PEAK DUO XL-G11S.Y3/BFG 600W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO XL-G11S.Y3/BFG 600W",
       "type": "Bifacial",
       "length_mm": 2462,
@@ -3513,8 +3733,30 @@
       "default_orientation": "Portrait",
       "cells_per_module": 156
     },
+    "Q.PEAK DUO XL-G11S.3/BFG 605W": {
+      "manufacturer": "HANWHA QCells",
+      "model": "Q.PEAK DUO XL-G11S.3/BFG 605W",
+      "type": "Bifacial",
+      "length_mm": 2462,
+      "width_mm": 1134,
+      "depth_mm": 35,
+      "weight_kg": 34.9,
+      "wattage": 605,
+      "vmp": 45.4,
+      "imp": 13.33,
+      "voc": 53.69,
+      "isc": 13.9,
+      "max_system_voltage": 1500,
+      "efficiency": 21.7,
+      "temperature_coefficient_pmax": -0.34,
+      "temperature_coefficient_voc": -0.27,
+      "temperature_coefficient_isc": 0.04,
+      "bifaciality_factor": 0.7,
+      "default_orientation": "Portrait",
+      "cells_per_module": 156
+    },
     "Q.PEAK DUO XL-G11S.Y3/BFG 605W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO XL-G11S.Y3/BFG 605W",
       "type": "Bifacial",
       "length_mm": 2462,
@@ -3536,7 +3778,7 @@
       "cells_per_module": 156
     },
     "Q.TRON XL-G2.3/BFG 620W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.TRON XL-G2.3/BFG 620W",
       "type": "Bifacial",
       "length_mm": 2462,
@@ -3557,7 +3799,7 @@
       "cells_per_module": 156
     },
     "Q.TRON XL-G2.3/BFG 625W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.TRON XL-G2.3/BFG 625W",
       "type": "Bifacial",
       "length_mm": 2462,
@@ -3578,7 +3820,7 @@
       "cells_per_module": 156
     },
     "Q.TRON XL-G2.3/BFG 630W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.TRON XL-G2.3/BFG 630W",
       "type": "Bifacial",
       "length_mm": 2462,
@@ -3599,7 +3841,7 @@
       "cells_per_module": 156
     },
     "Q.TRON XL-G2.3/BFG 635W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.TRON XL-G2.3/BFG 635W",
       "type": "Bifacial",
       "length_mm": 2462,
@@ -3620,7 +3862,7 @@
       "cells_per_module": 156
     },
     "Q.TRON XL-G2.3/BFG 640W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.TRON XL-G2.3/BFG 640W",
       "type": "Bifacial",
       "length_mm": 2462,
@@ -3641,7 +3883,7 @@
       "cells_per_module": 156
     },
     "Q.TRON XL-G2.3/BFG 645W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.TRON XL-G2.3/BFG 645W",
       "type": "Bifacial",
       "length_mm": 2462,
@@ -3661,8 +3903,30 @@
       "default_orientation": "Portrait",
       "cells_per_module": 156
     },
+    "Q.PEAK DUO ML-G12S.3/BFG 660W": {
+      "manufacturer": "HANWHA QCells",
+      "model": "Q.PEAK DUO ML-G12S.3/BFG 660W",
+      "type": "Bifacial",
+      "length_mm": 2384,
+      "width_mm": 1303,
+      "depth_mm": 35,
+      "weight_kg": 38.2,
+      "wattage": 660,
+      "vmp": 37.94,
+      "imp": 17.39,
+      "voc": 45.68,
+      "isc": 18.36,
+      "max_system_voltage": 1500,
+      "efficiency": 21.2,
+      "temperature_coefficient_pmax": -0.34,
+      "temperature_coefficient_voc": -0.27,
+      "temperature_coefficient_isc": 0.04,
+      "bifaciality_factor": 0.7,
+      "default_orientation": "Portrait",
+      "cells_per_module": 132
+    },
     "Q.PEAK DUO ML-G12S.7/BFG 660W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO ML-G12S.7/BFG 660W",
       "type": "Bifacial",
       "length_mm": 2384,
@@ -3684,7 +3948,7 @@
       "cells_per_module": 132
     },
     "Q.PEAK DUO ML-G12S/BFG 660W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO ML-G12S/BFG 660W",
       "type": "Bifacial",
       "length_mm": 2384,
@@ -3705,8 +3969,30 @@
       "default_orientation": "Portrait",
       "cells_per_module": 132
     },
+    "Q.PEAK DUO ML-G12S.3/BFG 665W": {
+      "manufacturer": "HANWHA QCells",
+      "model": "Q.PEAK DUO ML-G12S.3/BFG 665W",
+      "type": "Bifacial",
+      "length_mm": 2384,
+      "width_mm": 1303,
+      "depth_mm": 35,
+      "weight_kg": 38.2,
+      "wattage": 665,
+      "vmp": 38.11,
+      "imp": 17.45,
+      "voc": 45.7,
+      "isc": 18.39,
+      "max_system_voltage": 1500,
+      "efficiency": 21.4,
+      "temperature_coefficient_pmax": -0.34,
+      "temperature_coefficient_voc": -0.27,
+      "temperature_coefficient_isc": 0.04,
+      "bifaciality_factor": 0.7,
+      "default_orientation": "Portrait",
+      "cells_per_module": 132
+    },
     "Q.PEAK DUO ML-G12S.7/BFG 665W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO ML-G12S.7/BFG 665W",
       "type": "Bifacial",
       "length_mm": 2384,
@@ -3728,7 +4014,7 @@
       "cells_per_module": 132
     },
     "Q.PEAK DUO ML-G12S/BFG 665W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO ML-G12S/BFG 665W",
       "type": "Bifacial",
       "length_mm": 2384,
@@ -3749,8 +4035,30 @@
       "default_orientation": "Portrait",
       "cells_per_module": 132
     },
+    "Q.PEAK DUO ML-G12S.3/BFG 670W": {
+      "manufacturer": "HANWHA QCells",
+      "model": "Q.PEAK DUO ML-G12S.3/BFG 670W",
+      "type": "Bifacial",
+      "length_mm": 2384,
+      "width_mm": 1303,
+      "depth_mm": 35,
+      "weight_kg": 38.2,
+      "wattage": 670,
+      "vmp": 38.27,
+      "imp": 17.51,
+      "voc": 45.72,
+      "isc": 18.42,
+      "max_system_voltage": 1500,
+      "efficiency": 21.6,
+      "temperature_coefficient_pmax": -0.34,
+      "temperature_coefficient_voc": -0.27,
+      "temperature_coefficient_isc": 0.04,
+      "bifaciality_factor": 0.7,
+      "default_orientation": "Portrait",
+      "cells_per_module": 132
+    },
     "Q.PEAK DUO ML-G12S.7/BFG 670W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO ML-G12S.7/BFG 670W",
       "type": "Bifacial",
       "length_mm": 2384,
@@ -3772,7 +4080,7 @@
       "cells_per_module": 132
     },
     "Q.PEAK DUO ML-G12S/BFG 670W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO ML-G12S/BFG 670W",
       "type": "Bifacial",
       "length_mm": 2384,
@@ -3793,8 +4101,30 @@
       "default_orientation": "Portrait",
       "cells_per_module": 132
     },
+    "Q.PEAK DUO ML-G12S.3/BFG 675W": {
+      "manufacturer": "HANWHA QCells",
+      "model": "Q.PEAK DUO ML-G12S.3/BFG 675W",
+      "type": "Bifacial",
+      "length_mm": 2384,
+      "width_mm": 1303,
+      "depth_mm": 35,
+      "weight_kg": 38.2,
+      "wattage": 675,
+      "vmp": 38.43,
+      "imp": 17.56,
+      "voc": 45.74,
+      "isc": 18.45,
+      "max_system_voltage": 1500,
+      "efficiency": 21.7,
+      "temperature_coefficient_pmax": -0.34,
+      "temperature_coefficient_voc": -0.27,
+      "temperature_coefficient_isc": 0.04,
+      "bifaciality_factor": 0.7,
+      "default_orientation": "Portrait",
+      "cells_per_module": 132
+    },
     "Q.PEAK DUO ML-G12S.7/BFG 675W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO ML-G12S.7/BFG 675W",
       "type": "Bifacial",
       "length_mm": 2384,
@@ -3816,7 +4146,7 @@
       "cells_per_module": 132
     },
     "Q.PEAK DUO ML-G12S/BFG 675W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO ML-G12S/BFG 675W",
       "type": "Bifacial",
       "length_mm": 2384,
@@ -3837,8 +4167,30 @@
       "default_orientation": "Portrait",
       "cells_per_module": 132
     },
+    "Q.PEAK DUO ML-G12S.3/BFG 680W": {
+      "manufacturer": "HANWHA QCells",
+      "model": "Q.PEAK DUO ML-G12S.3/BFG 680W",
+      "type": "Bifacial",
+      "length_mm": 2384,
+      "width_mm": 1303,
+      "depth_mm": 35,
+      "weight_kg": 38.2,
+      "wattage": 680,
+      "vmp": 38.59,
+      "imp": 17.62,
+      "voc": 45.76,
+      "isc": 18.48,
+      "max_system_voltage": 1500,
+      "efficiency": 21.9,
+      "temperature_coefficient_pmax": -0.34,
+      "temperature_coefficient_voc": -0.27,
+      "temperature_coefficient_isc": 0.04,
+      "bifaciality_factor": 0.7,
+      "default_orientation": "Portrait",
+      "cells_per_module": 132
+    },
     "Q.PEAK DUO ML-G12S/BFG 680W": {
-      "manufacturer": "QCells",
+      "manufacturer": "HANWHA QCells",
       "model": "Q.PEAK DUO ML-G12S/BFG 680W",
       "type": "Bifacial",
       "length_mm": 2384,

@@ -1,0 +1,110 @@
+{
+  "page_index": 0,
+  "page_class": "string_allocation_table",
+  "parsed": {
+    "project": {
+      "customer": "OneEnergy Renewables",
+      "name": "Pine Hill",
+      "tracker_manufacturer": "ATI",
+      "dc_capacity_kw": 7318.5,
+      "ac_capacity_kw": 5500.0,
+      "dc_ac_ratio": 1.33,
+      "total_modules": 12300,
+      "total_strings": 492,
+      "inverter_qty": 22,
+      "inverter": "CPS (Chint Power Systems) CPS SCH250K-T-US-600"
+    },
+    "modules": [
+      {
+        "brand": "SEG Solar",
+        "model": "SEG-595-BTA-BG",
+        "size_watts": 595,
+        "quantity": 12300,
+        "string_size": 25,
+        "string_quantity": 492
+      }
+    ],
+    "tracker_templates": [
+      {
+        "name": "ATI-50-595W-0/M/50-1P",
+        "module_ref": "SEG Solar SEG-595-BTA-BG",
+        "modules_per_string": 25,
+        "strings_per_tracker": 2,
+        "modules_per_tracker": 50,
+        "modules_high": 1,
+        "orientation": "Portrait",
+        "motor_placement": "between_strings",
+        "motor_after_string": null,
+        "motor_in_string": null,
+        "split_north": 0,
+        "split_south": 50,
+        "module_spacing_m": 0.01,
+        "quantity": 2
+      },
+      {
+        "name": "ATI-75-595W-25/M/50-1P",
+        "module_ref": "SEG Solar SEG-595-BTA-BG",
+        "modules_per_string": 25,
+        "strings_per_tracker": 3,
+        "modules_per_tracker": 75,
+        "modules_high": 1,
+        "orientation": "Portrait",
+        "motor_placement": "between_strings",
+        "motor_after_string": 1,
+        "motor_in_string": null,
+        "split_north": 25,
+        "split_south": 50,
+        "module_spacing_m": 0.01,
+        "quantity": 49
+      },
+      {
+        "name": "ATI-100-595W-50/M/50-1P",
+        "module_ref": "SEG Solar SEG-595-BTA-BG",
+        "modules_per_string": 25,
+        "strings_per_tracker": 4,
+        "modules_per_tracker": 100,
+        "modules_high": 1,
+        "orientation": "Portrait",
+        "motor_placement": "between_strings",
+        "motor_after_string": 2,
+        "motor_in_string": null,
+        "split_north": 50,
+        "split_south": 50,
+        "module_spacing_m": 0.01,
+        "quantity": 74
+      },
+      {
+        "name": "ATI-50-595W-50/M/0-1P",
+        "module_ref": "SEG Solar SEG-595-BTA-BG",
+        "modules_per_string": 25,
+        "strings_per_tracker": 2,
+        "modules_per_tracker": 50,
+        "modules_high": 1,
+        "orientation": "Portrait",
+        "motor_placement": "between_strings",
+        "motor_after_string": null,
+        "motor_in_string": null,
+        "split_north": 50,
+        "split_south": 0,
+        "module_spacing_m": 0.01,
+        "quantity": 15
+      },
+      {
+        "name": "ATI-75-595W-50/M/25-1P",
+        "module_ref": "SEG Solar SEG-595-BTA-BG",
+        "modules_per_string": 25,
+        "strings_per_tracker": 3,
+        "modules_per_tracker": 75,
+        "modules_high": 1,
+        "orientation": "Portrait",
+        "motor_placement": "between_strings",
+        "motor_after_string": 2,
+        "motor_in_string": null,
+        "split_north": 50,
+        "split_south": 25,
+        "module_spacing_m": 0.01,
+        "quantity": 5
+      }
+    ]
+  }
+}

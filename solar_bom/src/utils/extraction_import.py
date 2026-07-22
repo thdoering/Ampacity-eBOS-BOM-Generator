@@ -34,9 +34,10 @@ _DEFAULT_MOTOR_GAP_M: float = TrackerTemplate.__dataclass_fields__['motor_gap_m'
 @dataclass
 class ModuleImportEntry:
     """A placeholder module from the extraction, to be resolved by the user."""
-    label: str                       # brand — placeholder label and join key
+    label: str                       # unique display label AND join key (see _module_label)
     wattage: Optional[float]         # size_watts (used to pre-filter the mapping dropdown)
     model: Optional[str]             # often null
+    brand: Optional[str] = None      # raw brand as extracted (may repeat across entries)
     layout_hints: Dict[str, Any] = field(default_factory=dict)  # read-only display only
 
 
@@ -271,6 +272,59 @@ def _check_template_invariants(tpl: Dict[str, Any]) -> List[str]:
     return warnings
 
 
+def _norm(s: str) -> str:
+    """Normalize a join key: casefold and collapse internal whitespace."""
+    return ' '.join(str(s).split()).casefold()
+
+
+def _module_label(brand: str, model: Optional[str]) -> str:
+    """Display label and join key for one module entry.
+
+    Two extraction conventions must both work here:
+
+    * placeholder labels — ``brand="Module Type 1"``, ``model`` absent. The label
+      is the bare brand, matching the historical ``module_ref == brand`` join.
+    * real manufacturer names — ``brand="Qcells"``, ``model="Qpeak Duo XL-..."``.
+      Bare brand is not unique on multi-zone sites (both zones are Qcells), so the
+      label is ``brand + model``, matching that convention's ``module_ref``.
+    """
+    model = (model or '').strip()
+    brand = (brand or '').strip()
+    return f"{brand} {model}".strip() if model else brand
+
+
+def _build_ref_index(modules: List[ModuleImportEntry]) -> Dict[str, List[str]]:
+    """Map every acceptable ``module_ref`` spelling to the labels it could name.
+
+    A key resolving to more than one label is ambiguous and is not usable for a
+    join (e.g. bare ``"Qcells"`` when two zones share that brand).
+    """
+    index: Dict[str, List[str]] = {}
+    for entry in modules:
+        keys = {entry.label}
+        if entry.brand:
+            keys.add(entry.brand)
+        for key in keys:
+            index.setdefault(_norm(key), []).append(entry.label)
+    return index
+
+
+def _resolve_module_ref(raw_ref: str, index: Dict[str, List[str]]):
+    """Resolve a template's ``module_ref`` to a module label.
+
+    Returns ``(label_or_none, warning_or_none)``.
+    """
+    labels = index.get(_norm(raw_ref), [])
+    if len(labels) == 1:
+        return labels[0], None
+    if len(labels) > 1:
+        return None, (
+            f"module_ref '{raw_ref}' is ambiguous — it matches {len(labels)} modules "
+            f"({', '.join(labels)}). Cannot decide which module this template uses."
+        )
+    return None, f"module_ref '{raw_ref}' has no matching module in the extraction."
+
+
 def build_import_plan(data: Dict[str, Any]) -> ImportPlan:
     """Parse a validated ``ExtractionResult`` dict into an :class:`ImportPlan`.
 
@@ -299,22 +353,38 @@ def build_import_plan(data: Dict[str, Any]) -> ImportPlan:
 
     # --- Modules -----------------------------------------------------------
     modules: List[ModuleImportEntry] = []
-    module_labels = set()
+    used_labels: Dict[str, int] = {}
     for m in raw_modules:
         if not isinstance(m, dict):
             plan_warnings.append("Skipped a module entry that was not an object.")
             continue
-        label = m.get('brand')
-        if not label:
+        brand = m.get('brand')
+        if not brand:
             plan_warnings.append("Skipped a module entry with no 'brand' label.")
             continue
-        module_labels.add(label)
+
+        label = _module_label(brand, m.get('model'))
+        # Labels are dict keys downstream (dialog state, module_ref join), so a
+        # duplicate would silently collapse two modules into one.
+        if label in used_labels:
+            used_labels[label] += 1
+            plan_warnings.append(
+                f"Two modules share the label '{label}'; disambiguated the second "
+                f"as '{label} #{used_labels[label]}'."
+            )
+            label = f"{label} #{used_labels[label]}"
+        else:
+            used_labels[label] = 1
+
         modules.append(ModuleImportEntry(
             label=label,
             wattage=m.get('size_watts'),
             model=m.get('model'),
+            brand=brand,
             layout_hints={k: m.get(k) for k in _LAYOUT_HINT_MODULE_KEYS if m.get(k) is not None},
         ))
+
+    ref_index = _build_ref_index(modules)
 
     # --- Tracker templates -------------------------------------------------
     templates: List[TemplateImportEntry] = []
@@ -332,11 +402,13 @@ def build_import_plan(data: Dict[str, Any]) -> ImportPlan:
 
         warnings = _check_template_invariants(t)
 
-        # Resolve the join key to a known module label.
-        if module_ref not in module_labels:
-            warnings.append(
-                f"module_ref '{module_ref}' has no matching module in the extraction."
-            )
+        # Resolve the raw ref to a module label; downstream (dialog gate, main.py
+        # spec lookup) joins on the label, so store the resolved form when found.
+        resolved_label, ref_warning = _resolve_module_ref(module_ref, ref_index)
+        if ref_warning:
+            warnings.append(ref_warning)
+        else:
+            module_ref = resolved_label
 
         template_data = _template_to_app_shape(t)
         motor_fields, north_of_motor, motor_note = _compute_motor_fields(t)

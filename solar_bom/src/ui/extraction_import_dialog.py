@@ -44,8 +44,30 @@ class ImportDecisions:
 
 
 def _join_location(*parts) -> str:
-    """Join non-empty location parts into a single comma-separated string."""
-    return ", ".join(p.strip() for p in parts if p and str(p).strip())
+    """Join non-empty location parts into a single comma-separated string.
+
+    The extraction's ``address`` is usually the full one-line address, which
+    already contains ``city_state_zip``; appending that again would repeat it
+    ("Pine Hill Rd, Cross Plains, WI 53528, Cross Plains, WI 53528"). Skip any
+    part already present in what has been kept so far. A street-only address
+    (the case this join exists for) still picks up the city/state/zip.
+    """
+    def _comparable(s: str) -> str:
+        # Collapse whitespace and casefold so extraction spacing/case drift
+        # ("Dexter, ME 04930" vs "dexter,  me 04930") still counts as a repeat.
+        return ' '.join(s.split()).casefold()
+
+    kept: List[str] = []
+    for part in parts:
+        if not part:
+            continue
+        text = str(part).strip()
+        if not text:
+            continue
+        if _comparable(text) in _comparable(", ".join(kept)):
+            continue
+        kept.append(text)
+    return ", ".join(kept)
 
 
 class ExtractionImportDialog(tk.Toplevel):
@@ -76,8 +98,11 @@ class ExtractionImportDialog(tk.Toplevel):
 
         # Inverter / project-meta state.
         self._inverter_var: Optional[tk.StringVar] = None
+        # Per meta field: a checkbox (write this field at all?) and an editable
+        # value seeded from the extraction — the user can correct a wrong value
+        # or supply one the extraction missed.
         self._meta_fill_vars: Dict[str, tk.BooleanVar] = {}
-        self._meta_fill_values: Dict[str, str] = {}
+        self._meta_entry_vars: Dict[str, tk.StringVar] = {}
 
         self._build_ui()
         self._center_on_parent(parent)
@@ -429,19 +454,32 @@ class ExtractionImportDialog(tk.Toplevel):
 
         any_row = False
         for attr, value, caption in fillables:
-            if not value:
-                continue
-            any_row = True
             current = getattr(md, attr, None) if md else None
             if current:
-                ttk.Label(frame, text=f"{caption}: '{value}'  —  already set to '{current}', skipping",
-                          foreground='gray40').pack(anchor='w')
-            else:
-                var = tk.BooleanVar(value=True)
-                self._meta_fill_vars[attr] = var
-                self._meta_fill_values[attr] = value
-                ttk.Checkbutton(frame, text=f"Fill {caption} with '{value}'",
-                                variable=var).pack(anchor='w')
+                # Never overwrite a field the project already has.
+                if value:
+                    any_row = True
+                    ttk.Label(frame, text=f"{caption}: '{value}'  —  already set to '{current}', skipping",
+                              foreground='gray40').pack(anchor='w')
+                continue
+
+            # Editable row: the checkbox decides whether the field is written,
+            # the entry carries the value. Seeded from the extraction, but the
+            # user can correct a wrong value or type one it missed.
+            any_row = True
+            fill_var = tk.BooleanVar(value=True)
+            entry_var = tk.StringVar(value=value or '')
+            self._meta_fill_vars[attr] = fill_var
+            self._meta_entry_vars[attr] = entry_var
+
+            row = ttk.Frame(frame)
+            row.pack(anchor='w', fill='x', pady=1)
+            ttk.Checkbutton(row, text=f"Fill {caption}:", variable=fill_var,
+                            width=22).pack(side='left')
+            ttk.Entry(row, textvariable=entry_var, width=40).pack(side='left', padx=5)
+            if not value:
+                ttk.Label(row, text="not found in the drawing",
+                          foreground='gray40').pack(side='left')
         if not any_row:
             ttk.Label(frame, text="No project-meta fields to fill.").pack(anchor='w')
 
@@ -501,6 +539,20 @@ class ExtractionImportDialog(tk.Toplevel):
                 parent=self)
             return
 
+        # 1b) Every template must join to a resolved module. Without this, main.py
+        # silently skips the template and the import is a no-op the user can't see.
+        orphaned = [t.name for t in self.plan.templates
+                    if t.module_ref not in self._resolved_modules]
+        if orphaned:
+            messagebox.showwarning(
+                "Templates without a module",
+                "These templates reference a module that isn't in the extraction, "
+                "so they cannot be imported:\n\n"
+                + "\n".join(f"  • {n}" for n in orphaned)
+                + "\n\nFix the extraction's module_ref values and re-import.",
+                parent=self)
+            return
+
         # 2) Invariant-failing templates must be acknowledged.
         for idx, tpl in enumerate(self.plan.templates):
             if idx in self._tpl_ack_vars and not self._tpl_ack_vars[idx].get():
@@ -523,9 +575,15 @@ class ExtractionImportDialog(tk.Toplevel):
                 'template_data': corrected,
             })
 
-        # 4) Project-meta fills the user kept checked.
-        fills = {attr: self._meta_fill_values[attr]
-                 for attr, var in self._meta_fill_vars.items() if var.get()}
+        # 4) Project-meta: write a field only if it's checked AND has a value —
+        # an unchecked box skips it, and an empty box has nothing to write.
+        fills = {}
+        for attr, fill_var in self._meta_fill_vars.items():
+            if not fill_var.get():
+                continue
+            value = self._meta_entry_vars[attr].get().strip()
+            if value:
+                fills[attr] = value
 
         # 5) Inverter selection.
         inv = None

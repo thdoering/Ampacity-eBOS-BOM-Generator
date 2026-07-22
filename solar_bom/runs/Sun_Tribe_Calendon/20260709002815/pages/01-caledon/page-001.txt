@@ -1,0 +1,193 @@
+PRELIMINARY VISUAL AID ONLY
+NOT FOR CONSTRUCTION
+C:\Users\bconroy\Project Analyst\Customers\Sun Tribe\Caledon\Ampacity OMNI CAD 08-11-25\SunTribe_Caledon_Ampacity-Omni_Layout_CAD_08_11_2025.dwg
+N
+S
+W
+E
+OmniTrack Project Details
+Customer
+Sun Tribe
+Project Name
+Calendon
+Address
+Calendon Rd
+Coordinates
+38.346475,
+-77.130623
+City, State, Zip
+King george,
+VA 22485
+ASCE 7-16 Wind & Snow
+105
+0
+Risk Category
+25
+Module 1 Brand
+Qpeak Duo
+XL-G11S.3/BFG
+Module 1 Size
+590
+Module 1 Qty
+20250
+Row Spacing Mod 1
+20'
+String Size Mod 1
+25
+String Qty Mod 1
+810
+Module 2 Brand
+QPeak Duo
+ML-G12S.3-BFG
+Module 2 Size
+660
+Module 2 Qty
+22050
+Row Spacing Mod 2
+20'
+String Size Mod 2
+30
+String Qty Mod 2
+735
+Total Project Size (W DC)
+26500500
+Date
+08/11/2025
+Designer
+BC
+Revision Date
+08/11/2025
+Revision #
+4
+Row Summary Mod 1
+Quantity
+Row Length
+Row
+Type
+Bearing
+Posts
+Split
+Dampers
+Total Post
+48
+75
+Ext
+14
+37/38
+4
+672
+200
+75
+Int
+12
+37/38
+4
+2400
+2
+50
+Ext
+10
+12/38
+4
+20
+10
+50
+Int
+9
+12/38
+4
+90
+10
+50
+Ext
+10
+37/13
+4
+100
+11
+50
+Int
+9
+37/13
+4
+99
+Row Summary Mod 2
+32
+90
+Ext
+20
+45/45
+4
+640
+187
+90
+Int
+16
+45/45
+4
+2992
+5
+60
+Ext
+14
+15/45
+4
+70
+26
+60
+Int
+11
+15/45
+4
+286
+3
+60
+Ext
+14
+45/15
+4
+42
+5
+60
+Int
+11
+45/15
+4
+55
+Additional Information Mod 1 G11
+Damper Type
+Coil Over Damper
+HD Bearings
+Yes
+Center/CAB Gap
+30" Centered
+Clamp Types A/B Regions
+1400mm TB
+Clamp Types C/D Regions
+400mm TB
+Bearing Gaps
+No
+Additional Information Mod 2 G12
+Damper Type
+Coil Over Damper
+HD Bearings
+No
+Center/CAB Gap
+30" Centered
+Clamp Types A/B Regions
+1400mm TB
+Clamp Types C/D Regions
+1400mm TB
+Bearing Gaps
+Single A/B Gaps
+Foundation Post Summary
+Type
+Quantity
+Bearing
+7466
+Gear
+539
+Driveline Angle
+0
+Motor Qty
+26
