@@ -993,7 +993,41 @@ class QuickEstimate(ttk.Frame):
         length_with_waste = raw_length_ft * WASTE_FACTOR
         rounded = INCREMENT * math.ceil(length_with_waste / INCREMENT)
         return max(10, int(rounded))
-    
+
+    def _record_combined_whip(self, totals, whip_raw_ft, ext_pos_raw, ext_neg_raw,
+                              h_str_count, inv_idx):
+        """Record one harness as a combined (extender-folded) whip, per polarity.
+
+        Used only when the "combine extender + whip" setting is on. The combined
+        length is the whip E-W distance plus that polarity's extender leg, rounded
+        as a single conductor. Combined whips keep the WHIP wire gauge (no new sizing
+        rule). Populates the site-level per-polarity buckets, the per-device
+        per-polarity buckets, and total_whip_length.
+        """
+        gauge = self.get_wire_size_for('whip', h_str_count)
+        pos_len = self.round_whip_length(whip_raw_ft + ext_pos_raw)
+        neg_len = self.round_whip_length(whip_raw_ft + ext_neg_raw)
+        pos_key = (pos_len, gauge)
+        neg_key = (neg_len, gauge)
+        totals['whips_pos_by_length'][pos_key] += 1
+        totals['whips_neg_by_length'][neg_key] += 1
+        totals['total_whip_length'] += pos_len + neg_len
+        pd_pos = totals['whips_pos_by_length_per_device'].setdefault(inv_idx, {})
+        pd_neg = totals['whips_neg_by_length_per_device'].setdefault(inv_idx, {})
+        pd_pos[pos_key] = pd_pos.get(pos_key, 0) + 1
+        pd_neg[neg_key] = pd_neg.get(neg_key, 0) + 1
+
+        # Shadow running sums of the *separate* whip (E-W only) and extender (pos leg)
+        # lengths, mirroring what the symmetric extender/whip buckets would hold. These
+        # feed _compute_wire_length_estimates so the voltage-drop auto-sizing — and thus
+        # the whip gauge — is identical whether or not this setting is on.
+        whip_len = self.round_whip_length(whip_raw_ft)
+        totals['_combine_whip_len_sum'] = totals.get('_combine_whip_len_sum', 0) + whip_len * 2
+        totals['_combine_whip_qty'] = totals.get('_combine_whip_qty', 0) + 2
+        totals['_combine_ext_pos_len_sum'] = (
+            totals.get('_combine_ext_pos_len_sum', 0) + self.round_whip_length(ext_pos_raw))
+        totals['_combine_ext_pos_qty'] = totals.get('_combine_ext_pos_qty', 0) + 1
+
     def load_combiner_library(self):
         """Load combiner box library from JSON file"""
         try:
@@ -1508,12 +1542,28 @@ class QuickEstimate(ttk.Frame):
         ws_frame.pack(side='left', fill='y', padx=(10, 0))
         self._ws_frame = ws_frame
         
-        # Row 0: Reset button
+        # Row 0: Reset button + combine-extender-whip toggle
         controls_row = ttk.Frame(ws_frame)
         controls_row.pack(fill='x', pady=(0, 5))
 
         ttk.Button(controls_row, text="Reset", width=5,
                     command=self._reset_wire_sizing_to_recommended).pack(side='left')
+
+        self._ws_combine_var = tk.BooleanVar(
+            value=bool(self.wire_sizing_settings.get('combine_extender_whip', False)))
+        combine_chk = ttk.Checkbutton(
+            controls_row, text="Combine extender + whip into single whip",
+            variable=self._ws_combine_var)
+        combine_chk.pack(side='left', padx=(10, 0))
+        self._add_tooltip(
+            combine_chk,
+            "Removes extender line items from the takeoff and folds each harness's "
+            "extender leg into its whip, so whips are correspondingly longer. Whip "
+            "gauge is unchanged and drawings still show the legs separately — this "
+            "only affects the BOM line items.",
+        )
+        self._ws_combine_var.trace_add(
+            'write', lambda *a: self._on_combine_extender_whip_changed())
         
         # Column headers
         header_row = ttk.Frame(ws_frame)
@@ -1580,7 +1630,7 @@ class QuickEstimate(ttk.Frame):
     @classmethod
     def _make_default_wss(cls) -> dict:
         """Return a fresh wire_sizing_settings dict populated with defaults."""
-        d = {'ambient_c': 30, 'soil_c': 20}
+        d = {'ambient_c': 30, 'soil_c': 20, 'combine_extender_whip': False}
         for key, _, insulation, material in cls._WSS_CABLE_TYPES:
             d[key] = {
                 'insulation': insulation,
@@ -1990,16 +2040,24 @@ class QuickEstimate(ttk.Frame):
             mps = 28
         harness_one_way_ft = module_width_ft * mps / 2.0
 
-        # Extender: weighted average from pos extender lengths
+        # Extender: weighted average from pos extender lengths.
+        # In combine mode the extender buckets are empty (folded into whips), so fall
+        # back to the shadow sums so the auto-sized gauge matches the non-combined case.
         ext_pos = totals.get('extenders_pos_by_length', {})
         total_ext_len = sum(length * qty for (length, _g), qty in ext_pos.items())
         total_ext_qty = sum(ext_pos.values())
+        if total_ext_qty == 0 and totals.get('_combine_ext_pos_qty'):
+            total_ext_len = totals['_combine_ext_pos_len_sum']
+            total_ext_qty = totals['_combine_ext_pos_qty']
         extender_one_way_ft = (total_ext_len / total_ext_qty) if total_ext_qty > 0 else 0.0
 
-        # Whip: weighted average
+        # Whip: weighted average (E-W only, so gauge is unaffected by the combine fold)
         whips = totals.get('whips_by_length', {})
         total_whip_len = sum(length * qty for (length, _g), qty in whips.items())
         total_whip_qty = sum(whips.values())
+        if total_whip_qty == 0 and totals.get('_combine_whip_qty'):
+            total_whip_len = totals['_combine_whip_len_sum']
+            total_whip_qty = totals['_combine_whip_qty']
         whip_one_way_ft = (total_whip_len / total_whip_qty) if total_whip_qty > 0 else 0.0
 
         # DC feeder: average single-run length (undo parallel multiplier)
@@ -2159,6 +2217,19 @@ class QuickEstimate(ttk.Frame):
             self.device_feeder_parallel_counts[dev_idx] = val
         self._mark_dirty()
 
+    def _on_combine_extender_whip_changed(self):
+        """Handle the 'combine extender + whip' toggle in the Wire Sizing table.
+
+        The value lives in wire_sizing_settings (persisted with the estimate). Marks
+        results stale so the takeoff is recalculated with/without the fold; the
+        Calculate button turns 'Stale' as with any other wire-sizing change.
+        """
+        if getattr(self, '_refreshing_ws_table', False) or getattr(self, '_loading', False):
+            return
+        self.wire_sizing_settings['combine_extender_whip'] = bool(self._ws_combine_var.get())
+        self._mark_dirty()
+        self.save_estimate()
+
     def refresh_wire_sizing_table(self):
         """Refresh the wire sizing table rows based on current harness configs."""
         if not hasattr(self, '_ws_rows_frame'):
@@ -2179,6 +2250,12 @@ class QuickEstimate(ttk.Frame):
                 for _ops, _name in list(_tv.trace_info()):
                     if 'write' in _ops:
                         _tv.trace_remove('write', _name)
+
+        # Restore the combine-extender-whip toggle from the persisted setting
+        # (guarded by _refreshing_ws_table so the trace doesn't fire here).
+        if hasattr(self, '_ws_combine_var'):
+            self._ws_combine_var.set(
+                bool(self.wire_sizing_settings.get('combine_extender_whip', False)))
 
         # Clear existing rows
         for widget in self._ws_rows_frame.winfo_children():
@@ -3464,6 +3541,8 @@ class QuickEstimate(ttk.Frame):
             wss = copy.deepcopy(defaults)
             wss['ambient_c'] = saved_wss.get('ambient_c', defaults['ambient_c'])
             wss['soil_c'] = saved_wss.get('soil_c', defaults['soil_c'])
+            wss['combine_extender_whip'] = saved_wss.get(
+                'combine_extender_whip', defaults['combine_extender_whip'])
             for cable_key in [k for k, *_ in self._WSS_CABLE_TYPES]:
                 if cable_key in saved_wss:
                     for field, def_val in defaults[cable_key].items():
@@ -4984,9 +5063,14 @@ class QuickEstimate(ttk.Frame):
                 qty = totals['ipc_by_tap'][tap_count]
                 insert_row(f"{tap_count}-Tap IPC", '', qty, 'ea')
         
-        # Extenders — split by wire gauge, then by polarity
-        ext_gauges = sorted(set(g for (_, g) in totals['extenders_pos_by_length'].keys()) |
-                           set(g for (_, g) in totals['extenders_neg_by_length'].keys()))
+        # When extenders have been folded into whips (combine mode) the per-polarity
+        # combined-whip buckets are populated and no extender line items are emitted.
+        combined_whips = bool(totals.get('whips_pos_by_length') or totals.get('whips_neg_by_length'))
+
+        # Extenders — split by wire gauge, then by polarity (skipped in combine mode)
+        ext_gauges = [] if combined_whips else sorted(
+            set(g for (_, g) in totals['extenders_pos_by_length'].keys()) |
+            set(g for (_, g) in totals['extenders_neg_by_length'].keys()))
         for gauge in ext_gauges:
             # Positive
             pos_items = {length: qty for (length, g), qty in totals['extenders_pos_by_length'].items() if g == gauge}
@@ -5007,12 +5091,35 @@ class QuickEstimate(ttk.Frame):
                     insert_row(f"Extender {length}ft (Neg)", e_pn, qty, 'ea', e_unit, e_ext, description=self._lookup_description(e_pn))
 
         # Whips — split by wire gauge, then by polarity
-        whip_gauges = sorted(set(g for (_, g) in totals.get('whips_by_length', {}).keys()))
-        if whip_gauges:
-            display = totals.get('_display', {})
-            topology = display.get('topology', self.topology_var.get() if hasattr(self, 'topology_var') else '')
-            device_label = 'to inverter' if topology == 'Distributed String' else 'to combiner'
+        display = totals.get('_display', {})
+        topology = display.get('topology', self.topology_var.get() if hasattr(self, 'topology_var') else '')
+        device_label = 'to inverter' if topology == 'Distributed String' else 'to combiner'
 
+        if combined_whips:
+            # Combined whips are carried per-polarity (pos ≠ neg on offset trackers),
+            # so quantities are read directly — no symmetric // 2 split.
+            pos_by_len = totals.get('whips_pos_by_length', {})
+            neg_by_len = totals.get('whips_neg_by_length', {})
+            whip_gauges = sorted(set(g for (_, g) in pos_by_len.keys()) |
+                                 set(g for (_, g) in neg_by_len.keys()))
+            for gauge in whip_gauges:
+                sc = self._gauge_to_string_count('whip', gauge)
+                pos_items = {length: qty for (length, g), qty in pos_by_len.items() if g == gauge}
+                if pos_items:
+                    insert_section(f'WHIPS — POSITIVE ({device_label}) ({gauge}, CU)')
+                    for length in sorted(pos_items.keys()):
+                        qty = pos_items[length]
+                        w_pn, w_unit, w_ext = self.lookup_part_and_price('whip', polarity='positive', length_ft=length, qty=qty, num_strings=sc)
+                        insert_row(f"Whip {length}ft (Pos)", w_pn, qty, 'ea', w_unit, w_ext, description=self._lookup_description(w_pn))
+                neg_items = {length: qty for (length, g), qty in neg_by_len.items() if g == gauge}
+                if neg_items:
+                    insert_section(f'WHIPS — NEGATIVE ({device_label}) ({gauge}, CU)')
+                    for length in sorted(neg_items.keys()):
+                        qty = neg_items[length]
+                        w_pn, w_unit, w_ext = self.lookup_part_and_price('whip', polarity='negative', length_ft=length, qty=qty, num_strings=sc)
+                        insert_row(f"Whip {length}ft (Neg)", w_pn, qty, 'ea', w_unit, w_ext, description=self._lookup_description(w_pn))
+        else:
+            whip_gauges = sorted(set(g for (_, g) in totals.get('whips_by_length', {}).keys()))
             for gauge in whip_gauges:
                 gauge_items = {length: qty for (length, g), qty in totals['whips_by_length'].items() if g == gauge}
                 if not gauge_items:
@@ -6651,6 +6758,13 @@ class QuickEstimate(ttk.Frame):
             'harnesses_by_size': defaultdict(int),
             'inline_fuses_by_rating': defaultdict(int),
             'whips_by_length': defaultdict(int),
+            # Per-polarity combined-whip buckets — populated only when the
+            # "combine extender + whip" setting is on (pos ≠ neg on offset trackers,
+            # so these cannot use the symmetric whips_by_length bucket).
+            'whips_pos_by_length': defaultdict(int),
+            'whips_neg_by_length': defaultdict(int),
+            'whips_pos_by_length_per_device': {},
+            'whips_neg_by_length_per_device': {},
             'extenders_pos_by_length': defaultdict(int),
             'extenders_neg_by_length': defaultdict(int),
             'extenders_pos_by_length_per_device': {},
@@ -7301,6 +7415,17 @@ class QuickEstimate(ttk.Frame):
                         tap_count = 4
                     totals['ipc_by_tap'][tap_count] += 2  # pos + neg
 
+        # "Combine extender + whip into single whip" — fold each harness's extender
+        # leg into its whip so the takeoff has no extender line items and longer whips.
+        # Only active where whips actually run (not Trunk Bus, has trackers + devices);
+        # otherwise extenders are left untouched so no footage is silently dropped.
+        combine = self.wire_sizing_settings.get('combine_extender_whip', False)
+        combine_active = (combine and lv_method != 'Trunk Bus'
+                          and total_all_trackers > 0 and num_devices > 0)
+        # Recorded so diagnostics can relax the whip/extender invariants this
+        # feature intentionally breaks (no extenders, whips longer than E-W span).
+        totals['_combine_extender_whip'] = combine_active
+
         # ==================== Whip calculation (skipped for Trunk Bus) ====================
         if lv_method != 'Trunk Bus' and total_all_trackers > 0 and num_devices > 0:
             whip_distances = self.calculate_whip_distances_from_positions(
@@ -7308,6 +7433,7 @@ class QuickEstimate(ttk.Frame):
             )
 
             split_details = getattr(self, '_split_tracker_details', {})
+            tracker_seg_map_whip = getattr(self, '_tracker_to_segment', [])
             seen_whip_trackers = set()
             
             for entry in whip_distances:
@@ -7358,14 +7484,57 @@ class QuickEstimate(ttk.Frame):
                     else:
                         ind_harness_sizes = harness_sizes_by_spt.get(spt, [spt])
                 
-                for h_str_count in ind_harness_sizes:
-                    gauge = self.get_wire_size_for('whip', h_str_count)
-                    key = (whip_length, gauge)
-                    totals['whips_by_length'][key] += 2  # pos + neg
-                    totals['total_whip_length'] += whip_length * 2
-                    totals.setdefault('whips_by_length_per_device', {})
-                    per_dev = totals['whips_by_length_per_device'].setdefault(inv_idx, {})
-                    per_dev[key] = per_dev.get(key, 0) + 2
+                if not combine_active:
+                    for h_str_count in ind_harness_sizes:
+                        gauge = self.get_wire_size_for('whip', h_str_count)
+                        key = (whip_length, gauge)
+                        totals['whips_by_length'][key] += 2  # pos + neg
+                        totals['total_whip_length'] += whip_length * 2
+                        totals.setdefault('whips_by_length_per_device', {})
+                        per_dev = totals['whips_by_length_per_device'].setdefault(inv_idx, {})
+                        per_dev[key] = per_dev.get(key, 0) + 2
+                elif tidx < 0 or tidx >= len(tracker_seg_map_whip):
+                    # No tracker→segment mapping (e.g. no-allocation fallback): can't
+                    # pair with an extender, so keep the plain symmetric whip rather
+                    # than dropping the footage entirely.
+                    for h_str_count in ind_harness_sizes:
+                        gauge = self.get_wire_size_for('whip', h_str_count)
+                        key = (whip_length, gauge)
+                        totals['whips_by_length'][key] += 2  # pos + neg
+                        totals['total_whip_length'] += whip_length * 2
+                        totals.setdefault('whips_by_length_per_device', {})
+                        per_dev = totals['whips_by_length_per_device'].setdefault(inv_idx, {})
+                        per_dev[key] = per_dev.get(key, 0) + 2
+                else:
+                    # Combine mode: fold each harness's extender leg into its whip,
+                    # per polarity. Uses the FINAL whip distance (distance_ft, which
+                    # already includes any manual N-S leg) plus the FINAL extender pairs
+                    # (with any whip-point override applied), so a moved whip junction
+                    # nets out correctly. Combined whips carry the whip wire gauge.
+                    seg_info_c = tracker_seg_map_whip[tidx]
+                    seg_c = seg_info_c['seg']
+                    device_position_c = seg_info_c['device_position']
+                    wp_override_c = self._whip_point_overrides.get(f"{tidx}:{inv_idx}")
+                    if tidx in split_details:
+                        for portion in split_details[tidx]['portions']:
+                            if portion['inv_idx'] != inv_idx:
+                                continue
+                            ext_pairs_c = self.calculate_extender_lengths_per_segment(
+                                seg_c, device_position_c, portion.get('start_pos', 0),
+                                whip_point_override=wp_override_c,
+                                harness_sizes_override=portion['harnesses'])
+                            ph_c = portion['harnesses']
+                            for pair_idx, (pos_raw, neg_raw) in enumerate(ext_pairs_c):
+                                h_c = ph_c[pair_idx] if pair_idx < len(ph_c) else 1
+                                self._record_combined_whip(
+                                    totals, distance_ft, pos_raw, neg_raw, h_c, inv_idx)
+                    else:
+                        ext_pairs_c = self.calculate_extender_lengths_per_segment(
+                            seg_c, device_position_c, whip_point_override=wp_override_c)
+                        for pair_idx, (pos_raw, neg_raw) in enumerate(ext_pairs_c):
+                            h_c = ind_harness_sizes[pair_idx] if pair_idx < len(ind_harness_sizes) else 1
+                            self._record_combined_whip(
+                                totals, distance_ft, pos_raw, neg_raw, h_c, inv_idx)
 
         split_details = getattr(self, '_split_tracker_details', {})
         tracker_seg_map = getattr(self, '_tracker_to_segment', [])
@@ -7388,8 +7557,9 @@ class QuickEstimate(ttk.Frame):
         for _tidx_ext, _info_ext in enumerate(tracker_seg_map):
             trackers_by_seg_id.setdefault(id(_info_ext['seg']), []).append(_tidx_ext)
 
-        # Process non-split trackers in bulk (original logic minus split count)
-        for group_idx, group in enumerate(self.groups):
+        # Process non-split trackers in bulk (original logic minus split count).
+        # In combine mode these extenders are folded into whips above, so skip.
+        for group_idx, group in ([] if combine_active else enumerate(self.groups)):
             device_position = group.get('device_position', 'middle')
             for seg in group['segments']:
                 if seg['quantity'] <= 0:
@@ -7423,8 +7593,9 @@ class QuickEstimate(ttk.Frame):
                             _pd_pos[pos_key] = _pd_pos.get(pos_key, 0) + 1
                             _pd_neg[neg_key] = _pd_neg.get(neg_key, 0) + 1
 
-        # Process split trackers individually — each portion gets its own extenders
-        for tidx, details in split_details.items():
+        # Process split trackers individually — each portion gets its own extenders.
+        # In combine mode these are folded into whips above, so skip.
+        for tidx, details in ([] if combine_active else split_details.items()):
             if tidx >= len(tracker_seg_map):
                 continue
             
@@ -7456,8 +7627,10 @@ class QuickEstimate(ttk.Frame):
         # Adjust extenders for trackers that have a user-set whip point override.
         # Extenders are not affected by CB N-S position or device_position_overrides —
         # only explicit _whip_point_overrides change extender lengths.
+        # In combine mode, whip-point overrides are already applied inside the
+        # combined-whip fold above, so this extender adjustment pass is skipped.
         ns_offsets = getattr(self, '_tracker_ns_to_device', {})
-        if ns_offsets:
+        if ns_offsets and not combine_active:
             for (tidx, inv_idx), _signed_ns in ns_offsets.items():
                 wp_override = self._whip_point_overrides.get(f"{tidx}:{inv_idx}")
 
@@ -8043,9 +8216,29 @@ class QuickEstimate(ttk.Frame):
                     _wr(f"{fuse_rating}A Inline DC String Fuse (Pos)", pn, _lib_desc(fuse_library, pn), dev_fuse_qty, 'ea')
 
             # Whip cables — by (length, gauge) bucket per device
+            dev_whip_pos = totals.get('whips_pos_by_length_per_device', {}).get(dev_idx, {})
+            dev_whip_neg = totals.get('whips_neg_by_length_per_device', {}).get(dev_idx, {})
             dev_whip_buckets = totals.get('whips_by_length_per_device', {}).get(dev_idx, {})
 
-            if dev_whip_buckets:
+            if dev_whip_pos or dev_whip_neg:
+                # Combine mode: extender folded into whip, carried per-polarity
+                # (pos ≠ neg on offset trackers) — read directly, no // 2 split.
+                for polarity, dev_buckets in (('positive', dev_whip_pos), ('negative', dev_whip_neg)):
+                    by_gauge = {}
+                    for (length, gauge), qty in dev_buckets.items():
+                        if qty > 0:
+                            by_gauge.setdefault(gauge, {})[length] = qty
+                    label_pol = 'Pos' if polarity == 'positive' else 'Neg'
+                    for gauge in sorted(by_gauge.keys()):
+                        sc = self._gauge_to_string_count('whip', gauge)
+                        for length in sorted(by_gauge[gauge].keys()):
+                            qty = by_gauge[gauge][length]
+                            pn, _, _ = self.lookup_part_and_price(
+                                'whip', polarity=polarity, length_ft=length,
+                                qty=qty, num_strings=sc)
+                            _wr(f'Whip {length}ft ({label_pol})', pn,
+                                _lib_desc(whip_library, pn), qty, 'ea')
+            elif dev_whip_buckets:
                 by_gauge = {}
                 for (length, gauge), qty in dev_whip_buckets.items():
                     by_gauge.setdefault(gauge, {})[length] = qty

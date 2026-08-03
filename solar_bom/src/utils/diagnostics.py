@@ -207,6 +207,15 @@ def validate_extenders(totals, groups, tracker_seg_map, split_tracker_details,
         list of issue strings. Empty list = all good.
     """
     issues = []
+
+    # When extenders are folded into whips ("combine extender + whip"), there are
+    # intentionally no extender line items — the count/harness invariants below don't
+    # apply. The whip validators cover the folded footage instead.
+    if totals.get('_combine_extender_whip'):
+        if verbose:
+            print("\n[EXT DIAG] Combined extender+whip mode — extender checks skipped.\n")
+        return issues
+
     pos_by_length = totals.get('extenders_pos_by_length', {})
     neg_by_length = totals.get('extenders_neg_by_length', {})
 
@@ -492,15 +501,26 @@ def validate_whips(totals, groups=None, split_tracker_details=None, tracker_seg_
         list of issue strings. Empty list = all good.
     """
     issues = []
-    whips_by_length = totals.get('whips_by_length', {})
+    combined = bool(totals.get('_combine_extender_whip'))
+    if combined:
+        # Combined whips are carried per-polarity (pos ≠ neg on offset trackers), so
+        # merge them into a length→qty view for the length/total/count checks below.
+        whips_by_length = {}
+        for src in ('whips_pos_by_length', 'whips_neg_by_length'):
+            for key, qty in totals.get(src, {}).items():
+                whips_by_length[key] = whips_by_length.get(key, 0) + qty
+    else:
+        whips_by_length = totals.get('whips_by_length', {})
 
     # ── 1. Every whip entry should have qty divisible by 2 (pos + neg) ──
-    for (length, gauge), qty in whips_by_length.items():
-        if qty % 2 != 0:
-            issues.append(
-                f"WHIP_ODD_QTY: Whip {length}ft ({gauge}) has qty={qty}, "
-                f"expected even (pos+neg pairs)"
-            )
+    #    Skipped when combined: per-polarity buckets are asymmetric by design.
+    if not combined:
+        for (length, gauge), qty in whips_by_length.items():
+            if qty % 2 != 0:
+                issues.append(
+                    f"WHIP_ODD_QTY: Whip {length}ft ({gauge}) has qty={qty}, "
+                    f"expected even (pos+neg pairs)"
+                )
 
     # ── 2. No zero or negative lengths ──
     for (length, gauge), qty in whips_by_length.items():
@@ -558,10 +578,12 @@ def validate_whips(totals, groups=None, split_tracker_details=None, tracker_seg_
             )
 
     # ── 5. Whip count should equal extender count ──
+    #    Skipped when combined: extenders are intentionally folded into whips (zero
+    #    extender line items), so a whip↔extender count match is not expected.
     total_pos_ext = sum(totals.get('extenders_pos_by_length', {}).values())
     total_neg_ext = sum(totals.get('extenders_neg_by_length', {}).values())
     total_ext = total_pos_ext + total_neg_ext
-    if total_ext > 0 and total_whips != total_ext:
+    if not combined and total_ext > 0 and total_whips != total_ext:
         issues.append(
             f"WHIP_EXT_COUNT_MISMATCH: {total_whips} whips != "
             f"{total_ext} extenders ({total_pos_ext} pos + {total_neg_ext} neg) — "
@@ -607,6 +629,14 @@ def validate_whip_extender_relationship(totals, qe_widget, verbose=False):
         list of issue strings. Empty list = all good.
     """
     issues = []
+    # When extenders are folded into whips, combined whips legitimately exceed the
+    # max E-W span by the N-S extender leg, so the "whips are E-W only" check no
+    # longer applies.
+    if totals.get('_combine_extender_whip'):
+        if verbose:
+            print("\n[WHIP/EXT RELATIONSHIP] Combined mode — E-W-span check skipped.\n")
+        return issues
+
     ns_offsets = getattr(qe_widget, '_tracker_ns_to_device', {})
     whips_by_length = totals.get('whips_by_length', {})
     groups = getattr(qe_widget, 'groups', [])
