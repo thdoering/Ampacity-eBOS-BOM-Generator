@@ -44,6 +44,9 @@ class SitePreviewWindow(tk.Toplevel):
         self.selected_pad_idx = None
         self.placing_pad = False  # True when in "click to place" mode
         self.assigning_devices = False  # True when Assign Devices dialog is open
+        self._device_list_window = None  # non-modal "All Devices" list, if open
+        self._device_list_tree = None
+        self._device_list_search_var = None
         
         # Zoom and pan state
         self.scale = 1.0
@@ -126,6 +129,7 @@ class SitePreviewWindow(tk.Toplevel):
         self.setup_ui()
         self.build_layout_data()
         self._recolor_from_cb_assignments()
+        self._refresh_device_displays()  # _build_legend() ran before device_positions existed — rebuild with real labels
         self.after(50, self.fit_and_redraw)
     
     def _get_preview_tracker_dims_ft(self, template_ref):
@@ -385,10 +389,14 @@ class SitePreviewWindow(tk.Toplevel):
         self.wiring_layer_panel = ttk.LabelFrame(canvas_frame, text="Wiring Layers", padding="4")
         self._build_wiring_layer_panel()
 
-        # Bottom legend (rebuildable)
-        self.legend_frame = ttk.Frame(self, padding="5")
-        self.legend_frame.pack(fill='x')
+        # Bottom legend (rebuildable) + All Devices button
+        bottom_bar = ttk.Frame(self)
+        bottom_bar.pack(fill='x')
+        self.legend_frame = ttk.Frame(bottom_bar, padding="5")
+        self.legend_frame.pack(fill='x', side='left', expand=True)
         self._build_legend()
+        ttk.Button(bottom_bar, text="All Devices...",
+                   command=self._open_device_list_window).pack(side='right', padx=8, pady=5)
         self._refresh_skid_hint()
 
     def _build_legend(self):
@@ -401,15 +409,22 @@ class SitePreviewWindow(tk.Toplevel):
         swatch_frame = ttk.Frame(self.legend_frame)
         swatch_frame.pack(anchor='w')
         
+        device_positions = getattr(self, 'device_positions', [])
         num_inv = self.inv_summary.get('total_inverters', 0)
         max_show = min(num_inv, 15)
+        entries = []
         for i in range(max_show):
+            label_text = device_positions[i].get('label', f"{self.device_label} {i+1}") \
+                if i < len(device_positions) else f"{self.device_label} {i+1}"
+            entries.append((i, label_text))
+        entries.sort(key=lambda e: [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', e[1])])
+        for i, label_text in entries:
             color = self.colors[i % len(self.colors)]
             swatch = tk.Canvas(swatch_frame, width=12, height=12, highlightthickness=0,
                                cursor='hand2')
             swatch.create_rectangle(0, 0, 12, 12, fill=color, outline='#333333')
             swatch.pack(side='left', padx=(0, 2))
-            lbl = ttk.Label(swatch_frame, text=f"{self.device_label} {i+1}",
+            lbl = ttk.Label(swatch_frame, text=label_text,
                            font=('Helvetica', 8), cursor='hand2')
             lbl.pack(side='left', padx=(0, 8))
             swatch.bind('<Button-1>', lambda e, idx=i: self._on_legend_device_click(idx))
@@ -435,6 +450,11 @@ class SitePreviewWindow(tk.Toplevel):
             runs_str = f"  |  {spatial_runs} spatial run(s)" if spatial_runs > 1 else ""
             ttk.Label(self.legend_frame, text=f"{size_str}  |  {split_count} split tracker(s){runs_str}",
                      font=('Helvetica', 9), foreground='#555555').pack(anchor='w')
+
+    def _refresh_device_displays(self):
+        """Rebuild the bottom legend and, if open, the All Devices list from current labels."""
+        self._build_legend()
+        self._refresh_device_list_tree()
 
     def _on_legend_device_click(self, device_idx):
         """Select the device matching a legend entry.
@@ -464,6 +484,97 @@ class SitePreviewWindow(tk.Toplevel):
         self._invalidate_world_layer()
         self.draw()
         self.focus_force()
+
+    def _open_device_list_window(self):
+        """Open (or focus) a non-modal window listing every device, searchable and click-to-select."""
+        win = self._device_list_window
+        if win is not None:
+            try:
+                if win.winfo_exists():
+                    win.deiconify()
+                    win.lift()
+                    win.focus_set()
+                    return
+            except Exception:
+                pass
+            self._device_list_window = None
+            self._device_list_tree = None
+
+        win = tk.Toplevel(self)
+        win.title("All Devices")
+        win.geometry("280x420")
+        win.transient(self)
+
+        search_frame = ttk.Frame(win, padding=(8, 8, 8, 4))
+        search_frame.pack(fill='x')
+        ttk.Label(search_frame, text="Search:").pack(side='left')
+        search_var = tk.StringVar()
+        search_entry = ttk.Entry(search_frame, textvariable=search_var)
+        search_entry.pack(side='left', fill='x', expand=True, padx=(4, 0))
+        search_var.trace_add('write', lambda *a: self._refresh_device_list_tree())
+
+        tree_frame = ttk.Frame(win, padding=(8, 0, 8, 8))
+        tree_frame.pack(fill='both', expand=True)
+        tree = ttk.Treeview(tree_frame, show='tree', selectmode='browse')
+        tree_scroll = ttk.Scrollbar(tree_frame, orient='vertical', command=tree.yview)
+        tree.config(yscrollcommand=tree_scroll.set)
+        tree.pack(side='left', fill='both', expand=True)
+        tree_scroll.pack(side='right', fill='y')
+
+        def on_select(event=None):
+            selected = tree.selection()
+            if not selected:
+                return
+            iid = selected[0]
+            if not iid.startswith('dev_'):
+                return
+            device_idx = int(iid[len('dev_'):])
+            self._on_legend_device_click(device_idx)
+
+        tree.bind('<<TreeviewSelect>>', on_select)
+
+        def on_close():
+            win.destroy()
+            self._device_list_window = None
+            self._device_list_tree = None
+            self._device_list_search_var = None
+
+        win.protocol("WM_DELETE_WINDOW", on_close)
+
+        self._device_list_window = win
+        self._device_list_tree = tree
+        self._device_list_search_var = search_var
+        self._refresh_device_list_tree()
+        search_entry.focus_set()
+
+    def _refresh_device_list_tree(self):
+        """Repopulate the All Devices tree from current device labels, honoring the search filter."""
+        tree = self._device_list_tree
+        if tree is None:
+            return
+        try:
+            if not tree.winfo_exists():
+                self._device_list_window = None
+                self._device_list_tree = None
+                return
+        except Exception:
+            self._device_list_window = None
+            self._device_list_tree = None
+            return
+
+        filter_text = self._device_list_search_var.get().strip().lower() if self._device_list_search_var else ''
+
+        rows = []
+        for i, dev in enumerate(getattr(self, 'device_positions', [])):
+            label = dev.get('label', f"{self.device_label} {i+1}")
+            if filter_text and filter_text not in label.lower():
+                continue
+            rows.append((i, label))
+        rows.sort(key=lambda r: [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', r[1])])
+
+        tree.delete(*tree.get_children())
+        for i, label in rows:
+            tree.insert('', 'end', iid=f'dev_{i}', text=label)
 
     def _build_wiring_layer_panel(self):
         """Populate the wiring layer toggle panel with an 4×2 checkbutton grid."""
@@ -1711,6 +1822,7 @@ class SitePreviewWindow(tk.Toplevel):
             new_name = new_name.strip()
             self.device_names[dev_idx] = new_name
             dev['label'] = new_name
+            self._refresh_device_displays()
             self._invalidate_world_layer()
             self.draw()
     
@@ -2852,7 +2964,7 @@ class SitePreviewWindow(tk.Toplevel):
 
         self.build_layout_data()
         self._recolor_from_cb_assignments()
-        self._build_legend()
+        self._refresh_device_displays()
 
         # Refresh dialog tree if open
         refresh_fn = self._edit_dialog_refresh_tree
@@ -3015,7 +3127,7 @@ class SitePreviewWindow(tk.Toplevel):
 
         self.build_layout_data()
         self._recolor_from_cb_assignments()
-        self._build_legend()
+        self._refresh_device_displays()
 
         alloc = inv_summary.get('allocation_result', {})
         num_inv = inv_summary.get('total_inverters', 0)
@@ -3055,7 +3167,7 @@ class SitePreviewWindow(tk.Toplevel):
                 # Keep lock — just refresh positions and display
                 self.build_layout_data()
                 self._recolor_from_cb_assignments()
-                self._build_legend()
+                self._refresh_device_displays()
                 inv_summary = getattr(parent, 'last_totals', {}).get('inverter_summary', {})
                 num_inv = inv_summary.get('total_inverters', 0)
                 total_str = inv_summary.get('total_strings', 0)
@@ -3087,8 +3199,8 @@ class SitePreviewWindow(tk.Toplevel):
                 self.inv_summary = inv_summary
                 self.build_layout_data()
                 self._recolor_from_cb_assignments()
-                self._build_legend()
-                
+                self._refresh_device_displays()
+
                 # Update top bar summary
                 num_inv = inv_summary.get('total_inverters', 0)
                 total_str = inv_summary.get('total_strings', 0)
@@ -6487,7 +6599,7 @@ class SitePreviewWindow(tk.Toplevel):
                 )
             self.build_layout_data()
             self._recolor_from_cb_assignments()
-            self._build_legend()
+            self._refresh_device_displays()
             self._invalidate_world_layer()
             self.draw()
 
@@ -6514,7 +6626,7 @@ class SitePreviewWindow(tk.Toplevel):
                 self.inv_summary = original_inv_summary
             self.build_layout_data()
             self._recolor_from_cb_assignments()
-            self._build_legend()
+            self._refresh_device_displays()
             self._invalidate_world_layer()
             self.draw()
             refresh_tree()
