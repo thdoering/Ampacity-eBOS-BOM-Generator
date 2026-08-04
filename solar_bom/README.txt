@@ -1,63 +1,45 @@
 ================================================================================
-Solar eBOS BOM Generator v3.6.0
+Solar eBOS BOM Generator v3.7.0
 ================================================================================
 
 INSTALLATION INSTRUCTIONS
 -------------------------
 
 1. Download the executable from SharePoint
-   - Click on "Solar eBOS BOM Generator v3.6.0.exe"
+   - Click on "Solar eBOS BOM Generator v3.7.0.exe"
    - When you see the warning "isn't commonly downloaded", click the three dots (...)
    - Click "Keep"
    - Confirm again if prompted
 
 2. Run the Application
    - Navigate to your Downloads folder
-   - Double-click "Solar eBOS BOM Generator v3.6.0.exe"
+   - Double-click "Solar eBOS BOM Generator v3.7.0.exe"
    - If Windows SmartScreen appears, click "More info" then "Run anyway"
 
 This is our internal tool - these warnings are normal for unsigned applications.
 
-WHAT'S NEW IN VERSION 3.6.0 (June 23, 2026)
+WHAT'S NEW IN VERSION 3.7.0 (August 4, 2026)
 --------------------------------------------
 
-MAJOR NEW FEATURES:
-- NEC 2023 Ampacity Engine: Wire sizing in Quick Estimate (and the block/wiring
-  configurator workflow) now runs through a NEC 2023-based ampacity engine that
-  selects the minimum gauge satisfying both ampacity (ambient + CCC derating,
-  termination cap, 690.8 source-circuit factor) and a configurable voltage-drop
-  target, across all five cable types
-- Wire Sizing Settings Panel: New collapsible panel for per-cable control over
-  insulation type, termination temp, install method, conductor material, VD%
-  target, and circuits-sharing count; table now shows a Sizing Detail column
-  with a per-row NEC breakdown, yellow highlighting for manual overrides, and a
-  (VD↑) marker when voltage drop drove the gauge up
-- Skids Field: Decouples AC-homerun quantity from inverter count (Central Inverter
-  and Centralized String topologies); export is gated until placed pads match the
-  skid target, with a live "N of M skids placed" hint in Site Preview
-- Per-Estimate Revision Field: Quick Estimate gained a Revision field; PDF and Excel
-  filenames and the titleblock REV cell now carry version + revision + date
-
 IMPROVEMENTS:
-- 32' FS harnesses added to the harness library
-- Harness slack is now visible in the wiring workflow
-- User-editable string-to-string length for harnesses
-- Factory module and inverter libraries are clearly labeled (factory) with Edit/Delete
-  disabled and an alert explaining factory inverters can't be modified
-- AC homerun default length changed from 500 ft to 50 ft
-- Combiner box east-west nudge step is now half the row spacing
-- "Apply to all" button added for row spacing
-- Calculate Estimate is blocked with a warning when no inverter is assigned
-- Wiring geometry now references tracker physical center and the true driveline
-- Pricing data updated
+- All Devices List: New non-modal, searchable window in Site Preview listing every
+  device, not just the bottom ribbon's first-15 cap; clicking a row selects and
+  highlights that device on the canvas, same as clicking a ribbon entry
+- Site Preview device ribbon now shows each device's real, renamable label instead
+  of a generic "type + index" placeholder, and both the ribbon and the All Devices
+  list are sorted alphanumerically
 
 BUG FIXES:
-- Extender lengths are now independent of combiner box north-south position
-- Fixed split-tracker overlay harness bleeding onto strings of another combiner box
-- Fixed the Block Details tab in the Excel BOM
-- Fixed device alignment bugs
-- Fixed a combiner box placement bug
-- Fixed the Calculate button falsely turning red again after a successful run
+- Renamed device labels no longer revert to their default names after closing and
+  reopening Site Preview
+
+PREVIOUS VERSION HIGHLIGHTS (v3.6.0):
+- NEC 2023 Ampacity Engine for wire sizing across all five cable types, with a new
+  Wire Sizing Settings Panel and per-row Sizing Detail breakdown
+- Skids Field decoupling AC-homerun quantity from inverter count, with an export
+  gate and live "N of M skids placed" hint in Site Preview
+- Per-Estimate Revision Field carried through PDF/Excel filenames and titleblock
+- Factory module and inverter libraries clearly labeled with Edit/Delete disabled
 
 PREVIOUS VERSION HIGHLIGHTS (v3.5.0):
 - Factory Module & Inverter Libraries that ship with the app and merge at load time

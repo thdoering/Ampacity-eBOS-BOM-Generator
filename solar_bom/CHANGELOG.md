@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.7.0] - 2026-08-04
+
+### Added
+- **All Devices List (Site Preview)**: A non-modal, searchable window listing every device, not just the bottom ribbon's first-15 cap. Clicking a row selects and highlights that device on the canvas, the same as clicking a ribbon entry.
+
+### Changed
+- **Site Preview Device Ribbon**: Ribbon entries now show each device's real, renamable label instead of a generic "type + index" placeholder. The ribbon and the All Devices list are both sorted alphanumerically.
+
+### Fixed
+- **Device Rename Persistence**: Renamed device labels no longer revert to their default names after closing and reopening Site Preview.
+
 ## [3.6.0] - 2026-06-23
 
 ### Added
