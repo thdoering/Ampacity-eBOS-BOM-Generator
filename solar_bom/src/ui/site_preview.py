@@ -16,7 +16,7 @@ class SitePreviewWindow(tk.Toplevel):
                  num_devices=0, device_label='CB', initial_inspect=False, pads=None, device_names=None,
                  device_feeder_sizes=None, device_feeder_parallel_counts=None, measurements=None,
                  device_x_offsets=None, device_y_offsets=None, device_position_overrides=None,
-                 corridors=None):
+                 corridors=None, device_ns_steps=None, device_ew_steps=None):
         super().__init__(parent)
         self.title("Site Preview — Inverter Allocation")
         self.geometry("1100x750")
@@ -37,8 +37,10 @@ class SitePreviewWindow(tk.Toplevel):
         self.device_names = dict(device_names) if device_names else {}  # {device_idx: "custom_name"}
         self.device_feeder_sizes = dict(device_feeder_sizes) if device_feeder_sizes else {}  # {device_idx: "cable_size"}
         self.device_feeder_parallel_counts = dict(device_feeder_parallel_counts) if device_feeder_parallel_counts else {}  # {device_idx: int parallel sets per pole}
-        self.device_x_offsets = dict(device_x_offsets) if device_x_offsets else {}  # {device_idx: float} cumulative E-W nudge in feet
-        self.device_y_offsets = dict(device_y_offsets) if device_y_offsets else {}  # {device_idx: float} cumulative N-S nudge in feet
+        self.device_x_offsets = dict(device_x_offsets) if device_x_offsets else {}  # {device_idx: float} legacy absolute E-W nudge in feet — no longer applied, kept only for migration
+        self.device_y_offsets = dict(device_y_offsets) if device_y_offsets else {}  # {device_idx: float} legacy absolute N-S nudge in feet — no longer applied, kept only for migration
+        self.device_ns_steps = dict(device_ns_steps) if device_ns_steps else {}  # {device_idx: int} signed N-S nudge in anchor-step counts
+        self.device_ew_steps = dict(device_ew_steps) if device_ew_steps else {}  # {device_idx: int} signed E-W nudge in half-row-spacing step counts
         self.device_position_overrides = dict(device_position_overrides) if device_position_overrides else {}  # {device_idx: 'north'|'middle'|'south'} effective zone after nudging
         self.device_color_offsets = {}  # {device_idx: int} how many steps forward in the color palette
         self.selected_pad_idx = None
@@ -983,8 +985,32 @@ class SitePreviewWindow(tk.Toplevel):
             )
 
         for i, dev in enumerate(self.device_positions):
-            dev['x'] += self.device_x_offsets.get(i, 0.0)
-            dev['y'] += self.device_y_offsets.get(i, 0.0)
+            dev['x'] = self._resolve_ew_step(i, dev['x'], dev.get('group_idx'))
+
+        self._prune_device_step_orphans()
+
+    def _prune_device_step_orphans(self):
+        """Drop N-S/E-W step entries whose device index no longer exists.
+
+        Runs every time device positions are recomputed (allocation refresh,
+        group move, device-count change), so a shrink-then-grow cycle can't
+        resurrect a stale nudge on a device index that means something else now.
+        """
+        valid_count = len(self.device_positions)
+
+        def _prune(steps, parent_attr):
+            orphans = [k for k in steps if k >= valid_count]
+            if not orphans:
+                return
+            for k in orphans:
+                del steps[k]
+            parent_steps = getattr(self.master, parent_attr, None)
+            if parent_steps is not None:
+                for k in orphans:
+                    parent_steps.pop(k, None)
+
+        _prune(self.device_ns_steps, 'device_ns_steps')
+        _prune(self.device_ew_steps, 'device_ew_steps')
 
     def _apply_middle_x_bias(self, device_x, device_y, center_local, local_indices,
                               strings_per_tracker_map, pitch, group_x, group_num_trackers):
@@ -1031,6 +1057,69 @@ class SitePreviewWindow(tk.Toplevel):
             new_x = max(x_min, min(x_max, device_x - bias))
 
         return new_x
+
+    def _resolve_ew_step(self, dev_idx, base_x, grp_idx):
+        """Resolve a stored E-W step count into a world-X position from base_x.
+
+        Each step is half of *this device's group* row spacing, so the nudge scales
+        automatically if that group's row spacing changes later. Clamps the resolved
+        X to the group's bounding rect (same bounds _apply_middle_x_bias uses) and
+        writes back a reduced step count if clamping kicked in.
+        """
+        step = self.device_ew_steps.get(dev_idx, 0)
+        if step == 0 or grp_idx is None or grp_idx >= len(self.group_layout):
+            return base_x
+
+        group_data = self.group_layout[grp_idx]
+        pitch = group_data.get('row_spacing_ft', self.tracker_pitch_ft)
+        if not pitch:
+            return base_x
+
+        half_pitch = pitch / 2.0
+        group_num_trackers = len(group_data.get('trackers', []))
+        x_min = group_data['x']
+        x_max = group_data['x'] + max(group_num_trackers - 1, 0) * pitch + self.max_tracker_width_ft
+
+        resolved_x = base_x + step * half_pitch
+        if x_min <= resolved_x <= x_max:
+            return resolved_x
+
+        clamped_x = max(x_min, min(x_max, resolved_x))
+        clamped_step = round((clamped_x - base_x) / half_pitch)
+        clamped_x = base_x + clamped_step * half_pitch
+        if clamped_step != step:
+            self.device_ew_steps[dev_idx] = clamped_step
+            parent_steps = getattr(self.master, 'device_ew_steps', None)
+            if parent_steps is not None:
+                parent_steps[dev_idx] = clamped_step
+        return clamped_x
+
+    def _resolve_ns_step(self, dev_idx, base_y, anchors):
+        """Resolve a stored N-S step count against freshly built anchors.
+
+        Finds the anchor nearest base_y, adds the stored step count, and clamps to
+        the anchor list bounds — so a step means "N anchors from the computed base,"
+        never an absolute offset that can go stale when base_y shifts.
+
+        Returns (resolved_y, zone_type), or (base_y, None) when there's no step to
+        apply or no anchors to snap to — the caller should leave position/zone alone.
+        """
+        step = self.device_ns_steps.get(dev_idx, 0)
+        if step == 0 or not anchors:
+            return base_y, None
+
+        nearest_idx = min(range(len(anchors)), key=lambda i: abs(anchors[i][0] - base_y))
+        target_idx = nearest_idx + step
+        clamped_idx = max(0, min(len(anchors) - 1, target_idx))
+        if clamped_idx != target_idx:
+            clamped_step = clamped_idx - nearest_idx
+            self.device_ns_steps[dev_idx] = clamped_step
+            parent_steps = getattr(self.master, 'device_ns_steps', None)
+            if parent_steps is not None:
+                parent_steps[dev_idx] = clamped_step
+
+        target_y, target_type = anchors[clamped_idx]
+        return target_y, target_type
 
     def _compute_devices_from_allocation(self, inverters, device_width_ft, device_height_ft, offset_ft):
         """Place one device per inverter, positioned at the center of that inverter's trackers."""
@@ -1313,6 +1402,15 @@ class SitePreviewWindow(tk.Toplevel):
             dev_idx = len(self.device_positions)
             label = self.device_names.get(dev_idx, f"{self.device_label}-{inv_idx + 1:02d}")
 
+            resolved_y, resolved_type = self._resolve_ns_step(dev_idx, device_y, ns_anchors)
+            if resolved_type is not None:
+                device_y = resolved_y
+                device_position = resolved_type
+                self.device_position_overrides[dev_idx] = resolved_type
+                parent_overrides = getattr(self.master, 'device_position_overrides', None)
+                if parent_overrides is not None:
+                    parent_overrides[dev_idx] = resolved_type
+
             self.device_positions.append({
                 'x': device_x,
                 'y': device_y,
@@ -1409,7 +1507,46 @@ class SitePreviewWindow(tk.Toplevel):
                     if local_idx < len(group_trackers):
                         spt = group_trackers[local_idx].get('strings_per_tracker', 0)
                         assigned_strings[global_idx] = set(range(int(spt)))
-                
+
+                # Compute N-S snap anchors (north/middle/south device Y for every tracker
+                # in this device's sub-range) — same construction as the allocation path,
+                # so N-S nudge steps resolve identically for both placement methods.
+                align = group_data.get('tracker_alignment', 'motor')
+                motor_ref = group_data.get('motor_y_ft', None)
+                ns_typed_set = set()
+                for local_idx in range(tracker_start, tracker_start + sub_size):
+                    if local_idx >= len(group_trackers):
+                        continue
+                    t = group_trackers[local_idx]
+                    t_len = t.get('length_ft', group_data.get('length_ft', 0))
+                    t_lx = t.get('local_x_idx', local_idx)
+                    t_ang = t_lx * pitch * driveline_tan
+                    t_motor = t.get('motor_y_ft', t_len / 2)
+                    if align == 'top':
+                        ty = gy + t_ang
+                    elif align == 'bottom':
+                        ty = gy + (group_data.get('length_ft', t_len) - t_len) + t_ang
+                    elif t.get('has_motor', False) and motor_ref is not None:
+                        ty = gy + (motor_ref - t_motor) + t_ang
+                    else:
+                        ty = gy + (group_data.get('length_ft', t_len) - t_len) / 2 + t_ang
+                    ns_typed_set.add((round(ty - offset_ft - device_height_ft, 4), 'north'))
+                    t_motor_gap = t.get('motor_gap_ft', 0.0)
+                    ns_typed_set.add((round(ty + t_motor + t_motor_gap / 2 - device_height_ft / 2, 4), 'middle'))
+                    ns_typed_set.add((round(ty + t_len + offset_ft, 4), 'south'))
+                ns_anchors = sorted(ns_typed_set, key=lambda a: a[0])
+
+                dev_idx = len(self.device_positions)
+                device_position_for_dict = device_position
+                resolved_y, resolved_type = self._resolve_ns_step(dev_idx, device_y, ns_anchors)
+                if resolved_type is not None:
+                    device_y = resolved_y
+                    device_position_for_dict = resolved_type
+                    self.device_position_overrides[dev_idx] = resolved_type
+                    parent_overrides = getattr(self.master, 'device_position_overrides', None)
+                    if parent_overrides is not None:
+                        parent_overrides[dev_idx] = resolved_type
+
                 self.device_positions.append({
                     'x': device_x,
                     'y': device_y,
@@ -1417,10 +1554,11 @@ class SitePreviewWindow(tk.Toplevel):
                     'height_ft': device_height_ft,
                     'label': self.device_names.get(global_device_idx, f"CB-{global_device_idx + 1:02d}"),
                     'group_idx': grp_idx,
-                    'device_position': device_position,
+                    'device_position': device_position_for_dict,
                     'assigned_strings': assigned_strings,
+                    'ns_anchors': ns_anchors,
                 })
-                
+
                 global_device_idx += 1
                 tracker_start += sub_size
         
@@ -2165,7 +2303,7 @@ class SitePreviewWindow(tk.Toplevel):
         return self._nudge_selected_device_ns(1)
 
     def _nudge_selected_device(self, sign):
-        """Move the selected device E (sign=+1) or W (sign=-1) by one row-spacing step."""
+        """Move the selected device E (sign=+1) or W (sign=-1) by one half row-spacing step."""
         focus = self.focus_get()
         if isinstance(focus, (tk.Entry, ttk.Entry, tk.Text, ttk.Combobox, ttk.Spinbox)):
             return
@@ -2189,13 +2327,12 @@ class SitePreviewWindow(tk.Toplevel):
         if not pitch:
             return
 
-        delta = sign * pitch / 2.0
-        self.device_x_offsets[dev_idx] = self.device_x_offsets.get(dev_idx, 0.0) + delta
-        parent_offsets = getattr(self.master, 'device_x_offsets', None)
-        if parent_offsets is not None:
-            parent_offsets[dev_idx] = self.device_x_offsets[dev_idx]
+        self.device_ew_steps[dev_idx] = self.device_ew_steps.get(dev_idx, 0) + sign
+        parent_steps = getattr(self.master, 'device_ew_steps', None)
+        if parent_steps is not None:
+            parent_steps[dev_idx] = self.device_ew_steps[dev_idx]
 
-        self.device_positions[dev_idx]['x'] += delta
+        self._compute_device_positions()
         self._update_world_bounds()
         self._invalidate_world_layer()
         self.draw()
@@ -2244,32 +2381,14 @@ class SitePreviewWindow(tk.Toplevel):
         if not anchors:
             return
 
-        current_y = self.device_positions[dev_idx]['y']
-        # Base Y is the computed Y before any cumulative y_offset was applied
-        base_y = current_y - self.device_y_offsets.get(dev_idx, 0.0)
+        self.device_ns_steps[dev_idx] = self.device_ns_steps.get(dev_idx, 0) + sign
+        parent_steps = getattr(self.master, 'device_ns_steps', None)
+        if parent_steps is not None:
+            parent_steps[dev_idx] = self.device_ns_steps[dev_idx]
 
-        # Find anchor nearest to current position (anchors are (y, zone_type) tuples)
-        nearest_idx = min(range(len(anchors)), key=lambda i: abs(anchors[i][0] - current_y))
-
-        target_idx = nearest_idx + sign
-        if target_idx < 0 or target_idx >= len(anchors):
-            return  # Already at the end — clamp silently
-
-        target_y, target_type = anchors[target_idx]
-        new_offset = target_y - base_y
-        self.device_y_offsets[dev_idx] = new_offset
-        parent_offsets = getattr(self.master, 'device_y_offsets', None)
-        if parent_offsets is not None:
-            parent_offsets[dev_idx] = new_offset
-
-        # Record the effective device_position for this zone so extender calculations
-        # use the correct device-side string orientation (not the group's static setting).
-        self.device_position_overrides[dev_idx] = target_type
-        parent_overrides = getattr(self.master, 'device_position_overrides', None)
-        if parent_overrides is not None:
-            parent_overrides[dev_idx] = target_type
-
-        self.device_positions[dev_idx]['y'] = target_y
+        # device_position_overrides is refreshed inside _compute_device_positions,
+        # which re-resolves the step against fresh anchors every recompute.
+        self._compute_device_positions()
         self._update_world_bounds()
         self._invalidate_world_layer()
         self.draw()
@@ -3070,15 +3189,15 @@ class SitePreviewWindow(tk.Toplevel):
             layout['x'] = grp_idx * (layout['width_ft'] + group_spacing)
             layout['y'] = 0
 
-        self.device_x_offsets.clear()
-        parent_x_offsets = getattr(self.master, 'device_x_offsets', None)
-        if parent_x_offsets is not None:
-            parent_x_offsets.clear()
+        self.device_ns_steps.clear()
+        parent_ns_steps = getattr(self.master, 'device_ns_steps', None)
+        if parent_ns_steps is not None:
+            parent_ns_steps.clear()
 
-        self.device_y_offsets.clear()
-        parent_y_offsets = getattr(self.master, 'device_y_offsets', None)
-        if parent_y_offsets is not None:
-            parent_y_offsets.clear()
+        self.device_ew_steps.clear()
+        parent_ew_steps = getattr(self.master, 'device_ew_steps', None)
+        if parent_ew_steps is not None:
+            parent_ew_steps.clear()
 
         self.device_position_overrides.clear()
         parent_pos_overrides = getattr(self.master, 'device_position_overrides', None)
@@ -3098,12 +3217,15 @@ class SitePreviewWindow(tk.Toplevel):
         """Update preview in place after Calculate Estimate runs in the parent QuickEstimate.
 
         Pulls fresh allocation/topology state from the parent and re-renders.
-        Preview-local user edits (pads, device_names, feeder sizes, x offsets,
-        measurements, corridors) are intentionally preserved — they live on this
-        window until close and are synced back to the parent via _on_preview_close.
-        Stale index keys in those dicts caused by a device-count decrease are left
-        in place; downstream rendering tolerates missing-index lookups via .get(),
-        matching existing _refresh_allocation behavior.
+        Preview-local user edits (pads, device_names, feeder sizes, N-S/E-W nudge
+        steps, measurements, corridors) are intentionally preserved — they live on
+        this window until close and are synced back to the parent via
+        _on_preview_close. Stale index keys caused by a device-count decrease are
+        left in place for device_names/feeder-size-style dicts (downstream
+        rendering tolerates missing-index lookups via .get(), matching existing
+        _refresh_allocation behavior); device_ns_steps/device_ew_steps are the
+        exception — _compute_device_positions prunes their orphaned keys on every
+        recompute, including the one this refresh triggers.
         """
         parent = self.master
 

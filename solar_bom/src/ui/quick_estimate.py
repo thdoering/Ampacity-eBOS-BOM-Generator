@@ -36,8 +36,10 @@ class QuickEstimate(ttk.Frame):
         self.device_names = {}  # {device_idx: "custom_name"} for CB/SI renaming
         self.device_feeder_sizes = {}  # {device_idx: "cable_size"} per-device feeder/homerun size
         self.device_feeder_parallel_counts = {}  # {device_idx: int} per-device parallel sets per pole
-        self.device_x_offsets = {}  # {device_idx: float} cumulative E-W nudge in feet
-        self.device_y_offsets = {}  # {device_idx: float} cumulative N-S nudge in feet
+        self.device_x_offsets = {}  # {device_idx: float} legacy absolute E-W nudge in feet — no longer applied, kept only for migration
+        self.device_y_offsets = {}  # {device_idx: float} legacy absolute N-S nudge in feet — no longer applied, kept only for migration
+        self.device_ns_steps = {}  # {device_idx: int} signed N-S nudge in anchor-step counts
+        self.device_ew_steps = {}  # {device_idx: int} signed E-W nudge in half-row-spacing step counts
         self.device_position_overrides = {}  # {device_idx: 'north'|'middle'|'south'} effective zone after N-S nudging
         self._whip_point_overrides = {}  # {f"{tidx}:{inv_idx}": float} signed_ns override (ft, + = CB south of motor)
         self._whip_point_ns_legs = {}   # {f"{tidx}:{inv_idx}": float} NS leg of whip in ft (abs, alignment-aware)
@@ -1115,6 +1117,30 @@ class QuickEstimate(ttk.Frame):
         
         return whip_distances
 
+    @staticmethod
+    def _compact_device_index_map(inverters):
+        """Map each inverter's raw index to its compacted device index.
+
+        Mirrors SitePreviewWindow._compute_devices_from_allocation, which allocates
+        a device slot only for inverters with a non-empty harness_map — so the Nth
+        rendered/selected device is the Nth inverter that actually has one, not the
+        Nth inverter overall. device_names, device_ns_steps, device_ew_steps,
+        device_feeder_sizes, and pad/corridor assignments are all keyed by that
+        compacted index, not by an inverter's raw position in the allocation list.
+
+        Returns a list the same length as inverters; entries are None for
+        inverters that get no device slot.
+        """
+        mapping = []
+        next_dev_idx = 0
+        for inv in inverters:
+            if not inv.get('harness_map', []):
+                mapping.append(None)
+            else:
+                mapping.append(next_dev_idx)
+                next_dev_idx += 1
+        return mapping
+
     def calculate_whip_distances_from_positions(self, allocation_result, topology, num_devices, row_spacing_ft=None):
         """Calculate whip distances using device positions derived from allocation.
         
@@ -1179,8 +1205,9 @@ class QuickEstimate(ttk.Frame):
         
         # Compute device world X and metadata for each inverter
         inverters = allocation_result.get('inverters', [])
+        inv_to_dev = self._compact_device_index_map(inverters)
         device_info = []  # list of (world_x, device_position) per inverter
-        
+
         for inv_idx, inv in enumerate(inverters):
             harness_map = inv.get('harness_map', [])
             if not harness_map:
@@ -1226,8 +1253,13 @@ class QuickEstimate(ttk.Frame):
                     if frac < 0.01:  # integer multiple = on a tracker, not in a gap
                         device_x += grp_pitch / 2
 
-            # Apply E-W nudge offset to device X
-            device_x += self.device_x_offsets.get(inv_idx, 0.0)
+            # Apply E-W nudge step — keyed by compacted device index (see
+            # _compact_device_index_map), not the raw inv_idx used above.
+            dev_idx = inv_to_dev[inv_idx]
+            if dev_idx is not None:
+                ew_pitch = group_source.get('row_spacing_ft', 20.0)
+                if ew_pitch:
+                    device_x += self.device_ew_steps.get(dev_idx, 0) * (ew_pitch / 2.0)
 
             # Compute device Y from average of its trackers' Y positions + device_position offset
             inv_tracker_ys = []
@@ -1236,9 +1268,6 @@ class QuickEstimate(ttk.Frame):
                 if tidx < len(tracker_world_y) and tracker_group[tidx] == primary_grp:
                     inv_tracker_ys.append(tracker_world_y[tidx])
             device_y = (min(inv_tracker_ys) + max(inv_tracker_ys)) / 2.0 if inv_tracker_ys else 0.0
-
-            # Apply N-S nudge offset to device Y
-            device_y += self.device_y_offsets.get(inv_idx, 0.0)
 
             device_info.append((device_x, device_y, device_position))
         
@@ -1357,6 +1386,7 @@ class QuickEstimate(ttk.Frame):
             auto_x_cursor += group_tracker_count * row_spacing_ft + row_spacing_ft * 2
         
         # Compute device positions (center X, Y based on device_position)
+        inv_to_dev = self._compact_device_index_map(inverters)
         device_positions = []
         for inv_idx, inv in enumerate(inverters):
             harness_map = inv.get('harness_map', [])
@@ -1393,7 +1423,13 @@ class QuickEstimate(ttk.Frame):
                     if frac < 0.01:
                         dev_x += grp_pitch / 2
 
-            dev_x += self.device_x_offsets.get(inv_idx, 0.0)
+            # Apply E-W nudge step — keyed by compacted device index (see
+            # _compact_device_index_map), not the raw inv_idx used above.
+            dev_idx = inv_to_dev[inv_idx]
+            if dev_idx is not None:
+                ew_pitch = group_source.get('row_spacing_ft', row_spacing_ft)
+                if ew_pitch:
+                    dev_x += self.device_ew_steps.get(dev_idx, 0) * (ew_pitch / 2.0)
 
             # Approximate device Y from group position
             saved_y = group_source.get('position_y', 0)
@@ -1420,7 +1456,10 @@ class QuickEstimate(ttk.Frame):
             else:
                 dev_y = group_y + tracker_length_ft / 2.0
 
-            dev_y += self.device_y_offsets.get(inv_idx, 0.0)
+            # N-S nudge is not reflected here — this Y is already a coarse,
+            # group-level approximation (not the anchor-snapped Y site_preview.py
+            # renders), and reproducing that anchor system would mean duplicating
+            # per-tracker motor/alignment/driveline geometry into this function.
 
             device_positions.append((dev_x, dev_y, primary_grp))
         
@@ -3684,13 +3723,44 @@ class QuickEstimate(ttk.Frame):
         saved_parallel_counts = estimate_data.get('device_feeder_parallel_counts', {})
         self.device_feeder_parallel_counts = {int(k): int(v) for k, v in saved_parallel_counts.items()}
 
-        # Load per-device E-W nudge offsets (convert str keys back to int)
+        # Legacy E-W/N-S absolute nudge offsets — kept only as migration input below,
+        # no longer applied to device positions.
         saved_x_offsets = estimate_data.get('device_x_offsets', {})
         self.device_x_offsets = {int(k): float(v) for k, v in saved_x_offsets.items()}
-
-        # Load per-device N-S nudge offsets (convert str keys back to int)
         saved_y_offsets = estimate_data.get('device_y_offsets', {})
         self.device_y_offsets = {int(k): float(v) for k, v in saved_y_offsets.items()}
+
+        # Load per-device N-S / E-W nudge steps, migrating from the legacy offsets
+        # above when an estimate predates the new keys. Runs only when BOTH new
+        # keys are absent, so a re-save never re-triggers migration.
+        saved_ns_steps = estimate_data.get('device_ns_steps')
+        saved_ew_steps = estimate_data.get('device_ew_steps')
+        if saved_ns_steps is None and saved_ew_steps is None:
+            saved_cb_for_count = estimate_data.get('combiner_assignments') or []
+            saved_si_for_count = estimate_data.get('si_assignments') or []
+            valid_device_count = len(saved_cb_for_count) if saved_cb_for_count else len(saved_si_for_count)
+
+            # Legacy N-S offsets carry no recoverable intent — a stale absolute Y
+            # offset can't be told apart from a deliberate nudge, so it's discarded
+            # rather than converted.
+            self.device_ns_steps = {}
+
+            # Legacy E-W offsets are exact multiples of the half-pitch nudge step,
+            # so the conversion is exact rather than a guess. Values under half a
+            # step round to 0, which cleans up float-noise entries from old bugs.
+            pitch = self.groups[0].get('row_spacing_ft', 20.0) if self.groups else 20.0
+            half_pitch = pitch / 2.0 if pitch else 0.0
+            self.device_ew_steps = {}
+            if half_pitch:
+                for k, v in self.device_x_offsets.items():
+                    if valid_device_count and k >= valid_device_count:
+                        continue
+                    step = round(float(v) / half_pitch)
+                    if step != 0:
+                        self.device_ew_steps[k] = step
+        else:
+            self.device_ns_steps = {int(k): int(v) for k, v in (saved_ns_steps or {}).items()}
+            self.device_ew_steps = {int(k): int(v) for k, v in (saved_ew_steps or {}).items()}
 
         # Load per-device effective device_position overrides
         saved_pos_overrides = estimate_data.get('device_position_overrides', {})
@@ -3795,11 +3865,13 @@ class QuickEstimate(ttk.Frame):
         # Save per-device parallel counts (convert int keys to str for JSON)
         estimate_data['device_feeder_parallel_counts'] = {str(k): v for k, v in self.device_feeder_parallel_counts.items()}
 
-        # Save per-device E-W nudge offsets (convert int keys to str for JSON)
-        estimate_data['device_x_offsets'] = {str(k): v for k, v in self.device_x_offsets.items()}
-
-        # Save per-device N-S nudge offsets (convert int keys to str for JSON)
-        estimate_data['device_y_offsets'] = {str(k): v for k, v in self.device_y_offsets.items()}
+        # Save per-device N-S / E-W nudge steps (convert int keys to str for JSON).
+        # Legacy absolute offsets are dropped from the saved estimate — they're
+        # migrated to steps on load and never written back out.
+        estimate_data['device_ns_steps'] = {str(k): v for k, v in self.device_ns_steps.items()}
+        estimate_data['device_ew_steps'] = {str(k): v for k, v in self.device_ew_steps.items()}
+        estimate_data.pop('device_x_offsets', None)
+        estimate_data.pop('device_y_offsets', None)
 
         # Save per-device effective device_position overrides
         estimate_data['device_position_overrides'] = {str(k): v for k, v in self.device_position_overrides.items()}
@@ -4165,6 +4237,8 @@ class QuickEstimate(ttk.Frame):
         self.device_feeder_sizes.clear()
         self.device_x_offsets.clear()
         self.device_y_offsets.clear()
+        self.device_ns_steps.clear()
+        self.device_ew_steps.clear()
         self.device_position_overrides.clear()
         self._whip_point_overrides.clear()
         self._whip_point_ns_legs.clear()
@@ -4420,6 +4494,8 @@ class QuickEstimate(ttk.Frame):
             device_feeder_parallel_counts=self.device_feeder_parallel_counts,
             device_x_offsets=self.device_x_offsets,
             device_y_offsets=self.device_y_offsets,
+            device_ns_steps=self.device_ns_steps,
+            device_ew_steps=self.device_ew_steps,
             device_position_overrides=self.device_position_overrides,
             measurements=self.measurements,
             corridors=self.corridors
@@ -4433,8 +4509,8 @@ class QuickEstimate(ttk.Frame):
             self.device_names = dict(preview.device_names)  # Save renamed devices back
             self.device_feeder_sizes = dict(preview.device_feeder_sizes)  # Save feeder sizes back
             self.device_feeder_parallel_counts = dict(preview.device_feeder_parallel_counts)  # Save parallel counts back
-            self.device_x_offsets = dict(preview.device_x_offsets)  # Save E-W nudge offsets back
-            self.device_y_offsets = dict(preview.device_y_offsets)  # Save N-S nudge offsets back
+            self.device_ns_steps = dict(preview.device_ns_steps)  # Save N-S nudge steps back
+            self.device_ew_steps = dict(preview.device_ew_steps)  # Save E-W nudge steps back
             self.device_position_overrides = dict(preview.device_position_overrides)  # Save effective zone overrides back
             self.measurements = list(preview.measurements)  # Save measurements back
             self.corridors = list(preview.corridors)  # Save corridors back
@@ -9270,6 +9346,8 @@ class QuickEstimate(ttk.Frame):
             device_feeder_parallel_counts=self.device_feeder_parallel_counts,
             device_x_offsets=self.device_x_offsets,
             device_y_offsets=self.device_y_offsets,
+            device_ns_steps=self.device_ns_steps,
+            device_ew_steps=self.device_ew_steps,
             device_position_overrides=self.device_position_overrides
         )
         temp_preview.withdraw()  # Keep it hidden
