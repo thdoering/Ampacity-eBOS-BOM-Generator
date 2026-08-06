@@ -48,7 +48,9 @@
       "Bash(python -c \"import src.utils.diagnostics; import src.ui.quick_estimate; print\\('import OK'\\)\")",
       "Bash(git --no-pager diff --stat src/ui/quick_estimate.py src/utils/diagnostics.py)",
       "Bash(python -c \"import src.ui.quick_estimate; print\\('import OK'\\)\")",
-      "Bash(python -m py_compile src/ui/site_preview.py src/ui/quick_estimate.py)"
+      "Bash(python -m py_compile src/ui/site_preview.py src/ui/quick_estimate.py)",
+      "Bash(python -m py_compile src/utils/device_geometry.py)",
+      "Bash(python -m py_compile src/ui/quick_estimate.py src/utils/device_geometry.py)"
     ]
   }
 }

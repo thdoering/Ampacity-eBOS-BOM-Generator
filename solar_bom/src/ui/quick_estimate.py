@@ -10,6 +10,7 @@ from datetime import datetime
 from collections import defaultdict
 from src.utils.string_allocation import allocate_strings, allocate_strings_sequential, allocate_strings_spatial
 from src.utils.file_handlers import get_user_data_path, get_bundled_data_path
+from src.utils import device_geometry
 from .site_preview import SitePreviewWindow, QuickEstimateDialog
 
 
@@ -1168,25 +1169,21 @@ class QuickEstimate(ttk.Frame):
                         spt_list.append(seg['strings_per_tracker'])
             return [(d[0], spt_list[i] if i < len(spt_list) else 0, i, -1) for i, d in enumerate(old_distances)]
         
-        # Build world X for every global tracker index
-        # Uses saved group positions or auto-layout, same as site preview
+        # Build world X for every global tracker index — quick_estimate's own
+        # tracker-centerline convention, used only for the tracker's own E-W
+        # position (the whip's "from" end). The device's own X now comes
+        # entirely from the shared geometry below (the whip's "to" end).
+        # Uses saved group positions or auto-layout, same as site preview.
         tracker_world_x = []
-        tracker_world_y = []
-        tracker_group = []
         auto_x_cursor = 0.0
-        
+
         for grp_idx, group in enumerate(self.groups):
             saved_x = group.get('position_x')
-            saved_y = group.get('position_y')
             if saved_x is not None:
                 group_x = saved_x
             else:
                 group_x = auto_x_cursor
-            group_y = saved_y if saved_y is not None else 0.0
-            
-            driveline_angle_deg = group.get('driveline_angle', 0.0)
-            driveline_tan = math.tan(math.radians(driveline_angle_deg)) if driveline_angle_deg != 0 else 0.0
-            
+
             grp_row_spacing = group.get('row_spacing_ft', 20.0)
             local_idx = 0
             for seg in group['segments']:
@@ -1195,100 +1192,117 @@ class QuickEstimate(ttk.Frame):
                 for _ in range(seg['quantity']):
                     local_x_offset = local_idx * grp_row_spacing
                     tracker_world_x.append(group_x + local_x_offset + t_half_width)
-                    tracker_world_y.append(group_y + local_x_offset * driveline_tan)
-                    tracker_group.append(grp_idx)
                     local_idx += 1
-            
+
             # Advance auto cursor
             group_tracker_count = sum(seg['quantity'] for seg in group['segments'])
             auto_x_cursor += group_tracker_count * grp_row_spacing + grp_row_spacing * 2
-        
+
+        # Motor-row-anchored world Y for every global tracker index — the
+        # single source of truth shared with site_preview.py, so a combiner
+        # N-S nudge and this whip length agree on where the device actually is.
+        group_layout, tracker_to_group, max_tracker_width_ft = device_geometry.build_group_layout(
+            self.groups, self.enabled_templates
+        )
+        tracker_world_y = []
+        for tidx in range(len(tracker_world_x)):
+            grp_local = tracker_to_group.get(tidx)
+            if grp_local is None:
+                tracker_world_y.append(0.0)
+                continue
+            g_idx, l_idx = grp_local
+            gd = group_layout[g_idx]
+            t = gd['trackers'][l_idx]
+            tracker_world_y.append(device_geometry.tracker_motor_row_y(gd, t, l_idx))
+
+        # device_position_for_inverter's rendered-box constants. quick_estimate
+        # has no rendered device box, but must use the SAME device_height_ft/
+        # offset_ft site_preview.py uses so a stored N-S step count resolves to
+        # the same anchor in both files — physical_anchor_y() below then
+        # converts the rendered-corner Y back into the physical connection Y.
+        _DEVICE_WIDTH_FT = 4.0
+        _DEVICE_HEIGHT_FT = 3.0
+        _OFFSET_FT = 5.0
+
         # Compute device world X and metadata for each inverter
         inverters = allocation_result.get('inverters', [])
         inv_to_dev = self._compact_device_index_map(inverters)
-        device_info = []  # list of (world_x, device_position) per inverter
+        device_info = []  # list of (device_x, device_y) per inverter
 
         for inv_idx, inv in enumerate(inverters):
             harness_map = inv.get('harness_map', [])
             if not harness_map:
                 device_info.append(None)
                 continue
-            
-            # Find majority group
-            group_counts = {}
-            for entry in harness_map:
-                tidx = entry['tracker_idx']
-                if tidx < len(tracker_group):
-                    grp = tracker_group[tidx]
-                    group_counts[grp] = group_counts.get(grp, 0) + 1
-            
-            if not group_counts:
+
+            geom = device_geometry.device_position_for_inverter(
+                harness_map, tracker_to_group, group_layout, self.groups,
+                _DEVICE_WIDTH_FT, _DEVICE_HEIGHT_FT, _OFFSET_FT, max_tracker_width_ft
+            )
+            if geom is None:
                 device_info.append(None)
                 continue
-            
-            primary_grp = max(group_counts, key=group_counts.get)
-            group_source = self.groups[primary_grp] if primary_grp < len(self.groups) else {}
-            device_position = group_source.get('device_position', 'middle')
-            
-            # Device X = average of its trackers' world X positions in the primary group
-            inv_tracker_xs = []
-            for entry in harness_map:
-                tidx = entry['tracker_idx']
-                if tidx < len(tracker_world_x) and tracker_group[tidx] == primary_grp:
-                    inv_tracker_xs.append(tracker_world_x[tidx])
-            
-            if inv_tracker_xs:
-                device_x = (min(inv_tracker_xs) + max(inv_tracker_xs)) / 2.0
-            else:
-                device_x = 0
 
-            # For 'middle' placement: snap device_x to the nearest row gap.
-            # The midpoint formula lands in the gap for even tracker counts but on a tracker
-            # left-edge for odd counts (1, 3, 5...) — in the odd case bias half a pitch east.
-            if device_position == 'middle' and inv_tracker_xs:
-                grp_pitch = group_source.get('row_spacing_ft', 20.0)
-                if grp_pitch > 0:
-                    center_offset = (max(inv_tracker_xs) - min(inv_tracker_xs)) / 2.0
-                    frac = (center_offset / grp_pitch) % 1
-                    if frac < 0.01:  # integer multiple = on a tracker, not in a gap
-                        device_x += grp_pitch / 2
+            primary_grp = geom['primary_group_idx']
+            group_source = self.groups[primary_grp] if primary_grp < len(self.groups) else {}
+
+            # Device X: same shared geometry as site_preview.py's rendered
+            # position, not quick_estimate's own tracker-centerline formula —
+            # so this and the CB popup agree exactly, not just on bias direction.
+            device_x = geom['x']
+
+            dev_idx = inv_to_dev[inv_idx]
+
+            # Device Y: resolve this device's own N-S nudge step (for the first
+            # time) against the shared anchor set, then convert the resolved
+            # rendered-corner Y back into the physical connection-point Y.
+            # Computed before the X bias below, which needs it for the
+            # nearest-pad tie-break.
+            if dev_idx is not None:
+                resolved_y, resolved_type = device_geometry.resolve_ns_step(
+                    self.device_ns_steps, dev_idx, geom['y'], geom['ns_anchors']
+                )
+            else:
+                resolved_y, resolved_type = geom['y'], None
+
+            effective_y = resolved_y if resolved_type is not None else geom['y']
+            effective_type = resolved_type if resolved_type is not None else geom['device_position']
+            device_y = device_geometry.physical_anchor_y(effective_y, effective_type, _DEVICE_HEIGHT_FT)
+
+            # For 'middle' placement: snap device_x into the row-spacing gap,
+            # using the shared bias direction (string-weighted, pad-tiebreak)
+            # so this agrees with site_preview.py's CB popup — quick_estimate's
+            # own "always bias east" rule could pick the opposite direction on
+            # a tie, throwing E-W off by a full row pitch for exactly the
+            # devices where the tie-break matters.
+            if geom['middle_bias_context'] is not None:
+                bc = geom['middle_bias_context']
+                device_x = device_geometry.apply_middle_x_bias(
+                    device_x, device_y, bc['center_local_x'], bc['local_x_indices'],
+                    bc['spt_map'], bc['pitch'], bc['group_x'], bc['group_num_trackers'],
+                    max_tracker_width_ft, self.pads
+                )
 
             # Apply E-W nudge step — keyed by compacted device index (see
             # _compact_device_index_map), not the raw inv_idx used above.
-            dev_idx = inv_to_dev[inv_idx]
             if dev_idx is not None:
                 ew_pitch = group_source.get('row_spacing_ft', 20.0)
                 if ew_pitch:
                     device_x += self.device_ew_steps.get(dev_idx, 0) * (ew_pitch / 2.0)
 
-            # Compute device Y from average of its trackers' Y positions + device_position offset
-            inv_tracker_ys = []
-            for entry in harness_map:
-                tidx = entry['tracker_idx']
-                if tidx < len(tracker_world_y) and tracker_group[tidx] == primary_grp:
-                    inv_tracker_ys.append(tracker_world_y[tidx])
-            device_y = (min(inv_tracker_ys) + max(inv_tracker_ys)) / 2.0 if inv_tracker_ys else 0.0
+            device_info.append((device_x, device_y))
 
-            device_info.append((device_x, device_y, device_position))
-        
-        def get_ns_base_offset(device_position):
-            """Fixed N-S offset from device_position setting (north/south/middle)."""
-            if device_position == 'middle':
-                return 0.0
-            return 6.5  # 5ft offset + half device height
-        
         # Compute distance for each tracker to its assigned device
         # Deduplicate: each physical tracker generates whips once, even if split across inverters
         whip_distances = []
         seen_trackers = set()
-        
+
         for inv_idx, inv in enumerate(inverters):
             if inv_idx >= len(device_info) or device_info[inv_idx] is None:
                 continue
-            
-            dev_x, dev_y, dev_position = device_info[inv_idx]
-            ns_base = get_ns_base_offset(dev_position)
-            
+
+            dev_x, dev_y = device_info[inv_idx]
+
             for entry in inv['harness_map']:
                 tidx = entry['tracker_idx']
                 is_split = entry.get('is_split', False)
@@ -1305,8 +1319,12 @@ class QuickEstimate(ttk.Frame):
                 # N-S inter-row distance (tracker to device) — stored for extender adjustment
                 ns_inter_row = abs(tracker_world_y[tidx] - dev_y)
                 
-                # Whip = E-W only; N-S distance goes to extender
-                total_distance = ew_distance
+                # Whip = E-W plus the N-S run from the tracker's row to the device's
+                # row. That N-S term is 0 for same-group trackers (device_y is the
+                # midpoint of primary-group tracker Ys), and is the full inter-group
+                # gap when a combiner spans groups — footage that was previously
+                # dropped from the BOM entirely.
+                total_distance = ew_distance + ns_inter_row
                 
                 # Store SIGNED N-S offset: positive = CB is south of tracker
                 if not hasattr(self, '_tracker_ns_to_device'):
@@ -1343,48 +1361,30 @@ class QuickEstimate(ttk.Frame):
         if not inverters:
             return result
         
-        # Build device world X positions (same as whip calc)
-        device_world_x = []
-        device_group = []
-        auto_x_cursor = 0.0
-        
-        for grp_idx, group in enumerate(self.groups):
-            saved_x = group.get('position_x')
-            group_x = saved_x if saved_x is not None else auto_x_cursor
-            
-            local_idx = 0
-            tracker_info_local = []
-            for seg in group['segments']:
-                for _ in range(seg['quantity']):
-                    tracker_info_local.append((grp_idx, local_idx))
-                    local_idx += 1
-            
-            group_tracker_count = sum(seg['quantity'] for seg in group['segments'])
-            auto_x_cursor += group_tracker_count * row_spacing_ft + row_spacing_ft * 2
-        
-        # Recompute device centers (same logic as whip calc and site preview)
-        tracker_world_x = []
-        tracker_grp = []
+        # Group left-edge X per group — still needed below for the azimuth
+        # rotation math (device X/Y itself now comes entirely from the shared
+        # geometry; see the device_position_for_inverter call below).
         group_x_map = {}
         auto_x_cursor = 0.0
 
         for grp_idx, group in enumerate(self.groups):
             saved_x = group.get('position_x')
-            group_x = saved_x if saved_x is not None else auto_x_cursor
-            group_x_map[grp_idx] = group_x
-
-            local_idx = 0
-            for seg in group['segments']:
-                dims = self._get_estimate_tracker_dims_ft(seg.get('template_ref'))
-                t_half_width = dims[0] / 2 if dims else 0.0
-                for _ in range(seg['quantity']):
-                    tracker_world_x.append(group_x + local_idx * row_spacing_ft + t_half_width)
-                    tracker_grp.append(grp_idx)
-                    local_idx += 1
+            group_x_map[grp_idx] = saved_x if saved_x is not None else auto_x_cursor
 
             group_tracker_count = sum(seg['quantity'] for seg in group['segments'])
             auto_x_cursor += group_tracker_count * row_spacing_ft + row_spacing_ft * 2
-        
+
+        # Motor-row-anchored world Y and N-S nudge — the same shared geometry
+        # calculate_whip_distances_from_positions uses, so a combiner N-S nudge
+        # moves the feeder route too, not just the whips.
+        group_layout, tracker_to_group, max_tracker_width_ft = device_geometry.build_group_layout(
+            self.groups, self.enabled_templates, default_row_spacing_ft=row_spacing_ft
+        )
+
+        _DEVICE_WIDTH_FT = 4.0
+        _DEVICE_HEIGHT_FT = 3.0
+        _OFFSET_FT = 5.0
+
         # Compute device positions (center X, Y based on device_position)
         inv_to_dev = self._compact_device_index_map(inverters)
         device_positions = []
@@ -1393,73 +1393,60 @@ class QuickEstimate(ttk.Frame):
             if not harness_map:
                 device_positions.append(None)
                 continue
-            
-            group_counts = {}
-            for entry in harness_map:
-                tidx = entry['tracker_idx']
-                if tidx < len(tracker_grp):
-                    g = tracker_grp[tidx]
-                    group_counts[g] = group_counts.get(g, 0) + 1
-            
-            if not group_counts:
+
+            geom = device_geometry.device_position_for_inverter(
+                harness_map, tracker_to_group, group_layout, self.groups,
+                _DEVICE_WIDTH_FT, _DEVICE_HEIGHT_FT, _OFFSET_FT, max_tracker_width_ft
+            )
+            if geom is None:
                 device_positions.append(None)
                 continue
-            
-            primary_grp = max(group_counts, key=group_counts.get)
-            group_source = self.groups[primary_grp] if primary_grp < len(self.groups) else {}
-            device_position = group_source.get('device_position', 'middle')
-            
-            inv_xs = [tracker_world_x[e['tracker_idx']] for e in harness_map 
-                      if e['tracker_idx'] < len(tracker_world_x) and tracker_grp[e['tracker_idx']] == primary_grp]
-            
-            dev_x = (min(inv_xs) + max(inv_xs)) / 2.0 if inv_xs else 0
 
-            # For 'middle' placement: snap dev_x to the nearest row gap (same logic as whip calc).
-            if device_position == 'middle' and inv_xs:
-                grp_pitch = group_source.get('row_spacing_ft', row_spacing_ft)
-                if grp_pitch > 0:
-                    center_offset = (max(inv_xs) - min(inv_xs)) / 2.0
-                    frac = (center_offset / grp_pitch) % 1
-                    if frac < 0.01:
-                        dev_x += grp_pitch / 2
+            primary_grp = geom['primary_group_idx']
+            group_source = self.groups[primary_grp] if primary_grp < len(self.groups) else {}
+
+            # Device X: same shared geometry as site_preview.py's rendered
+            # position (see the comment on this same pattern in
+            # calculate_whip_distances_from_positions).
+            dev_x = geom['x']
+
+            dev_idx = inv_to_dev[inv_idx]
+
+            # Device Y: resolve this device's own N-S nudge step against the
+            # shared anchor set, then convert the resolved rendered-corner Y
+            # back into the physical connection-point Y (see the comment on
+            # this same pattern in calculate_whip_distances_from_positions).
+            # Computed before the X bias below, which needs it for the
+            # nearest-pad tie-break.
+            if dev_idx is not None:
+                resolved_y, resolved_type = device_geometry.resolve_ns_step(
+                    self.device_ns_steps, dev_idx, geom['y'], geom['ns_anchors']
+                )
+            else:
+                resolved_y, resolved_type = geom['y'], None
+
+            effective_y = resolved_y if resolved_type is not None else geom['y']
+            effective_type = resolved_type if resolved_type is not None else geom['device_position']
+            dev_y = device_geometry.physical_anchor_y(effective_y, effective_type, _DEVICE_HEIGHT_FT)
+
+            # For 'middle' placement: snap dev_x into the row-spacing gap,
+            # using the shared bias direction (string-weighted, pad-tiebreak)
+            # so this agrees with site_preview.py's CB popup (see the comment
+            # on this same pattern in calculate_whip_distances_from_positions).
+            if geom['middle_bias_context'] is not None:
+                bc = geom['middle_bias_context']
+                dev_x = device_geometry.apply_middle_x_bias(
+                    dev_x, dev_y, bc['center_local_x'], bc['local_x_indices'],
+                    bc['spt_map'], bc['pitch'], bc['group_x'], bc['group_num_trackers'],
+                    max_tracker_width_ft, self.pads
+                )
 
             # Apply E-W nudge step — keyed by compacted device index (see
             # _compact_device_index_map), not the raw inv_idx used above.
-            dev_idx = inv_to_dev[inv_idx]
             if dev_idx is not None:
                 ew_pitch = group_source.get('row_spacing_ft', row_spacing_ft)
                 if ew_pitch:
                     dev_x += self.device_ew_steps.get(dev_idx, 0) * (ew_pitch / 2.0)
-
-            # Approximate device Y from group position
-            saved_y = group_source.get('position_y', 0)
-            group_y = saved_y if saved_y is not None else 0
-            
-            # Get tracker length for Y offset calculation
-            first_ref = None
-            for seg in group_source.get('segments', []):
-                ref = seg.get('template_ref')
-                if ref and ref in self.enabled_templates:
-                    first_ref = ref
-                    break
-            
-            tracker_length_ft = 180.0  # fallback
-            if first_ref:
-                dims = self._get_estimate_tracker_dims_ft(first_ref)
-                if dims:
-                    tracker_length_ft = dims[1]
-            
-            if device_position == 'north':
-                dev_y = group_y - 5.0
-            elif device_position == 'south':
-                dev_y = group_y + tracker_length_ft + 5.0
-            else:
-                dev_y = group_y + tracker_length_ft / 2.0
-
-            # N-S nudge is not reflected here — this Y is already a coarse,
-            # group-level approximation (not the anchor-snapped Y site_preview.py
-            # renders), and reproducing that anchor system would mean duplicating
-            # per-tracker motor/alignment/driveline geometry into this function.
 
             device_positions.append((dev_x, dev_y, primary_grp))
         

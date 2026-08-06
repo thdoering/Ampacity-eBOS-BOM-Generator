@@ -485,6 +485,28 @@
       "bifaciality_factor": null,
       "default_orientation": "Portrait",
       "cells_per_module": 72
+    },
+    "CS6.2-66TB-620H": {
+      "manufacturer": "Canadian Solar",
+      "model": "CS6.2-66TB-620H",
+      "type": "Bifacial",
+      "length_mm": 2382,
+      "width_mm": 1134,
+      "depth_mm": 40,
+      "weight_kg": 33.4,
+      "wattage": 620,
+      "vmp": 41.2,
+      "imp": 15.06,
+      "voc": 48.4,
+      "isc": 16.08,
+      "max_system_voltage": 1500,
+      "efficiency": 23.0,
+      "temperature_coefficient_pmax": -0.29,
+      "temperature_coefficient_voc": -0.25,
+      "temperature_coefficient_isc": 0.045,
+      "bifaciality_factor": 0.8,
+      "default_orientation": "Portrait",
+      "cells_per_module": 132
     }
   },
   "ZnShine": {

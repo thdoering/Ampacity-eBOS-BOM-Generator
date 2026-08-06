@@ -4,6 +4,8 @@ import math
 import copy
 import re
 
+from ..utils import device_geometry
+
 # Set True to print per-tracker extender debug info to stdout whenever
 # the info panel is refreshed (e.g. after nudging a combiner box).
 _EXTENDER_DEBUG = False
@@ -1137,189 +1139,26 @@ class SitePreviewWindow(tk.Toplevel):
             harness_map = inv.get('harness_map', [])
             if not harness_map:
                 continue
-            
-            # Find which trackers this inverter uses
-            inv_tracker_indices = [entry['tracker_idx'] for entry in harness_map]
-            
-            # Determine majority group
-            group_counts = {}
-            for tidx in inv_tracker_indices:
-                if tidx in tracker_to_group:
-                    grp_idx = tracker_to_group[tidx][0]
-                    group_counts[grp_idx] = group_counts.get(grp_idx, 0) + 1
-            
-            if not group_counts:
+
+            geom = device_geometry.device_position_for_inverter(
+                harness_map, tracker_to_group, self.group_layout, self.groups,
+                device_width_ft, device_height_ft, offset_ft, max_width
+            )
+            if geom is None:
                 continue
-            
-            primary_grp_idx = max(group_counts, key=group_counts.get)
-            group_data = self.group_layout[primary_grp_idx]
-            group_source = self.groups[primary_grp_idx] if primary_grp_idx < len(self.groups) else {}
-            device_position = group_source.get('device_position', 'middle')
-            
-            gx = group_data['x']
-            gy = group_data['y']
-            
-            # Compute X from the center of this inverter's trackers within the primary group.
-            local_indices = []
-            for tidx in inv_tracker_indices:
-                if tidx in tracker_to_group and tracker_to_group[tidx][0] == primary_grp_idx:
-                    local_indices.append(tracker_to_group[tidx][1])
 
-            group_trackers_list = group_data.get('trackers', [])
-            pitch = group_data.get('row_spacing_ft', self.tracker_pitch_ft)
+            device_x = geom['x']
+            device_y = geom['y']
+            device_position = geom['device_position']
+            primary_grp_idx = geom['primary_group_idx']
+            ns_anchors = geom['ns_anchors']
 
-            local_x_indices = [
-                group_trackers_list[li].get('local_x_idx', li)
-                for li in local_indices if li < len(group_trackers_list)
-            ]
-
-            if local_x_indices:
-                center_local_x = (min(local_x_indices) + max(local_x_indices)) / 2.0
-                device_x = gx + center_local_x * pitch + (max_width - device_width_ft) / 2
-            else:
-                center_local_x = 0
-                device_x = gx
-
-            # Driveline angle Y offset based on device's E-W position
-            angle_y_offset = center_local_x * pitch * group_data.get('driveline_tan', 0.0)
-
-            # Compute Y based on position setting.
-            # For north/south we first find the most extreme GROUP the CB has trackers in
-            # (southernmost group for 'south', northernmost for 'north'), then apply the
-            # original closest-tracker-to-device-X logic within that group.
-            # This handles CBs that span two stacked rows (e.g., Group 14 + Group 16)
-            # without the driveline-angle regression that comes from picking the global
-            # minimum/maximum tracker Y across all groups.
-            if device_position in ('north', 'south'):
-                # Step 1: find the most extreme group by visual extent.
-                anchor_grp_idx = primary_grp_idx
-                anchor_val = None
-                for grp_idx_s, grp_data_s in enumerate(self.group_layout):
-                    has_any = any(
-                        tidx in tracker_to_group and tracker_to_group[tidx][0] == grp_idx_s
-                        for tidx in inv_tracker_indices
-                    )
-                    if not has_any:
-                        continue
-                    grp_gy_s = grp_data_s['y']
-                    if device_position == 'south':
-                        vis_max = grp_data_s.get('visual_max_y', grp_data_s.get('length_ft', 0))
-                        val = grp_gy_s + vis_max
-                        if anchor_val is None or val > anchor_val:
-                            anchor_val = val
-                            anchor_grp_idx = grp_idx_s
-                    else:  # 'north'
-                        vis_min = grp_data_s.get('visual_min_y', 0)
-                        val = grp_gy_s + vis_min
-                        if anchor_val is None or val < anchor_val:
-                            anchor_val = val
-                            anchor_grp_idx = grp_idx_s
-
-                # Step 2: within the anchor group, use the closest-to-device-X tracker.
-                anchor_grp_data = self.group_layout[anchor_grp_idx]
-                anchor_gy = anchor_grp_data['y']
-                anchor_trackers = anchor_grp_data.get('trackers', [])
-                anchor_length = anchor_grp_data.get('length_ft', 0)
-                anchor_motor_y_ref = anchor_grp_data.get('motor_y_ft', None)
-                anchor_dtan = anchor_grp_data.get('driveline_tan', 0.0)
-                anchor_pitch = anchor_grp_data.get('row_spacing_ft', self.tracker_pitch_ft)
-                anchor_alignment = anchor_grp_data.get('tracker_alignment', 'motor')
-
-                anchor_local = [
-                    tracker_to_group[tidx][1]
-                    for tidx in inv_tracker_indices
-                    if tidx in tracker_to_group and tracker_to_group[tidx][0] == anchor_grp_idx
-                ]
-
-                closest_local_idx = None
-                closest_dist = float('inf')
-                for li in anchor_local:
-                    if li >= len(anchor_trackers):
-                        continue
-                    t_lx = anchor_trackers[li].get('local_x_idx', li)
-                    dist = abs(t_lx - center_local_x)
-                    if dist < closest_dist:
-                        closest_dist = dist
-                        closest_local_idx = li
-
-                if closest_local_idx is not None:
-                    t = anchor_trackers[closest_local_idx]
-                    t_length = t.get('length_ft', anchor_length)
-                    _t_lx = t.get('local_x_idx', closest_local_idx)
-                    t_angle_y = _t_lx * anchor_pitch * anchor_dtan
-
-                    if anchor_alignment == 'top':
-                        ty = anchor_gy + t_angle_y
-                    elif anchor_alignment == 'bottom':
-                        ty = anchor_gy + (anchor_length - t_length) + t_angle_y
-                    elif t.get('has_motor', False) and anchor_motor_y_ref is not None:
-                        ty = anchor_gy + (anchor_motor_y_ref - t.get('motor_y_ft', 0)) + t_angle_y
-                    else:
-                        ty = anchor_gy + (anchor_length - t_length) / 2 + t_angle_y
-
-                    if device_position == 'north':
-                        device_y = ty - offset_ft - device_height_ft
-                    else:
-                        device_y = ty + t_length + offset_ft
-                else:
-                    # Fallback to anchor group bounds
-                    if device_position == 'north':
-                        vis_min = anchor_grp_data.get('visual_min_y', 0)
-                        device_y = anchor_gy + vis_min - offset_ft - device_height_ft
-                    else:
-                        vis_max = anchor_grp_data.get('visual_max_y', anchor_grp_data.get('length_ft', 0))
-                        device_y = anchor_gy + vis_max + offset_ft
-            else:  # 'middle' or fallback
-                group_motor_y_ref = group_data.get('motor_y_ft', None)
-                group_length = group_data.get('length_ft', 0)
-                driveline_tan = group_data.get('driveline_tan', 0.0)
-                tracker_alignment = group_data.get('tracker_alignment', 'motor')
-
-                # Find closest assigned tracker to device center (same as north/south)
-                m_closest_idx = None
-                m_closest_dist = float('inf')
-                for li in local_indices:
-                    if li < len(group_trackers_list):
-                        t_lx = group_trackers_list[li].get('local_x_idx', li)
-                        dist = abs(t_lx - center_local_x)
-                        if dist < m_closest_dist:
-                            m_closest_dist = dist
-                            m_closest_idx = li
-
-                if m_closest_idx is not None:
-                    t = group_trackers_list[m_closest_idx]
-                    t_length = t.get('length_ft', group_length)
-                    t_lx = t.get('local_x_idx', m_closest_idx)
-                    t_angle_y = t_lx * pitch * driveline_tan
-                    t_motor_y_ft = t.get('motor_y_ft', t_length / 2)
-
-                    if tracker_alignment == 'top':
-                        ty = gy + t_angle_y
-                    elif tracker_alignment == 'bottom':
-                        ty = gy + (group_length - t_length) + t_angle_y
-                    elif t.get('has_motor', False) and group_motor_y_ref is not None:
-                        ty = gy + (group_motor_y_ref - t.get('motor_y_ft', 0)) + t_angle_y
-                    else:
-                        ty = gy + (group_length - t_length) / 2 + t_angle_y
-
-                    motor_gap_ft = t.get('motor_gap_ft', 0.0)
-                    device_y = ty + t_motor_y_ft + motor_gap_ft / 2 - device_height_ft / 2
-                else:
-                    fallback_motor = group_motor_y_ref if group_motor_y_ref is not None else group_length / 2
-                    fallback_gap = group_trackers_list[0].get('motor_gap_ft', 0.0) if group_trackers_list else 0.0
-                    device_y = gy + fallback_motor + fallback_gap / 2 - device_height_ft / 2 + angle_y_offset
-
-                if local_x_indices:
-                    spt_map = {
-                        group_trackers_list[li].get('local_x_idx', li):
-                        group_trackers_list[li].get('strings_per_tracker', 1)
-                        for li in local_indices if li < len(group_trackers_list)
-                    }
-                    _total_trackers = len(group_trackers_list)
-                    device_x = self._apply_middle_x_bias(
-                        device_x, device_y, center_local_x, local_x_indices, spt_map,
-                        pitch, gx, _total_trackers
-                    )
+            if geom['middle_bias_context'] is not None:
+                bc = geom['middle_bias_context']
+                device_x = self._apply_middle_x_bias(
+                    device_x, device_y, bc['center_local_x'], bc['local_x_indices'],
+                    bc['spt_map'], bc['pitch'], bc['group_x'], bc['group_num_trackers']
+                )
 
             # Build assigned_strings from this inverter's harness_map
             assigned_strings = {}
@@ -1363,42 +1202,6 @@ class SitePreviewWindow(tk.Toplevel):
                         for s in range(existing, existing + strings_taken):
                             assigned_strings[tidx].add(s)
             
-            # Compute N-S snap anchors (north/middle/south device Y for every connected tracker).
-            # Each anchor is a (y_ft, zone_type) tuple so the nudge code knows which
-            # device_position to activate when it snaps to that anchor.
-            ns_typed_set = set()
-            for _tidx in inv_tracker_indices:
-                if _tidx not in tracker_to_group:
-                    continue
-                _g_idx, _l_idx = tracker_to_group[_tidx]
-                _gd = self.group_layout[_g_idx]
-                _g_trackers = _gd.get('trackers', [])
-                if _l_idx >= len(_g_trackers):
-                    continue
-                _t = _g_trackers[_l_idx]
-                _t_len = _t.get('length_ft', _gd.get('length_ft', 0))
-                _t_lx = _t.get('local_x_idx', _l_idx)
-                _pitch = _gd.get('row_spacing_ft', self.tracker_pitch_ft)
-                _dtan = _gd.get('driveline_tan', 0.0)
-                _ang = _t_lx * _pitch * _dtan
-                _align = _gd.get('tracker_alignment', 'motor')
-                _motor_ref = _gd.get('motor_y_ft', None)
-                _t_motor = _t.get('motor_y_ft', _t_len / 2)
-                _gy = _gd['y']
-                if _align == 'top':
-                    _ty = _gy + _ang
-                elif _align == 'bottom':
-                    _ty = _gy + (_gd.get('length_ft', _t_len) - _t_len) + _ang
-                elif _t.get('has_motor', False) and _motor_ref is not None:
-                    _ty = _gy + (_motor_ref - _t_motor) + _ang
-                else:
-                    _ty = _gy + (_gd.get('length_ft', _t_len) - _t_len) / 2 + _ang
-                ns_typed_set.add((round(_ty - offset_ft - device_height_ft, 4),      'north'))
-                _t_motor_gap = _t.get('motor_gap_ft', 0.0)
-                ns_typed_set.add((round(_ty + _t_motor + _t_motor_gap / 2 - device_height_ft / 2, 4), 'middle'))
-                ns_typed_set.add((round(_ty + _t_len + offset_ft, 4),              'south'))
-            ns_anchors = sorted(ns_typed_set, key=lambda a: a[0])
-
             dev_idx = len(self.device_positions)
             label = self.device_names.get(dev_idx, f"{self.device_label}-{inv_idx + 1:02d}")
 
@@ -1511,29 +1314,14 @@ class SitePreviewWindow(tk.Toplevel):
                 # Compute N-S snap anchors (north/middle/south device Y for every tracker
                 # in this device's sub-range) — same construction as the allocation path,
                 # so N-S nudge steps resolve identically for both placement methods.
-                align = group_data.get('tracker_alignment', 'motor')
-                motor_ref = group_data.get('motor_y_ft', None)
                 ns_typed_set = set()
                 for local_idx in range(tracker_start, tracker_start + sub_size):
                     if local_idx >= len(group_trackers):
                         continue
                     t = group_trackers[local_idx]
-                    t_len = t.get('length_ft', group_data.get('length_ft', 0))
-                    t_lx = t.get('local_x_idx', local_idx)
-                    t_ang = t_lx * pitch * driveline_tan
-                    t_motor = t.get('motor_y_ft', t_len / 2)
-                    if align == 'top':
-                        ty = gy + t_ang
-                    elif align == 'bottom':
-                        ty = gy + (group_data.get('length_ft', t_len) - t_len) + t_ang
-                    elif t.get('has_motor', False) and motor_ref is not None:
-                        ty = gy + (motor_ref - t_motor) + t_ang
-                    else:
-                        ty = gy + (group_data.get('length_ft', t_len) - t_len) / 2 + t_ang
-                    ns_typed_set.add((round(ty - offset_ft - device_height_ft, 4), 'north'))
-                    t_motor_gap = t.get('motor_gap_ft', 0.0)
-                    ns_typed_set.add((round(ty + t_motor + t_motor_gap / 2 - device_height_ft / 2, 4), 'middle'))
-                    ns_typed_set.add((round(ty + t_len + offset_ft, 4), 'south'))
+                    ns_typed_set.update(device_geometry.tracker_ns_anchors(
+                        group_data, t, offset_ft, device_height_ft, t.get('local_x_idx', local_idx)
+                    ))
                 ns_anchors = sorted(ns_typed_set, key=lambda a: a[0])
 
                 dev_idx = len(self.device_positions)
@@ -3686,7 +3474,14 @@ class SitePreviewWindow(tk.Toplevel):
         # if the two groups' motor rows align in world space, signed_ns ≈ 0 regardless
         # of the raw grp['y'] difference.
         dev_cx = dev['x'] + dev['width_ft'] / 2
-        dev_cy = dev['y'] + dev.get('height_ft', 3.0) / 2
+        # dev['y'] is a render-corner Y, not the physical anchor point — box
+        # center only coincides with the anchor for a 'middle'-zone device.
+        # 'north'/'south' anchor at the standoff edge instead; see
+        # device_geometry.physical_anchor_y for the same conversion quick_estimate.py
+        # uses for the BOM's whip lengths, so this popup agrees with it.
+        dev_cy = device_geometry.physical_anchor_y(
+            dev['y'], dev.get('device_position', 'middle'), dev.get('height_ft', 3.0)
+        )
 
         if _EXTENDER_DEBUG:
             print(f"\n=== Extender debug: {dev_label} [idx={device_idx}] ===")
